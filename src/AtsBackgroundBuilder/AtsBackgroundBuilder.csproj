@@ -1,0 +1,75 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net45;net8.0-windows</TargetFrameworks>
+    <AssemblyName>AtsBackgroundBuilder</AssemblyName>
+    <RootNamespace>AtsBackgroundBuilder</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Platforms>AnyCPU</Platforms>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net45'">
+    <DefineConstants>NET45;$(DefineConstants)</DefineConstants>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <DefineConstants>NET8_0_WINDOWS;$(DefineConstants)</DefineConstants>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Plugin.cs" />
+    <Compile Include="OdHelpers.cs" />
+    <Compile Include="LayerManager.cs" />
+    <Compile Include="LabelPlacer.cs" />
+    <Compile Include="GeometryUtils.cs" />
+    <Compile Include="ExcelLookup.cs" />
+    <Compile Include="Config.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net45'">
+    <Reference Include="AcDbMgd">
+      <HintPath>..\..\..\lib\AutoCAD2015\AcDbMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcMgd">
+      <HintPath>..\..\..\lib\AutoCAD2015\AcMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcCoreMgd">
+      <HintPath>..\..\..\lib\AutoCAD2015\AcCoreMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcMapMgd">
+      <HintPath>..\..\..\lib\AutoCAD2015\AcMapMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <Reference Include="AcDbMgd">
+      <HintPath>..\..\..\lib\AutoCAD2025\AcDbMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcMgd">
+      <HintPath>..\..\..\lib\AutoCAD2025\AcMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcCoreMgd">
+      <HintPath>..\..\..\lib\AutoCAD2025\AcCoreMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcMapMgd">
+      <HintPath>..\..\..\lib\AutoCAD2025\AcMapMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CopyBuildOutput" AfterTargets="Build">
+    <ItemGroup>
+      <BuildOutputFiles Include="$(TargetDir)*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(BuildOutputFiles)" DestinationFolder="$(MSBuildProjectDirectory)\..\..\build\$(TargetFramework)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>
