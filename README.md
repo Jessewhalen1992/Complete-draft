@@ -1,13 +1,12 @@
 # ATS Background Builder
 
-AutoCAD Map 3D .NET plugin for generating Alberta ATS-style background linework and disposition labels.
+AutoCAD Map 3D 2025 .NET plugin for generating Alberta ATS-style background linework and disposition labels.
 
 ## Build output
 
-The solution targets **net45** and **net8.0-windows**. Build outputs (plus dependencies) are copied to:
+The solution targets **net8.0-windows** for AutoCAD Map 3D 2025. Build outputs (plus dependencies) are copied to:
 
 ```
-/build/net45/
 /build/net8.0-windows/
 ```
 
