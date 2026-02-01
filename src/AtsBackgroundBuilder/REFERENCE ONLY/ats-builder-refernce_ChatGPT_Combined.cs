@@ -5,10 +5,35 @@
 // FILE: C:\Users\Work Test 2\Desktop\SURF DEV\ResidenceSync\Properties\AssemblyInfo.cs
 /////////////////////////////////////////////////////////////////////
 
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Globalization;
+using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Windows.Forms;
+using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.ApplicationServices.Core;
+using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
+using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
+using Autodesk.AutoCAD.Windows;
+using Autodesk.Gis.Map;
+using Autodesk.Gis.Map.Constants;
+using Autodesk.Gis.Map.ObjectData;
+using Autodesk.Gis.Map.Project;
+using Autodesk.Gis.Map.Utilities;
+using ResidenceSync.Properties;
 using ResidenceSync.UI;
+using AcadApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
+using Application = Autodesk.AutoCAD.ApplicationServices.Core.Application;
+using DbOpenMode = Autodesk.AutoCAD.DatabaseServices.OpenMode;
+using OdDataType = Autodesk.Gis.Map.Constants.DataType;
+using OdOpenMode = Autodesk.Gis.Map.Constants.OpenMode;
+using OdTable = Autodesk.Gis.Map.ObjectData.Table;
 [assembly: CommandClass(typeof(ResidenceSync.ResidenceSyncCommands))]
 [assembly: CommandClass(typeof(RSUiCommands))]
 
@@ -32,27 +57,7 @@ using ResidenceSync.UI;
 // FILE: C:\Users\Work Test 2\Desktop\SURF DEV\ResidenceSync\ResidenceSyncCommands.cs
 /////////////////////////////////////////////////////////////////////
 
-using Autodesk.AutoCAD.ApplicationServices;
-using Autodesk.AutoCAD.ApplicationServices.Core;
-using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.EditorInput;
-using Autodesk.AutoCAD.Geometry;
-using Autodesk.AutoCAD.Runtime;
-using Autodesk.Gis.Map;
-using Autodesk.Gis.Map.Constants;
-using Autodesk.Gis.Map.ObjectData;
-using Autodesk.Gis.Map.Utilities;
-using System;
-using System.Collections.Generic;
-using System.Globalization;
-using System.IO;
-using System.Linq;
-using AcadApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
-using DbOpenMode = Autodesk.AutoCAD.DatabaseServices.OpenMode;
-using OdDataType = Autodesk.Gis.Map.Constants.DataType;
-using OdOpenMode = Autodesk.Gis.Map.Constants.OpenMode;
-using OdTable = Autodesk.Gis.Map.ObjectData.Table;
-using Autodesk.Gis.Map.Project; // for ProjectModel
+// (using directives consolidated at top of file)
 
 
 namespace ResidenceSync
@@ -2735,8 +2740,6 @@ namespace ResidenceSync
 // FILE: C:\Users\Work Test 2\Desktop\SURF DEV\ResidenceSync\UI\MacroBuilder.cs
 /////////////////////////////////////////////////////////////////////
 
-using System;
-
 namespace ResidenceSync.UI
 {
     internal static class MacroBuilder
@@ -2822,14 +2825,6 @@ namespace ResidenceSync.UI
 /////////////////////////////////////////////////////////////////////
 // FILE: C:\Users\Work Test 2\Desktop\SURF DEV\ResidenceSync\UI\RSPanel.cs
 /////////////////////////////////////////////////////////////////////
-
-using Autodesk.AutoCAD.ApplicationServices;
-using Application = Autodesk.AutoCAD.ApplicationServices.Core.Application;
-using ResidenceSync.Properties;
-using System;
-using System.Drawing;
-using System.Linq;
-using System.Windows.Forms;
 
 namespace ResidenceSync.UI
 {
@@ -3347,12 +3342,6 @@ namespace ResidenceSync.UI
 // How to open the UI: run command RSUI.
 // Usage notes: The palette only sends command macros; any required picks or prompts continue in AutoCAD.
 
-using Autodesk.AutoCAD.ApplicationServices.Core;
-using Autodesk.AutoCAD.Runtime;
-using Autodesk.AutoCAD.Windows;
-using System.Drawing;
-using System.Windows.Forms;
-
 namespace ResidenceSync.UI
 {
     public class RSUiCommands : IExtensionApplication
@@ -3429,4 +3418,3 @@ namespace ResidenceSync.UI
         }
     }
 }
-
