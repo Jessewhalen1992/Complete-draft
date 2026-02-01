@@ -1175,6 +1175,7 @@ namespace AtsBackgroundBuilder
             out SectionOutline outline)
         {
             outline = null;
+            var checkedAny = false;
             foreach (var folder in searchFolders)
             {
                 if (!FolderHasSectionIndex(folder, key.Zone))
@@ -1182,10 +1183,16 @@ namespace AtsBackgroundBuilder
                     continue;
                 }
 
+                checkedAny = true;
                 if (SectionIndexReader.TryLoadSectionOutline(folder, key, logger, out outline))
                 {
                     return true;
                 }
+            }
+
+            if (!checkedAny)
+            {
+                logger.WriteLine($"No section index file found for zone {key.Zone}. Searched: {string.Join("; ", searchFolders)}");
             }
 
             return false;

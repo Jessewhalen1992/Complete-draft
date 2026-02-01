@@ -19,6 +19,9 @@ namespace AtsBackgroundBuilder
 
     public static class ShapefileImporter
     {
+        private static readonly Lazy<Type?> MapImportType = new Lazy<Type?>(
+            () => Type.GetType("Autodesk.Gis.Map.ImportExport.MapImport, ManagedMapApi"));
+
         public static ShapefileImportSummary ImportShapefiles(
             Database database,
             Editor editor,
@@ -47,6 +50,12 @@ namespace AtsBackgroundBuilder
             logger.WriteLine($"Shapefile search folders: {string.Join("; ", searchFolders)}");
             logger.WriteLine($"Section extents loaded: {sectionExtents.Count} (buffer {config.SectionBufferDistance}).");
 
+            if (!TryGetMapImportType(logger, out var mapImportType))
+            {
+                summary.ImportFailures += config.DispositionShapefiles.Length;
+                return summary;
+            }
+
             foreach (var shapefile in config.DispositionShapefiles)
             {
                 logger.WriteLine($"Resolving shapefile: {shapefile}");
@@ -62,7 +71,7 @@ namespace AtsBackgroundBuilder
                 LogShapefileSidecars(shapefilePath, logger);
 
                 logger.WriteLine("Starting shapefile import.");
-                if (!TryImportShapefile(shapefilePath, logger))
+                if (!TryImportShapefile(mapImportType, shapefilePath, logger))
                 {
                     logger.WriteLine("Shapefile import failed.");
                     summary.ImportFailures++;
@@ -85,6 +94,19 @@ namespace AtsBackgroundBuilder
             summary.ImportedDispositions = dispositionPolylines.Count;
             editor.WriteMessage($"\nImported {summary.ImportedDispositions} dispositions from shapefiles.");
             return summary;
+        }
+
+        private static bool TryGetMapImportType(Logger logger, out Type mapImportType)
+        {
+            mapImportType = MapImportType.Value;
+            if (mapImportType == null)
+            {
+                logger.WriteLine("MapImport type not found. Ensure Map 3D is available before importing shapefiles.");
+                logger.WriteLine("Skipping shapefile import for this run.");
+                return false;
+            }
+
+            return true;
         }
 
         private static IReadOnlyList<string> BuildShapefileSearchFolders(Config config)
@@ -319,17 +341,10 @@ namespace AtsBackgroundBuilder
             return roundedCenter;
         }
 
-        private static bool TryImportShapefile(string shapefilePath, Logger logger)
+        private static bool TryImportShapefile(Type mapImportType, string shapefilePath, Logger logger)
         {
             try
             {
-                var mapImportType = Type.GetType("Autodesk.Gis.Map.ImportExport.MapImport, ManagedMapApi");
-                if (mapImportType == null)
-                {
-                    logger.WriteLine("MapImport type not found. Ensure Map 3D is available.");
-                    return false;
-                }
-
                 var mapImport = Activator.CreateInstance(mapImportType);
                 SetProperty(mapImportType, mapImport, "SourceFile", shapefilePath);
                 SetProperty(mapImportType, mapImport, "FileName", shapefilePath);
