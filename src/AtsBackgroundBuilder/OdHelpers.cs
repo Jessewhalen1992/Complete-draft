@@ -13,8 +13,15 @@ namespace AtsBackgroundBuilder
             try
             {
                 var tables = HostMapApplicationServices.Application.ActiveProject.ODTables;
-                foreach (Table table in tables)
+                var tableNames = tables.GetTableNames();
+                if (tableNames == null || tableNames.Length == 0)
                 {
+                    return null;
+                }
+
+                foreach (var tableName in tableNames)
+                {
+                    Autodesk.Gis.Map.ObjectData.Table table = tables[tableName];
                     var records = GetRecordsForObject(table, objectId, logger);
                     if (records == null || records.Count == 0)
                     {
@@ -22,11 +29,13 @@ namespace AtsBackgroundBuilder
                     }
 
                     var record = records[0];
+                    var fieldDefinitions = table.FieldDefinitions;
                     var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                     for (var i = 0; i < record.Count; i++)
                     {
                         var field = record[i];
-                        dict[field.FieldName] = field.Value?.ToString() ?? string.Empty;
+                        var fieldName = fieldDefinitions[i].Name;
+                        dict[fieldName] = MapValueToString(field);
                     }
 
                     return dict;
@@ -40,7 +49,7 @@ namespace AtsBackgroundBuilder
             return null;
         }
 
-        private static Records? GetRecordsForObject(Table table, ObjectId objectId, Logger logger)
+        private static Records? GetRecordsForObject(Autodesk.Gis.Map.ObjectData.Table table, ObjectId objectId, Logger logger)
         {
             try
             {
@@ -57,6 +66,25 @@ namespace AtsBackgroundBuilder
                     logger.WriteLine("OD GetObjectRecords failed: " + ex.Message);
                     return null;
                 }
+            }
+        }
+
+        private static string MapValueToString(MapValue value)
+        {
+            switch (value.Type)
+            {
+                case DataType.Integer:
+                    return value.Int32Value.ToString();
+                case DataType.Real:
+                    return value.DoubleValue.ToString();
+                case DataType.Character:
+                    return value.StrValue ?? string.Empty;
+                case DataType.Point:
+                    return value.PointValue?.ToString() ?? string.Empty;
+                case DataType.Date:
+                    return value.DateValue.ToString();
+                default:
+                    return string.Empty;
             }
         }
     }
