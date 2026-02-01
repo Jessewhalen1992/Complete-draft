@@ -38,7 +38,8 @@ namespace AtsBackgroundBuilder
             var companyLookup = ExcelLookup.Load(Path.Combine(dllFolder, "CompanyLookup.xlsx"), logger);
             var purposeLookup = ExcelLookup.Load(Path.Combine(dllFolder, "PurposeLookup.xlsx"), logger);
 
-            var quarterPolylines = PromptForQuarterPolylines(editor, database);
+            var sectionDrawResult = TryDrawSectionWithQuarters(editor, database, config, logger);
+            var quarterPolylines = sectionDrawResult.QuarterPolylineIds;
             if (quarterPolylines.Count == 0)
             {
                 editor.WriteMessage("\nNo quarter polylines selected.");
@@ -174,7 +175,7 @@ namespace AtsBackgroundBuilder
             logger.Dispose();
         }
 
-        private static List<ObjectId> PromptForQuarterPolylines(Editor editor, Database database)
+        private static SectionDrawResult TryDrawSectionWithQuarters(Editor editor, Database database, Config config, Logger logger)
         {
             var filter = new SelectionFilter(new[]
             {
@@ -189,42 +190,33 @@ namespace AtsBackgroundBuilder
             var selection = editor.GetSelection(prompt, filter);
             if (selection.Status == PromptStatus.OK)
             {
-                return new List<ObjectId>(selection.Value.GetObjectIds());
+                return new SectionDrawResult(new List<ObjectId>(selection.Value.GetObjectIds()), false);
+            }
+
+            if (config.UseSectionIndex)
+            {
+                if (TryPromptSectionKey(editor, out var sectionKey))
+                {
+                    var baseFolder = string.IsNullOrWhiteSpace(config.SectionIndexFolder)
+                        ? (Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? Environment.CurrentDirectory)
+                        : config.SectionIndexFolder;
+                    if (SectionIndexReader.TryLoadSectionOutline(baseFolder, sectionKey, logger, out var outline))
+                    {
+                        return DrawSectionFromIndex(database, outline);
+                    }
+
+                    editor.WriteMessage("\nSection not found in index. Falling back to manual selection.");
+                }
             }
 
             editor.WriteMessage("\nSelect section polylines to generate quarters.");
             var sectionSelection = editor.GetSelection(prompt, filter);
             if (sectionSelection.Status != PromptStatus.OK)
             {
-                return new List<ObjectId>();
+                return new SectionDrawResult(new List<ObjectId>(), false);
             }
 
-            var quarterIds = new List<ObjectId>();
-            using (var transaction = database.TransactionManager.StartTransaction())
-            {
-                var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
-                var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-
-                foreach (var id in sectionSelection.Value.GetObjectIds())
-                {
-                    var section = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
-                    if (section == null || !section.Closed)
-                    {
-                        continue;
-                    }
-
-                    foreach (var quarter in GenerateQuarters(section))
-                    {
-                        var quarterId = modelSpace.AppendEntity(quarter);
-                        transaction.AddNewlyCreatedDBObject(quarter, true);
-                        quarterIds.Add(quarterId);
-                    }
-                }
-
-                transaction.Commit();
-            }
-
-            return quarterIds;
+            return DrawQuartersFromSections(database, sectionSelection.Value.GetObjectIds());
         }
 
         private static List<ObjectId> PromptForDispositionPolylines(Editor editor, Database database)
@@ -403,6 +395,150 @@ namespace AtsBackgroundBuilder
 
             return polyline;
         }
+
+        private static SectionDrawResult DrawSectionFromIndex(Database database, SectionOutline outline)
+        {
+            var quarterIds = new List<ObjectId>();
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                var sectionPolyline = new Polyline(outline.Vertices.Count)
+                {
+                    Closed = outline.Closed
+                };
+
+                for (var i = 0; i < outline.Vertices.Count; i++)
+                {
+                    var vertex = outline.Vertices[i];
+                    sectionPolyline.AddVertexAt(i, vertex, 0, 0, 0);
+                }
+
+                modelSpace.AppendEntity(sectionPolyline);
+                transaction.AddNewlyCreatedDBObject(sectionPolyline, true);
+
+                foreach (var quarter in GenerateQuarters(sectionPolyline))
+                {
+                    var quarterId = modelSpace.AppendEntity(quarter);
+                    transaction.AddNewlyCreatedDBObject(quarter, true);
+                    quarterIds.Add(quarterId);
+                }
+
+                transaction.Commit();
+            }
+
+            return new SectionDrawResult(quarterIds, true);
+        }
+
+        private static SectionDrawResult DrawQuartersFromSections(Database database, ObjectId[] sectionIds)
+        {
+            var quarterIds = new List<ObjectId>();
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+                foreach (var id in sectionIds)
+                {
+                    var section = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
+                    if (section == null || !section.Closed)
+                    {
+                        continue;
+                    }
+
+                    foreach (var quarter in GenerateQuarters(section))
+                    {
+                        var quarterId = modelSpace.AppendEntity(quarter);
+                        transaction.AddNewlyCreatedDBObject(quarter, true);
+                        quarterIds.Add(quarterId);
+                    }
+                }
+
+                transaction.Commit();
+            }
+
+            return new SectionDrawResult(quarterIds, false);
+        }
+
+        private static bool TryPromptSectionKey(Editor editor, out SectionKey key)
+        {
+            key = default;
+            if (!TryPromptInt(editor, "Enter zone (e.g., 11 or 12)", out var zone))
+            {
+                return false;
+            }
+
+            if (!TryPromptString(editor, "Enter section", out var section))
+            {
+                return false;
+            }
+
+            if (!TryPromptString(editor, "Enter township", out var township))
+            {
+                return false;
+            }
+
+            if (!TryPromptString(editor, "Enter range", out var range))
+            {
+                return false;
+            }
+
+            if (!TryPromptString(editor, "Enter meridian", out var meridian))
+            {
+                return false;
+            }
+
+            key = new SectionKey(zone, section, township, range, meridian);
+            return true;
+        }
+
+        private static bool TryPromptString(Editor editor, string message, out string value)
+        {
+            value = string.Empty;
+            var options = new PromptStringOptions(message + ": ")
+            {
+                AllowSpaces = true
+            };
+
+            var result = editor.GetString(options);
+            if (result.Status != PromptStatus.OK || string.IsNullOrWhiteSpace(result.StringResult))
+            {
+                return false;
+            }
+
+            value = result.StringResult;
+            return true;
+        }
+
+        private static bool TryPromptInt(Editor editor, string message, out int value)
+        {
+            value = 0;
+            var options = new PromptIntegerOptions(message + ": ")
+            {
+                AllowNone = false
+            };
+
+            var result = editor.GetInteger(options);
+            if (result.Status != PromptStatus.OK)
+            {
+                return false;
+            }
+
+            value = result.Value;
+            return true;
+        }
+    }
+
+    public sealed class SectionDrawResult
+    {
+        public SectionDrawResult(List<ObjectId> quarterPolylineIds, bool generatedFromIndex)
+        {
+            QuarterPolylineIds = quarterPolylineIds;
+            GeneratedFromIndex = generatedFromIndex;
+        }
+
+        public List<ObjectId> QuarterPolylineIds { get; }
+        public bool GeneratedFromIndex { get; }
     }
 
     public sealed class SummaryResult
