@@ -19,8 +19,20 @@ namespace AtsBackgroundBuilder
 
     public static class ShapefileImporter
     {
-        private static readonly Lazy<Type?> MapImportType = new Lazy<Type?>(
-            () => Type.GetType("Autodesk.Gis.Map.ImportExport.MapImport, ManagedMapApi"));
+        private static readonly string[] MapImportTypeNames =
+        {
+            "Autodesk.Gis.Map.ImportExport.MapImport",
+            "Autodesk.Gis.Map.Platform.ImportExport.MapImport"
+        };
+
+        private static readonly string[] MapImportAssemblyNames =
+        {
+            "ManagedMapApi",
+            "AcMapImportExport",
+            "AcMapMgd"
+        };
+
+        private static readonly Lazy<Type?> MapImportType = new Lazy<Type?>(ResolveMapImportType);
 
         public static ShapefileImportSummary ImportShapefiles(
             Database database,
@@ -102,11 +114,64 @@ namespace AtsBackgroundBuilder
             if (mapImportType == null)
             {
                 logger.WriteLine("MapImport type not found. Ensure Map 3D is available before importing shapefiles.");
+                logger.WriteLine($"Loaded assemblies: {string.Join(", ", AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetName().Name))}");
                 logger.WriteLine("Skipping shapefile import for this run.");
                 return false;
             }
 
             return true;
+        }
+
+        private static Type? ResolveMapImportType()
+        {
+            foreach (var typeName in MapImportTypeNames)
+            {
+                var resolved = Type.GetType(typeName);
+                if (resolved != null)
+                {
+                    return resolved;
+                }
+
+                foreach (var assemblyName in MapImportAssemblyNames)
+                {
+                    resolved = Type.GetType($"{typeName}, {assemblyName}");
+                    if (resolved != null)
+                    {
+                        return resolved;
+                    }
+                }
+            }
+
+            foreach (var assemblyName in MapImportAssemblyNames)
+            {
+                TryLoadAssembly(assemblyName);
+            }
+
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                foreach (var typeName in MapImportTypeNames)
+                {
+                    var resolved = assembly.GetType(typeName, false);
+                    if (resolved != null)
+                    {
+                        return resolved;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static void TryLoadAssembly(string assemblyName)
+        {
+            try
+            {
+                Assembly.Load(assemblyName);
+            }
+            catch
+            {
+                // ignored
+            }
         }
 
         private static IReadOnlyList<string> BuildShapefileSearchFolders(Config config)
