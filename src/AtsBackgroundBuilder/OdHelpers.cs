@@ -56,17 +56,10 @@ namespace AtsBackgroundBuilder
             {
                 return table.GetObjectTableRecords(0, objectId, Autodesk.Gis.Map.Constants.OpenMode.OpenForRead, false);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                try
-                {
-                    return table.GetObjectTableRecords(objectId, Autodesk.Gis.Map.Constants.OpenMode.OpenForRead, false);
-                }
-                catch (Exception ex)
-                {
-                    logger.WriteLine("OD GetObjectRecords failed: " + ex.Message);
-                    return null;
-                }
+                logger.WriteLine("OD GetObjectRecords failed: " + ex.Message);
+                return null;
             }
         }
 
@@ -80,12 +73,8 @@ namespace AtsBackgroundBuilder
                     return value.DoubleValue.ToString();
                 case Autodesk.Gis.Map.Constants.DataType.Character:
                     return value.StrValue ?? string.Empty;
-                case Autodesk.Gis.Map.Constants.DataType.Point:
-                    return value.PointValue?.ToString() ?? string.Empty;
-                case Autodesk.Gis.Map.Constants.DataType.Date:
-                    return value.DateValue.ToString();
                 default:
-                    return string.Empty;
+                    return value.ToString();
             }
         }
     }

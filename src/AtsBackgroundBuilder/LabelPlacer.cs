@@ -124,7 +124,10 @@ namespace AtsBackgroundBuilder
                     {
                         using (region)
                         {
-                            var centroid = region.AreaProperties.Centroid;
+                            var centroid = Point3d.Origin;
+                            var normal = Vector3d.ZAxis;
+                            var axes = Vector3d.XAxis;
+                            region.AreaProperties(ref centroid, ref normal, ref axes);
                             var point = new Point2d(centroid.X, centroid.Y);
                             result.MultiQuarterProcessed++;
                             foreach (var candidate in GeometryUtils.GetSpiralOffsets(point, _config.TextHeight, _config.MaxOverlapAttempts))
