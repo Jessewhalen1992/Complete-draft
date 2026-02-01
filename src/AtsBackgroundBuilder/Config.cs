@@ -12,6 +12,9 @@ namespace AtsBackgroundBuilder
         public bool UseRegionIntersection { get; set; } = true;
         public bool UseSectionIndex { get; set; } = true;
         public string SectionIndexFolder { get; set; } = string.Empty;
+        public double SectionBufferDistance { get; set; } = 100.0;
+        public string ShapefileFolder { get; set; } = "C:\\AUTOCAD-SETUP CG\\SHAPE FILES";
+        public string[] DispositionShapefiles { get; set; } = new[] { "DAB_APPL.shp" };
 
         public static Config Load(string configPath, Logger logger)
         {
