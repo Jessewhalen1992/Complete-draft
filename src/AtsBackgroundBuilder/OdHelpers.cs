@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.Gis.Map;
 using Autodesk.Gis.Map.ObjectData;
+using Autodesk.Gis.Map.Utilities;
 
 namespace AtsBackgroundBuilder
 {
@@ -14,7 +15,7 @@ namespace AtsBackgroundBuilder
             {
                 var tables = HostMapApplicationServices.Application.ActiveProject.ODTables;
                 var tableNames = tables.GetTableNames();
-                if (tableNames == null || tableNames.Length == 0)
+                if (tableNames == null || tableNames.Count == 0)
                 {
                     return null;
                 }
@@ -53,13 +54,13 @@ namespace AtsBackgroundBuilder
         {
             try
             {
-                return table.GetObjectRecords(0, objectId, Autodesk.Gis.Map.Constants.OpenMode.OpenForRead, false);
+                return table.GetObjectTableRecords(0, objectId, Autodesk.Gis.Map.Constants.OpenMode.OpenForRead, false);
             }
             catch (Exception)
             {
                 try
                 {
-                    return table.GetObjectRecords(objectId, Autodesk.Gis.Map.Constants.OpenMode.OpenForRead, false);
+                    return table.GetObjectTableRecords(objectId, Autodesk.Gis.Map.Constants.OpenMode.OpenForRead, false);
                 }
                 catch (Exception ex)
                 {
@@ -73,15 +74,15 @@ namespace AtsBackgroundBuilder
         {
             switch (value.Type)
             {
-                case DataType.Integer:
+                case Autodesk.Gis.Map.Constants.DataType.Integer:
                     return value.Int32Value.ToString();
-                case DataType.Real:
+                case Autodesk.Gis.Map.Constants.DataType.Real:
                     return value.DoubleValue.ToString();
-                case DataType.Character:
+                case Autodesk.Gis.Map.Constants.DataType.Character:
                     return value.StrValue ?? string.Empty;
-                case DataType.Point:
+                case Autodesk.Gis.Map.Constants.DataType.Point:
                     return value.PointValue?.ToString() ?? string.Empty;
-                case DataType.Date:
+                case Autodesk.Gis.Map.Constants.DataType.Date:
                     return value.DateValue.ToString();
                 default:
                     return string.Empty;
