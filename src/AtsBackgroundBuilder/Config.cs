@@ -18,23 +18,23 @@ namespace AtsBackgroundBuilder
 
         public static Config Load(string configPath, Logger logger)
         {
+            var defaults = new Config();
             if (!File.Exists(configPath))
             {
-                var config = new Config();
-                config.Save(configPath, logger);
-                return config;
+                defaults.Save(configPath, logger);
+                return defaults;
             }
 
             try
             {
                 var json = File.ReadAllText(configPath);
                 var loaded = JsonSerializer.Deserialize<Config>(json);
-                return loaded ?? new Config();
+                return MergeDefaults(defaults, loaded);
             }
             catch (Exception ex)
             {
                 logger.WriteLine("Config load failed, using defaults: " + ex.Message);
-                return new Config();
+                return defaults;
             }
         }
 
@@ -49,6 +49,38 @@ namespace AtsBackgroundBuilder
             {
                 logger.WriteLine("Config save failed: " + ex.Message);
             }
+        }
+
+        private static Config MergeDefaults(Config defaults, Config? loaded)
+        {
+            if (loaded == null)
+            {
+                return defaults;
+            }
+
+            defaults.TextHeight = loaded.TextHeight;
+            defaults.MaxOverlapAttempts = loaded.MaxOverlapAttempts;
+            defaults.PlaceWhenOverlapFails = loaded.PlaceWhenOverlapFails;
+            defaults.UseRegionIntersection = loaded.UseRegionIntersection;
+            defaults.UseSectionIndex = loaded.UseSectionIndex;
+            defaults.SectionBufferDistance = loaded.SectionBufferDistance;
+
+            if (!string.IsNullOrWhiteSpace(loaded.SectionIndexFolder))
+            {
+                defaults.SectionIndexFolder = loaded.SectionIndexFolder;
+            }
+
+            if (!string.IsNullOrWhiteSpace(loaded.ShapefileFolder))
+            {
+                defaults.ShapefileFolder = loaded.ShapefileFolder;
+            }
+
+            if (loaded.DispositionShapefiles != null && loaded.DispositionShapefiles.Length > 0)
+            {
+                defaults.DispositionShapefiles = loaded.DispositionShapefiles;
+            }
+
+            return defaults;
         }
     }
 }
