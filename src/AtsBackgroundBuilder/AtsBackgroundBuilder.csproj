@@ -35,4 +35,8 @@
   <ItemGroup>
     <PackageReference Include="System.Data.OleDb" Version="8.0.0" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="REFERENCE ONLY\**\*.cs" />
+  </ItemGroup>
 </Project>
