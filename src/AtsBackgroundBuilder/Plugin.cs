@@ -323,8 +323,8 @@ namespace AtsBackgroundBuilder
             {
                 DefaultValue = defaultValue,
                 AllowNone = true,
-                MinValue = min,
-                MaxValue = max
+                LowerLimit = min,
+                UpperLimit = max
             };
 
             var result = editor.GetDouble(options);
