@@ -44,9 +44,12 @@ namespace AtsBackgroundBuilder
             var existingKeys = BuildExistingFeatureKeys(database, logger);
             var existingIds = CapturePolylineIds(database);
             var searchFolders = BuildShapefileSearchFolders(config);
+            logger.WriteLine($"Shapefile search folders: {string.Join("; ", searchFolders)}");
+            logger.WriteLine($"Section extents loaded: {sectionExtents.Count} (buffer {config.SectionBufferDistance}).");
 
             foreach (var shapefile in config.DispositionShapefiles)
             {
+                logger.WriteLine($"Resolving shapefile: {shapefile}");
                 var shapefilePath = ResolveShapefilePath(searchFolders, shapefile);
                 if (string.IsNullOrWhiteSpace(shapefilePath))
                 {
@@ -55,21 +58,28 @@ namespace AtsBackgroundBuilder
                     continue;
                 }
 
+                logger.WriteLine($"Using shapefile: {shapefilePath}");
+                LogShapefileSidecars(shapefilePath, logger);
+
+                logger.WriteLine("Starting shapefile import.");
                 if (!TryImportShapefile(shapefilePath, logger))
                 {
+                    logger.WriteLine("Shapefile import failed.");
                     summary.ImportFailures++;
                     continue;
                 }
 
                 var newIds = CaptureNewPolylineIds(database, existingIds);
                 existingIds.UnionWith(newIds);
+                logger.WriteLine($"Shapefile import produced {newIds.Count} new polylines.");
 
                 if (newIds.Count == 0)
                 {
+                    logger.WriteLine("No new LWPOLYLINE entities detected after import.");
                     continue;
                 }
 
-                FilterAndCollect(database, logger, newIds, sectionExtents, existingKeys, dispositionPolylines, summary);
+                FilterAndCollect(database, logger, newIds, sectionExtents, existingKeys, dispositionPolylines, summary, Path.GetFileName(shapefilePath));
             }
 
             summary.ImportedDispositions = dispositionPolylines.Count;
@@ -223,8 +233,12 @@ namespace AtsBackgroundBuilder
             List<Extents2d> sectionExtents,
             HashSet<string> existingKeys,
             List<ObjectId> dispositionPolylines,
-            ShapefileImportSummary summary)
+            ShapefileImportSummary summary,
+            string shapefileName)
         {
+            var filteredStart = summary.FilteredDispositions;
+            var dedupedStart = summary.DedupedDispositions;
+            var acceptedStart = dispositionPolylines.Count;
             using (var transaction = database.TransactionManager.StartTransaction())
             {
                 foreach (var id in newIds)
@@ -266,6 +280,11 @@ namespace AtsBackgroundBuilder
 
                 transaction.Commit();
             }
+
+            var accepted = dispositionPolylines.Count - acceptedStart;
+            var filtered = summary.FilteredDispositions - filteredStart;
+            var deduped = summary.DedupedDispositions - dedupedStart;
+            logger.WriteLine($"Shapefile '{shapefileName}' results: accepted {accepted}, filtered {filtered}, deduped {deduped}.");
         }
 
         private static bool IsWithinSections(Extents2d polyExtents, List<Extents2d> sectionExtents)
@@ -322,18 +341,21 @@ namespace AtsBackgroundBuilder
                 var initMethod = mapImportType.GetMethod("Init");
                 initMethod?.Invoke(mapImport, new object[] { "MAPIMPORT" });
 
-                if (InvokeIfExists(mapImportType, mapImport, "Import"))
+                if (InvokeIfExists(mapImportType, mapImport, "Import", logger))
                 {
+                    logger.WriteLine("MapImport.Import invoked.");
                     return true;
                 }
 
-                if (InvokeIfExists(mapImportType, mapImport, "Run"))
+                if (InvokeIfExists(mapImportType, mapImport, "Run", logger))
                 {
+                    logger.WriteLine("MapImport.Run invoked.");
                     return true;
                 }
 
-                if (InvokeIfExists(mapImportType, mapImport, "Execute"))
+                if (InvokeIfExists(mapImportType, mapImport, "Execute", logger))
                 {
+                    logger.WriteLine("MapImport.Execute invoked.");
                     return true;
                 }
 
@@ -356,16 +378,33 @@ namespace AtsBackgroundBuilder
             }
         }
 
-        private static bool InvokeIfExists(Type type, object instance, string methodName)
+        private static bool InvokeIfExists(Type type, object instance, string methodName, Logger logger)
         {
             var method = type.GetMethod(methodName, Type.EmptyTypes);
             if (method != null)
             {
+                logger.WriteLine($"Invoking MapImport.{methodName}.");
                 method.Invoke(instance, null);
                 return true;
             }
 
             return false;
+        }
+
+        private static void LogShapefileSidecars(string shapefilePath, Logger logger)
+        {
+            var basePath = Path.Combine(
+                Path.GetDirectoryName(shapefilePath) ?? string.Empty,
+                Path.GetFileNameWithoutExtension(shapefilePath));
+            var required = new[] { ".shp", ".shx", ".dbf" };
+            foreach (var extension in required)
+            {
+                var candidate = basePath + extension;
+                if (!File.Exists(candidate))
+                {
+                    logger.WriteLine($"Missing shapefile sidecar: {candidate}");
+                }
+            }
         }
     }
 }
