@@ -201,7 +201,27 @@ namespace AtsBackgroundBuilder
                 var requests = PromptForSectionRequests(editor);
                 if (requests.Count > 0)
                 {
-                    return DrawSectionsFromRequests(database, requests, config, logger);
+                    var result = DrawSectionsFromRequests(database, requests, config, logger);
+                    if (result.QuarterPolylineIds.Count == 0)
+                    {
+                        var baseFolder = string.IsNullOrWhiteSpace(config.SectionIndexFolder)
+                            ? (Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? Environment.CurrentDirectory)
+                            : config.SectionIndexFolder;
+                        var zones = new HashSet<int>();
+                        foreach (var request in requests)
+                        {
+                            zones.Add(request.Key.Zone);
+                        }
+
+                        var zoneList = string.Join(", ", zones);
+                        editor.WriteMessage(
+                            $"\nNo section outlines found in index. " +
+                            $"Verify the section index files for zone(s) {zoneList} exist in {baseFolder} " +
+                            "(Master_Sections.index_Z<zone>.jsonl/.csv or Master_Sections.index.jsonl/.csv). " +
+                            "See AtsBackgroundBuilder.log for details.");
+                    }
+
+                    return result;
                 }
             }
 
