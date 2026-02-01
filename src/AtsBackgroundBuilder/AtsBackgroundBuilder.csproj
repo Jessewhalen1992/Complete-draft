@@ -10,29 +10,25 @@
     <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Reference Include="AcDbMgd">
-      <HintPath>..\..\..\lib\AutoCAD2025\AcDbMgd.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="AcMgd">
-      <HintPath>..\..\..\lib\AutoCAD2025\AcMgd.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="AcCoreMgd">
-      <HintPath>..\..\..\lib\AutoCAD2025\AcCoreMgd.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="AcMapMgd">
-      <HintPath>..\..\..\lib\AutoCAD2025\AcMapMgd.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-  </ItemGroup>
-
   <Target Name="CopyBuildOutput" AfterTargets="Build">
     <ItemGroup>
       <BuildOutputFiles Include="$(TargetDir)*.*" />
     </ItemGroup>
     <Copy SourceFiles="@(BuildOutputFiles)" DestinationFolder="$(MSBuildProjectDirectory)\..\..\build\$(TargetFramework)" SkipUnchangedFiles="true" />
   </Target>
+
+  <ItemGroup>
+    <Reference Include="accoremgd">
+      <HintPath>..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\accoremgd.dll</HintPath>
+    </Reference>
+    <Reference Include="Acdbmgd">
+      <HintPath>..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\acdbmgd.dll</HintPath>
+    </Reference>
+    <Reference Include="Acmgd">
+      <HintPath>..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\acmgd.dll</HintPath>
+    </Reference>
+    <Reference Include="ManagedMapApi">
+      <HintPath>..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\Map\ManagedMapApi.dll</HintPath>
+    </Reference>
+  </ItemGroup>
 </Project>
