@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
@@ -41,13 +43,14 @@ namespace AtsBackgroundBuilder
 
             var existingKeys = BuildExistingFeatureKeys(database, logger);
             var existingIds = CapturePolylineIds(database);
+            var searchFolders = BuildShapefileSearchFolders(config);
 
             foreach (var shapefile in config.DispositionShapefiles)
             {
-                var shapefilePath = Path.Combine(config.ShapefileFolder, shapefile);
-                if (!File.Exists(shapefilePath))
+                var shapefilePath = ResolveShapefilePath(searchFolders, shapefile);
+                if (string.IsNullOrWhiteSpace(shapefilePath))
                 {
-                    logger.WriteLine("Shapefile missing: " + shapefilePath);
+                    logger.WriteLine($"Shapefile missing: {shapefile}. Searched: {string.Join("; ", searchFolders)}");
                     summary.ImportFailures++;
                     continue;
                 }
@@ -72,6 +75,42 @@ namespace AtsBackgroundBuilder
             summary.ImportedDispositions = dispositionPolylines.Count;
             editor.WriteMessage($"\nImported {summary.ImportedDispositions} dispositions from shapefiles.");
             return summary;
+        }
+
+        private static IReadOnlyList<string> BuildShapefileSearchFolders(Config config)
+        {
+            var folders = new List<string>();
+            AddFolder(folders, config.ShapefileFolder);
+            AddFolder(folders, new Config().ShapefileFolder);
+            AddFolder(folders, Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? Environment.CurrentDirectory);
+            return folders;
+        }
+
+        private static void AddFolder(List<string> folders, string? folder)
+        {
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                return;
+            }
+
+            if (!folders.Contains(folder, StringComparer.OrdinalIgnoreCase))
+            {
+                folders.Add(folder);
+            }
+        }
+
+        private static string? ResolveShapefilePath(IReadOnlyList<string> folders, string shapefile)
+        {
+            foreach (var folder in folders)
+            {
+                var candidate = Path.Combine(folder, shapefile);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
         }
 
         private static HashSet<ObjectId> CapturePolylineIds(Database database)
