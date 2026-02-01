@@ -1,11 +1,6 @@
 using System;
 using System.IO;
-#if NET8_0_WINDOWS
 using System.Text.Json;
-#else
-using System.Runtime.Serialization;
-using System.Runtime.Serialization.Json;
-#endif
 
 namespace AtsBackgroundBuilder
 {
@@ -15,6 +10,8 @@ namespace AtsBackgroundBuilder
         public int MaxOverlapAttempts { get; set; } = 25;
         public bool PlaceWhenOverlapFails { get; set; } = true;
         public bool UseRegionIntersection { get; set; } = true;
+        public bool UseSectionIndex { get; set; } = true;
+        public string SectionIndexFolder { get; set; } = string.Empty;
 
         public static Config Load(string configPath, Logger logger)
         {
@@ -27,18 +24,9 @@ namespace AtsBackgroundBuilder
 
             try
             {
-#if NET8_0_WINDOWS
                 var json = File.ReadAllText(configPath);
                 var loaded = JsonSerializer.Deserialize<Config>(json);
                 return loaded ?? new Config();
-#else
-                using (var stream = File.OpenRead(configPath))
-                {
-                    var serializer = new DataContractJsonSerializer(typeof(Config));
-                    var loaded = serializer.ReadObject(stream) as Config;
-                    return loaded ?? new Config();
-                }
-#endif
             }
             catch (Exception ex)
             {
@@ -51,16 +39,8 @@ namespace AtsBackgroundBuilder
         {
             try
             {
-#if NET8_0_WINDOWS
                 var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(configPath, json);
-#else
-                using (var stream = File.Create(configPath))
-                {
-                    var serializer = new DataContractJsonSerializer(typeof(Config));
-                    serializer.WriteObject(stream, this);
-                }
-#endif
             }
             catch (Exception ex)
             {
