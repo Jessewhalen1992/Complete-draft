@@ -11,16 +11,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Plugin.cs" />
-    <Compile Include="OdHelpers.cs" />
-    <Compile Include="LayerManager.cs" />
-    <Compile Include="LabelPlacer.cs" />
-    <Compile Include="GeometryUtils.cs" />
-    <Compile Include="ExcelLookup.cs" />
-    <Compile Include="Config.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
     <Reference Include="AcDbMgd">
       <HintPath>..\..\..\lib\AutoCAD2025\AcDbMgd.dll</HintPath>
       <Private>false</Private>
