@@ -1404,8 +1404,28 @@ namespace AtsBackgroundBuilder
 
         public void Initialize(string path)
         {
-            _writer = new StreamWriter(path, true) { AutoFlush = true };
-            WriteLine("---- ATSBUILD " + DateTime.Now + " ----");
+            try
+            {
+                var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                _writer = new StreamWriter(stream) { AutoFlush = true };
+                WriteLine("---- ATSBUILD " + DateTime.Now + " ----");
+            }
+            catch (IOException ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Logger init failed for {path}: {ex.Message}");
+                var fallbackPath = BuildFallbackLogPath(path);
+                try
+                {
+                    var stream = new FileStream(fallbackPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                    _writer = new StreamWriter(stream) { AutoFlush = true };
+                    WriteLine("---- ATSBUILD " + DateTime.Now + " ----");
+                    WriteLine($"Logger initialized with fallback path: {fallbackPath}");
+                }
+                catch (IOException fallbackEx)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Logger fallback init failed for {fallbackPath}: {fallbackEx.Message}");
+                }
+            }
         }
 
         public void WriteLine(string message)
@@ -1416,6 +1436,14 @@ namespace AtsBackgroundBuilder
         public void Dispose()
         {
             _writer?.Dispose();
+        }
+
+        private static string BuildFallbackLogPath(string path)
+        {
+            var directory = Path.GetDirectoryName(path) ?? Environment.CurrentDirectory;
+            var baseName = Path.GetFileNameWithoutExtension(path);
+            var extension = Path.GetExtension(path);
+            return Path.Combine(directory, $"{baseName}-{DateTime.Now:yyyyMMdd-HHmmss}{extension}");
         }
     }
 }
