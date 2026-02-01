@@ -322,13 +322,23 @@ namespace AtsBackgroundBuilder
             var options = new PromptDoubleOptions(message + " [" + defaultValue + "]: ")
             {
                 DefaultValue = defaultValue,
-                AllowNone = true,
-                LowerLimit = min,
-                UpperLimit = max
+                AllowNone = true
             };
 
             var result = editor.GetDouble(options);
-            return result.Status == PromptStatus.OK ? result.Value : defaultValue;
+            if (result.Status != PromptStatus.OK)
+            {
+                return defaultValue;
+            }
+
+            var value = result.Value;
+            if (value < min || value > max)
+            {
+                editor.WriteMessage($"\nValue out of range. Using nearest allowed value ({min} - {max}).");
+                return Math.Min(Math.Max(value, min), max);
+            }
+
+            return value;
         }
 
         private static int PromptForInt(Editor editor, string message, int defaultValue, int min, int max)
