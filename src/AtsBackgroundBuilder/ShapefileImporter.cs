@@ -633,7 +633,7 @@ namespace AtsBackgroundBuilder
                 var tables = project.ODTables;
                 var names = tables.GetTableNames();
 
-                // FIX: no .Any() on StringCollection — manual check
+                // FIX: no .Any() on StringCollection â€” manual check
                 bool exists = false;
                 if (names != null)
                 {

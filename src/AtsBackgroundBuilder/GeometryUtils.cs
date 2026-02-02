@@ -1,3 +1,6 @@
+// FILE: C:\Users\Work Test 2\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\GeometryUtils.cs
+/////////////////////////////////////////////////////////////////////
+
 using System;
 using System.Collections.Generic;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -167,3 +170,4 @@ namespace AtsBackgroundBuilder
     }
 }
 
+/////////////////////////////////////////////////////////////////////

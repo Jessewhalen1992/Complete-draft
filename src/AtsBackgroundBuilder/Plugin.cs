@@ -1,3 +1,6 @@
+// FILE: C:\Users\Work Test 2\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\Plugin.cs
+/////////////////////////////////////////////////////////////////////
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -1455,3 +1458,4 @@ namespace AtsBackgroundBuilder
     }
 }
 
+/////////////////////////////////////////////////////////////////////
