@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using Autodesk.AutoCAD.Runtime;
 
 namespace AtsBackgroundBuilder
 {
@@ -124,15 +125,22 @@ namespace AtsBackgroundBuilder
                     {
                         using (region)
                         {
-                            var centroid = Point3d.Origin;
-                            var normal = Vector3d.ZAxis;
-                            var axes = Vector3d.XAxis;
-                            region.AreaProperties(ref centroid, ref normal, ref axes);
-                            var point = new Point2d(centroid.X, centroid.Y);
-                            result.MultiQuarterProcessed++;
-                            foreach (var candidate in GeometryUtils.GetSpiralOffsets(point, _config.TextHeight, _config.MaxOverlapAttempts))
+                            try
                             {
-                                yield return candidate;
+                                var centroid = Point3d.Origin;
+                                var normal = Vector3d.ZAxis;
+                                var axes = Vector3d.XAxis;
+                                region.AreaProperties(ref centroid, ref normal, ref axes);
+                                var point = new Point2d(centroid.X, centroid.Y);
+                                result.MultiQuarterProcessed++;
+                                foreach (var candidate in GeometryUtils.GetSpiralOffsets(point, _config.TextHeight, _config.MaxOverlapAttempts))
+                                {
+                                    yield return candidate;
+                                }
+                            }
+                            catch (Exception ex) when (ex is Autodesk.AutoCAD.Runtime.Exception || ex is InvalidOperationException)
+                            {
+                                _logger.WriteLine($"Region centroid failed ({ex.GetType().Name}). Falling back to safe point.");
                             }
                         }
                     }
@@ -226,4 +234,3 @@ namespace AtsBackgroundBuilder
         public int MultiQuarterProcessed { get; set; }
     }
 }
-
