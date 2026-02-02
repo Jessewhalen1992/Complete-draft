@@ -226,3 +226,4 @@ namespace AtsBackgroundBuilder
         public int MultiQuarterProcessed { get; set; }
     }
 }
+
