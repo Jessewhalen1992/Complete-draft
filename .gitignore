@@ -12,9 +12,20 @@ rad.json
 TestResults.xml
 
 ### .NET / Visual Studio ###
+
 # Build results
 bin/
 obj/
+
+# Custom build output (your case: build/net8.0-windows/* contains copied AutoCAD DLLs)
+build/
+**/build/
+
+# dotnet publish / artifacts
+**/publish/
+**/artifacts/
+**/out/
+**/TestResults/
 
 # VS tooling
 .vs/
@@ -27,14 +38,16 @@ obj/
 .idea/
 *.sln.iml
 
-# VS Code settings
-.vscode/
-
 # OS files
 .DS_Store
 Thumbs.db
 
 # NuGet
 *.nupkg
+
 # Visual Studio cache/options
 *.cache
+
+# Optional misc (safe)
+*.log
+*.tmp
