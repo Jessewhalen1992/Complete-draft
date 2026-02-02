@@ -125,22 +125,34 @@ namespace AtsBackgroundBuilder
                     {
                         using (region)
                         {
+                            var centroidComputed = false;
+                            var point = Point2d.Origin;
+
                             try
                             {
                                 var centroid = Point3d.Origin;
                                 var normal = Vector3d.ZAxis;
                                 var axes = Vector3d.XAxis;
                                 region.AreaProperties(ref centroid, ref normal, ref axes);
-                                var point = new Point2d(centroid.X, centroid.Y);
+                                point = new Point2d(centroid.X, centroid.Y);
+                                centroidComputed = true;
                                 result.MultiQuarterProcessed++;
+                            }
+                            catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                            {
+                                _logger.WriteLine($"Region centroid failed ({ex.GetType().Name}). Falling back to safe point.");
+                            }
+                            catch (InvalidOperationException ex)
+                            {
+                                _logger.WriteLine($"Region centroid failed ({ex.GetType().Name}). Falling back to safe point.");
+                            }
+
+                            if (centroidComputed)
+                            {
                                 foreach (var candidate in GeometryUtils.GetSpiralOffsets(point, _config.TextHeight, _config.MaxOverlapAttempts))
                                 {
                                     yield return candidate;
                                 }
-                            }
-                            catch (Exception ex) when (ex is Autodesk.AutoCAD.Runtime.Exception || ex is InvalidOperationException)
-                            {
-                                _logger.WriteLine($"Region centroid failed ({ex.GetType().Name}). Falling back to safe point.");
                             }
                         }
                     }
