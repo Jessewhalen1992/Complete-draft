@@ -87,19 +87,19 @@ namespace AtsBackgroundBuilder
             {
                 foreach (var id in dispositionPolylines)
                 {
-                    var polyline = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
-                    if (polyline == null || !polyline.Closed)
+                    var ent = transaction.GetObject(id, OpenMode.ForRead) as Entity;
+                    if (ent == null || !GeometryUtils.TryGetClosedBoundaryClone(ent, out var clone))
                     {
                         result.SkippedNotClosed++;
                         continue;
                     }
 
                     // Work with an in-memory clone after the transaction ends.
-                    var clone = (Polyline)polyline.Clone();
+                    // NOTE: clone is a DBObject not in the database; keep it alive for label placement.
 
                     // Default output layers (can be overridden by client/foreign logic later).
-                    string lineLayer = polyline.Layer;
-                    string textLayer = polyline.Layer;
+                    string lineLayer = ent.Layer;
+                    string textLayer = ent.Layer;
 
                     result.TotalDispositions++;
                     var od = OdHelpers.ReadObjectData(id, logger);

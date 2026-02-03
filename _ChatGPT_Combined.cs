@@ -1,18 +1,24 @@
 ﻿// AUTO-GENERATED MERGE FILE FOR REVIEW
-// Generated: 2026-02-03 13:13:03
+// Generated: 2026-02-03 15:50:51
 
 /////////////////////////////////////////////////////////////////////
 // FILE: C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\Config.cs
 /////////////////////////////////////////////////////////////////////
 
-/////////////////////////////////////////////////////////////////////
-
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 
 namespace AtsBackgroundBuilder
 {
+    /// <summary>
+    /// Central configuration loaded from a JSON file beside the plugin DLL.
+    /// - Defaults are written on first run.
+    /// - When loading an older config, any missing properties keep their defaults.
+    /// </summary>
     public sealed class Config
     {
         // -------------------------
@@ -23,22 +29,94 @@ namespace AtsBackgroundBuilder
         public bool PlaceWhenOverlapFails { get; set; } = true;
         public bool UseRegionIntersection { get; set; } = true;
 
-        // -------------------------
-        // Leaders (circle + line)
-        // -------------------------
-        public bool EnableLeaders { get; set; } = true;
-        public double LeaderCircleRadius { get; set; } = 0.75;
+        // Back-compat: some previous iterations referenced this property name.
+        public bool AllowLabelOverlap { get; set; } = false;
+
+        // When false, a single disposition only gets labeled once even if it intersects multiple quarters.
+        public bool AllowMultiQuarterDispositions { get; set; } = false;
 
         // -------------------------
-        // Lookups
+        // Leaders / callouts
         // -------------------------
+        public bool EnableLeaders { get; set; } = true;
+
+        /// <summary>
+        /// Radius for the "target" circle at the leader start point (0 disables).
+        /// Units are drawing units (meters in your workflow).
+        /// </summary>
+        public double LeaderCircleRadius { get; set; } = 1.0;
+
+        // -------------------------
+        // Section Index (Compass / Res Manager)
+        // -------------------------
+        public bool UseSectionIndex { get; set; } = true;
+        public string SectionIndexFolder { get; set; } = @"C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\RES MANAGER";
+
+        /// <summary>
+        /// Buffer around section extents used to filter imported features.
+        /// </summary>
+        public double SectionBufferDistance { get; set; } = 100.0;
+
+        // -------------------------
+        // Shapefile import
+        // -------------------------
+        public string ShapefileFolder { get; set; } = @"C:\AUTOCAD-SETUP CG\SHAPE FILES";
+
+        /// <summary>
+        /// Shapefiles to import dispositions from (filenames only).
+        /// </summary>
+        public string[] DispositionShapefiles { get; set; } = new[] { "DAB_APPL.shp" };
+
+        // -------------------------
+        // Lookup tables (Excel)
+        // -------------------------
+        /// <summary>
+        /// Folder where CompanyLookup.xlsx and PurposeLookup.xlsx live.
+        /// </summary>
         public string LookupFolder { get; set; } = @"C:\AUTOCAD-SETUP CG\CG_LISP\AUTO UPDATE LABELS";
+
         public string CompanyLookupFile { get; set; } = "CompanyLookup.xlsx";
         public string PurposeLookupFile { get; set; } = "PurposeLookup.xlsx";
 
         // -------------------------
         // Width measurement / snapping
         // -------------------------
+        /// <summary>
+        /// How many samples along a corridor to estimate width variability.
+        /// </summary>
+        public int WidthSampleCount { get; set; } = 15;
+
+        /// <summary>
+        /// If max-min width exceeds this absolute tolerance (meters), treat as "Variable Width".
+        /// </summary>
+        public double VariableWidthAbsTolerance { get; set; } = 0.50;
+
+        /// <summary>
+        /// If max-min width exceeds this relative tolerance (ratio), treat as "Variable Width".
+        /// </summary>
+        public double VariableWidthRelTolerance { get; set; } = 0.05;
+
+        /// <summary>
+        /// Acceptable / standardized ROW widths (meters). If a measured width is within WidthSnapTolerance of
+        /// one of these, snap to that value in the label.
+        /// </summary>
+        public double[] AcceptableRowWidths { get; set; } = new[]
+        {
+            10.50, 10.06, 3.05, 4.57, 6.10, 15.24, 20.12,
+            30.18, 30.48, 36.58, 18.29, 9.14, 7.62
+        };
+
+        public double WidthSnapTolerance { get; set; } = 0.25;
+
+        /// <summary>
+        /// For width-required purposes, allow label to be placed inside the quarter but outside the disposition polygon.
+        /// </summary>
+        public bool AllowOutsideDispositionForWidthPurposes { get; set; } = true;
+
+        /// <summary>
+        /// Purpose codes that require width + dimension-style labeling (per your latest notes).
+        /// Match is case-insensitive after trimming.
+        /// </summary>
         public string[] WidthRequiredPurposeCodes { get; set; } = new[]
         {
             "PIPELINE",
@@ -54,94 +132,208 @@ namespace AtsBackgroundBuilder
             "FLOWLINE"
         };
 
-        public double[] AcceptableRowWidths { get; set; } = new[]
-        {
-            10.50, 10.06, 3.05, 4.57, 6.10, 15.24, 20.12,
-            30.18, 30.48, 36.58, 18.29, 9.14, 7.62
-        };
-
-        public double WidthSnapTolerance { get; set; } = 0.25;
-        public int WidthSampleCount { get; set; } = 7;
-
-        public double VariableWidthAbsTolerance { get; set; } = 0.50;
-        public double VariableWidthRelTolerance { get; set; } = 0.15;
-
-        public bool AllowOutsideDispositionForWidthPurposes { get; set; } = true;
-
         // -------------------------
-        // Section index / importer
+        // Load / Save
         // -------------------------
-        public bool UseSectionIndex { get; set; } = true;
-
-        // Note: this path is from your existing setup. Adjust if required.
-        public string SectionIndexFolder { get; set; } = @"C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\RES MANAGER";
-
-        public bool ImportAdjacentSections { get; set; } = true;
-
-        public bool ImportDispositionShapefiles { get; set; } = true;
-        public string DispositionShapefileFolder { get; set; } = "";
-        // Backwards-compatible aliases used by some modules (older naming).
-        // Prefer ImportDispositionShapefiles / DispositionShapefileFolder in new code.
-        public bool DispositionShapefiles
+        public static Config Load(string configPath, Logger logger)
         {
-            get => ImportDispositionShapefiles;
-            set => ImportDispositionShapefiles = value;
-        }
+            var defaults = new Config();
 
-        public string ShapefileFolder
-        {
-            get => DispositionShapefileFolder;
-            set => DispositionShapefileFolder = value ?? string.Empty;
-        }
-
-        /// <summary>
-        /// Optional buffer distance (drawing units) to expand the section/quarter extents when importing shapefiles.
-        /// </summary>
-        public double SectionBufferDistance { get; set; } = 0.0;
-
-        public string[] DispositionShapefileNames { get; set; } = new[] { "dispositions.shp" };
-
-        public bool AllowMultiQuarterDispositions { get; set; } = true;
-
-        public static Config Load(string path, Logger logger)
-        {
-            if (!File.Exists(path))
+            // First run: write defaults.
+            if (!File.Exists(configPath))
             {
-                var cfg = new Config();
-                Save(path, cfg, logger);
-                return cfg;
+                defaults.Save(configPath, logger);
+                return defaults;
             }
 
             try
             {
-                var json = File.ReadAllText(path);
-                var cfg = JsonSerializer.Deserialize<Config>(json);
+                var json = File.ReadAllText(configPath);
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
 
-                if (cfg == null)
-                    throw new Exception("Config deserialize returned null.");
+                // Start with defaults; selectively overwrite values that exist in the JSON.
+                ApplyJson(defaults, root);
 
-                return cfg;
+                // If older configs put widths as strings or with commas, try a lenient fix.
+                defaults.AcceptableRowWidths = NormalizeWidthArray(defaults.AcceptableRowWidths);
+
+                return defaults;
             }
             catch (Exception ex)
             {
-                logger.WriteLine($"Config load failed ({path}): {ex.Message}");
-                var cfg = new Config();
-                Save(path, cfg, logger);
-                return cfg;
+                logger.WriteLine("Config load failed, using defaults: " + ex.Message);
+                return defaults;
             }
         }
 
-        public static void Save(string path, Config cfg, Logger logger)
+        private void Save(string configPath, Logger logger)
         {
             try
             {
-                var json = JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(path, json);
+                var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(configPath, json);
             }
             catch (Exception ex)
             {
-                logger.WriteLine($"Config save failed ({path}): {ex.Message}");
+                logger.WriteLine("Config save failed: " + ex.Message);
             }
+        }
+
+        private static void ApplyJson(Config cfg, JsonElement root)
+        {
+            // Helper lambdas
+            static bool TryBool(JsonElement r, string name, out bool v)
+            {
+                v = default;
+                if (!r.TryGetProperty(name, out var el)) return false;
+                if (el.ValueKind is JsonValueKind.True or JsonValueKind.False) { v = el.GetBoolean(); return true; }
+                return false;
+            }
+
+            static bool TryInt(JsonElement r, string name, out int v)
+            {
+                v = default;
+                if (!r.TryGetProperty(name, out var el)) return false;
+                if (el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out v)) return true;
+                return false;
+            }
+
+            static bool TryDouble(JsonElement r, string name, out double v)
+            {
+                v = default;
+                if (!r.TryGetProperty(name, out var el)) return false;
+                if (el.ValueKind == JsonValueKind.Number && el.TryGetDouble(out v)) return true;
+
+                // allow numeric strings
+                if (el.ValueKind == JsonValueKind.String)
+                {
+                    var s = el.GetString() ?? "";
+                    if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out v)) return true;
+                    if (double.TryParse(s, NumberStyles.Float, CultureInfo.CurrentCulture, out v)) return true;
+                }
+
+                return false;
+            }
+
+            static bool TryString(JsonElement r, string name, out string? v)
+            {
+                v = null;
+                if (!r.TryGetProperty(name, out var el)) return false;
+                if (el.ValueKind == JsonValueKind.String) { v = el.GetString(); return true; }
+                return false;
+            }
+
+            static bool TryStringArray(JsonElement r, string name, out string[]? v)
+            {
+                v = null;
+                if (!r.TryGetProperty(name, out var el)) return false;
+                if (el.ValueKind != JsonValueKind.Array) return false;
+
+                var list = new List<string>();
+                foreach (var item in el.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.String)
+                    {
+                        var s = item.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)) list.Add(s.Trim());
+                    }
+                }
+
+                v = list.ToArray();
+                return true;
+            }
+
+            static bool TryDoubleArray(JsonElement r, string name, out double[]? v)
+            {
+                v = null;
+                if (!r.TryGetProperty(name, out var el)) return false;
+                if (el.ValueKind != JsonValueKind.Array) return false;
+
+                var list = new List<double>();
+                foreach (var item in el.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.Number && item.TryGetDouble(out var d))
+                        list.Add(d);
+                    else if (item.ValueKind == JsonValueKind.String)
+                    {
+                        var s = item.GetString() ?? "";
+                        if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var dd))
+                            list.Add(dd);
+                        else if (double.TryParse(s, NumberStyles.Float, CultureInfo.CurrentCulture, out dd))
+                            list.Add(dd);
+                    }
+                }
+
+                if (list.Count > 0)
+                {
+                    v = list.ToArray();
+                    return true;
+                }
+
+                return false;
+            }
+
+            // Doubles
+            if (TryDouble(root, nameof(TextHeight), out var d) && d > 0) cfg.TextHeight = d;
+            if (TryDouble(root, nameof(SectionBufferDistance), out d) && d >= 0) cfg.SectionBufferDistance = d;
+            if (TryDouble(root, nameof(LeaderCircleRadius), out d) && d >= 0) cfg.LeaderCircleRadius = d;
+
+            if (TryDouble(root, nameof(VariableWidthAbsTolerance), out d) && d >= 0) cfg.VariableWidthAbsTolerance = d;
+            if (TryDouble(root, nameof(VariableWidthRelTolerance), out d) && d >= 0) cfg.VariableWidthRelTolerance = d;
+            if (TryDouble(root, nameof(WidthSnapTolerance), out d) && d >= 0) cfg.WidthSnapTolerance = d;
+
+            // Ints
+            if (TryInt(root, nameof(MaxOverlapAttempts), out var i) && i > 0) cfg.MaxOverlapAttempts = i;
+            if (TryInt(root, nameof(WidthSampleCount), out i) && i > 0) cfg.WidthSampleCount = i;
+
+            // Bools
+            if (TryBool(root, nameof(PlaceWhenOverlapFails), out var b)) cfg.PlaceWhenOverlapFails = b;
+            if (TryBool(root, nameof(UseRegionIntersection), out b)) cfg.UseRegionIntersection = b;
+            if (TryBool(root, nameof(AllowLabelOverlap), out b)) cfg.AllowLabelOverlap = b;
+            if (TryBool(root, nameof(AllowMultiQuarterDispositions), out b)) cfg.AllowMultiQuarterDispositions = b;
+
+            if (TryBool(root, nameof(EnableLeaders), out b)) cfg.EnableLeaders = b;
+            if (TryBool(root, nameof(UseSectionIndex), out b)) cfg.UseSectionIndex = b;
+
+            if (TryBool(root, nameof(AllowOutsideDispositionForWidthPurposes), out b))
+                cfg.AllowOutsideDispositionForWidthPurposes = b;
+
+            // Strings
+            if (TryString(root, nameof(SectionIndexFolder), out var s) && !string.IsNullOrWhiteSpace(s))
+                cfg.SectionIndexFolder = s.Trim();
+
+            if (TryString(root, nameof(ShapefileFolder), out s) && !string.IsNullOrWhiteSpace(s))
+                cfg.ShapefileFolder = s.Trim();
+
+            if (TryString(root, nameof(LookupFolder), out s) && !string.IsNullOrWhiteSpace(s))
+                cfg.LookupFolder = s.Trim();
+
+            if (TryString(root, nameof(CompanyLookupFile), out s) && !string.IsNullOrWhiteSpace(s))
+                cfg.CompanyLookupFile = s.Trim();
+
+            if (TryString(root, nameof(PurposeLookupFile), out s) && !string.IsNullOrWhiteSpace(s))
+                cfg.PurposeLookupFile = s.Trim();
+
+            // Arrays
+            if (TryStringArray(root, nameof(DispositionShapefiles), out var sa) && sa != null && sa.Length > 0)
+                cfg.DispositionShapefiles = sa;
+
+            if (TryStringArray(root, nameof(WidthRequiredPurposeCodes), out sa) && sa != null && sa.Length > 0)
+                cfg.WidthRequiredPurposeCodes = sa;
+
+            if (TryDoubleArray(root, nameof(AcceptableRowWidths), out var da) && da != null && da.Length > 0)
+                cfg.AcceptableRowWidths = da;
+        }
+
+        private static double[] NormalizeWidthArray(double[] widths)
+        {
+            // Ensure unique, finite, sorted (helps snapping).
+            return widths
+                .Where(w => !double.IsNaN(w) && !double.IsInfinity(w) && w > 0)
+                .Distinct()
+                .OrderBy(w => w)
+                .ToArray();
         }
     }
 }
@@ -781,6 +973,97 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
             return !(double.IsNaN(v) || double.IsInfinity(v));
         }
 
+
+        /// <summary>
+        /// Returns a cloned closed boundary polyline for an imported disposition entity.
+        /// Supports LWPOLYLINE and common Map 3D polygon entities (MPOLYGON / POLYLINE2D / POLYLINE3D) via explode.
+        /// </summary>
+        public static bool TryGetClosedBoundaryClone(Entity ent, out Polyline boundaryClone)
+        {
+            boundaryClone = null;
+
+            if (ent == null)
+                return false;
+
+            if (ent is Polyline pl)
+            {
+                if (!pl.Closed || pl.NumberOfVertices < 3)
+                    return false;
+
+                boundaryClone = (Polyline)pl.Clone();
+                return true;
+            }
+
+            // Map-imported polygons often arrive as MPOLYGON or old-style POLYLINE* entities.
+            if (ent is Polyline2d || ent is Polyline3d || string.Equals(ent.GetType().Name, "MPolygon", StringComparison.OrdinalIgnoreCase))
+            {
+                var exploded = ExplodeToBestClosedPolyline(ent);
+                if (exploded == null)
+                    return false;
+
+                boundaryClone = exploded;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static Polyline? ExplodeToBestClosedPolyline(Entity ent)
+        {
+            var col = new DBObjectCollection();
+            try
+            {
+                ent.Explode(col);
+            }
+            catch
+            {
+                foreach (DBObject o in col) o.Dispose();
+                return null;
+            }
+
+            Polyline best = null;
+            double bestScore = -1.0;
+
+            foreach (DBObject obj in col)
+            {
+                if (obj is Polyline p && p.Closed && p.NumberOfVertices >= 3)
+                {
+                    double score = 0.0;
+                    try
+                    {
+                        var ext = p.GeometricExtents;
+                        score = Math.Abs((ext.MaxPoint.X - ext.MinPoint.X) * (ext.MaxPoint.Y - ext.MinPoint.Y));
+                    }
+                    catch
+                    {
+                        score = 0.0;
+                    }
+
+                    if (best == null || score > bestScore)
+                    {
+                        best?.Dispose();
+                        best = p;
+                        bestScore = score;
+                    }
+                    else
+                    {
+                        p.Dispose();
+                    }
+                }
+                else
+                {
+                    obj.Dispose();
+                }
+            }
+
+            if (best == null)
+                return null;
+
+            var clone = (Polyline)best.Clone();
+            best.Dispose();
+            return clone;
+        }
+
     }
 }
 
@@ -854,7 +1137,7 @@ namespace AtsBackgroundBuilder
                             }
 
                             // Ensure label layer exists
-                            EnsureLayerInTransaction(transaction, _database, disposition.TextLayerName);
+                            EnsureLayerInTransaction(_database, transaction, disposition.TextLayerName);
 
                             using (var dispClone = (Polyline)disposition.Polyline.Clone())
                             {
@@ -1000,17 +1283,13 @@ namespace AtsBackgroundBuilder
             modelSpace.AppendEntity(line);
             tr.AddNewlyCreatedDBObject(line, true);
         }
-        private static void EnsureLayerInTransaction(Transaction tr, Database db, string layerName)
+                private static void EnsureLayerInTransaction(Database db, Transaction tr, string layerName)
         {
-            if (string.IsNullOrWhiteSpace(layerName))
-                return;
-
             var layerTable = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
             if (layerTable.Has(layerName))
                 return;
 
             layerTable.UpgradeOpen();
-
             var layer = new LayerTableRecord
             {
                 Name = layerName,
@@ -1471,19 +1750,19 @@ namespace AtsBackgroundBuilder
             {
                 foreach (var id in dispositionPolylines)
                 {
-                    var polyline = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
-                    if (polyline == null || !polyline.Closed)
+                    var ent = transaction.GetObject(id, OpenMode.ForRead) as Entity;
+                    if (ent == null || !GeometryUtils.TryGetClosedBoundaryClone(ent, out var clone))
                     {
                         result.SkippedNotClosed++;
                         continue;
                     }
 
                     // Work with an in-memory clone after the transaction ends.
-                    var clone = (Polyline)polyline.Clone();
+                    // NOTE: clone is a DBObject not in the database; keep it alive for label placement.
 
                     // Default output layers (can be overridden by client/foreign logic later).
-                    string lineLayer = polyline.Layer;
-                    string textLayer = polyline.Layer;
+                    string lineLayer = ent.Layer;
+                    string textLayer = ent.Layer;
 
                     result.TotalDispositions++;
                     var od = OdHelpers.ReadObjectData(id, logger);
@@ -6881,16 +7160,26 @@ namespace AtsBackgroundBuilder
 // FILE: C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\ShapefileImporter.cs
 /////////////////////////////////////////////////////////////////////
 
-/////////////////////////////////////////////////////////////////////
-
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
+
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+
+using Autodesk.Gis.Map;
+using Autodesk.Gis.Map.ImportExport;
+
+using AcApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
+
+using MapOpenMode = Autodesk.Gis.Map.Constants.OpenMode;
+using MapDataType = Autodesk.Gis.Map.Constants.DataType;
+using OdRecord = Autodesk.Gis.Map.ObjectData.Record;
+using OdRecords = Autodesk.Gis.Map.ObjectData.Records;
 
 namespace AtsBackgroundBuilder
 {
@@ -6904,21 +7193,6 @@ namespace AtsBackgroundBuilder
 
     public static class ShapefileImporter
     {
-        private static readonly string[] MapImportTypeNames =
-        {
-            "Autodesk.Gis.Map.ImportExport.MapImport",
-            "Autodesk.Gis.Map.Platform.ImportExport.MapImport"
-        };
-
-        private static readonly string[] MapImportAssemblyNames =
-        {
-            "ManagedMapApi",
-            "AcMapImportExport",
-            "AcMapMgd"
-        };
-
-        private static readonly Lazy<Type?> MapImportType = new Lazy<Type?>(ResolveMapImportType);
-
         public static ShapefileImportSummary ImportShapefiles(
             Database database,
             Editor editor,
@@ -6929,14 +7203,7 @@ namespace AtsBackgroundBuilder
         {
             var summary = new ShapefileImportSummary();
 
-            if (!config.ImportDispositionShapefiles)
-            {
-                logger.WriteLine("Disposition shapefile import disabled. Skipping shapefile import.");
-                return summary;
-            }
-
-            var dispositionFiles = config.DispositionShapefileNames ?? Array.Empty<string>();
-            if (dispositionFiles.Length == 0)
+            if (config.DispositionShapefiles == null || config.DispositionShapefiles.Length == 0)
             {
                 logger.WriteLine("No disposition shapefiles configured.");
                 return summary;
@@ -6950,50 +7217,119 @@ namespace AtsBackgroundBuilder
             }
 
             var existingKeys = BuildExistingFeatureKeys(database, logger);
-            var existingIds = CapturePolylineIds(database);
+            var existingCandidates = CaptureDispositionCandidateIds(database); // LWPOLYLINE + MPOLYGON
+
             var searchFolders = BuildShapefileSearchFolders(config);
             logger.WriteLine($"Shapefile search folders: {string.Join("; ", searchFolders)}");
             logger.WriteLine($"Section extents loaded: {sectionExtents.Count} (buffer {config.SectionBufferDistance}).");
 
-            if (!TryGetMapImportType(logger, out var mapImportType))
+            if (!TryGetMap3dImporter(logger, out var importer))
             {
-                summary.ImportFailures += dispositionFiles.Length;
+                summary.ImportFailures += config.DispositionShapefiles.Length;
                 return summary;
             }
 
-            foreach (var shapefile in dispositionFiles)
+            // Your suggestion: set MAPUSEMPOLYGON BEFORE import starts.
+            // This is the safest way to avoid MPOLYGON + POLYDISPLAY altogether.
+            object prevMapUseMPolygon = null;
+            bool mapUseMPolygonChanged = TrySetSystemVariable("MAPUSEMPOLYGON", 0, logger, out prevMapUseMPolygon);
+
+            Autodesk.AutoCAD.Runtime.ProgressMeter overallMeter = null;
+            try
             {
-                logger.WriteLine($"Resolving shapefile: {shapefile}");
-                var shapefilePath = ResolveShapefilePath(searchFolders, shapefile);
-                if (string.IsNullOrWhiteSpace(shapefilePath))
+                overallMeter = new Autodesk.AutoCAD.Runtime.ProgressMeter();
+                overallMeter.SetLimit(config.DispositionShapefiles.Length);
+                overallMeter.Start("ATSBUILD: Importing shapefiles");
+            }
+            catch
+            {
+                overallMeter = null;
+            }
+
+            try
+            {
+                foreach (var shapefile in config.DispositionShapefiles)
                 {
-                    logger.WriteLine($"Shapefile missing: {shapefile}. Searched: {string.Join("; ", searchFolders)}");
-                    summary.ImportFailures++;
-                    continue;
+                    try { overallMeter?.MeterProgress(); } catch { }
+
+                    logger.WriteLine($"Resolving shapefile: {shapefile}");
+                    var shapefilePath = ResolveShapefilePath(searchFolders, shapefile);
+                    if (string.IsNullOrWhiteSpace(shapefilePath))
+                    {
+                        logger.WriteLine($"Shapefile missing: {shapefile}. Searched: {string.Join("; ", searchFolders)}");
+                        summary.ImportFailures++;
+                        continue;
+                    }
+
+                    logger.WriteLine($"Using shapefile: {shapefilePath}");
+                    LogShapefileSidecars(shapefilePath, logger);
+
+                    logger.WriteLine("Starting shapefile import.");
+                    if (!TryImportShapefile(importer, shapefilePath, sectionExtents, logger, out var odTableName))
+                    {
+                        logger.WriteLine("Shapefile import failed.");
+                        summary.ImportFailures++;
+                        continue;
+                    }
+
+                    // Find newly-created candidates (polylines + mpolygons)
+                    var newCandidates = CaptureNewDispositionCandidateIds(database, existingCandidates);
+                    existingCandidates.UnionWith(newCandidates);
+
+                    var newPolylines = newCandidates.Where(IsLwPolylineId).ToList();
+                    var newMPolygons = newCandidates.Where(IsMPolygonId).ToList();
+
+                    logger.WriteLine($"Post-import candidates: {newPolylines.Count} LWPOLYLINE, {newMPolygons.Count} MPOLYGON.");
+
+                    // Fallback: If Map still made MPOLYGON, convert to LWPOLYLINE and erase MPOLYGON.
+                    if (newMPolygons.Count > 0)
+                    {
+                        var converted = ConvertPolygonEntitiesToPolylines(
+                            database: database,
+                            logger: logger,
+                            polygonEntityIds: newMPolygons,
+                            odTableName: odTableName,
+                            sectionExtents: sectionExtents);
+
+                        foreach (var mpId in newMPolygons)
+                            existingCandidates.Remove(mpId);
+
+                        existingCandidates.UnionWith(converted);
+                        newPolylines.AddRange(converted);
+
+                        logger.WriteLine($"Converted {converted.Count} MPOLYGON to LWPOLYLINE (OD attempted from '{odTableName}').");
+                    }
+
+                    logger.WriteLine($"Shapefile import produced {newPolylines.Count} new polyline candidates.");
+
+                    if (newPolylines.Count == 0)
+                    {
+                        logger.WriteLine("No new LWPOLYLINE candidates detected after import/conversion.");
+                        continue;
+                    }
+
+                    FilterAndCollect(
+                        database,
+                        logger,
+                        newPolylines,
+                        sectionExtents,
+                        existingKeys,
+                        dispositionPolylines,
+                        summary,
+                        Path.GetFileName(shapefilePath));
+                }
+            }
+            finally
+            {
+                try { overallMeter?.Stop(); } catch { }
+
+                // Restore MAPUSEMPOLYGON (comment out if you want it OFF permanently)
+                if (mapUseMPolygonChanged && prevMapUseMPolygon != null)
+                {
+                    TrySetSystemVariable("MAPUSEMPOLYGON", prevMapUseMPolygon, logger, out _);
                 }
 
-                logger.WriteLine($"Using shapefile: {shapefilePath}");
-                LogShapefileSidecars(shapefilePath, logger);
-
-                logger.WriteLine("Starting shapefile import.");
-                if (!TryImportShapefile(mapImportType, shapefilePath, logger))
-                {
-                    logger.WriteLine("Shapefile import failed.");
-                    summary.ImportFailures++;
-                    continue;
-                }
-
-                var newIds = CaptureNewPolylineIds(database, existingIds);
-                existingIds.UnionWith(newIds);
-                logger.WriteLine($"Shapefile import produced {newIds.Count} new polylines.");
-
-                if (newIds.Count == 0)
-                {
-                    logger.WriteLine("No new LWPOLYLINE entities detected after import.");
-                    continue;
-                }
-
-                FilterAndCollect(database, logger, newIds, sectionExtents, existingKeys, dispositionPolylines, summary, Path.GetFileName(shapefilePath));
+                // Important: don't dispose importer (Map may own lifetime).
             }
 
             summary.ImportedDispositions = dispositionPolylines.Count;
@@ -7001,13 +7337,22 @@ namespace AtsBackgroundBuilder
             return summary;
         }
 
-        private static bool TryGetMapImportType(Logger logger, out Type mapImportType)
+        private static bool TryGetMap3dImporter(Logger logger, out Importer importer)
         {
-            mapImportType = MapImportType.Value;
-            if (mapImportType == null)
+            importer = null;
+
+            try
             {
-                logger.WriteLine("MapImport type not found. Ensure Map 3D is available before importing shapefiles.");
-                logger.WriteLine($"Loaded assemblies: {string.Join(", ", AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetName().Name))}");
+                importer = HostMapApplicationServices.Application?.Importer;
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine("Map 3D Importer access failed: " + ex.Message);
+            }
+
+            if (importer == null)
+            {
+                logger.WriteLine("Map 3D Importer not available. Ensure AutoCAD Map 3D is installed/loaded before importing shapefiles.");
                 logger.WriteLine("Skipping shapefile import for this run.");
                 return false;
             }
@@ -7015,63 +7360,169 @@ namespace AtsBackgroundBuilder
             return true;
         }
 
-        private static Type? ResolveMapImportType()
+        private static bool TrySetSystemVariable(string name, object value, Logger logger, out object previous)
         {
-            foreach (var typeName in MapImportTypeNames)
-            {
-                var resolved = Type.GetType(typeName);
-                if (resolved != null)
-                {
-                    return resolved;
-                }
-
-                foreach (var assemblyName in MapImportAssemblyNames)
-                {
-                    resolved = Type.GetType($"{typeName}, {assemblyName}");
-                    if (resolved != null)
-                    {
-                        return resolved;
-                    }
-                }
-            }
-
-            foreach (var assemblyName in MapImportAssemblyNames)
-            {
-                TryLoadAssembly(assemblyName);
-            }
-
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                foreach (var typeName in MapImportTypeNames)
-                {
-                    var resolved = assembly.GetType(typeName, false);
-                    if (resolved != null)
-                    {
-                        return resolved;
-                    }
-                }
-            }
-
-            return null;
-        }
-
-        private static void TryLoadAssembly(string assemblyName)
-        {
+            previous = null;
             try
             {
-                Assembly.Load(assemblyName);
+                previous = AcApp.GetSystemVariable(name);
+                AcApp.SetSystemVariable(name, value);
+                logger.WriteLine($"{name} set to {value} (previous: {previous ?? "null"})");
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine($"Failed to set system variable '{name}': {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool TryImportShapefile(
+            Importer importer,
+            string shapefilePath,
+            List<Extents2d> sectionExtents,
+            Logger logger,
+            out string odTableName)
+        {
+            odTableName = BuildOdTableName(shapefilePath);
+
+            try
+            {
+                importer.Init("SHP", shapefilePath);
+
+                // Import window restriction to reduce heavy loads
+                TrySetLocationWindow(importer, sectionExtents, logger);
+
+                // Ensure DBF attributes become Object Data (OD)
+                var mappingMode = DetermineDataMappingMode(odTableName, logger);
+
+                int layerCount = 0;
+                foreach (InputLayer layer in importer)
+                {
+                    layerCount++;
+                    layer.ImportFromInputLayerOn = true;
+
+                    try
+                    {
+                        layer.SetDataMapping(mappingMode, odTableName);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        // Try opposite mapping mode as fallback
+                        try
+                        {
+                            var fallbackMode = mappingMode == ImportDataMapping.NewObjectDataOnly
+                                ? ImportDataMapping.ExistingObjectDataOnly
+                                : ImportDataMapping.NewObjectDataOnly;
+
+                            layer.SetDataMapping(fallbackMode, odTableName);
+                            logger.WriteLine($"SetDataMapping fallback succeeded for '{layer.Name}' using mode '{fallbackMode}'.");
+                        }
+                        catch (System.Exception fallbackEx)
+                        {
+                            logger.WriteLine($"SetDataMapping failed for '{layer.Name}': {ex.Message} (fallback failed: {fallbackEx.Message})");
+                        }
+                    }
+                }
+
+                if (layerCount == 0)
+                    logger.WriteLine("Importer.Init succeeded but no input layers were returned.");
+
+                // SAFEST: plain Import() (no reflection)
+                importer.Import();
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine("Shapefile import failed: " + ex);
+                return false;
+            }
+        }
+
+        private static void TrySetLocationWindow(Importer importer, List<Extents2d> sectionExtents, Logger logger)
+        {
+            if (sectionExtents == null || sectionExtents.Count == 0)
+                return;
+
+            var union = UnionExtents(sectionExtents);
+
+            try
+            {
+                var method = importer.GetType().GetMethod("SetLocationWindowAndOptions");
+                if (method == null)
+                    return;
+
+                var ps = method.GetParameters();
+                if (ps.Length != 5 || ps[0].ParameterType != typeof(double) || ps[1].ParameterType != typeof(double) ||
+                    ps[2].ParameterType != typeof(double) || ps[3].ParameterType != typeof(double) || !ps[4].ParameterType.IsEnum)
+                    return;
+
+                // LocationOption: usually 2 == kUseLocationWindow
+                var option = GetEnumValue(ps[4].ParameterType, 2, "kUseLocationWindow", "UseLocationWindow");
+
+                method.Invoke(importer, new object[]
+                {
+                    union.MinPoint.X,
+                    union.MaxPoint.X,
+                    union.MinPoint.Y,
+                    union.MaxPoint.Y,
+                    option
+                });
+
+                logger.WriteLine($"Importer location window set: X[{union.MinPoint.X:G},{union.MaxPoint.X:G}] Y[{union.MinPoint.Y:G},{union.MaxPoint.Y:G}]");
             }
             catch
             {
-                // ignored
+                // non-critical
             }
+        }
+
+        private static object GetEnumValue(Type enumType, int fallbackNumeric, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                try { return Enum.Parse(enumType, name, ignoreCase: true); }
+                catch { }
+            }
+
+            try { return Enum.ToObject(enumType, fallbackNumeric); }
+            catch { return fallbackNumeric; }
+        }
+
+        private static ImportDataMapping DetermineDataMappingMode(string odTableName, Logger logger)
+        {
+            try
+            {
+                var tables = HostMapApplicationServices.Application.ActiveProject.ODTables;
+                var names = tables.GetTableNames();
+
+                if (names != null)
+                {
+                    foreach (var nObj in names)
+                    {
+                        var n = nObj as string ?? nObj?.ToString();
+                        if (string.Equals(n, odTableName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return ImportDataMapping.ExistingObjectDataOnly;
+                        }
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine("OD table lookup failed: " + ex.Message);
+            }
+
+            return ImportDataMapping.NewObjectDataOnly;
         }
 
         private static IReadOnlyList<string> BuildShapefileSearchFolders(Config config)
         {
             var folders = new List<string>();
             AddFolder(folders, config.ShapefileFolder);
-            AddFolder(folders, new Config().ShapefileFolder);
+
+            try { AddFolder(folders, new Config().ShapefileFolder); } catch { }
+
             AddFolder(folders, Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? Environment.CurrentDirectory);
             return folders;
         }
@@ -7079,128 +7530,408 @@ namespace AtsBackgroundBuilder
         private static void AddFolder(List<string> folders, string? folder)
         {
             if (string.IsNullOrWhiteSpace(folder))
-            {
                 return;
-            }
 
             if (!folders.Contains(folder, StringComparer.OrdinalIgnoreCase))
-            {
                 folders.Add(folder);
-            }
         }
 
         private static string? ResolveShapefilePath(IReadOnlyList<string> folders, string shapefile)
         {
+            if (File.Exists(shapefile))
+                return shapefile;
+
             foreach (var folder in folders)
             {
                 var candidate = Path.Combine(folder, shapefile);
                 if (File.Exists(candidate))
-                {
                     return candidate;
-                }
             }
 
             return null;
         }
 
-        private static HashSet<ObjectId> CapturePolylineIds(Database database)
+        private static HashSet<ObjectId> CaptureDispositionCandidateIds(Database database)
         {
             var ids = new HashSet<ObjectId>();
-            using (var transaction = database.TransactionManager.StartTransaction())
-            {
-                var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
-                var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-                foreach (ObjectId id in modelSpace)
-                {
-                    if (id.ObjectClass.DxfName != "LWPOLYLINE")
-                    {
-                        continue;
-                    }
 
-                    ids.Add(id);
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                foreach (ObjectId id in ms)
+                {
+                    if (IsLwPolylineId(id) || IsMPolygonId(id))
+                        ids.Add(id);
                 }
 
-                transaction.Commit();
+                tr.Commit();
             }
 
             return ids;
         }
 
-        private static List<ObjectId> CaptureNewPolylineIds(Database database, HashSet<ObjectId> existingIds)
+        private static List<ObjectId> CaptureNewDispositionCandidateIds(Database database, HashSet<ObjectId> existing)
         {
             var newIds = new List<ObjectId>();
-            using (var transaction = database.TransactionManager.StartTransaction())
-            {
-                var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
-                var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-                foreach (ObjectId id in modelSpace)
-                {
-                    if (id.ObjectClass.DxfName != "LWPOLYLINE")
-                    {
-                        continue;
-                    }
 
-                    if (!existingIds.Contains(id))
-                    {
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                foreach (ObjectId id in ms)
+                {
+                    if (!IsLwPolylineId(id) && !IsMPolygonId(id))
+                        continue;
+
+                    if (!existing.Contains(id))
                         newIds.Add(id);
-                    }
                 }
 
-                transaction.Commit();
+                tr.Commit();
             }
 
             return newIds;
         }
 
+        private static bool IsLwPolylineId(ObjectId id)
+        {
+            var dxf = id.ObjectClass?.DxfName;
+            return string.Equals(dxf, "LWPOLYLINE", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsMPolygonId(ObjectId id)
+        {
+            var dxf = id.ObjectClass?.DxfName;
+            var cls = id.ObjectClass?.Name;
+
+            return string.Equals(dxf, "MPOLYGON", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(cls, "AcDbMPolygon", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static List<ObjectId> ConvertPolygonEntitiesToPolylines(
+            Database database,
+            Logger logger,
+            IReadOnlyList<ObjectId> polygonEntityIds,
+            string odTableName,
+            List<Extents2d> sectionExtents)
+        {
+            var created = new List<ObjectId>();
+            if (polygonEntityIds == null || polygonEntityIds.Count == 0)
+                return created;
+
+            Autodesk.AutoCAD.Runtime.ProgressMeter meter = null;
+            try
+            {
+                meter = new Autodesk.AutoCAD.Runtime.ProgressMeter();
+                meter.SetLimit(polygonEntityIds.Count);
+                meter.Start("ATSBUILD: Converting polygons");
+            }
+            catch
+            {
+                meter = null;
+            }
+
+            try
+            {
+                using (var tr = database.TransactionManager.StartTransaction())
+                {
+                    var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+                    foreach (var polyId in polygonEntityIds)
+                    {
+                        try { meter?.MeterProgress(); } catch { }
+
+                        if (!polyId.IsValid)
+                            continue;
+
+                        var ent = tr.GetObject(polyId, OpenMode.ForWrite, false) as Entity;
+                        if (ent == null)
+                            continue;
+
+                        if (!IsEntityWithinSections(ent, sectionExtents))
+                        {
+                            try { ent.Erase(); } catch { }
+                            continue;
+                        }
+
+                        var exploded = new DBObjectCollection();
+                        Polyline bestBoundary = null;
+
+                        try
+                        {
+                            ent.Explode(exploded);
+                            bestBoundary = SelectLargestClosedPolyline(exploded);
+                        }
+                        catch (System.Exception ex)
+                        {
+                            logger.WriteLine($"Polygon explode failed: {ex.Message}");
+                        }
+
+                        try
+                        {
+                            if (bestBoundary != null)
+                            {
+                                var newPl = (Polyline)bestBoundary.Clone();
+                                CopyBasicEntityProps(ent, newPl);
+                                NormalizePolylineDisplay(newPl);
+
+                                ms.AppendEntity(newPl);
+                                tr.AddNewlyCreatedDBObject(newPl, true);
+
+                                TryCopyObjectData(polyId, newPl.ObjectId, odTableName, logger);
+                                created.Add(newPl.ObjectId);
+                            }
+
+                            ent.Erase(); // remove MPOLYGON so POLYDISPLAY isn't needed
+                        }
+                        catch (System.Exception ex)
+                        {
+                            logger.WriteLine($"Polygon conversion failed: {ex.Message}");
+                        }
+                        finally
+                        {
+                            foreach (DBObject dbo in exploded)
+                            {
+                                try { dbo.Dispose(); } catch { }
+                            }
+                        }
+                    }
+
+                    tr.Commit();
+                }
+            }
+            finally
+            {
+                try { meter?.Stop(); } catch { }
+            }
+
+            return created;
+        }
+
+        private static bool IsEntityWithinSections(Entity ent, List<Extents2d> sectionExtents)
+        {
+            if (sectionExtents == null || sectionExtents.Count == 0)
+                return true;
+
+            Extents3d e3d;
+            try { e3d = ent.GeometricExtents; }
+            catch { return true; }
+
+            var e2d = new Extents2d(
+                new Point2d(e3d.MinPoint.X, e3d.MinPoint.Y),
+                new Point2d(e3d.MaxPoint.X, e3d.MaxPoint.Y));
+
+            return IsWithinSections(e2d, sectionExtents);
+        }
+
+        private static Polyline SelectLargestClosedPolyline(DBObjectCollection exploded)
+        {
+            Polyline best = null;
+            double bestArea = -1;
+
+            foreach (DBObject dbo in exploded)
+            {
+                if (dbo is not Polyline pl)
+                    continue;
+
+                if (!pl.Closed)
+                    continue;
+
+                double area;
+                try { area = Math.Abs(pl.Area); }
+                catch { area = 0; }
+
+                if (area > bestArea)
+                {
+                    bestArea = area;
+                    best = pl;
+                }
+            }
+
+            return best;
+        }
+
+        private static void CopyBasicEntityProps(Entity source, Entity dest)
+        {
+            try { dest.Layer = source.Layer; } catch { }
+            try { dest.Color = source.Color; } catch { }
+            try { dest.Linetype = source.Linetype; } catch { }
+            try { dest.LinetypeScale = source.LinetypeScale; } catch { }
+            try { dest.LineWeight = source.LineWeight; } catch { }
+            try { dest.Transparency = source.Transparency; } catch { }
+            try { dest.Visible = source.Visible; } catch { }
+        }
+
+        private static void NormalizePolylineDisplay(Polyline pl)
+        {
+            try { pl.ConstantWidth = 0.0; } catch { }
+
+            try
+            {
+                for (int i = 0; i < pl.NumberOfVertices; i++)
+                {
+                    pl.SetStartWidthAt(i, 0.0);
+                    pl.SetEndWidthAt(i, 0.0);
+                }
+            }
+            catch { }
+        }
+
+        private static void TryCopyObjectData(ObjectId sourceId, ObjectId destId, string odTableName, Logger logger)
+        {
+            if (string.IsNullOrWhiteSpace(odTableName))
+                return;
+
+            try
+            {
+                var project = HostMapApplicationServices.Application?.ActiveProject;
+                if (project == null)
+                    return;
+
+                var tables = project.ODTables;
+                var names = tables.GetTableNames();
+
+                // FIX: no .Any() on StringCollection — manual check
+                bool exists = false;
+                if (names != null)
+                {
+                    foreach (var nObj in names)
+                    {
+                        var n = nObj as string ?? nObj?.ToString();
+                        if (string.Equals(n, odTableName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            exists = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!exists)
+                    return;
+
+                var table = tables[odTableName];
+
+                using (OdRecords records = table.GetObjectTableRecords(0, sourceId, MapOpenMode.OpenForRead, true))
+                {
+                    if (records == null || records.Count == 0)
+                        return;
+
+                    foreach (OdRecord srcRecord in records)
+                    {
+                        var newRecord = OdRecord.Create();
+                        table.InitRecord(newRecord);
+
+                        int n = Math.Min(srcRecord.Count, newRecord.Count);
+                        for (int i = 0; i < n; i++)
+                        {
+                            try
+                            {
+                                var srcVal = srcRecord[i];
+                                var dstVal = newRecord[i];
+
+                                switch (srcVal.Type)
+                                {
+                                    case MapDataType.Character:
+                                        dstVal.Assign(srcVal.StrValue ?? string.Empty);
+                                        break;
+
+                                    case MapDataType.Integer:
+                                        dstVal.Assign(srcVal.Int32Value);
+                                        break;
+
+                                    case MapDataType.Real:
+                                        dstVal.Assign(srcVal.DoubleValue);
+                                        break;
+
+                                    default:
+                                        dstVal.Assign(srcVal.ToString());
+                                        break;
+                                }
+                            }
+                            catch
+                            {
+                                // ignore per-field failures
+                            }
+                        }
+
+                        table.AddRecord(newRecord, destId);
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine($"OD copy failed (table '{odTableName}'): {ex.Message}");
+            }
+        }
+
         private static List<Extents2d> BuildSectionBufferExtents(Database database, IReadOnlyList<ObjectId> sectionPolylineIds, double buffer)
         {
             var extents = new List<Extents2d>();
-            using (var transaction = database.TransactionManager.StartTransaction())
+
+            using (var tr = database.TransactionManager.StartTransaction())
             {
                 foreach (var id in sectionPolylineIds)
                 {
-                    var polyline = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
-                    if (polyline == null)
-                    {
+                    var pl = tr.GetObject(id, OpenMode.ForRead) as Polyline;
+                    if (pl == null)
                         continue;
-                    }
 
-                    var polylineExtents = polyline.GeometricExtents;
-                    var bufferExtents = new Extents2d(
-                        new Point2d(polylineExtents.MinPoint.X - buffer, polylineExtents.MinPoint.Y - buffer),
-                        new Point2d(polylineExtents.MaxPoint.X + buffer, polylineExtents.MaxPoint.Y + buffer));
-                    extents.Add(bufferExtents);
+                    var e = pl.GeometricExtents;
+                    extents.Add(new Extents2d(
+                        new Point2d(e.MinPoint.X - buffer, e.MinPoint.Y - buffer),
+                        new Point2d(e.MaxPoint.X + buffer, e.MaxPoint.Y + buffer)));
                 }
 
-                transaction.Commit();
+                tr.Commit();
             }
 
             return extents;
         }
 
+        private static Extents2d UnionExtents(List<Extents2d> extents)
+        {
+            var minX = extents[0].MinPoint.X;
+            var minY = extents[0].MinPoint.Y;
+            var maxX = extents[0].MaxPoint.X;
+            var maxY = extents[0].MaxPoint.Y;
+
+            for (int i = 1; i < extents.Count; i++)
+            {
+                var e = extents[i];
+                minX = Math.Min(minX, e.MinPoint.X);
+                minY = Math.Min(minY, e.MinPoint.Y);
+                maxX = Math.Max(maxX, e.MaxPoint.X);
+                maxY = Math.Max(maxY, e.MaxPoint.Y);
+            }
+
+            return new Extents2d(new Point2d(minX, minY), new Point2d(maxX, maxY));
+        }
+
         private static HashSet<string> BuildExistingFeatureKeys(Database database, Logger logger)
         {
             var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            using (var transaction = database.TransactionManager.StartTransaction())
-            {
-                var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
-                var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-                foreach (ObjectId id in modelSpace)
-                {
-                    var polyline = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
-                    if (polyline == null)
-                    {
-                        continue;
-                    }
 
-                    var key = BuildFeatureKey(polyline, id, logger);
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                foreach (ObjectId id in ms)
+                {
+                    var pl = tr.GetObject(id, OpenMode.ForRead) as Polyline;
+                    if (pl == null)
+                        continue;
+
+                    var key = BuildFeatureKey(pl, id, logger);
                     if (!string.IsNullOrWhiteSpace(key))
-                    {
                         keys.Add(key);
-                    }
                 }
 
-                transaction.Commit();
+                tr.Commit();
             }
 
             return keys;
@@ -7219,46 +7950,72 @@ namespace AtsBackgroundBuilder
             var filteredStart = summary.FilteredDispositions;
             var dedupedStart = summary.DedupedDispositions;
             var acceptedStart = dispositionPolylines.Count;
-            using (var transaction = database.TransactionManager.StartTransaction())
+
+            Autodesk.AutoCAD.Runtime.ProgressMeter meter = null;
+            try
             {
-                foreach (var id in newIds)
+                meter = new Autodesk.AutoCAD.Runtime.ProgressMeter();
+                meter.SetLimit(newIds.Count);
+                meter.Start($"ATSBUILD: Filtering {shapefileName}");
+            }
+            catch
+            {
+                meter = null;
+            }
+
+            try
+            {
+                using (var tr = database.TransactionManager.StartTransaction())
                 {
-                    var polyline = transaction.GetObject(id, OpenMode.ForWrite) as Polyline;
-                    if (polyline == null || !polyline.Closed)
+                    foreach (var id in newIds)
                     {
-                        summary.FilteredDispositions++;
-                        polyline?.Erase();
-                        continue;
+                        try { meter?.MeterProgress(); } catch { }
+
+                        var pl = tr.GetObject(id, OpenMode.ForWrite) as Polyline;
+                        if (pl == null)
+                            continue;
+
+                        NormalizePolylineDisplay(pl);
+
+                        if (!pl.Closed)
+                        {
+                            summary.FilteredDispositions++;
+                            pl.Erase();
+                            continue;
+                        }
+
+                        var ext = pl.GeometricExtents;
+                        var e2d = new Extents2d(
+                            new Point2d(ext.MinPoint.X, ext.MinPoint.Y),
+                            new Point2d(ext.MaxPoint.X, ext.MaxPoint.Y));
+
+                        if (!IsWithinSections(e2d, sectionExtents))
+                        {
+                            summary.FilteredDispositions++;
+                            pl.Erase();
+                            continue;
+                        }
+
+                        var key = BuildFeatureKey(pl, id, logger);
+                        if (!string.IsNullOrWhiteSpace(key) && existingKeys.Contains(key))
+                        {
+                            summary.DedupedDispositions++;
+                            pl.Erase();
+                            continue;
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(key))
+                            existingKeys.Add(key);
+
+                        dispositionPolylines.Add(id);
                     }
 
-                    var extents = polyline.GeometricExtents;
-                    var extents2d = new Extents2d(
-                        new Point2d(extents.MinPoint.X, extents.MinPoint.Y),
-                        new Point2d(extents.MaxPoint.X, extents.MaxPoint.Y));
-                    if (!IsWithinSections(extents2d, sectionExtents))
-                    {
-                        summary.FilteredDispositions++;
-                        polyline.Erase();
-                        continue;
-                    }
-
-                    var key = BuildFeatureKey(polyline, id, logger);
-                    if (!string.IsNullOrWhiteSpace(key) && existingKeys.Contains(key))
-                    {
-                        summary.DedupedDispositions++;
-                        polyline.Erase();
-                        continue;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(key))
-                    {
-                        existingKeys.Add(key);
-                    }
-
-                    dispositionPolylines.Add(id);
+                    tr.Commit();
                 }
-
-                transaction.Commit();
+            }
+            finally
+            {
+                try { meter?.Stop(); } catch { }
             }
 
             var accepted = dispositionPolylines.Count - acceptedStart;
@@ -7272,9 +8029,7 @@ namespace AtsBackgroundBuilder
             foreach (var sectionExtent in sectionExtents)
             {
                 if (GeometryUtils.ExtentsIntersect(polyExtents, sectionExtent))
-                {
                     return true;
-                }
             }
 
             return false;
@@ -7299,69 +8054,27 @@ namespace AtsBackgroundBuilder
             return roundedCenter;
         }
 
-        private static bool TryImportShapefile(Type mapImportType, string shapefilePath, Logger logger)
+        private static string BuildOdTableName(string shapefilePath)
         {
-            try
-            {
-                var mapImport = Activator.CreateInstance(mapImportType);
-                SetProperty(mapImportType, mapImport, "SourceFile", shapefilePath);
-                SetProperty(mapImportType, mapImport, "FileName", shapefilePath);
-                SetProperty(mapImportType, mapImport, "CreateObjectData", true);
-                SetProperty(mapImportType, mapImport, "UseObjectData", true);
-                SetProperty(mapImportType, mapImport, "ImportPolylines", true);
-                SetProperty(mapImportType, mapImport, "ImportClosedPolylines", true);
+            var baseName = Path.GetFileNameWithoutExtension(shapefilePath) ?? "DISP";
+            var sb = new StringBuilder();
 
-                var initMethod = mapImportType.GetMethod("Init");
-                initMethod?.Invoke(mapImport, new object[] { "MAPIMPORT" });
+            foreach (var ch in baseName.Trim())
+                sb.Append(char.IsLetterOrDigit(ch) || ch == '_' ? ch : '_');
 
-                if (InvokeIfExists(mapImportType, mapImport, "Import", logger))
-                {
-                    logger.WriteLine("MapImport.Import invoked.");
-                    return true;
-                }
+            var name = sb.Length == 0 ? "DISP" : sb.ToString();
 
-                if (InvokeIfExists(mapImportType, mapImport, "Run", logger))
-                {
-                    logger.WriteLine("MapImport.Run invoked.");
-                    return true;
-                }
+            if (char.IsDigit(name[0]))
+                name = "ATS_" + name;
 
-                if (InvokeIfExists(mapImportType, mapImport, "Execute", logger))
-                {
-                    logger.WriteLine("MapImport.Execute invoked.");
-                    return true;
-                }
+            if (!name.StartsWith("ATS_", StringComparison.OrdinalIgnoreCase))
+                name = "ATS_" + name;
 
-                logger.WriteLine("MapImport executed without a valid import method.");
-                return false;
-            }
-            catch (Exception ex)
-            {
-                logger.WriteLine("Shapefile import failed: " + ex.Message);
-                return false;
-            }
-        }
+            const int maxLen = 31;
+            if (name.Length > maxLen)
+                name = name.Substring(0, maxLen);
 
-        private static void SetProperty(Type type, object instance, string propertyName, object value)
-        {
-            var property = type.GetProperty(propertyName);
-            if (property != null && property.CanWrite)
-            {
-                property.SetValue(instance, value);
-            }
-        }
-
-        private static bool InvokeIfExists(Type type, object instance, string methodName, Logger logger)
-        {
-            var method = type.GetMethod(methodName, Type.EmptyTypes);
-            if (method != null)
-            {
-                logger.WriteLine($"Invoking MapImport.{methodName}.");
-                method.Invoke(instance, null);
-                return true;
-            }
-
-            return false;
+            return name;
         }
 
         private static void LogShapefileSidecars(string shapefilePath, Logger logger)
@@ -7369,14 +8082,12 @@ namespace AtsBackgroundBuilder
             var basePath = Path.Combine(
                 Path.GetDirectoryName(shapefilePath) ?? string.Empty,
                 Path.GetFileNameWithoutExtension(shapefilePath));
-            var required = new[] { ".shp", ".shx", ".dbf" };
-            foreach (var extension in required)
+
+            foreach (var ext in new[] { ".shp", ".shx", ".dbf" })
             {
-                var candidate = basePath + extension;
+                var candidate = basePath + ext;
                 if (!File.Exists(candidate))
-                {
                     logger.WriteLine($"Missing shapefile sidecar: {candidate}");
-                }
             }
         }
     }

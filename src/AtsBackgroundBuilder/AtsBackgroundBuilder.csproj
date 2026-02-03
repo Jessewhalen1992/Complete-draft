@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0-windows</TargetFramework>
     <AssemblyName>AtsBackgroundBuilder</AssemblyName>
@@ -26,6 +26,9 @@
     </Reference>
     <Reference Include="Acmgd">
       <HintPath>..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\acmgd.dll</HintPath>
+    </Reference>
+    <Reference Include="AcMPolygonMGD">
+      <HintPath>..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\AcMPolygonMGD.dll</HintPath>
     </Reference>
     <Reference Include="ManagedMapApi">
       <HintPath>..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\Map\ManagedMapApi.dll</HintPath>

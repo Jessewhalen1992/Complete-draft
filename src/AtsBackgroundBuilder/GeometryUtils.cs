@@ -452,5 +452,96 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
             return !(double.IsNaN(v) || double.IsInfinity(v));
         }
 
+
+        /// <summary>
+        /// Returns a cloned closed boundary polyline for an imported disposition entity.
+        /// Supports LWPOLYLINE and common Map 3D polygon entities (MPOLYGON / POLYLINE2D / POLYLINE3D) via explode.
+        /// </summary>
+        public static bool TryGetClosedBoundaryClone(Entity ent, out Polyline boundaryClone)
+        {
+            boundaryClone = null;
+
+            if (ent == null)
+                return false;
+
+            if (ent is Polyline pl)
+            {
+                if (!pl.Closed || pl.NumberOfVertices < 3)
+                    return false;
+
+                boundaryClone = (Polyline)pl.Clone();
+                return true;
+            }
+
+            // Map-imported polygons often arrive as MPOLYGON or old-style POLYLINE* entities.
+            if (ent is Polyline2d || ent is Polyline3d || string.Equals(ent.GetType().Name, "MPolygon", StringComparison.OrdinalIgnoreCase))
+            {
+                var exploded = ExplodeToBestClosedPolyline(ent);
+                if (exploded == null)
+                    return false;
+
+                boundaryClone = exploded;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static Polyline? ExplodeToBestClosedPolyline(Entity ent)
+        {
+            var col = new DBObjectCollection();
+            try
+            {
+                ent.Explode(col);
+            }
+            catch
+            {
+                foreach (DBObject o in col) o.Dispose();
+                return null;
+            }
+
+            Polyline best = null;
+            double bestScore = -1.0;
+
+            foreach (DBObject obj in col)
+            {
+                if (obj is Polyline p && p.Closed && p.NumberOfVertices >= 3)
+                {
+                    double score = 0.0;
+                    try
+                    {
+                        var ext = p.GeometricExtents;
+                        score = Math.Abs((ext.MaxPoint.X - ext.MinPoint.X) * (ext.MaxPoint.Y - ext.MinPoint.Y));
+                    }
+                    catch
+                    {
+                        score = 0.0;
+                    }
+
+                    if (best == null || score > bestScore)
+                    {
+                        best?.Dispose();
+                        best = p;
+                        bestScore = score;
+                    }
+                    else
+                    {
+                        p.Dispose();
+                    }
+                }
+                else
+                {
+                    obj.Dispose();
+                }
+            }
+
+            if (best == null)
+                return null;
+
+            var clone = (Polyline)best.Clone();
+            best.Dispose();
+            return clone;
+        }
+
     }
 }
