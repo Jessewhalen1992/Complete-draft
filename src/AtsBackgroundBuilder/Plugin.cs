@@ -127,7 +127,9 @@ namespace AtsBackgroundBuilder
                     try
                     {
                         var purposeEntry = purposeLookup.Lookup(purpose);
-                        var suffix = purposeEntry?.Extra?.Trim();
+                        var suffix = purposeEntry?.Extra?.Trim() ?? string.Empty;
+                        if (suffix.StartsWith("-", StringComparison.InvariantCulture))
+                            suffix = suffix.Substring(1);
                         if (!string.IsNullOrEmpty(suffix))
                         {
                             var prefix = string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase)
@@ -147,6 +149,15 @@ namespace AtsBackgroundBuilder
                     if (!string.IsNullOrEmpty(textLayerName))
                         textLayer = textLayerName;
 
+                    // Ensure the layer exists before assigning
+                    layerManager.EnsureLayer(lineLayer);
+                    var lineEntity = transaction.GetObject(id, OpenMode.ForWrite) as Entity;
+                    if (lineEntity != null && lineEntity.Layer != lineLayer)
+                    {
+                        lineEntity.Layer = lineLayer;
+                        lineEntity.ColorIndex = 256;  // ensure ByLayer colour
+                    }
+
                     var requiresWidth = PurposeRequiresWidth(purpose, config);
                     string labelText;
 
@@ -162,6 +173,11 @@ namespace AtsBackgroundBuilder
                             measurement.MedianWidth,
                             config.AcceptableRowWidths,
                             config.WidthSnapTolerance);
+                        double nearestInt = Math.Round(measurement.MedianWidth, 0, MidpointRounding.AwayFromZero);
+                        double diffSnap = Math.Abs(measurement.MedianWidth - snapped);
+                        double diffInt = Math.Abs(measurement.MedianWidth - nearestInt);
+                        if (diffInt < diffSnap && diffInt <= config.WidthSnapTolerance)
+                            snapped = nearestInt;
 
                         bool isVariable = measurement.IsVariable;
                         if (isVariable && Math.Abs(snapped - measurement.MedianWidth) <= config.WidthSnapTolerance)

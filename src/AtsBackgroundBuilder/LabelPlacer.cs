@@ -149,8 +149,8 @@ namespace AtsBackgroundBuilder
                 TextHeight = _config.TextHeight,
                 Contents = labelText,
                 Layer = layerName,
-                ColorIndex = 7,
-                Attachment = AttachmentPoint.BottomLeft
+                ColorIndex = 256,
+                Attachment = AttachmentPoint.MiddleCenter
             };
         }
 
@@ -181,8 +181,8 @@ namespace AtsBackgroundBuilder
                 TextHeight = _config.TextHeight,
                 Contents = labelText,
                 Layer = layerName,
-                ColorIndex = 7,
-                Attachment = AttachmentPoint.BottomLeft
+                ColorIndex = 256,
+                Attachment = AttachmentPoint.MiddleCenter
             };
 
             var mleader = new MLeader();
@@ -201,10 +201,13 @@ namespace AtsBackgroundBuilder
             mleader.LeaderLineType = LeaderType.StraightLeader;
 
             // Assign an arrow block (e.g. a dot) via ArrowSymbolId as needed; no HasArrowHead property exists
-            mleader.ArrowSymbolId = GetClosedDotArrowId(tr);
+            var arrowId = GetClosedDotArrowId(tr);
+            if (!arrowId.IsNull)
+                mleader.ArrowSymbolId = arrowId;
+            mleader.ArrowSize = 5.0;
 
             mleader.Layer = layerName;
-            mleader.ColorIndex = 7;
+            mleader.ColorIndex = 256;
 
             modelSpace.AppendEntity(mleader);
             tr.AddNewlyCreatedDBObject(mleader, true);
