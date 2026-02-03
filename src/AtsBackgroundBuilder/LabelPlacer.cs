@@ -64,7 +64,7 @@ namespace AtsBackgroundBuilder
                             }
 
                             // Ensure label layer exists
-                            EnsureLayerInTransaction(transaction, disposition.TextLayerName);
+                            EnsureLayerInTransaction(_database, transaction, disposition.TextLayerName);
 
                             using (var dispClone = (Polyline)disposition.Polyline.Clone())
                             {
@@ -210,10 +210,9 @@ namespace AtsBackgroundBuilder
             modelSpace.AppendEntity(line);
             tr.AddNewlyCreatedDBObject(line, true);
         }
-        private static void EnsureLayerInTransaction(Transaction tr, string layerName)
+        private static void EnsureLayerInTransaction(Database database, Transaction tr, string layerName)
         {
-            var db = tr.Database;
-            var layerTable = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+            var layerTable = (LayerTable)tr.GetObject(database.LayerTableId, OpenMode.ForRead);
             if (layerTable.Has(layerName))
                 return;
 
