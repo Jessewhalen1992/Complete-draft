@@ -145,10 +145,10 @@ namespace AtsBackgroundBuilder
         {
             if (_config.EnableLeaders && disposition.AddLeader)
             {
-                return CreateLeader(tr, modelSpace, target, labelPoint, disposition.LabelText, disposition.TextLayerName);
+                return CreateLeader(tr, modelSpace, target, labelPoint, disposition.LabelText, disposition.TextLayerName, disposition.TextColorIndex);
             }
 
-            var mtext = CreateLabel(tr, labelPoint, disposition.LabelText, disposition.TextLayerName);
+            var mtext = CreateLabel(tr, labelPoint, disposition.LabelText, disposition.TextLayerName, disposition.TextColorIndex);
             modelSpace.AppendEntity(mtext);
             tr.AddNewlyCreatedDBObject(mtext, true);
             return mtext;
@@ -160,7 +160,8 @@ namespace AtsBackgroundBuilder
             Point2d target,
             Point2d labelPoint,
             string labelText,
-            string layerName)
+            string layerName,
+            int colorIndex)
         {
             var attachment = GetLeaderAttachment(target, labelPoint);
             var mtext = new MText
@@ -169,7 +170,7 @@ namespace AtsBackgroundBuilder
                 TextHeight = _config.TextHeight,
                 Contents = labelText,
                 Layer = layerName,
-                ColorIndex = 256,
+                ColorIndex = colorIndex,
                 Attachment = attachment
             };
             ApplyDimensionStyle(tr, mtext, out _);
@@ -195,14 +196,14 @@ namespace AtsBackgroundBuilder
             mleader.ArrowSize = 5.0;
 
             mleader.Layer = layerName;
-            mleader.ColorIndex = 256;
+            mleader.ColorIndex = colorIndex;
 
             modelSpace.AppendEntity(mleader);
             tr.AddNewlyCreatedDBObject(mleader, true);
             return mleader;
         }
 
-        private MText CreateLabel(Transaction tr, Point2d labelPoint, string labelText, string layerName)
+        private MText CreateLabel(Transaction tr, Point2d labelPoint, string labelText, string layerName, int colorIndex)
         {
             var mtext = new MText
             {
@@ -210,7 +211,7 @@ namespace AtsBackgroundBuilder
                 TextHeight = _config.TextHeight,
                 Contents = labelText,
                 Layer = layerName,
-                ColorIndex = 256,
+                ColorIndex = colorIndex,
                 Attachment = AttachmentPoint.MiddleCenter
             };
 
@@ -478,6 +479,7 @@ namespace AtsBackgroundBuilder
         public string LayerName { get; }
         public string TextLayerName { get; }
         public Point2d SafePoint { get; }
+        public int TextColorIndex { get; set; } = 256;
 
         // For width-required purposes, allow label to be placed in the quarter (not necessarily in the disposition)
         public bool AllowLabelOutsideDisposition { get; set; }

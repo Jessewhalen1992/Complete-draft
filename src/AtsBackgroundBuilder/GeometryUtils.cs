@@ -238,29 +238,30 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
             // Compute ranges in principal space (using vertices)
             GetPrincipalRanges(corridor, origin, major, minor, out double minT, out double maxT, out double minS, out double maxS);
 
-            // Center offset along minor axis
-            double centerS = (minS + maxS) / 2.0;
-
-            // Big length for intersection lines
-            double big = Math.Max(maxT - minT, maxS - minS);
-            if (big <= 0) big = 10.0;
-            big *= 4.0;
-
             var widths = new List<double>(sampleCount);
             bool usedSamples = false;
 
-            // Sample positions (skip ends)
+            // Sample positions (skip ends) using local polyline normal
+            double length = corridor.Length;
             for (int i = 1; i <= sampleCount; i++)
             {
                 double frac = (double)i / (sampleCount + 1);
-                double t = minT + frac * (maxT - minT);
+                double dist = frac * length;
+                double param = corridor.GetParameterAtDistance(dist);
+                Point3d p3d = corridor.GetPointAtParameter(param);
+                Point2d center2d = new Point2d(p3d.X, p3d.Y);
 
-                var pCenter = origin + (major * t) + (minor * centerS);
-
-                if (TryCrossSectionWidth(corridor, pCenter, minor, big, out var w))
+                Vector3d derivative = corridor.GetFirstDerivative(param);
+                Vector2d tan2d = new Vector2d(derivative.X, derivative.Y);
+                if (tan2d.Length > 1e-6)
                 {
-                    widths.Add(w);
-                    usedSamples = true;
+                    Vector2d normal = new Vector2d(-tan2d.Y, tan2d.X).GetNormal();
+                    double bigLocal = Math.Max(corridor.GeometricExtents.MaxPoint.DistanceTo(corridor.GeometricExtents.MinPoint), length) * 2.0;
+                    if (TryCrossSectionWidth(corridor, center2d, normal, bigLocal, out var w))
+                    {
+                        widths.Add(w);
+                        usedSamples = true;
+                    }
                 }
             }
 

@@ -169,14 +169,25 @@ namespace AtsBackgroundBuilder
                             config.VariableWidthAbsTolerance,
                             config.VariableWidthRelTolerance);
 
-                        var snapped = GeometryUtils.SnapWidthToAcceptable(
-                            measurement.MedianWidth,
-                            config.AcceptableRowWidths,
-                            config.WidthSnapTolerance);
-                        double nearestInt = Math.Round(measurement.MedianWidth, 0, MidpointRounding.AwayFromZero);
-                        double diffSnap = Math.Abs(measurement.MedianWidth - snapped);
-                        double diffInt = Math.Abs(measurement.MedianWidth - nearestInt);
-                        if (diffInt < diffSnap && diffInt <= config.WidthSnapTolerance)
+                        double median = measurement.MedianWidth;
+                        double nearestInt = Math.Round(median, 0, MidpointRounding.AwayFromZero);
+
+                        double bestException = median;
+                        double diffException = double.MaxValue;
+                        if (config.AcceptableRowWidths != null && config.AcceptableRowWidths.Length > 0)
+                        {
+                            bestException = config.AcceptableRowWidths
+                                .OrderBy(w => Math.Abs(median - w))
+                                .First();
+                            diffException = Math.Abs(median - bestException);
+                        }
+                        double diffInt = Math.Abs(median - nearestInt);
+
+                        double snapped;
+                        bool snappedToAcceptable = diffException <= diffInt || diffException <= config.WidthSnapTolerance;
+                        if (snappedToAcceptable)
+                            snapped = bestException;
+                        else
                             snapped = nearestInt;
 
                         bool isVariable = measurement.IsVariable;
@@ -185,6 +196,7 @@ namespace AtsBackgroundBuilder
                             isVariable = false;
                         }
 
+                        bool hasMatchingWidth = !isVariable && snappedToAcceptable;
                         if (isVariable)
                         {
                             labelText = mappedCompany + "\\P" + "Variable Width" + "\\P" + ToTitleCaseWords(purpose) + "\\P" + dispNumFormatted;
@@ -194,19 +206,27 @@ namespace AtsBackgroundBuilder
                             var widthText = snapped.ToString("0.00", CultureInfo.InvariantCulture);
                             labelText = mappedCompany + "\\P" + widthText + " " + mappedPurpose + "\\P" + dispNumFormatted;
                         }
-                    }
-                    else
-                    {
-                        labelText = mappedCompany + "\\P" + mappedPurpose + "\\P" + dispNumFormatted;
+
+                        var widthLabelColor = hasMatchingWidth ? 256 : 3;
+                        var info = new DispositionInfo(id, clone, labelText, lineLayer, textLayer, safePoint)
+                        {
+                            AllowLabelOutsideDisposition = config.AllowOutsideDispositionForWidthPurposes,
+                            AddLeader = true,
+                            TextColorIndex = widthLabelColor
+                        };
+                        dispositions.Add(info);
+                        continue;
                     }
 
-                    var info = new DispositionInfo(id, clone, labelText, lineLayer, textLayer, safePoint)
+                    labelText = mappedCompany + "\\P" + mappedPurpose + "\\P" + dispNumFormatted;
+
+                    var nonWidthInfo = new DispositionInfo(id, clone, labelText, lineLayer, textLayer, safePoint)
                     {
-                        AllowLabelOutsideDisposition = requiresWidth && config.AllowOutsideDispositionForWidthPurposes,
-                        AddLeader = requiresWidth
+                        AllowLabelOutsideDisposition = false,
+                        AddLeader = false
                     };
 
-                    dispositions.Add(info);
+                    dispositions.Add(nonWidthInfo);
                 }
 
                 transaction.Commit();
