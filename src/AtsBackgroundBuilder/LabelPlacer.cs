@@ -141,19 +141,6 @@ namespace AtsBackgroundBuilder
             return result;
         }
 
-        private MText CreateLabel(Point2d point, string labelText, string layerName)
-        {
-            return new MText
-            {
-                Location = new Point3d(point.X, point.Y, 0),
-                TextHeight = _config.TextHeight,
-                Contents = labelText,
-                Layer = layerName,
-                ColorIndex = 256,
-                Attachment = AttachmentPoint.MiddleCenter
-            };
-        }
-
         private Entity CreateLabelEntity(Transaction tr, BlockTableRecord modelSpace, Point2d target, Point2d labelPoint, DispositionInfo disposition)
         {
             if (_config.EnableLeaders && disposition.AddLeader)
@@ -161,7 +148,7 @@ namespace AtsBackgroundBuilder
                 return CreateLeader(tr, modelSpace, target, labelPoint, disposition.LabelText, disposition.TextLayerName);
             }
 
-            var mtext = CreateLabel(labelPoint, disposition.LabelText, disposition.TextLayerName);
+            var mtext = CreateLabel(tr, labelPoint, disposition.LabelText, disposition.TextLayerName);
             modelSpace.AppendEntity(mtext);
             tr.AddNewlyCreatedDBObject(mtext, true);
             return mtext;
@@ -175,6 +162,7 @@ namespace AtsBackgroundBuilder
             string labelText,
             string layerName)
         {
+            var attachment = GetLeaderAttachment(target, labelPoint);
             var mtext = new MText
             {
                 Location = new Point3d(labelPoint.X, labelPoint.Y, 0),
@@ -182,13 +170,16 @@ namespace AtsBackgroundBuilder
                 Contents = labelText,
                 Layer = layerName,
                 ColorIndex = 256,
-                Attachment = AttachmentPoint.MiddleCenter
+                Attachment = attachment
             };
+            ApplyDimensionStyle(tr, mtext, out var dimStyleId);
 
             var mleader = new MLeader();
             mleader.SetDatabaseDefaults();
             mleader.ContentType = ContentType.MTextContent;
             mleader.MText = mtext;
+            if (!dimStyleId.IsNull)
+                mleader.DimStyle = dimStyleId;
 
             // Create a leader cluster and line
             int leaderIndex = mleader.AddLeader();
@@ -200,8 +191,8 @@ namespace AtsBackgroundBuilder
 
             mleader.LeaderLineType = LeaderType.StraightLeader;
 
-            // Assign an arrow block (e.g. a dot) via ArrowSymbolId as needed; no HasArrowHead property exists
-            var arrowId = GetClosedDotArrowId(tr);
+            // Assign an arrow block (e.g. dot blank) via ArrowSymbolId as needed; no HasArrowHead property exists
+            var arrowId = GetLeaderArrowId(tr);
             if (!arrowId.IsNull)
                 mleader.ArrowSymbolId = arrowId;
             mleader.ArrowSize = 5.0;
@@ -214,18 +205,72 @@ namespace AtsBackgroundBuilder
             return mleader;
         }
 
-        private ObjectId GetClosedDotArrowId(Transaction tr)
+        private MText CreateLabel(Transaction tr, Point2d labelPoint, string labelText, string layerName)
+        {
+            var mtext = new MText
+            {
+                Location = new Point3d(labelPoint.X, labelPoint.Y, 0),
+                TextHeight = _config.TextHeight,
+                Contents = labelText,
+                Layer = layerName,
+                ColorIndex = 256,
+                Attachment = AttachmentPoint.MiddleCenter
+            };
+
+            ApplyDimensionStyle(tr, mtext, out _);
+            return mtext;
+        }
+
+        private void ApplyDimensionStyle(Transaction tr, MText mtext, out ObjectId dimStyleId)
+        {
+            dimStyleId = ObjectId.Null;
+            if (tr == null || mtext == null) return;
+
+            var dimStyleTable = (DimStyleTable)tr.GetObject(_database.DimStyleTableId, OpenMode.ForRead);
+            if (!dimStyleTable.Has(_config.DimensionStyleName))
+                return;
+
+            dimStyleId = dimStyleTable[_config.DimensionStyleName];
+            var dimStyle = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
+            if (!dimStyle.TextStyleId.IsNull)
+                mtext.TextStyleId = dimStyle.TextStyleId;
+        }
+
+        private static AttachmentPoint GetLeaderAttachment(Point2d target, Point2d labelPoint)
+        {
+            var dx = labelPoint.X - target.X;
+            if (Math.Abs(dx) < 1e-6)
+                return AttachmentPoint.MiddleCenter;
+
+            return dx < 0 ? AttachmentPoint.MiddleRight : AttachmentPoint.MiddleLeft;
+        }
+
+        private ObjectId GetLeaderArrowId(Transaction tr)
         {
             var blockTable = (BlockTable)tr.GetObject(_database.BlockTableId, OpenMode.ForRead);
-            var candidateNames = new[]
+            var preferred = _config.LeaderArrowBlockName?.Trim();
+            var candidateNames = new List<string>();
+            if (!string.IsNullOrWhiteSpace(preferred))
             {
+                candidateNames.Add(preferred);
+                candidateNames.Add("_" + preferred);
+                candidateNames.Add(preferred.ToUpperInvariant());
+                candidateNames.Add("_" + preferred.ToUpperInvariant());
+            }
+
+            candidateNames.AddRange(new[]
+            {
+                "DotBlank",
+                "_DotBlank",
+                "_DOTBLANK",
+                "DOTBLANK",
                 "_Dot",
                 "_DOT",
                 "DOT",
                 "_DotSmall",
                 "_DOTSMALL",
                 "DOTSMALL"
-            };
+            });
 
             foreach (var name in candidateNames)
             {
