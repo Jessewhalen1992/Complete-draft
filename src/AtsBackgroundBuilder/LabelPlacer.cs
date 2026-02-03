@@ -123,23 +123,35 @@ namespace AtsBackgroundBuilder
             {
                 if (GeometryUtils.TryIntersectRegions(disposition, quarter, out var regions))
                 {
+                    bool emitted = false;
+
                     foreach (var region in regions)
                     {
+                        Point2d point;
+                        bool gotCentroid;
+
                         using (region)
                         {
-                            var centroid = Point3d.Origin;
-                            var normal = Vector3d.ZAxis;
-                            var axes = Vector3d.XAxis;
-                            region.AreaProperties(ref centroid, ref normal, ref axes);
-                            var point = new Point2d(centroid.X, centroid.Y);
-                            result.MultiQuarterProcessed++;
-                            foreach (var candidate in GeometryUtils.GetSpiralOffsets(point, _config.TextHeight, _config.MaxOverlapAttempts))
-                            {
-                                yield return candidate;
-                            }
+                            // Region.AreaProperties expects a valid coordinate system (origin, xAxis, yAxis)
+                            // in the plane of the region. If the origin is not on the region plane, or the axes
+                            // are invalid, AutoCAD can throw eInvalidInput.
+                            gotCentroid =
+                                TryGetRegionCentroid2d(region, quarter.Elevation, out point) ||
+                                TryGetRegionCentroid2d(region, disposition.Elevation, out point);
                         }
+
+                        if (!gotCentroid)
+                            continue;
+
+                        emitted = true;
+                        result.MultiQuarterProcessed++;
+
+                        foreach (var candidate in GeometryUtils.GetSpiralOffsets(point, _config.TextHeight, _config.MaxOverlapAttempts))
+                            yield return candidate;
                     }
-                    yield break;
+
+                    if (emitted)
+                        yield break;
                 }
             }
 
@@ -147,6 +159,32 @@ namespace AtsBackgroundBuilder
             {
                 yield return candidate;
             }
+        }
+        private static bool TryGetRegionCentroid2d(Region region, double elevation, out Point2d centroid)
+        {
+            centroid = Point2d.Origin;
+
+            try
+            {
+                // Build a WCS XY coordinate system on the same plane as the region.
+                // (Origin must lie on the region plane.)
+                var origin = new Point3d(0.0, 0.0, elevation);
+                var xAxis = Vector3d.XAxis;
+                var yAxis = Vector3d.YAxis;
+
+                centroid = region.AreaProperties(ref origin, ref xAxis, ref yAxis).Centroid;
+                return IsFinite(centroid);
+            }
+            catch
+            {
+                centroid = Point2d.Origin;
+                return false;
+            }
+        }
+
+        private static bool IsFinite(Point2d pt)
+        {
+            return !(double.IsNaN(pt.X) || double.IsNaN(pt.Y) || double.IsInfinity(pt.X) || double.IsInfinity(pt.Y));
         }
 
         private MText CreateLabel(DispositionInfo disposition, Point2d location, ObjectId textStyleId)
