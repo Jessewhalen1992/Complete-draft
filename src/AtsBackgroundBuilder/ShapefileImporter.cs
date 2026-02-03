@@ -45,7 +45,14 @@ namespace AtsBackgroundBuilder
             List<ObjectId> dispositionPolylines)
         {
             var summary = new ShapefileImportSummary();
-            if (config.DispositionShapefiles.Length == 0)
+            if (!config.ImportDispositionShapefiles)
+            {
+                logger.WriteLine("Disposition shapefile import disabled by config.");
+                return summary;
+            }
+
+            var shapefileNames = config.DispositionShapefileNames ?? Array.Empty<string>();
+            if (shapefileNames.Length == 0)
             {
                 logger.WriteLine("No disposition shapefiles configured.");
                 return summary;
@@ -66,11 +73,11 @@ namespace AtsBackgroundBuilder
 
             if (!TryGetMapImportType(logger, out var mapImportType))
             {
-                summary.ImportFailures += config.DispositionShapefiles.Length;
+                summary.ImportFailures += shapefileNames.Length;
                 return summary;
             }
 
-            foreach (var shapefile in config.DispositionShapefiles)
+            foreach (var shapefile in shapefileNames)
             {
                 logger.WriteLine($"Resolving shapefile: {shapefile}");
                 var shapefilePath = ResolveShapefilePath(searchFolders, shapefile);
