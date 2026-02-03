@@ -187,22 +187,21 @@ namespace AtsBackgroundBuilder
 
             var mleader = new MLeader();
             mleader.SetDatabaseDefaults();
-            mleader.ContentType = ContentType.MText;
+            mleader.ContentType = ContentType.MTextContent;
             mleader.MText = mtext;
 
+            // Create a leader cluster and line
             int leaderIndex = mleader.AddLeader();
-            mleader.AddLeaderLine(leaderIndex);
-            mleader.SetFirstVertex(leaderIndex, 0, new Point3d(target.X, target.Y, 0));
-            mleader.SetLastVertex(leaderIndex, 0, new Point3d(labelPoint.X, labelPoint.Y, 0));
+            int lineIndex = mleader.AddLeaderLine(leaderIndex);
+
+            // Set the start and end points of the leader line
+            mleader.AddFirstVertex(lineIndex, new Point3d(target.X, target.Y, 0));
+            mleader.AddLastVertex(lineIndex, new Point3d(labelPoint.X, labelPoint.Y, 0));
 
             mleader.LeaderLineType = LeaderType.StraightLeader;
-            mleader.HasArrowHead = true;
 
-            var arrowId = GetClosedDotArrowId(tr);
-            if (!arrowId.IsNull)
-            {
-                mleader.ArrowSymbolId = arrowId;
-            }
+            // Assign an arrow block (e.g. a dot) via ArrowSymbolId as needed; no HasArrowHead property exists
+            mleader.ArrowSymbolId = GetClosedDotArrowId(tr);
 
             mleader.Layer = layerName;
             mleader.ColorIndex = 7;
