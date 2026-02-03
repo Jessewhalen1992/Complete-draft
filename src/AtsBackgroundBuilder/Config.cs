@@ -18,6 +18,7 @@ namespace AtsBackgroundBuilder
         // Label placement
         // -------------------------
         public double TextHeight { get; set; } = 10.0;
+        public string DimensionStyleName { get; set; } = "Compass 5 000";
         public int MaxOverlapAttempts { get; set; } = 25;
         public bool PlaceWhenOverlapFails { get; set; } = true;
         public bool UseRegionIntersection { get; set; } = true;
@@ -38,6 +39,7 @@ namespace AtsBackgroundBuilder
         /// Units are drawing units (meters in your workflow).
         /// </summary>
         public double LeaderCircleRadius { get; set; } = 1.0;
+        public string LeaderArrowBlockName { get; set; } = "DotBlank";
 
         // -------------------------
         // Section Index (Compass / Res Manager)
@@ -295,6 +297,12 @@ namespace AtsBackgroundBuilder
             // Strings
             if (TryString(root, nameof(SectionIndexFolder), out var s) && !string.IsNullOrWhiteSpace(s))
                 cfg.SectionIndexFolder = s.Trim();
+
+            if (TryString(root, nameof(DimensionStyleName), out s) && !string.IsNullOrWhiteSpace(s))
+                cfg.DimensionStyleName = s.Trim();
+
+            if (TryString(root, nameof(LeaderArrowBlockName), out s) && !string.IsNullOrWhiteSpace(s))
+                cfg.LeaderArrowBlockName = s.Trim();
 
             if (TryString(root, nameof(ShapefileFolder), out s) && !string.IsNullOrWhiteSpace(s))
                 cfg.ShapefileFolder = s.Trim();
