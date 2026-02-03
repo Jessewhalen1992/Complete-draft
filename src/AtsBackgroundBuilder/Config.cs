@@ -1,6 +1,7 @@
 /////////////////////////////////////////////////////////////////////
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -73,13 +74,6 @@ namespace AtsBackgroundBuilder
 
         public bool ImportDispositionShapefiles { get; set; } = true;
         public string DispositionShapefileFolder { get; set; } = "";
-        // Backwards-compatible aliases used by some modules (older naming).
-        // Prefer ImportDispositionShapefiles / DispositionShapefileFolder in new code.
-        public bool DispositionShapefiles
-        {
-            get => ImportDispositionShapefiles;
-            set => ImportDispositionShapefiles = value;
-        }
 
         public string ShapefileFolder
         {
@@ -108,11 +102,13 @@ namespace AtsBackgroundBuilder
             try
             {
                 var json = File.ReadAllText(path);
+                using var document = JsonDocument.Parse(json);
                 var cfg = JsonSerializer.Deserialize<Config>(json);
 
                 if (cfg == null)
                     throw new Exception("Config deserialize returned null.");
 
+                ApplyLegacyShapefileConfig(document.RootElement, cfg);
                 return cfg;
             }
             catch (Exception ex)
@@ -134,6 +130,61 @@ namespace AtsBackgroundBuilder
             catch (Exception ex)
             {
                 logger.WriteLine($"Config save failed ({path}): {ex.Message}");
+            }
+        }
+
+        private static void ApplyLegacyShapefileConfig(JsonElement root, Config cfg)
+        {
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return;
+            }
+
+            if (root.TryGetProperty("DispositionShapefiles", out var shapefileElement))
+            {
+                switch (shapefileElement.ValueKind)
+                {
+                    case JsonValueKind.True:
+                    case JsonValueKind.False:
+                        cfg.ImportDispositionShapefiles = shapefileElement.GetBoolean();
+                        break;
+                    case JsonValueKind.String:
+                        var singleName = shapefileElement.GetString();
+                        if (!string.IsNullOrWhiteSpace(singleName))
+                        {
+                            cfg.DispositionShapefileNames = new[] { singleName };
+                        }
+                        break;
+                    case JsonValueKind.Array:
+                        var names = new List<string>();
+                        foreach (var entry in shapefileElement.EnumerateArray())
+                        {
+                            if (entry.ValueKind == JsonValueKind.String)
+                            {
+                                var name = entry.GetString();
+                                if (!string.IsNullOrWhiteSpace(name))
+                                {
+                                    names.Add(name);
+                                }
+                            }
+                        }
+
+                        if (names.Count > 0)
+                        {
+                            cfg.DispositionShapefileNames = names.ToArray();
+                        }
+                        break;
+                }
+            }
+
+            if (root.TryGetProperty("ShapefileFolder", out var folderElement)
+                && folderElement.ValueKind == JsonValueKind.String)
+            {
+                var folder = folderElement.GetString();
+                if (!string.IsNullOrWhiteSpace(folder))
+                {
+                    cfg.DispositionShapefileFolder = folder;
+                }
             }
         }
     }
