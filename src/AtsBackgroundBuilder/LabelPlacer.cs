@@ -1,11 +1,12 @@
-// FILE: C:\Users\Work Test 2\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\LabelPlacer.cs
 /////////////////////////////////////////////////////////////////////
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using Autodesk.AutoCAD.Runtime;
 
 namespace AtsBackgroundBuilder
 {
@@ -14,8 +15,8 @@ namespace AtsBackgroundBuilder
         private readonly Database _database;
         private readonly Editor _editor;
         private readonly LayerManager _layerManager;
-        private readonly Logger _logger;
         private readonly Config _config;
+        private readonly Logger _logger;
 
         public LabelPlacer(Database database, Editor editor, LayerManager layerManager, Config config, Logger logger)
         {
@@ -26,81 +27,127 @@ namespace AtsBackgroundBuilder
             _logger = logger;
         }
 
-        public PlacementResult PlaceLabels(
-            List<QuarterInfo> quarters,
-            List<DispositionInfo> dispositions,
-            string currentClient)
+        public PlacementResult PlaceLabels(List<QuarterInfo> quarters, List<DispositionInfo> dispositions, string currentClient)
         {
             var result = new PlacementResult();
+            var processedDispositionIds = new HashSet<ObjectId>();
 
             using (var transaction = _database.TransactionManager.StartTransaction())
             {
                 var blockTable = (BlockTable)transaction.GetObject(_database.BlockTableId, OpenMode.ForRead);
                 var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
-                var textStyleId = GetTextStyleId(transaction);
+                // Track extents of labels placed so far so we can avoid overlaps
+                var placedLabelExtents = new List<Extents3d>();
 
                 foreach (var quarter in quarters)
                 {
-                    var quarterExtents = quarter.Polyline.GeometricExtents;
-                    var placedExtents = new List<Extents2d>();
-
-                    foreach (var disposition in dispositions)
+                    using (var quarterClone = (Polyline)quarter.Polyline.Clone())
                     {
-                        if (!ExtentsIntersect(quarterExtents, disposition.Polyline.GeometricExtents))
+                        foreach (var disposition in dispositions)
                         {
-                            continue;
-                        }
+                            if (!_config.AllowMultiQuarterDispositions && processedDispositionIds.Contains(disposition.ObjectId))
+                                continue;
 
-                        if (string.IsNullOrWhiteSpace(disposition.LayerName) || string.IsNullOrWhiteSpace(disposition.TextLayerName))
-                        {
-                            result.SkippedNoLayerMapping++;
-                            continue;
-                        }
+                            if (processedDispositionIds.Contains(disposition.ObjectId))
+                                result.MultiQuarterProcessed++;
 
-                        var anchorPoints = GetAnchorPoints(quarter.Polyline, disposition.Polyline, disposition.SafePoint, result);
-                        var placed = false;
-                        var attempts = 0;
+                            // Quick reject by extents
+                            if (!GeometryUtils.ExtentsIntersect(quarter.Polyline.GeometricExtents, disposition.Polyline.GeometricExtents))
+                                continue;
 
-                        foreach (var point in anchorPoints)
-                        {
-                            attempts++;
-                            if (attempts > _config.MaxOverlapAttempts)
+                            // Label layer mapping check
+                            if (string.IsNullOrWhiteSpace(disposition.TextLayerName))
                             {
-                                break;
-                            }
-
-                            if (!GeometryUtils.PointInPolyline(quarter.Polyline, point) || !GeometryUtils.PointInPolyline(disposition.Polyline, point))
-                            {
+                                result.SkippedNoLayerMapping++;
                                 continue;
                             }
 
-                            var label = CreateLabel(disposition, point, textStyleId);
-                            modelSpace.AppendEntity(label);
-                            transaction.AddNewlyCreatedDBObject(label, true);
+                            // Ensure label layer exists
+                            EnsureLayerInTransaction(transaction, disposition.TextLayerName);
 
-                            var extents = GetExtents2d(label);
-                            if (HasOverlap(extents, placedExtents))
+                            using (var dispClone = (Polyline)disposition.Polyline.Clone())
                             {
-                                label.Erase(true);
-                                result.OverlapForced++;
-                                continue;
+                                // Leader target point (inside quarter ∩ disposition whenever possible)
+                                var target = GetTargetPoint(quarterClone, dispClone, disposition.SafePoint);
+
+                                // Candidate label points around the target
+                                var candidates = GetCandidateLabelPoints(
+                                        quarterClone,
+                                        dispClone,
+                                        target,
+                                        disposition.AllowLabelOutsideDisposition,
+                                        _config.TextHeight,
+                                        _config.MaxOverlapAttempts)
+                                    .ToList();
+
+                                if (candidates.Count == 0)
+                                {
+                                    // If we cannot find any point meeting the inside checks, fall back to target
+                                    candidates.Add(target);
+                                }
+
+                                bool placed = false;
+                                Point2d lastCandidate = candidates[candidates.Count - 1];
+
+                                foreach (var pt in candidates)
+                                {
+                                    lastCandidate = pt;
+
+                                    var mtext = CreateLabel(pt, disposition.LabelText, disposition.TextLayerName);
+
+                                    modelSpace.AppendEntity(mtext);
+                                    transaction.AddNewlyCreatedDBObject(mtext, true);
+
+                                    var bounds = mtext.GeometricExtents;
+                                    bool overlaps = placedLabelExtents.Any(b => GeometryUtils.ExtentsIntersect(b, bounds));
+
+                                    if (overlaps)
+                                    {
+                                        mtext.Erase();
+                                        continue;
+                                    }
+
+                                    // Success
+                                    placedLabelExtents.Add(bounds);
+                                    placed = true;
+                                    result.LabelsPlaced++;
+
+                                    if (_config.EnableLeaders && disposition.AddLeader)
+                                    {
+                                        CreateLeader(transaction, modelSpace, target, pt, disposition.TextLayerName);
+                                    }
+
+                                    break;
+                                }
+
+                                if (!placed && _config.PlaceWhenOverlapFails && candidates.Count > 0)
+                                {
+                                    // Forced placement at last candidate
+                                    var mtext = CreateLabel(lastCandidate, disposition.LabelText, disposition.TextLayerName);
+                                    modelSpace.AppendEntity(mtext);
+                                    transaction.AddNewlyCreatedDBObject(mtext, true);
+
+                                    placedLabelExtents.Add(mtext.GeometricExtents);
+                                    result.LabelsPlaced++;
+                                    result.OverlapForced++;
+
+                                    if (_config.EnableLeaders && disposition.AddLeader)
+                                    {
+                                        CreateLeader(transaction, modelSpace, target, lastCandidate, disposition.TextLayerName);
+                                    }
+
+                                    placed = true;
+                                }
+
+                                if (!placed)
+                                {
+                                    // Not counted in legacy result, but keep debug output
+                                    _logger.WriteLine($"Could not place label for disposition {disposition.ObjectId}");
+                                }
+
+                                processedDispositionIds.Add(disposition.ObjectId);
                             }
-
-                            placedExtents.Add(extents);
-                            placed = true;
-                            result.LabelsPlaced++;
-                            break;
-                        }
-
-                        if (!placed && _config.PlaceWhenOverlapFails)
-                        {
-                            var fallbackLabel = CreateLabel(disposition, disposition.SafePoint, textStyleId);
-                            modelSpace.AppendEntity(fallbackLabel);
-                            transaction.AddNewlyCreatedDBObject(fallbackLabel, true);
-                            placedExtents.Add(GetExtents2d(fallbackLabel));
-                            result.LabelsPlaced++;
-                            result.OverlapForced++;
                         }
                     }
                 }
@@ -111,121 +158,221 @@ namespace AtsBackgroundBuilder
             return result;
         }
 
-        private ObjectId GetTextStyleId(Transaction transaction)
+        private MText CreateLabel(Point2d point, string labelText, string layerName)
         {
-            var textStyleTable = (TextStyleTable)transaction.GetObject(_database.TextStyleTableId, OpenMode.ForRead);
-            return textStyleTable.Has("80L") ? textStyleTable["80L"] : _database.Textstyle;
+            return new MText
+            {
+                Location = new Point3d(point.X, point.Y, 0),
+                TextHeight = _config.TextHeight,
+                Contents = labelText,
+                Layer = layerName,
+                ColorIndex = 7,
+                Attachment = AttachmentPoint.BottomLeft
+            };
         }
 
-        private IEnumerable<Point2d> GetAnchorPoints(Polyline quarter, Polyline disposition, Point2d fallback, PlacementResult result)
+        private void CreateLeader(Transaction tr, BlockTableRecord modelSpace, Point2d target, Point2d labelPoint, string layerName)
         {
-            if (_config.UseRegionIntersection)
+            // Circle at target (optional)
+            if (_config.LeaderCircleRadius > 1e-6)
             {
-                if (GeometryUtils.TryIntersectRegions(disposition, quarter, out var regions))
+                var circle = new Circle(new Point3d(target.X, target.Y, 0), Vector3d.ZAxis, _config.LeaderCircleRadius)
                 {
-                    bool emitted = false;
+                    Layer = layerName,
+                    ColorIndex = 7
+                };
+                modelSpace.AppendEntity(circle);
+                tr.AddNewlyCreatedDBObject(circle, true);
+            }
 
-                    foreach (var region in regions)
+            // Line from circle edge to label point
+            var start = new Point3d(target.X, target.Y, 0);
+            var end = new Point3d(labelPoint.X, labelPoint.Y, 0);
+
+            var vec = end - start;
+            if (vec.Length < 1e-6)
+                return;
+
+            if (_config.LeaderCircleRadius > 1e-6)
+            {
+                var dir = vec.GetNormal();
+                start = start + dir * _config.LeaderCircleRadius;
+            }
+
+            if ((end - start).Length < 1e-6)
+                return;
+
+            var line = new Line(start, end)
+            {
+                Layer = layerName,
+                ColorIndex = 7
+            };
+            modelSpace.AppendEntity(line);
+            tr.AddNewlyCreatedDBObject(line, true);
+        }
+        private static void EnsureLayerInTransaction(Transaction tr, string layerName)
+        {
+            var db = tr.Database;
+            var layerTable = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+            if (layerTable.Has(layerName))
+                return;
+
+            layerTable.UpgradeOpen();
+            var layer = new LayerTableRecord
+            {
+                Name = layerName,
+                IsPlottable = true
+            };
+
+            layerTable.Add(layer);
+            tr.AddNewlyCreatedDBObject(layer, true);
+        }
+
+
+        private static IEnumerable<Point2d> GetCandidateLabelPoints(
+            Polyline quarter,
+            Polyline disposition,
+            Point2d target,
+            bool allowOutsideDisposition,
+            double step,
+            int maxPoints)
+        {
+            var spiral = GeometryUtils.GetSpiralOffsets(target, step, maxPoints).ToList();
+
+            if (!allowOutsideDisposition)
+            {
+                foreach (var p in spiral)
+                {
+                    if (PointInPolyline(quarter, p) && PointInPolyline(disposition, p))
+                        yield return p;
+                }
+                yield break;
+            }
+
+            // Prefer points in quarter but outside the disposition first (PDF-style callouts)
+            var inside = new List<Point2d>();
+            foreach (var p in spiral)
+            {
+                if (!PointInPolyline(quarter, p))
+                    continue;
+
+                if (PointInPolyline(disposition, p))
+                    inside.Add(p);
+                else
+                    yield return p;
+            }
+
+            foreach (var p in inside)
+                yield return p;
+        }
+
+        private Point2d GetTargetPoint(Polyline quarter, Polyline disposition, Point2d fallback)
+        {
+            // Best: centroid of intersection region(s)
+            if (_config.UseRegionIntersection && GeometryUtils.TryIntersectRegions(disposition, quarter, out var regions))
+            {
+                foreach (var region in regions)
+                {
+                    using (region)
                     {
-                        Point2d point;
-                        bool gotCentroid;
-
-                        using (region)
-                        {
-                            // Region.AreaProperties expects a valid coordinate system (origin, xAxis, yAxis)
-                            // in the plane of the region. If the origin is not on the region plane, or the axes
-                            // are invalid, AutoCAD can throw eInvalidInput.
-                            gotCentroid =
-                                TryGetRegionCentroid2d(region, quarter.Elevation, out point) ||
-                                TryGetRegionCentroid2d(region, disposition.Elevation, out point);
-                        }
-
-                        if (!gotCentroid)
-                            continue;
-
-                        emitted = true;
-                        result.MultiQuarterProcessed++;
-
-                        foreach (var candidate in GeometryUtils.GetSpiralOffsets(point, _config.TextHeight, _config.MaxOverlapAttempts))
-                            yield return candidate;
+                        var c = GetRegionCentroidSafe(region);
+                        if (PointInPolyline(quarter, c) && PointInPolyline(disposition, c))
+                            return c;
                     }
-
-                    if (emitted)
-                        yield break;
                 }
             }
 
-            foreach (var candidate in GeometryUtils.GetSpiralOffsets(fallback, _config.TextHeight, _config.MaxOverlapAttempts))
-            {
-                yield return candidate;
-            }
-        }
-        private static bool TryGetRegionCentroid2d(Region region, double elevation, out Point2d centroid)
-        {
-            centroid = Point2d.Origin;
+            // If safe point lies in this quarter
+            if (PointInPolyline(quarter, fallback) && PointInPolyline(disposition, fallback))
+                return fallback;
 
+            // Try extents overlap center
+            var overlap = GetExtentsOverlapCenter(quarter.GeometricExtents, disposition.GeometricExtents);
+            if (PointInPolyline(quarter, overlap) && PointInPolyline(disposition, overlap))
+                return overlap;
+
+            // Closest point on disposition to a known interior point of quarter
+            var qInterior = GeometryUtils.GetSafeInteriorPoint(quarter);
             try
             {
-                // Build a WCS XY coordinate system on the same plane as the region.
-                // (Origin must lie on the region plane.)
-                var origin = new Point3d(0.0, 0.0, elevation);
-                var xAxis = Vector3d.XAxis;
-                var yAxis = Vector3d.YAxis;
+                var closest = disposition.GetClosestPointTo(new Point3d(qInterior.X, qInterior.Y, 0), false);
+                var cp = new Point2d(closest.X, closest.Y);
+                if (PointInPolyline(quarter, cp))
+                    return cp;
+            }
+            catch { }
 
-                centroid = region.AreaProperties(ref origin, ref xAxis, ref yAxis).Centroid;
-                return IsFinite(centroid);
+            return fallback;
+        }
+
+        private static Point2d GetRegionCentroidSafe(Region region)
+        {
+            try
+            {
+                var centroid = Point3d.Origin;
+                var normal = Vector3d.ZAxis;
+                var axes = Vector3d.XAxis;
+                region.AreaProperties(ref centroid, ref normal, ref axes);
+
+                if (IsFinite(centroid.X) && IsFinite(centroid.Y))
+                    return new Point2d(centroid.X, centroid.Y);
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception)
+            {
+                // ignore
             }
             catch
             {
-                centroid = Point2d.Origin;
-                return false;
+                // ignore
+            }
+
+            try
+            {
+                var ext = region.GeometricExtents;
+                return new Point2d(
+                    (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
+                    (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
+                );
+            }
+            catch
+            {
+                return new Point2d(0, 0);
             }
         }
 
-        private static bool IsFinite(Point2d pt)
+        private static Point2d GetExtentsOverlapCenter(Extents3d a, Extents3d b)
         {
-            return !(double.IsNaN(pt.X) || double.IsNaN(pt.Y) || double.IsInfinity(pt.X) || double.IsInfinity(pt.Y));
+            double minX = Math.Max(a.MinPoint.X, b.MinPoint.X);
+            double maxX = Math.Min(a.MaxPoint.X, b.MaxPoint.X);
+
+            double minY = Math.Max(a.MinPoint.Y, b.MinPoint.Y);
+            double maxY = Math.Min(a.MaxPoint.Y, b.MaxPoint.Y);
+
+            return new Point2d((minX + maxX) / 2.0, (minY + maxY) / 2.0);
         }
 
-        private MText CreateLabel(DispositionInfo disposition, Point2d location, ObjectId textStyleId)
+
+        private static bool IsFinite(double v)
         {
-            var label = new MText
+            return !(double.IsNaN(v) || double.IsInfinity(v));
+        }
+
+        private static bool PointInPolyline(Polyline pl, Point2d pt)
+        {
+            bool inside = false;
+            int n = pl.NumberOfVertices;
+            for (int i = 0, j = n - 1; i < n; j = i++)
             {
-                Location = new Point3d(location.X, location.Y, 0.0),
-                Attachment = AttachmentPoint.MiddleCenter,
-                TextHeight = _config.TextHeight,
-                Contents = disposition.LabelText,
-                Layer = disposition.TextLayerName,
-                TextStyleId = textStyleId,
-                BackgroundFill = true
-            };
+                var pi = pl.GetPoint2dAt(i);
+                var pj = pl.GetPoint2dAt(j);
 
-            return label;
-        }
+                bool intersect = ((pi.Y > pt.Y) != (pj.Y > pt.Y)) &&
+                                 (pt.X < (pj.X - pi.X) * (pt.Y - pi.Y) /
+                                     ((pj.Y - pi.Y) == 0 ? 1e-12 : (pj.Y - pi.Y)) + pi.X);
 
-        private static Extents2d GetExtents2d(Entity entity)
-        {
-            var extents = entity.GeometricExtents;
-            return new Extents2d(new Point2d(extents.MinPoint.X, extents.MinPoint.Y), new Point2d(extents.MaxPoint.X, extents.MaxPoint.Y));
-        }
-
-        private static bool HasOverlap(Extents2d extents, List<Extents2d> existing)
-        {
-            foreach (var existingExtents in existing)
-            {
-                if (GeometryUtils.ExtentsIntersect(extents, existingExtents))
-                {
-                    return true;
-                }
+                if (intersect) inside = !inside;
             }
-
-            return false;
-        }
-
-        private static bool ExtentsIntersect(Extents3d a, Extents3d b)
-        {
-            return !(a.MaxPoint.X < b.MinPoint.X || a.MinPoint.X > b.MaxPoint.X ||
-                     a.MaxPoint.Y < b.MinPoint.Y || a.MinPoint.Y > b.MaxPoint.Y);
+            return inside;
         }
     }
 
@@ -234,9 +381,11 @@ namespace AtsBackgroundBuilder
         public QuarterInfo(Polyline polyline)
         {
             Polyline = polyline;
+            Bounds = polyline.GeometricExtents;
         }
 
         public Polyline Polyline { get; }
+        public Extents3d Bounds { get; }
     }
 
     public sealed class DispositionInfo
@@ -245,6 +394,7 @@ namespace AtsBackgroundBuilder
         {
             ObjectId = objectId;
             Polyline = polyline;
+            Bounds = polyline.GeometricExtents;
             LabelText = labelText;
             LayerName = layerName;
             TextLayerName = textLayerName;
@@ -253,10 +403,18 @@ namespace AtsBackgroundBuilder
 
         public ObjectId ObjectId { get; }
         public Polyline Polyline { get; }
+        public Extents3d Bounds { get; }
+
         public string LabelText { get; }
         public string LayerName { get; }
         public string TextLayerName { get; }
         public Point2d SafePoint { get; }
+
+        // For width-required purposes, allow label to be placed in the quarter (not necessarily in the disposition)
+        public bool AllowLabelOutsideDisposition { get; set; }
+
+        // Draw leader entities (circle + line) from target to label
+        public bool AddLeader { get; set; }
     }
 
     public sealed class PlacementResult
@@ -267,5 +425,3 @@ namespace AtsBackgroundBuilder
         public int MultiQuarterProcessed { get; set; }
     }
 }
-
-/////////////////////////////////////////////////////////////////////

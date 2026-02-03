@@ -1,7 +1,7 @@
-// FILE: C:\Users\Work Test 2\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\Plugin.cs
 /////////////////////////////////////////////////////////////////////
 
 using System;
+using System.Globalization;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -39,8 +39,11 @@ namespace AtsBackgroundBuilder
             var configPath = Path.Combine(dllFolder, "Config.json");
             var config = Config.Load(configPath, logger);
 
-            var companyLookup = ExcelLookup.Load(Path.Combine(dllFolder, "CompanyLookup.xlsx"), logger);
-            var purposeLookup = ExcelLookup.Load(Path.Combine(dllFolder, "PurposeLookup.xlsx"), logger);
+            var companyLookupPath = ResolveLookupPath(config.LookupFolder, config.CompanyLookupFile, dllFolder, "CompanyLookup.xlsx");
+            var purposeLookupPath = ResolveLookupPath(config.LookupFolder, config.PurposeLookupFile, dllFolder, "PurposeLookup.xlsx");
+
+            var companyLookup = ExcelLookup.Load(companyLookupPath, logger);
+            var purposeLookup = ExcelLookup.Load(purposeLookupPath, logger);
 
             var sectionDrawResult = TryPromptAndBuildSections(editor, database, config, logger);
             var quarterPolylines = sectionDrawResult.QuarterPolylineIds;
@@ -91,6 +94,13 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
+                    // Work with an in-memory clone after the transaction ends.
+                    var clone = (Polyline)polyline.Clone();
+
+                    // Default output layers (can be overridden by client/foreign logic later).
+                    string lineLayer = polyline.Layer;
+                    string textLayer = polyline.Layer;
+
                     result.TotalDispositions++;
                     var od = OdHelpers.ReadObjectData(id, logger);
                     if (od == null)
@@ -108,35 +118,42 @@ namespace AtsBackgroundBuilder
                     var purposeExtra = purposeLookup.Lookup(purpose)?.Extra ?? string.Empty;
 
                     var dispNumFormatted = FormatDispNum(dispNum);
-                    var labelText = mappedCompany + "\\P" + mappedPurpose + "\\P" + dispNumFormatted;
+                    var safePoint = GeometryUtils.GetSafeInteriorPoint(clone);
 
-                    var suffix = LayerManager.NormalizeSuffix(string.IsNullOrWhiteSpace(purposeExtra) ? purpose : purposeExtra);
-                    string lineLayer;
-                    string textLayer;
-                    if (string.IsNullOrWhiteSpace(suffix))
+                    var requiresWidth = PurposeRequiresWidth(purpose, config);
+                    string labelText;
+
+                    if (requiresWidth)
                     {
-                        lineLayer = polyline.Layer;
-                        textLayer = polyline.Layer;
-                        result.SkippedNoLayerMapping++;
+                        var measurement = GeometryUtils.MeasureCorridorWidth(
+                            clone,
+                            config.WidthSampleCount,
+                            config.VariableWidthAbsTolerance,
+                            config.VariableWidthRelTolerance);
+
+                        if (measurement.IsVariable)
+                        {
+                            labelText = mappedCompany + "\\P" + "Variable Width" + "\\P" + ToTitleCaseWords(purpose) + "\\P" + dispNumFormatted;
+                        }
+                        else
+                        {
+                            var snapped = GeometryUtils.SnapWidthToAcceptable(measurement.MedianWidth, config.AcceptableRowWidths, config.WidthSnapTolerance);
+                            var widthText = snapped.ToString("0.00", CultureInfo.InvariantCulture);
+                            labelText = mappedCompany + "\\P" + widthText + " " + mappedPurpose + "\\P" + dispNumFormatted;
+                        }
                     }
                     else
                     {
-                        var prefix = mappedCompany.Equals(currentClient, StringComparison.OrdinalIgnoreCase) ? "C" : "F";
-                        lineLayer = prefix + "-" + suffix;
-                        textLayer = prefix + "-" + suffix + "-T";
-                        layerManager.EnsureLayer(lineLayer);
-                        layerManager.EnsureLayer(textLayer);
+                        labelText = mappedCompany + "\\P" + mappedPurpose + "\\P" + dispNumFormatted;
                     }
 
-                    if (!lineLayer.Equals(polyline.Layer, StringComparison.OrdinalIgnoreCase))
+                    var info = new DispositionInfo(id, clone, labelText, lineLayer, textLayer, safePoint)
                     {
-                        polyline.UpgradeOpen();
-                        polyline.Layer = lineLayer;
-                    }
+                        AllowLabelOutsideDisposition = requiresWidth && config.AllowOutsideDispositionForWidthPurposes,
+                        AddLeader = requiresWidth
+                    };
 
-                    var safePoint = GeometryUtils.GetSafeInteriorPoint(polyline);
-                    var clone = (Polyline)polyline.Clone();
-                    dispositions.Add(new DispositionInfo(id, clone, labelText, lineLayer, textLayer, safePoint));
+                    dispositions.Add(info);
                 }
 
                 transaction.Commit();
@@ -273,7 +290,7 @@ namespace AtsBackgroundBuilder
 
         private static string PromptForClient(Editor editor, ExcelLookup lookup)
         {
-            var values = lookup.GetAllValues();
+            var values = lookup.Values;
             if (values.Count > 0 && values.Count <= 20)
             {
                 var options = new PromptKeywordOptions("Select current client")
@@ -360,6 +377,104 @@ namespace AtsBackgroundBuilder
             }
 
             return match.Groups[1].Value + " " + match.Groups[2].Value;
+        }
+
+        private static string ResolveLookupPath(string lookupFolder, string configuredFileName, string dllFolder, string defaultFileName)
+        {
+            // If the configured name is an absolute path, use it directly.
+            if (!string.IsNullOrWhiteSpace(configuredFileName) && Path.IsPathRooted(configuredFileName) && File.Exists(configuredFileName))
+                return configuredFileName;
+
+            var fileName = string.IsNullOrWhiteSpace(configuredFileName) ? defaultFileName : configuredFileName;
+
+            var candidates = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(lookupFolder))
+                candidates.Add(Path.Combine(lookupFolder, fileName));
+
+            if (!string.IsNullOrWhiteSpace(dllFolder))
+                candidates.Add(Path.Combine(dllFolder, fileName));
+
+            // Fall back to current working directory if needed
+            candidates.Add(Path.Combine(Environment.CurrentDirectory, fileName));
+
+            foreach (var p in candidates)
+            {
+                try
+                {
+                    if (File.Exists(p))
+                        return p;
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+
+            // If nothing exists, return the first candidate so the logger prints a useful "not found" path.
+            return candidates.FirstOrDefault() ?? Path.Combine(dllFolder ?? "", fileName);
+        }
+
+        private static bool PurposeRequiresWidth(string purpose, Config config)
+        {
+            if (string.IsNullOrWhiteSpace(purpose))
+                return false;
+
+            var norm = NormalizePurposeCode(purpose);
+            var list = config.WidthRequiredPurposeCodes ?? Array.Empty<string>();
+
+            foreach (var item in list)
+            {
+                if (NormalizePurposeCode(item) == norm)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static string NormalizePurposeCode(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            // Trim, uppercase, and collapse all whitespace to single spaces
+            var s = value.Trim().ToUpperInvariant();
+            var chars = new List<char>(s.Length);
+            bool prevSpace = false;
+
+            foreach (var ch in s)
+            {
+                if (char.IsWhiteSpace(ch))
+                {
+                    if (!prevSpace)
+                    {
+                        chars.Add(' ');
+                        prevSpace = true;
+                    }
+                }
+                else
+                {
+                    chars.Add(ch);
+                    prevSpace = false;
+                }
+            }
+
+            return new string(chars.ToArray());
+        }
+
+        private static string ToTitleCaseWords(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            // TitleCase, then common-word cleanup ("and" stays lower-case)
+            var lower = NormalizePurposeCode(value).ToLowerInvariant();
+            var title = CultureInfo.InvariantCulture.TextInfo.ToTitleCase(lower);
+
+            title = title.Replace(" And ", " and ");
+            title = title.Replace(" Of ", " of ");
+            title = title.Replace(" The ", " the ");
+            return title;
         }
 
         private static IEnumerable<Polyline> GenerateQuarters(Polyline section)

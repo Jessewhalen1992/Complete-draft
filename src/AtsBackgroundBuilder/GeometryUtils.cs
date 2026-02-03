@@ -1,4 +1,3 @@
-// FILE: C:\Users\Work Test 2\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\GeometryUtils.cs
 /////////////////////////////////////////////////////////////////////
 
 using System;
@@ -10,164 +9,448 @@ namespace AtsBackgroundBuilder
 {
     public static class GeometryUtils
     {
-        public static bool PointInPolyline(Polyline polyline, Point2d point)
-        {
-            var inside = false;
-            var count = polyline.NumberOfVertices;
-            if (count < 3)
-            {
-                return false;
-            }
+        public static bool ExtentsIntersect(Extents3d a, Extents3d b)
+{
+    // AutoCAD's Extents3d does not provide an IsDisjoint helper in all versions.
+    // Treat touching as intersecting.
+    return !(
+        a.MaxPoint.X < b.MinPoint.X || a.MinPoint.X > b.MaxPoint.X ||
+        a.MaxPoint.Y < b.MinPoint.Y || a.MinPoint.Y > b.MaxPoint.Y ||
+        a.MaxPoint.Z < b.MinPoint.Z || a.MinPoint.Z > b.MaxPoint.Z
+    );
+}
 
-            var j = count - 1;
-            for (var i = 0; i < count; i++)
-            {
-                var pi = polyline.GetPoint2dAt(i);
-                var pj = polyline.GetPoint2dAt(j);
-                var intersect = ((pi.Y > point.Y) != (pj.Y > point.Y)) &&
-                                (point.X < (pj.X - pi.X) * (point.Y - pi.Y) / (pj.Y - pi.Y + 1e-9) + pi.X);
-                if (intersect)
-                {
-                    inside = !inside;
-                }
-                j = i;
-            }
+public static bool ExtentsIntersect(Extents2d a, Extents2d b)
+{
+    // Treat touching as intersecting.
+    return !(
+        a.MaxPoint.X < b.MinPoint.X || a.MinPoint.X > b.MaxPoint.X ||
+        a.MaxPoint.Y < b.MinPoint.Y || a.MinPoint.Y > b.MaxPoint.Y
+    );
+}
 
-            return inside;
-        }
-
-        public static Point2d GetSafeInteriorPoint(Polyline polyline)
-        {
-            var centroid = GetCentroid(polyline);
-            if (PointInPolyline(polyline, centroid))
-            {
-                return centroid;
-            }
-
-            var midpoint = polyline.GetPointAtDist(polyline.Length / 2.0);
-            var fallback = new Point2d(midpoint.X, midpoint.Y);
-            if (PointInPolyline(polyline, fallback))
-            {
-                return fallback;
-            }
-
-            var extents = polyline.GeometricExtents;
-            var nudge = new Point2d((extents.MinPoint.X + extents.MaxPoint.X) * 0.5, (extents.MinPoint.Y + extents.MaxPoint.Y) * 0.5);
-            return nudge;
-        }
-
-        public static Point2d GetCentroid(Polyline polyline)
-        {
-            var count = polyline.NumberOfVertices;
-            if (count < 3)
-            {
-                var first = polyline.GetPoint2dAt(0);
-                return new Point2d(first.X, first.Y);
-            }
-
-            double accumulatedArea = 0.0;
-            double centerX = 0.0;
-            double centerY = 0.0;
-
-            for (var i = 0; i < count; i++)
-            {
-                var p0 = polyline.GetPoint2dAt(i);
-                var p1 = polyline.GetPoint2dAt((i + 1) % count);
-                var cross = p0.X * p1.Y - p1.X * p0.Y;
-                accumulatedArea += cross;
-                centerX += (p0.X + p1.X) * cross;
-                centerY += (p0.Y + p1.Y) * cross;
-            }
-
-            if (Math.Abs(accumulatedArea) < 1e-9)
-            {
-                var fallback = polyline.GetPoint2dAt(0);
-                return new Point2d(fallback.X, fallback.Y);
-            }
-
-            accumulatedArea *= 0.5;
-            centerX /= (6.0 * accumulatedArea);
-            centerY /= (6.0 * accumulatedArea);
-            return new Point2d(centerX, centerY);
-        }
-
+        /// <summary>
+        /// Compute intersection regions between two closed polylines.
+        /// Caller owns disposal of returned regions.
+        /// </summary>
         public static bool TryIntersectRegions(Polyline subject, Polyline clip, out List<Region> regions)
         {
             regions = new List<Region>();
+
+            Region? subjectRegion = null;
+            Region? clipRegion = null;
+
             try
             {
-                var subjectRegion = CreateRegion(subject);
-                var clipRegion = CreateRegion(clip);
+                subjectRegion = CreateRegion(subject);
+                clipRegion = CreateRegion(clip);
+
                 if (subjectRegion == null || clipRegion == null)
-                {
-                    subjectRegion?.Dispose();
-                    clipRegion?.Dispose();
                     return false;
-                }
 
-                using (clipRegion)
-                {
-                    subjectRegion.BooleanOperation(BooleanOperationType.BoolIntersect, clipRegion);
-                }
+                subjectRegion.BooleanOperation(BooleanOperationType.BoolIntersect, clipRegion);
 
+                // Note: BooleanOperation modifies the subject region in place.
                 regions.Add(subjectRegion);
+                subjectRegion = null; // prevent disposal here; caller will dispose
 
                 return regions.Count > 0;
             }
             catch
             {
-                foreach (var region in regions)
-                {
-                    region.Dispose();
-                }
-                regions.Clear();
                 return false;
+            }
+            finally
+            {
+                clipRegion?.Dispose();
+                subjectRegion?.Dispose();
             }
         }
 
         private static Region? CreateRegion(Polyline polyline)
         {
-            var curves = new DBObjectCollection();
-            curves.Add(polyline);
-            var regions = Region.CreateFromCurves(curves);
-            if (regions.Count == 0)
+            try
+            {
+                var curves = new DBObjectCollection();
+                curves.Add((Curve)polyline.Clone());
+
+                var regions = Region.CreateFromCurves(curves);
+                if (regions == null || regions.Count == 0)
+                    return null;
+
+                // Keep first region; dispose extras
+                var first = (Region)regions[0];
+                for (int i = 1; i < regions.Count; i++)
+                {
+                    regions[i]?.Dispose();
+                }
+                return first;
+            }
+            catch
             {
                 return null;
             }
-
-            return regions[0] as Region;
         }
 
-        public static bool ExtentsIntersect(Extents2d a, Extents2d b)
+        public static IEnumerable<Point2d> GetSpiralOffsets(Point2d center, double step, int maxPoints)
         {
-            return !(a.MaxPoint.X < b.MinPoint.X || a.MinPoint.X > b.MaxPoint.X ||
-                     a.MaxPoint.Y < b.MinPoint.Y || a.MinPoint.Y > b.MaxPoint.Y);
-        }
+            // Simple spiral: center, then 8 directions at increasing radius
+            yield return center;
 
-        public static IEnumerable<Point2d> GetSpiralOffsets(Point2d origin, double step, int count)
-        {
-            yield return origin;
-            var radius = step;
-            var generated = 1;
-            while (generated < count)
+            int yielded = 1;
+            int ring = 1;
+
+            while (yielded < maxPoints)
             {
-                for (var dx = -1; dx <= 1 && generated < count; dx++)
+                for (int i = 0; i < 8 && yielded < maxPoints; i++)
                 {
-                    for (var dy = -1; dy <= 1 && generated < count; dy++)
-                    {
-                        if (dx == 0 && dy == 0)
-                        {
-                            continue;
-                        }
-
-                        yield return new Point2d(origin.X + dx * radius, origin.Y + dy * radius);
-                        generated++;
-                    }
+                    double angle = (Math.PI / 4.0) * i;
+                    yield return new Point2d(
+                        center.X + Math.Cos(angle) * step * ring,
+                        center.Y + Math.Sin(angle) * step * ring
+                    );
+                    yielded++;
                 }
-                radius += step;
+                ring++;
             }
         }
+
+        public static Point2d GetSafeInteriorPoint(Polyline polyline)
+        {
+            // Try extents center first
+            var ext = polyline.GeometricExtents;
+            var center = new Point2d(
+                (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
+                (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
+            );
+
+            if (IsPointInsidePolyline(polyline, center))
+                return center;
+
+            // Spiral search
+            double step = Math.Max(polyline.Length / 200.0, 1.0);
+            for (int r = 1; r <= 50; r++)
+            {
+                for (int i = 0; i < 8; i++)
+                {
+                    double angle = (Math.PI / 4.0) * i;
+                    var p = new Point2d(
+                        center.X + Math.Cos(angle) * step * r,
+                        center.Y + Math.Sin(angle) * step * r
+                    );
+                    if (IsPointInsidePolyline(polyline, p))
+                        return p;
+                }
+            }
+
+            return center;
+        }
+
+        public static bool IsPointInsidePolyline(Polyline polyline, Point2d point)
+{
+    if (polyline == null) return false;
+    if (!polyline.Closed) return false;
+
+    int n = polyline.NumberOfVertices;
+    if (n < 3) return false;
+
+    bool inside = false;
+
+    for (int i = 0, j = n - 1; i < n; j = i++)
+    {
+        var pi = polyline.GetPoint2dAt(i);
+        var pj = polyline.GetPoint2dAt(j);
+
+        // Consider points on the boundary as inside.
+        if (IsPointOnSegment(point, pj, pi, 1e-9))
+            return true;
+
+        bool intersects = ((pi.Y > point.Y) != (pj.Y > point.Y)) &&
+                          (point.X < (pj.X - pi.X) * (point.Y - pi.Y) / (pj.Y - pi.Y + 0.0) + pi.X);
+
+        if (intersects)
+            inside = !inside;
     }
+
+    return inside;
 }
 
-/////////////////////////////////////////////////////////////////////
+private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol)
+{
+    var ab = b - a;
+    var ap = p - a;
+
+    double cross = ab.X * ap.Y - ab.Y * ap.X;
+    if (Math.Abs(cross) > tol) return false;
+
+    double dot = ap.X * ab.X + ap.Y * ab.Y;
+    if (dot < -tol) return false;
+
+    double len2 = ab.X * ab.X + ab.Y * ab.Y;
+    if (dot > len2 + tol) return false;
+
+    return true;
+}
+
+        // --------------------------------------------------------------------
+        // Width measurement utilities (for ROW-style disposition polygons)
+        // --------------------------------------------------------------------
+
+        public readonly struct WidthMeasurement
+        {
+            public WidthMeasurement(double medianWidth, double minWidth, double maxWidth, bool isVariable, bool usedSamples)
+            {
+                MedianWidth = medianWidth;
+                MinWidth = minWidth;
+                MaxWidth = maxWidth;
+                IsVariable = isVariable;
+                UsedSamples = usedSamples;
+            }
+
+            public double MedianWidth { get; }
+            public double MinWidth { get; }
+            public double MaxWidth { get; }
+            public bool IsVariable { get; }
+            public bool UsedSamples { get; }
+        }
+
+        /// <summary>
+        /// Measures the "corridor width" of a closed polyline by sampling cross-sections perpendicular to its principal axis.
+        /// If sampling fails, falls back to an oriented bounding width.
+        /// </summary>
+        public static WidthMeasurement MeasureCorridorWidth(
+            Polyline corridor,
+            int sampleCount,
+            double variableAbsTol,
+            double variableRelTol)
+        {
+            if (corridor == null) throw new ArgumentNullException(nameof(corridor));
+            if (sampleCount < 1) sampleCount = 7;
+
+            // Determine principal axes
+            if (!TryGetPrincipalAxes(corridor, out var origin, out var major, out var minor))
+            {
+                origin = GetSafeInteriorPoint(corridor);
+                major = Vector2d.XAxis;
+                minor = Vector2d.YAxis;
+            }
+
+            // Compute ranges in principal space (using vertices)
+            GetPrincipalRanges(corridor, origin, major, minor, out double minT, out double maxT, out double minS, out double maxS);
+
+            // Center offset along minor axis
+            double centerS = (minS + maxS) / 2.0;
+
+            // Big length for intersection lines
+            double big = Math.Max(maxT - minT, maxS - minS);
+            if (big <= 0) big = 10.0;
+            big *= 4.0;
+
+            var widths = new List<double>(sampleCount);
+            bool usedSamples = false;
+
+            // Sample positions (skip ends)
+            for (int i = 1; i <= sampleCount; i++)
+            {
+                double frac = (double)i / (sampleCount + 1);
+                double t = minT + frac * (maxT - minT);
+
+                var pCenter = origin + (major * t) + (minor * centerS);
+
+                if (TryCrossSectionWidth(corridor, pCenter, minor, big, out var w))
+                {
+                    widths.Add(w);
+                    usedSamples = true;
+                }
+            }
+
+            if (widths.Count == 0)
+            {
+                // Fallback: oriented bounding width
+                double fallback = maxS - minS;
+                if (fallback < 0) fallback = -fallback;
+                return new WidthMeasurement(fallback, fallback, fallback, false, false);
+            }
+
+            widths.Sort();
+            double median = widths[widths.Count / 2];
+            double minW = widths[0];
+            double maxW = widths[widths.Count - 1];
+            double range = maxW - minW;
+
+            bool isVariable = range > Math.Max(variableAbsTol, median * variableRelTol);
+
+            return new WidthMeasurement(median, minW, maxW, isVariable, usedSamples);
+        }
+
+        public static double SnapWidthToAcceptable(double measured, IReadOnlyList<double> acceptable, double tolerance)
+        {
+            if (acceptable == null || acceptable.Count == 0) return measured;
+            if (tolerance < 0) tolerance = 0;
+
+            double best = measured;
+            double bestDiff = double.MaxValue;
+
+            for (int i = 0; i < acceptable.Count; i++)
+            {
+                var w = acceptable[i];
+                double diff = Math.Abs(measured - w);
+                if (diff < bestDiff)
+                {
+                    bestDiff = diff;
+                    best = w;
+                }
+            }
+
+            return bestDiff <= tolerance ? best : measured;
+        }
+
+        private static bool TryGetPrincipalAxes(Polyline pl, out Point2d origin, out Vector2d major, out Vector2d minor)
+        {
+            origin = new Point2d(0, 0);
+            major = Vector2d.XAxis;
+            minor = Vector2d.YAxis;
+
+            int n = pl.NumberOfVertices;
+            if (n < 3) return false;
+
+            double meanX = 0, meanY = 0;
+            for (int i = 0; i < n; i++)
+            {
+                var p = pl.GetPoint2dAt(i);
+                meanX += p.X;
+                meanY += p.Y;
+            }
+            meanX /= n;
+            meanY /= n;
+
+            origin = new Point2d(meanX, meanY);
+
+            double sxx = 0, syy = 0, sxy = 0;
+            for (int i = 0; i < n; i++)
+            {
+                var p = pl.GetPoint2dAt(i);
+                double dx = p.X - meanX;
+                double dy = p.Y - meanY;
+                sxx += dx * dx;
+                syy += dy * dy;
+                sxy += dx * dy;
+            }
+
+            if (Math.Abs(sxy) < 1e-9 && Math.Abs(sxx - syy) < 1e-9)
+                return false;
+
+            double angle = 0.5 * Math.Atan2(2.0 * sxy, sxx - syy);
+            major = new Vector2d(Math.Cos(angle), Math.Sin(angle));
+            if (major.Length < 1e-9) return false;
+            major = major.GetNormal();
+
+            minor = new Vector2d(-major.Y, major.X); // 90 deg
+            if (minor.Length < 1e-9) return false;
+            minor = minor.GetNormal();
+
+            return true;
+        }
+
+        private static void GetPrincipalRanges(
+            Polyline pl,
+            Point2d origin,
+            Vector2d major,
+            Vector2d minor,
+            out double minT,
+            out double maxT,
+            out double minS,
+            out double maxS)
+        {
+            minT = double.PositiveInfinity;
+            maxT = double.NegativeInfinity;
+            minS = double.PositiveInfinity;
+            maxS = double.NegativeInfinity;
+
+            int n = pl.NumberOfVertices;
+            for (int i = 0; i < n; i++)
+            {
+                var p = pl.GetPoint2dAt(i);
+                var d = p - origin;
+                double t = d.DotProduct(major);
+                double s = d.DotProduct(minor);
+
+                if (t < minT) minT = t;
+                if (t > maxT) maxT = t;
+                if (s < minS) minS = s;
+                if (s > maxS) maxS = s;
+            }
+
+            if (!IsFinite(minT) || !IsFinite(maxT))
+            {
+                minT = 0;
+                maxT = 0;
+            }
+
+            if (!IsFinite(minS) || !IsFinite(maxS))
+            {
+                minS = 0;
+                maxS = 0;
+            }
+        }
+
+        private static bool TryCrossSectionWidth(Polyline corridor, Point2d center, Vector2d direction, double halfLength, out double width)
+        {
+            width = 0;
+
+            try
+            {
+                var dir = direction;
+                if (dir.Length < 1e-9) return false;
+                dir = dir.GetNormal();
+
+                // Build a long line segment through the corridor
+                var p1 = new Point3d(center.X - dir.X * halfLength, center.Y - dir.Y * halfLength, corridor.Elevation);
+                var p2 = new Point3d(center.X + dir.X * halfLength, center.Y + dir.Y * halfLength, corridor.Elevation);
+
+                using (var line = new Line(p1, p2))
+                {
+                    var pts = new Point3dCollection();
+                    corridor.IntersectWith(line, Intersect.OnBothOperands, pts, IntPtr.Zero, IntPtr.Zero);
+
+                    if (pts.Count < 2)
+                        return false;
+
+                    // Deduplicate + project along direction (relative to center)
+                    var proj = new List<double>(pts.Count);
+                    for (int i = 0; i < pts.Count; i++)
+                    {
+                        var p = pts[i];
+                        double s = (p.X - center.X) * dir.X + (p.Y - center.Y) * dir.Y;
+
+                        bool dup = false;
+                        for (int j = 0; j < proj.Count; j++)
+                        {
+                            if (Math.Abs(proj[j] - s) < 1e-6) { dup = true; break; }
+                        }
+                        if (!dup) proj.Add(s);
+                    }
+
+                    if (proj.Count < 2)
+                        return false;
+
+                    proj.Sort();
+                    width = proj[proj.Count - 1] - proj[0];
+                    if (width < 0) width = -width;
+
+                    return width > 1e-6;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsFinite(double v)
+        {
+            return !(double.IsNaN(v) || double.IsInfinity(v));
+        }
+
+    }
+}

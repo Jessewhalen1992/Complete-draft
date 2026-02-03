@@ -1,3 +1,5 @@
+/////////////////////////////////////////////////////////////////////
+
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -18,6 +20,15 @@ namespace AtsBackgroundBuilder
         public string Extra { get; }
     }
 
+    /// <summary>
+    /// Simple XLSX lookup reader:
+    /// - Column 1: key
+    /// - Column 2: value
+    /// - Column 3 (optional): extra
+    ///
+    /// This loader uses HDR=NO to support headerless sheets (your current CompanyLookup.xlsx / PurposeLookup.xlsx).
+    /// If the sheet has headers, typical header rows are auto-skipped.
+    /// </summary>
     public sealed class ExcelLookup
     {
         private readonly Dictionary<string, LookupEntry> _lookup = new Dictionary<string, LookupEntry>(StringComparer.OrdinalIgnoreCase);
@@ -66,68 +77,96 @@ namespace AtsBackgroundBuilder
             return null;
         }
 
-        public IReadOnlyList<string> GetAllValues()
-        {
-            return _values.AsReadOnly();
-        }
+        public IReadOnlyList<string> Values => _values;
 
         private void LoadWithOleDb(string xlsxPath, Logger logger)
         {
+            // HDR=NO so first row is treated as data (lookup files are headerless)
             var connString =
-                "Provider=Microsoft.ACE.OLEDB.12.0;" +
-                "Data Source=" + xlsxPath + ";" +
-                "Extended Properties='Excel 12.0 Xml;HDR=YES;IMEX=1';";
+                $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={xlsxPath};Extended Properties=\"Excel 12.0 Xml;HDR=NO;IMEX=1\";";
 
-            using (var connection = new OleDbConnection(connString))
+            using (var conn = new OleDbConnection(connString))
             {
-                connection.Open();
-                var schema = connection.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, null);
+                conn.Open();
+
+                // Discover first worksheet name
+                var schema = conn.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, null);
                 if (schema == null || schema.Rows.Count == 0)
                 {
-                    throw new InvalidOperationException("Excel file has no sheets.");
+                    logger.WriteLine("No worksheets found in: " + xlsxPath);
+                    return;
                 }
 
                 var sheetName = schema.Rows[0]["TABLE_NAME"].ToString();
                 if (string.IsNullOrWhiteSpace(sheetName))
                 {
-                    throw new InvalidOperationException("Excel sheet name not found.");
+                    logger.WriteLine("Could not determine worksheet name in: " + xlsxPath);
+                    return;
                 }
 
-                using (var command = connection.CreateCommand())
+                using (var cmd = conn.CreateCommand())
                 {
-                    command.CommandText = "SELECT * FROM [" + sheetName + "]";
-                    using (var adapter = new OleDbDataAdapter(command))
+                    cmd.CommandText = $"SELECT * FROM [{sheetName}]";
+
+                    using (var adapter = new OleDbDataAdapter(cmd))
                     {
-                        var table = new DataTable();
-                        adapter.Fill(table);
-                        foreach (DataRow row in table.Rows)
+                        var dt = new DataTable();
+                        adapter.Fill(dt);
+
+                        if (dt.Columns.Count < 2)
                         {
-                            var key = row.ItemArray.Length > 0 ? row[0]?.ToString() : null;
-                            if (string.IsNullOrWhiteSpace(key))
+                            logger.WriteLine("Lookup has fewer than 2 columns: " + xlsxPath);
+                            return;
+                        }
+
+                        foreach (DataRow row in dt.Rows)
+                        {
+                            var key = row[0]?.ToString()?.Trim();
+                            var value = row[1]?.ToString()?.Trim();
+                            var extra = dt.Columns.Count >= 3 ? row[2]?.ToString()?.Trim() : "";
+
+                            if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(value))
                             {
                                 continue;
                             }
 
-                            var value = row.ItemArray.Length > 1 ? row[1]?.ToString() ?? string.Empty : string.Empty;
-                            var extra = row.ItemArray.Length > 2 ? row[2]?.ToString() ?? string.Empty : string.Empty;
+                            if (IsHeaderRow(key, value))
+                            {
+                                continue;
+                            }
 
                             if (!_lookup.ContainsKey(key))
                             {
-                                _lookup.Add(key, new LookupEntry(value, extra));
-                                if (!string.IsNullOrWhiteSpace(value) && !_values.Contains(value))
-                                {
-                                    _values.Add(value);
-                                }
+                                _lookup[key] = new LookupEntry(value, extra ?? "");
+                            }
+
+                            if (!_values.Contains(value))
+                            {
+                                _values.Add(value);
                             }
                         }
                     }
                 }
             }
 
-            logger.WriteLine("Loaded lookup entries: " + _lookup.Count);
+            logger.WriteLine($"Loaded lookup ({_lookup.Count} rows): {xlsxPath}");
+        }
+
+        private static bool IsHeaderRow(string key, string value)
+        {
+            // CompanyLookup typical headers
+            if (key.Equals("key", StringComparison.OrdinalIgnoreCase) && value.Equals("value", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // PurposeLookup typical headers
+            if (key.Equals("purpcd", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Generic
+            if (key.Equals("company", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return false;
         }
     }
 }
-
-
-/////////////////////////////////////////////////////////////////////
