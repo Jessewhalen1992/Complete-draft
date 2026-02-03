@@ -94,17 +94,13 @@ namespace AtsBackgroundBuilder
                                 {
                                     lastCandidate = pt;
 
-                                    var mtext = CreateLabel(pt, disposition.LabelText, disposition.TextLayerName);
-
-                                    modelSpace.AppendEntity(mtext);
-                                    transaction.AddNewlyCreatedDBObject(mtext, true);
-
-                                    var bounds = mtext.GeometricExtents;
+                                    var labelEntity = CreateLabelEntity(transaction, modelSpace, target, pt, disposition);
+                                    var bounds = labelEntity.GeometricExtents;
                                     bool overlaps = placedLabelExtents.Any(b => GeometryUtils.ExtentsIntersect(b, bounds));
 
                                     if (overlaps)
                                     {
-                                        mtext.Erase();
+                                        labelEntity.Erase();
                                         continue;
                                     }
 
@@ -112,30 +108,17 @@ namespace AtsBackgroundBuilder
                                     placedLabelExtents.Add(bounds);
                                     placed = true;
                                     result.LabelsPlaced++;
-
-                                    if (_config.EnableLeaders && disposition.AddLeader)
-                                    {
-                                        CreateLeader(transaction, modelSpace, target, pt, disposition.TextLayerName);
-                                    }
-
                                     break;
                                 }
 
                                 if (!placed && _config.PlaceWhenOverlapFails && candidates.Count > 0)
                                 {
                                     // Forced placement at last candidate
-                                    var mtext = CreateLabel(lastCandidate, disposition.LabelText, disposition.TextLayerName);
-                                    modelSpace.AppendEntity(mtext);
-                                    transaction.AddNewlyCreatedDBObject(mtext, true);
+                                    var labelEntity = CreateLabelEntity(transaction, modelSpace, target, lastCandidate, disposition);
 
-                                    placedLabelExtents.Add(mtext.GeometricExtents);
+                                    placedLabelExtents.Add(labelEntity.GeometricExtents);
                                     result.LabelsPlaced++;
                                     result.OverlapForced++;
-
-                                    if (_config.EnableLeaders && disposition.AddLeader)
-                                    {
-                                        CreateLeader(transaction, modelSpace, target, lastCandidate, disposition.TextLayerName);
-                                    }
 
                                     placed = true;
                                 }
@@ -171,46 +154,89 @@ namespace AtsBackgroundBuilder
             };
         }
 
-        private void CreateLeader(Transaction tr, BlockTableRecord modelSpace, Point2d target, Point2d labelPoint, string layerName)
+        private Entity CreateLabelEntity(Transaction tr, BlockTableRecord modelSpace, Point2d target, Point2d labelPoint, DispositionInfo disposition)
         {
-            // Circle at target (optional)
-            if (_config.LeaderCircleRadius > 1e-6)
+            if (_config.EnableLeaders && disposition.AddLeader)
             {
-                var circle = new Circle(new Point3d(target.X, target.Y, 0), Vector3d.ZAxis, _config.LeaderCircleRadius)
-                {
-                    Layer = layerName,
-                    ColorIndex = 7
-                };
-                modelSpace.AppendEntity(circle);
-                tr.AddNewlyCreatedDBObject(circle, true);
+                return CreateLeader(tr, modelSpace, target, labelPoint, disposition.LabelText, disposition.TextLayerName);
             }
 
-            // Line from circle edge to label point
-            var start = new Point3d(target.X, target.Y, 0);
-            var end = new Point3d(labelPoint.X, labelPoint.Y, 0);
-
-            var vec = end - start;
-            if (vec.Length < 1e-6)
-                return;
-
-            if (_config.LeaderCircleRadius > 1e-6)
-            {
-                var dir = vec.GetNormal();
-                start = start + dir * _config.LeaderCircleRadius;
-            }
-
-            if ((end - start).Length < 1e-6)
-                return;
-
-            var line = new Line(start, end)
-            {
-                Layer = layerName,
-                ColorIndex = 7
-            };
-            modelSpace.AppendEntity(line);
-            tr.AddNewlyCreatedDBObject(line, true);
+            var mtext = CreateLabel(labelPoint, disposition.LabelText, disposition.TextLayerName);
+            modelSpace.AppendEntity(mtext);
+            tr.AddNewlyCreatedDBObject(mtext, true);
+            return mtext;
         }
-                private static void EnsureLayerInTransaction(Database db, Transaction tr, string layerName)
+
+        private MLeader CreateLeader(
+            Transaction tr,
+            BlockTableRecord modelSpace,
+            Point2d target,
+            Point2d labelPoint,
+            string labelText,
+            string layerName)
+        {
+            var mtext = new MText
+            {
+                Location = new Point3d(labelPoint.X, labelPoint.Y, 0),
+                TextHeight = _config.TextHeight,
+                Contents = labelText,
+                Layer = layerName,
+                ColorIndex = 7,
+                Attachment = AttachmentPoint.BottomLeft
+            };
+
+            var mleader = new MLeader();
+            mleader.SetDatabaseDefaults();
+            mleader.ContentType = ContentType.MText;
+            mleader.MText = mtext;
+
+            int leaderIndex = mleader.AddLeader();
+            mleader.AddLeaderLine(leaderIndex);
+            mleader.SetFirstVertex(leaderIndex, 0, new Point3d(target.X, target.Y, 0));
+            mleader.SetLastVertex(leaderIndex, 0, new Point3d(labelPoint.X, labelPoint.Y, 0));
+
+            mleader.LeaderLineType = LeaderType.StraightLeader;
+            mleader.HasArrowHead = true;
+
+            var arrowId = GetClosedDotArrowId(tr);
+            if (!arrowId.IsNull)
+            {
+                mleader.ArrowSymbolId = arrowId;
+            }
+
+            mleader.Layer = layerName;
+            mleader.ColorIndex = 7;
+
+            modelSpace.AppendEntity(mleader);
+            tr.AddNewlyCreatedDBObject(mleader, true);
+            return mleader;
+        }
+
+        private ObjectId GetClosedDotArrowId(Transaction tr)
+        {
+            var blockTable = (BlockTable)tr.GetObject(_database.BlockTableId, OpenMode.ForRead);
+            var candidateNames = new[]
+            {
+                "_Dot",
+                "_DOT",
+                "DOT",
+                "_DotSmall",
+                "_DOTSMALL",
+                "DOTSMALL"
+            };
+
+            foreach (var name in candidateNames)
+            {
+                if (blockTable.Has(name))
+                {
+                    return blockTable[name];
+                }
+            }
+
+            return ObjectId.Null;
+        }
+
+        private static void EnsureLayerInTransaction(Database db, Transaction tr, string layerName)
         {
             var layerTable = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
             if (layerTable.Has(layerName))

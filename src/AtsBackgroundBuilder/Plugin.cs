@@ -97,10 +97,6 @@ namespace AtsBackgroundBuilder
                     // Work with an in-memory clone after the transaction ends.
                     // NOTE: clone is a DBObject not in the database; keep it alive for label placement.
 
-                    // Default output layers (can be overridden by client/foreign logic later).
-                    string lineLayer = ent.Layer;
-                    string textLayer = ent.Layer;
-
                     result.TotalDispositions++;
                     var od = OdHelpers.ReadObjectData(id, logger);
                     if (od == null)
@@ -120,6 +116,37 @@ namespace AtsBackgroundBuilder
                     var dispNumFormatted = FormatDispNum(dispNum);
                     var safePoint = GeometryUtils.GetSafeInteriorPoint(clone);
 
+                    // Default output layers; will be overridden when mapping succeeds.
+                    string lineLayer = ent.Layer;
+                    string textLayer = ent.Layer;
+
+                    // Determine client/foreign layer names based on company and purpose.
+                    // Purpose extra column supplies the layer suffix (e.g. ROW, PIPE, etc.).
+                    string? lineLayerName = null;
+                    string? textLayerName = null;
+                    try
+                    {
+                        var purposeEntry = purposeLookup.Lookup(purpose);
+                        var suffix = purposeEntry?.Extra?.Trim();
+                        if (!string.IsNullOrEmpty(suffix))
+                        {
+                            var prefix = string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase)
+                                ? "C"
+                                : "F";
+                            lineLayerName = $"{prefix}-{suffix}";
+                            textLayerName = $"{lineLayerName}-T";
+                        }
+                    }
+                    catch
+                    {
+                        // ignore lookup failures; fall back to original layer
+                    }
+
+                    if (!string.IsNullOrEmpty(lineLayerName))
+                        lineLayer = lineLayerName;
+                    if (!string.IsNullOrEmpty(textLayerName))
+                        textLayer = textLayerName;
+
                     var requiresWidth = PurposeRequiresWidth(purpose, config);
                     string labelText;
 
@@ -131,13 +158,23 @@ namespace AtsBackgroundBuilder
                             config.VariableWidthAbsTolerance,
                             config.VariableWidthRelTolerance);
 
-                        if (measurement.IsVariable)
+                        var snapped = GeometryUtils.SnapWidthToAcceptable(
+                            measurement.MedianWidth,
+                            config.AcceptableRowWidths,
+                            config.WidthSnapTolerance);
+
+                        bool isVariable = measurement.IsVariable;
+                        if (isVariable && Math.Abs(snapped - measurement.MedianWidth) <= config.WidthSnapTolerance)
+                        {
+                            isVariable = false;
+                        }
+
+                        if (isVariable)
                         {
                             labelText = mappedCompany + "\\P" + "Variable Width" + "\\P" + ToTitleCaseWords(purpose) + "\\P" + dispNumFormatted;
                         }
                         else
                         {
-                            var snapped = GeometryUtils.SnapWidthToAcceptable(measurement.MedianWidth, config.AcceptableRowWidths, config.WidthSnapTolerance);
                             var widthText = snapped.ToString("0.00", CultureInfo.InvariantCulture);
                             labelText = mappedCompany + "\\P" + widthText + " " + mappedPurpose + "\\P" + dispNumFormatted;
                         }
