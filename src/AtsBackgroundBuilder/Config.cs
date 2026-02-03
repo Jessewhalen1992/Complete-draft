@@ -72,7 +72,7 @@ namespace AtsBackgroundBuilder
         public bool ImportAdjacentSections { get; set; } = true;
 
         public bool ImportDispositionShapefiles { get; set; } = true;
-        public string DispositionShapefileFolder { get; set; } = "";
+        public string DispositionShapefileFolder { get; set; } = @"C:\AUTOCAD-SETUP CG\SHAPE FILES";
         // Backwards-compatible aliases used by some modules (older naming).
         // Prefer ImportDispositionShapefiles / DispositionShapefileFolder in new code.
         public bool DispositionShapefiles
@@ -90,37 +90,37 @@ namespace AtsBackgroundBuilder
         /// <summary>
         /// Optional buffer distance (drawing units) to expand the section/quarter extents when importing shapefiles.
         /// </summary>
-        public double SectionBufferDistance { get; set; } = 0.0;
+        public double SectionBufferDistance { get; set; } = 100.0;
 
-        public string[] DispositionShapefileNames { get; set; } = new[] { "dispositions.shp" };
+        public string[] DispositionShapefileNames { get; set; } = new[] { "DAB_APPL.shp" };
 
         public bool AllowMultiQuarterDispositions { get; set; } = true;
 
         public static Config Load(string path, Logger logger)
         {
+            var defaults = new Config();
             if (!File.Exists(path))
             {
-                var cfg = new Config();
-                Save(path, cfg, logger);
-                return cfg;
+                Save(path, defaults, logger);
+                return defaults;
             }
 
             try
             {
                 var json = File.ReadAllText(path);
                 var cfg = JsonSerializer.Deserialize<Config>(json);
-
                 if (cfg == null)
+                {
                     throw new Exception("Config deserialize returned null.");
+                }
 
-                return cfg;
+                return MergeDefaults(defaults, cfg, json);
             }
             catch (Exception ex)
             {
                 logger.WriteLine($"Config load failed ({path}): {ex.Message}");
-                var cfg = new Config();
-                Save(path, cfg, logger);
-                return cfg;
+                Save(path, defaults, logger);
+                return defaults;
             }
         }
 
@@ -135,6 +135,94 @@ namespace AtsBackgroundBuilder
             {
                 logger.WriteLine($"Config save failed ({path}): {ex.Message}");
             }
+        }
+
+        private static Config MergeDefaults(Config defaults, Config loaded, string json)
+        {
+            defaults.TextHeight = loaded.TextHeight;
+            defaults.MaxOverlapAttempts = loaded.MaxOverlapAttempts;
+            defaults.PlaceWhenOverlapFails = loaded.PlaceWhenOverlapFails;
+            defaults.UseRegionIntersection = loaded.UseRegionIntersection;
+            defaults.EnableLeaders = loaded.EnableLeaders;
+            defaults.LeaderCircleRadius = loaded.LeaderCircleRadius;
+            defaults.LookupFolder = loaded.LookupFolder;
+            defaults.CompanyLookupFile = loaded.CompanyLookupFile;
+            defaults.PurposeLookupFile = loaded.PurposeLookupFile;
+            defaults.WidthRequiredPurposeCodes = loaded.WidthRequiredPurposeCodes;
+            defaults.AcceptableRowWidths = loaded.AcceptableRowWidths;
+            defaults.WidthSnapTolerance = loaded.WidthSnapTolerance;
+            defaults.WidthSampleCount = loaded.WidthSampleCount;
+            defaults.VariableWidthAbsTolerance = loaded.VariableWidthAbsTolerance;
+            defaults.VariableWidthRelTolerance = loaded.VariableWidthRelTolerance;
+            defaults.AllowOutsideDispositionForWidthPurposes = loaded.AllowOutsideDispositionForWidthPurposes;
+            defaults.UseSectionIndex = loaded.UseSectionIndex;
+            defaults.ImportAdjacentSections = loaded.ImportAdjacentSections;
+            defaults.ImportDispositionShapefiles = loaded.ImportDispositionShapefiles;
+            defaults.SectionBufferDistance = loaded.SectionBufferDistance;
+            defaults.AllowMultiQuarterDispositions = loaded.AllowMultiQuarterDispositions;
+
+            if (!string.IsNullOrWhiteSpace(loaded.SectionIndexFolder))
+            {
+                defaults.SectionIndexFolder = loaded.SectionIndexFolder;
+            }
+
+            if (!string.IsNullOrWhiteSpace(loaded.DispositionShapefileFolder))
+            {
+                defaults.DispositionShapefileFolder = loaded.DispositionShapefileFolder;
+            }
+
+            if (loaded.DispositionShapefileNames != null && loaded.DispositionShapefileNames.Length > 0)
+            {
+                defaults.DispositionShapefileNames = loaded.DispositionShapefileNames;
+            }
+
+            var legacyFolder = GetStringFromJson(json, "ShapefileFolder");
+            if (!string.IsNullOrWhiteSpace(legacyFolder))
+            {
+                defaults.DispositionShapefileFolder = legacyFolder;
+            }
+
+            var legacyNames = GetStringArrayFromJson(json, "DispositionShapefiles");
+            if (legacyNames != null && legacyNames.Length > 0)
+            {
+                defaults.DispositionShapefileNames = legacyNames;
+            }
+
+            return defaults;
+        }
+
+        private static string? GetStringFromJson(string json, string propertyName)
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty(propertyName, out var element))
+            {
+                return null;
+            }
+
+            return element.ValueKind == JsonValueKind.String ? element.GetString() : null;
+        }
+
+        private static string[]? GetStringArrayFromJson(string json, string propertyName)
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty(propertyName, out var element))
+            {
+                return null;
+            }
+
+            if (element.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var list = new string[element.GetArrayLength()];
+            var index = 0;
+            foreach (var item in element.EnumerateArray())
+            {
+                list[index++] = item.GetString() ?? string.Empty;
+            }
+
+            return list;
         }
     }
 }
