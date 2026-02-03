@@ -172,15 +172,12 @@ namespace AtsBackgroundBuilder
                 ColorIndex = 256,
                 Attachment = attachment
             };
-            ApplyDimensionStyle(tr, mtext, out var dimStyleId);
+            ApplyDimensionStyle(tr, mtext, out _);
 
             var mleader = new MLeader();
             mleader.SetDatabaseDefaults();
             mleader.ContentType = ContentType.MTextContent;
             mleader.MText = mtext;
-            if (!dimStyleId.IsNull)
-                mleader.DimStyle = dimStyleId;
-
             // Create a leader cluster and line
             int leaderIndex = mleader.AddLeader();
             int lineIndex = mleader.AddLeaderLine(leaderIndex);
@@ -232,8 +229,8 @@ namespace AtsBackgroundBuilder
 
             dimStyleId = dimStyleTable[_config.DimensionStyleName];
             var dimStyle = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
-            if (!dimStyle.TextStyleId.IsNull)
-                mtext.TextStyleId = dimStyle.TextStyleId;
+            if (!dimStyle.Dimtxsty.IsNull)
+                mtext.TextStyleId = dimStyle.Dimtxsty;
         }
 
         private static AttachmentPoint GetLeaderAttachment(Point2d target, Point2d labelPoint)
