@@ -31,6 +31,7 @@ namespace AtsBackgroundBuilder
         {
             var result = new PlacementResult();
             var processedDispositionIds = new HashSet<ObjectId>();
+            var countedDispositionIds = new HashSet<ObjectId>();
 
             using (var transaction = _database.TransactionManager.StartTransaction())
             {
@@ -49,8 +50,10 @@ namespace AtsBackgroundBuilder
                             if (!_config.AllowMultiQuarterDispositions && processedDispositionIds.Contains(disposition.ObjectId))
                                 continue;
 
-                            if (processedDispositionIds.Contains(disposition.ObjectId))
+                            if (countedDispositionIds.Contains(disposition.ObjectId))
                                 result.MultiQuarterProcessed++;
+                            else
+                                countedDispositionIds.Add(disposition.ObjectId);
 
                             // Quick reject by extents
                             if (!GeometryUtils.ExtentsIntersect(quarter.Polyline.GeometricExtents, disposition.Polyline.GeometricExtents))
@@ -68,8 +71,73 @@ namespace AtsBackgroundBuilder
 
                             using (var dispClone = (Polyline)disposition.Polyline.Clone())
                             {
+                                var labelText = disposition.LabelText;
+                                var textColorIndex = disposition.TextColorIndex;
+                                var safePoint = disposition.SafePoint;
+                                double measuredWidth = 0.0;
+
+                                if (disposition.RequiresWidth)
+                                {
+                                    // Clip the disposition clone to the quarter boundary
+                                    var clipped = GeometryUtils.IntersectPolylineWithRect(
+                                        dispClone,
+                                        quarterClone.GeometricExtents.MinPoint,
+                                        quarterClone.GeometricExtents.MaxPoint);
+                                    // fall back to the full clone if clipping fails
+                                    var polyForWidth = clipped ?? dispClone;
+
+                                    var measurement = GeometryUtils.MeasureCorridorWidth(
+                                        polyForWidth,
+                                        _config.WidthSampleCount,
+                                        _config.VariableWidthAbsTolerance,
+                                        _config.VariableWidthRelTolerance);
+
+                                    safePoint = measurement.MedianCenter;
+                                    measuredWidth = measurement.MedianWidth;
+
+                                    double median = measurement.MedianWidth;
+                                    double nearestInt = Math.Round(median, 0, MidpointRounding.AwayFromZero);
+
+                                    double bestException = median;
+                                    double diffException = double.MaxValue;
+                                    if (_config.AcceptableRowWidths != null && _config.AcceptableRowWidths.Length > 0)
+                                    {
+                                        bestException = _config.AcceptableRowWidths
+                                            .OrderBy(w => Math.Abs(median - w))
+                                            .First();
+                                        diffException = Math.Abs(median - bestException);
+                                    }
+                                    double diffInt = Math.Abs(median - nearestInt);
+
+                                    double snapped;
+                                    bool snappedToAcceptable = diffException <= diffInt || diffException <= _config.WidthSnapTolerance;
+                                    if (snappedToAcceptable)
+                                        snapped = bestException;
+                                    else
+                                        snapped = nearestInt;
+
+                                    bool isVariable = measurement.IsVariable;
+                                    if (isVariable && Math.Abs(snapped - measurement.MedianWidth) <= _config.WidthSnapTolerance)
+                                    {
+                                        isVariable = false;
+                                    }
+
+                                    bool hasMatchingWidth = !isVariable && snappedToAcceptable;
+                                    if (isVariable)
+                                    {
+                                        labelText = disposition.MappedCompany + "\\P" + "Variable Width" + "\\P" + disposition.PurposeTitleCase + "\\P" + disposition.DispNumFormatted;
+                                    }
+                                    else
+                                    {
+                                        var widthText = snapped.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+                                        labelText = disposition.MappedCompany + "\\P" + widthText + " " + disposition.MappedPurpose + "\\P" + disposition.DispNumFormatted;
+                                    }
+
+                                    textColorIndex = hasMatchingWidth ? 256 : 3;
+                                }
+
                                 // Leader target point (inside quarter ∩ disposition whenever possible)
-                                var target = GetTargetPoint(quarterClone, dispClone, disposition.SafePoint);
+                                var target = GetTargetPoint(quarterClone, dispClone, safePoint);
 
                                 // Candidate label points around the target
                                 var candidates = GetCandidateLabelPoints(
@@ -78,7 +146,8 @@ namespace AtsBackgroundBuilder
                                         target,
                                         disposition.AllowLabelOutsideDisposition,
                                         _config.TextHeight,
-                                        _config.MaxOverlapAttempts)
+                                        _config.MaxOverlapAttempts,
+                                        measuredWidth)
                                     .ToList();
 
                                 if (candidates.Count == 0)
@@ -94,7 +163,7 @@ namespace AtsBackgroundBuilder
                                 {
                                     lastCandidate = pt;
 
-                                    var labelEntity = CreateLabelEntity(transaction, modelSpace, target, pt, disposition);
+                                    var labelEntity = CreateLabelEntity(transaction, modelSpace, target, pt, disposition, labelText, textColorIndex);
                                     var bounds = labelEntity.GeometricExtents;
                                     bool overlaps = placedLabelExtents.Any(b => GeometryUtils.ExtentsIntersect(b, bounds));
 
@@ -114,7 +183,7 @@ namespace AtsBackgroundBuilder
                                 if (!placed && _config.PlaceWhenOverlapFails && candidates.Count > 0)
                                 {
                                     // Forced placement at last candidate
-                                    var labelEntity = CreateLabelEntity(transaction, modelSpace, target, lastCandidate, disposition);
+                                    var labelEntity = CreateLabelEntity(transaction, modelSpace, target, lastCandidate, disposition, labelText, textColorIndex);
 
                                     placedLabelExtents.Add(labelEntity.GeometricExtents);
                                     result.LabelsPlaced++;
@@ -129,7 +198,8 @@ namespace AtsBackgroundBuilder
                                     _logger.WriteLine($"Could not place label for disposition {disposition.ObjectId}");
                                 }
 
-                                processedDispositionIds.Add(disposition.ObjectId);
+                                if (!_config.AllowMultiQuarterDispositions)
+                                    processedDispositionIds.Add(disposition.ObjectId);
                             }
                         }
                     }
@@ -141,14 +211,21 @@ namespace AtsBackgroundBuilder
             return result;
         }
 
-        private Entity CreateLabelEntity(Transaction tr, BlockTableRecord modelSpace, Point2d target, Point2d labelPoint, DispositionInfo disposition)
+        private Entity CreateLabelEntity(
+            Transaction tr,
+            BlockTableRecord modelSpace,
+            Point2d target,
+            Point2d labelPoint,
+            DispositionInfo disposition,
+            string labelText,
+            int textColorIndex)
         {
             if (_config.EnableLeaders && disposition.AddLeader)
             {
-                return CreateLeader(tr, modelSpace, target, labelPoint, disposition.LabelText, disposition.TextLayerName, disposition.TextColorIndex);
+                return CreateLeader(tr, modelSpace, target, labelPoint, labelText, disposition.TextLayerName, textColorIndex);
             }
 
-            var mtext = CreateLabel(tr, labelPoint, disposition.LabelText, disposition.TextLayerName, disposition.TextColorIndex);
+            var mtext = CreateLabel(tr, labelPoint, labelText, disposition.TextLayerName, textColorIndex);
             modelSpace.AppendEntity(mtext);
             tr.AddNewlyCreatedDBObject(mtext, true);
             return mtext;
@@ -179,7 +256,7 @@ namespace AtsBackgroundBuilder
             mleader.SetDatabaseDefaults();
             mleader.ContentType = ContentType.MTextContent;
             mleader.MText = mtext;
-            mleader.TextAttachmentType = TextAttachmentType.AttachmentMiddle;
+            mleader.TextAttachmentType = GetLeaderTextAttachment(attachment);
             // Create a leader cluster and line
             int leaderIndex = mleader.AddLeader();
             int lineIndex = mleader.AddLeaderLine(leaderIndex);
@@ -250,6 +327,21 @@ namespace AtsBackgroundBuilder
             return dx < 0 ? AttachmentPoint.MiddleRight : AttachmentPoint.MiddleLeft;
         }
 
+        private static TextAttachmentType GetLeaderTextAttachment(AttachmentPoint attachment)
+        {
+            switch (attachment)
+            {
+                case AttachmentPoint.MiddleRight:
+                    return TextAttachmentType.AttachmentMiddleRight;
+                case AttachmentPoint.MiddleLeft:
+                    return TextAttachmentType.AttachmentMiddleLeft;
+                case AttachmentPoint.MiddleCenter:
+                    return TextAttachmentType.AttachmentMiddleCenter;
+                default:
+                    return TextAttachmentType.AttachmentMiddleCenter;
+            }
+        }
+
         private ObjectId GetLeaderArrowId(Transaction tr)
         {
             var blockTable = (BlockTable)tr.GetObject(_database.BlockTableId, OpenMode.ForRead);
@@ -312,10 +404,12 @@ namespace AtsBackgroundBuilder
             Point2d target,
             bool allowOutsideDisposition,
             double step,
-            int maxPoints)
+            int maxPoints,
+            double measuredWidth)
         {
             var spiral = GeometryUtils.GetSpiralOffsets(target, step, maxPoints).ToList();
-            double minDistance = step * 0.5;
+            double minDistance = step;
+            double halfWidth = measuredWidth * 0.5;
 
             if (!allowOutsideDisposition)
             {
@@ -325,7 +419,7 @@ namespace AtsBackgroundBuilder
                     {
                         var p3d = new Point3d(p.X, p.Y, 0);
                         var closest = disposition.GetClosestPointTo(p3d, false);
-                        if (closest.DistanceTo(p3d) >= minDistance)
+                        if (closest.DistanceTo(p3d) >= Math.Max(minDistance, halfWidth))
                             yield return p;
                     }
                 }
@@ -343,14 +437,14 @@ namespace AtsBackgroundBuilder
                 {
                     var p3d = new Point3d(p.X, p.Y, 0);
                     var closest = disposition.GetClosestPointTo(p3d, false);
-                    if (closest.DistanceTo(p3d) >= minDistance)
+                    if (closest.DistanceTo(p3d) >= Math.Max(minDistance, halfWidth))
                         inside.Add(p);
                 }
                 else
                 {
                     var p3d = new Point3d(p.X, p.Y, 0);
                     var closest = disposition.GetClosestPointTo(p3d, false);
-                    if (closest.DistanceTo(p3d) >= minDistance)
+                    if (closest.DistanceTo(p3d) >= Math.Max(minDistance, halfWidth))
                         yield return p;
                 }
             }
@@ -503,6 +597,11 @@ namespace AtsBackgroundBuilder
         public string TextLayerName { get; }
         public Point2d SafePoint { get; }
         public int TextColorIndex { get; set; } = 256;
+        public bool RequiresWidth { get; set; }
+        public string MappedCompany { get; set; } = string.Empty;
+        public string MappedPurpose { get; set; } = string.Empty;
+        public string PurposeTitleCase { get; set; } = string.Empty;
+        public string DispNumFormatted { get; set; } = string.Empty;
 
         // For width-required purposes, allow label to be placed in the quarter (not necessarily in the disposition)
         public bool AllowLabelOutsideDisposition { get; set; }
