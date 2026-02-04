@@ -240,7 +240,6 @@ namespace AtsBackgroundBuilder
             string layerName,
             int colorIndex)
         {
-            var attachment = GetLeaderAttachment(target, labelPoint);
             var mtext = new MText
             {
                 Location = new Point3d(labelPoint.X, labelPoint.Y, 0),
@@ -248,12 +247,13 @@ namespace AtsBackgroundBuilder
                 Contents = labelText,
                 Layer = layerName,
                 ColorIndex = colorIndex,
-                Attachment = attachment
+                Attachment = AttachmentPoint.MiddleCenter
             };
             ApplyDimensionStyle(tr, mtext, out _);
 
             var mleader = new MLeader();
             mleader.SetDatabaseDefaults();
+            ApplyLeaderStyle(tr, mleader);
             mleader.ContentType = ContentType.MTextContent;
             mleader.MText = mtext;
             mleader.TextAttachmentType = TextAttachmentType.AttachmentMiddle;
@@ -316,6 +316,17 @@ namespace AtsBackgroundBuilder
             var dimStyle = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
             if (!dimStyle.Dimtxsty.IsNull)
                 mtext.TextStyleId = dimStyle.Dimtxsty;
+        }
+
+        private void ApplyLeaderStyle(Transaction tr, MLeader mleader)
+        {
+            if (tr == null || mleader == null) return;
+
+            var leaderStyleDictionary = (DBDictionary)tr.GetObject(_database.MLeaderStyleDictionaryId, OpenMode.ForRead);
+            if (!leaderStyleDictionary.Contains("Dispo-Labels"))
+                return;
+
+            mleader.MLeaderStyle = leaderStyleDictionary.GetAt("Dispo-Labels");
         }
 
         private static AttachmentPoint GetLeaderAttachment(Point2d target, Point2d labelPoint)
