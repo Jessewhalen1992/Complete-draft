@@ -61,32 +61,36 @@ namespace AtsBackgroundBuilder
                             if (!GeometryUtils.ExtentsIntersect(quarter.Polyline.GeometricExtents, disposition.Polyline.GeometricExtents))
                                 continue;
 
+                            // Confirm actual intersection and compute per-quarter target
+                            if (!TryGetQuarterIntersectionTarget(quarterClone, disposition.Polyline, out var intersectionPiece, out var quarterTarget))
+                            {
+                                _logger.WriteLine($"No quarter intersection: disp={disposition.ObjectId} quarterExt={quarterClone.GeometricExtents}");
+                                result.SkippedNoIntersection++;
+                                continue;
+                            }
+
                             // Label layer mapping check
                             if (string.IsNullOrWhiteSpace(disposition.TextLayerName))
                             {
                                 result.SkippedNoLayerMapping++;
+                                if (intersectionPiece != null && !ReferenceEquals(intersectionPiece, disposition.Polyline))
+                                    intersectionPiece.Dispose();
                                 continue;
                             }
 
                             // Ensure label layer exists
                             EnsureLayerInTransaction(_database, transaction, disposition.TextLayerName);
 
+                            bool skipPlacement = false;
                             using (var dispClone = (Polyline)disposition.Polyline.Clone())
                             {
                                 var labelText = disposition.LabelText;
                                 var textColorIndex = disposition.TextColorIndex;
-                                var safePoint = disposition.SafePoint;
                                 double measuredWidth = 0.0;
 
                                 if (disposition.RequiresWidth)
                                 {
-                                    // Clip the disposition clone to the quarter boundary
-                                    var clipped = GeometryUtils.IntersectPolylineWithRect(
-                                        dispClone,
-                                        quarterClone.GeometricExtents.MinPoint,
-                                        quarterClone.GeometricExtents.MaxPoint);
-                                    // fall back to the full clone if clipping fails
-                                    var polyForWidth = clipped ?? dispClone;
+                                    var polyForWidth = intersectionPiece ?? dispClone;
 
                                     var measurement = GeometryUtils.MeasureCorridorWidth(
                                         polyForWidth,
@@ -94,7 +98,6 @@ namespace AtsBackgroundBuilder
                                         _config.VariableWidthAbsTolerance,
                                         _config.VariableWidthRelTolerance);
 
-                                    safePoint = measurement.MedianCenter;
                                     measuredWidth = measurement.MedianWidth;
 
                                     double median = measuredWidth;
@@ -141,7 +144,7 @@ namespace AtsBackgroundBuilder
                                 }
 
                                 // Leader target point (inside quarter ∩ disposition whenever possible)
-                                var target = disposition.RequiresWidth ? safePoint : GetTargetPoint(quarterClone, dispClone, safePoint);
+                                var target = quarterTarget;
 
                                 // Candidate label points around the target
                                 var candidates = GetCandidateLabelPoints(
@@ -156,59 +159,73 @@ namespace AtsBackgroundBuilder
 
                                 if (candidates.Count == 0)
                                 {
-                                    // If we have no valid candidate inside this quarter, do not place a label for this quarter.
-                                    // Falling back to an out-of-quarter target causes stacked/double labels in one quarter.
+                                    // Only fallback if target is actually inside this quarter
                                     if (!GeometryUtils.IsPointInsidePolyline(quarterClone, target))
-                                        continue;
-
-                                    candidates.Add(target);
+                                    {
+                                        skipPlacement = true;
+                                    }
+                                    else
+                                    {
+                                        candidates.Add(target);
+                                    }
                                 }
 
-                                bool placed = false;
-                                Point2d lastCandidate = candidates[candidates.Count - 1];
-
-                                foreach (var pt in candidates)
+                                if (!skipPlacement)
                                 {
-                                    lastCandidate = pt;
+                                    bool placed = false;
+                                    Point2d lastCandidate = candidates[candidates.Count - 1];
 
-                                    var labelEntity = CreateLabelEntity(transaction, modelSpace, target, pt, disposition, labelText, textColorIndex);
-                                    var bounds = labelEntity.GeometricExtents;
-                                    bool overlaps = placedLabelExtents.Any(b => GeometryUtils.ExtentsIntersect(b, bounds));
-
-                                    if (overlaps)
+                                    foreach (var pt in candidates)
                                     {
-                                        labelEntity.Erase();
-                                        continue;
+                                        lastCandidate = pt;
+
+                                        var labelEntity = CreateLabelEntity(transaction, modelSpace, target, pt, disposition, labelText, textColorIndex);
+                                        var bounds = labelEntity.GeometricExtents;
+                                        bool overlaps = placedLabelExtents.Any(b => GeometryUtils.ExtentsIntersect(b, bounds));
+
+                                        if (overlaps)
+                                        {
+                                            labelEntity.Erase();
+                                            continue;
+                                        }
+
+                                        // Success
+                                        placedLabelExtents.Add(bounds);
+                                        placed = true;
+                                        result.LabelsPlaced++;
+                                        break;
                                     }
 
-                                    // Success
-                                    placedLabelExtents.Add(bounds);
-                                    placed = true;
-                                    result.LabelsPlaced++;
-                                    break;
+                                    if (!placed && _config.PlaceWhenOverlapFails && candidates.Count > 0)
+                                    {
+                                        // Forced placement at last candidate
+                                        var labelEntity = CreateLabelEntity(transaction, modelSpace, target, lastCandidate, disposition, labelText, textColorIndex);
+
+                                        placedLabelExtents.Add(labelEntity.GeometricExtents);
+                                        result.LabelsPlaced++;
+                                        result.OverlapForced++;
+
+                                        placed = true;
+                                    }
+
+                                    if (!placed)
+                                    {
+                                        // Not counted in legacy result, but keep debug output
+                                        _logger.WriteLine($"Could not place label for disposition {disposition.ObjectId}");
+                                    }
+
+                                    if (!_config.AllowMultiQuarterDispositions)
+                                        processedDispositionIds.Add(disposition.ObjectId);
                                 }
-
-                                if (!placed && _config.PlaceWhenOverlapFails && candidates.Count > 0)
-                                {
-                                    // Forced placement at last candidate
-                                    var labelEntity = CreateLabelEntity(transaction, modelSpace, target, lastCandidate, disposition, labelText, textColorIndex);
-
-                                    placedLabelExtents.Add(labelEntity.GeometricExtents);
-                                    result.LabelsPlaced++;
-                                    result.OverlapForced++;
-
-                                    placed = true;
-                                }
-
-                                if (!placed)
-                                {
-                                    // Not counted in legacy result, but keep debug output
-                                    _logger.WriteLine($"Could not place label for disposition {disposition.ObjectId}");
-                                }
-
-                                if (!_config.AllowMultiQuarterDispositions)
-                                    processedDispositionIds.Add(disposition.ObjectId);
                             }
+
+                            if (intersectionPiece != null && !ReferenceEquals(intersectionPiece, disposition.Polyline))
+                            {
+                                intersectionPiece.Dispose();
+                            }
+
+                            if (skipPlacement)
+                                continue;
                         }
                     }
                 }
@@ -464,6 +481,77 @@ namespace AtsBackgroundBuilder
                 yield return p;
         }
 
+        private bool TryGetQuarterIntersectionTarget(
+            Polyline quarter,
+            Polyline disposition,
+            out Polyline? intersectionPiece,
+            out Point2d target)
+        {
+            intersectionPiece = null;
+            target = default;
+
+            // First try true polygon intersection: disposition ∩ quarter
+            if (GeometryUtils.TryIntersectPolylines(disposition, quarter, out var pieces) && pieces.Count > 0)
+            {
+                // keep only closed pieces
+                var closed = pieces.Where(p => p != null && p.Closed && p.NumberOfVertices >= 3).ToList();
+                if (closed.Count > 0)
+                {
+                    // pick the piece with the largest area (fallback to extents area if Area throws)
+                    Polyline best = closed[0];
+                    double bestScore = -1;
+
+                    foreach (var p in closed)
+                    {
+                        double score;
+                        try { score = Math.Abs(p.Area); }
+                        catch
+                        {
+                            var e = p.GeometricExtents;
+                            score = Math.Abs((e.MaxPoint.X - e.MinPoint.X) * (e.MaxPoint.Y - e.MinPoint.Y));
+                        }
+
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            best = p;
+                        }
+                    }
+
+                    intersectionPiece = best;
+
+                    // target = safe interior of intersection piece
+                    target = GeometryUtils.GetSafeInteriorPoint(best);
+
+                    // Dispose non-best pieces (TryIntersectPolylines returns DBObjects the caller owns)
+                    foreach (var p in closed)
+                    {
+                        if (!ReferenceEquals(p, best))
+                            p.Dispose();
+                    }
+                    return true;
+                }
+
+                // Dispose pieces if none were usable
+                foreach (var p in pieces) p.Dispose();
+            }
+
+            // Fallback: spiral search inside BOTH polygons within overlap extents
+            var overlap = GetExtentsOverlapCenter(quarter.GeometricExtents, disposition.GeometricExtents);
+            double step = Math.Max(_config.TextHeight, 5.0);
+            foreach (var p in GeometryUtils.GetSpiralOffsets(overlap, step, 200))
+            {
+                if (GeometryUtils.IsPointInsidePolyline(quarter, p) &&
+                    GeometryUtils.IsPointInsidePolyline(disposition, p))
+                {
+                    target = p;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private Point2d GetTargetPoint(Polyline quarter, Polyline disposition, Point2d fallback)
         {
             // Best: centroid of intersection region(s)
@@ -608,6 +696,7 @@ namespace AtsBackgroundBuilder
     {
         public int LabelsPlaced { get; set; }
         public int SkippedNoLayerMapping { get; set; }
+        public int SkippedNoIntersection { get; set; }
         public int OverlapForced { get; set; }
         public int MultiQuarterProcessed { get; set; }
     }
