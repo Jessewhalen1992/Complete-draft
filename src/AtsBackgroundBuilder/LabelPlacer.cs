@@ -314,7 +314,12 @@ namespace AtsBackgroundBuilder
                 foreach (var p in spiral)
                 {
                     if (PointInPolyline(quarter, p) && PointInPolyline(disposition, p))
-                        yield return p;
+                    {
+                        var p3d = new Point3d(p.X, p.Y, 0);
+                        var closest = disposition.GetClosestPointTo(p3d, false);
+                        if (closest.DistanceTo(p3d) >= (step * 0.5))
+                            yield return p;
+                    }
                 }
                 yield break;
             }

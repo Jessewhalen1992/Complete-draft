@@ -97,8 +97,9 @@ namespace AtsBackgroundBuilder
         /// </summary>
         public double[] AcceptableRowWidths { get; set; } = new[]
         {
-            10.50, 10.06, 3.05, 4.57, 6.10, 15.24, 20.00, 20.12,
-            30.18, 30.48, 36.58, 18.29, 9.14, 7.62
+            3.05, 4.57, 5.00, 6.10, 7.62, 8.00, 9.14,
+            10.06, 10.50, 15.24, 18.29, 20.00, 20.12,
+            25.00, 30.18, 30.48, 36.58
         };
 
         public double WidthSnapTolerance { get; set; } = 0.25;
