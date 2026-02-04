@@ -93,10 +93,7 @@ namespace AtsBackgroundBuilder
                                         _config.VariableWidthRelTolerance);
 
                                     safePoint = measurement.MedianCenter;
-                                    if (GeometryUtils.TryWidthAtPoint(polyForWidth, measurement.MedianCenter, out var pointWidth))
-                                        measuredWidth = pointWidth;
-                                    else
-                                        measuredWidth = measurement.MedianWidth;
+                                    measuredWidth = measurement.MedianWidth;
 
                                     double median = measuredWidth;
                                     double nearestInt = Math.Round(measuredWidth, 0, MidpointRounding.AwayFromZero);
@@ -126,8 +123,8 @@ namespace AtsBackgroundBuilder
                                     }
 
                                     bool snappedIsInAcceptable = _config.AcceptableRowWidths != null
-                                        && _config.AcceptableRowWidths.Any(w => Math.Abs(w - snapped) < 1e-6);
-                                    bool hasMatchingWidth = !isVariable && (snappedToAcceptable || snappedIsInAcceptable);
+                                        && _config.AcceptableRowWidths.Any(w => Math.Abs(w - snapped) <= 1e-4);
+                                    bool hasMatchingWidth = !isVariable && snappedIsInAcceptable;
                                     if (isVariable)
                                     {
                                         labelText = disposition.MappedCompany + "\\P" + "Variable Width" + "\\P" + disposition.PurposeTitleCase + "\\P" + disposition.DispNumFormatted;
@@ -142,7 +139,7 @@ namespace AtsBackgroundBuilder
                                 }
 
                                 // Leader target point (inside quarter ∩ disposition whenever possible)
-                                var target = GetTargetPoint(quarterClone, dispClone, safePoint);
+                                var target = disposition.RequiresWidth ? safePoint : GetTargetPoint(quarterClone, dispClone, safePoint);
 
                                 // Candidate label points around the target
                                 var candidates = GetCandidateLabelPoints(

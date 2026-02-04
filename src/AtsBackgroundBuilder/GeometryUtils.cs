@@ -365,10 +365,23 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
                 {
                     Vector2d normal = new Vector2d(-tan2d.Y, tan2d.X).GetNormal();
                     double bigLocal = Math.Max(corridor.GeometricExtents.MaxPoint.DistanceTo(corridor.GeometricExtents.MinPoint), length) * 2.0;
-                    if (TryCrossSectionWidth(corridor, center2d, normal, bigLocal, out var w))
+                    double approxWidth = Math.Abs(maxS - minS);
+                    double probe = approxWidth > 0 ? Math.Max(0.25, Math.Min(1.0, approxWidth * 0.05)) : 0.25;
+                    Point2d plus = new Point2d(center2d.X + normal.X * probe, center2d.Y + normal.Y * probe);
+                    Point2d minus = new Point2d(center2d.X - normal.X * probe, center2d.Y - normal.Y * probe);
+
+                    Point2d inside;
+                    if (IsPointInsidePolyline(corridor, plus))
+                        inside = plus;
+                    else if (IsPointInsidePolyline(corridor, minus))
+                        inside = minus;
+                    else
+                        continue;
+
+                    if (TryCrossSectionWidthStraddlingPoint(corridor, inside, normal, bigLocal, out var w, out var mid))
                     {
                         widths.Add(w);
-                        samples.Add((w, center2d));
+                        samples.Add((w, mid));
                         usedSamples = true;
                     }
                 }
@@ -441,6 +454,70 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
             }
 
             return bestDiff <= tolerance ? best : measured;
+        }
+
+        private static bool TryCrossSectionWidthStraddlingPoint(
+            Polyline corridor,
+            Point2d insidePoint,
+            Vector2d direction,
+            double halfLength,
+            out double width,
+            out Point2d midPoint)
+        {
+            width = 0;
+            midPoint = insidePoint;
+
+            var dir = direction;
+            if (dir.Length < 1e-9) return false;
+            dir = dir.GetNormal();
+
+            var p1 = new Point3d(insidePoint.X - dir.X * halfLength, insidePoint.Y - dir.Y * halfLength, corridor.Elevation);
+            var p2 = new Point3d(insidePoint.X + dir.X * halfLength, insidePoint.Y + dir.Y * halfLength, corridor.Elevation);
+
+            using (var line = new Line(p1, p2))
+            {
+                var pts = new Point3dCollection();
+                corridor.IntersectWith(line, Intersect.OnBothOperands, pts, IntPtr.Zero, IntPtr.Zero);
+                if (pts.Count < 2) return false;
+
+                var proj = new List<double>(pts.Count);
+                for (int i = 0; i < pts.Count; i++)
+                {
+                    var p = pts[i];
+                    double s = (p.X - insidePoint.X) * dir.X + (p.Y - insidePoint.Y) * dir.Y;
+
+                    bool dup = false;
+                    for (int j = 0; j < proj.Count; j++)
+                    {
+                        if (Math.Abs(proj[j] - s) < 1e-6) { dup = true; break; }
+                    }
+                    if (!dup) proj.Add(s);
+                }
+
+                if (proj.Count < 2) return false;
+
+                proj.Sort();
+
+                const double eps = 1e-6;
+                bool haveNeg = false, havePos = false;
+                double sNeg = double.NegativeInfinity;
+                double sPos = double.PositiveInfinity;
+
+                foreach (var s in proj)
+                {
+                    if (s < -eps && s > sNeg) { sNeg = s; haveNeg = true; }
+                    if (s > eps && s < sPos) { sPos = s; havePos = true; }
+                }
+
+                if (!haveNeg || !havePos) return false;
+
+                width = sPos - sNeg;
+                if (width <= 1e-6) return false;
+
+                double midS = (sNeg + sPos) * 0.5;
+                midPoint = new Point2d(insidePoint.X + dir.X * midS, insidePoint.Y + dir.Y * midS);
+                return true;
+            }
         }
 
         private static bool TryGetPrincipalAxes(Polyline pl, out Point2d origin, out Vector2d major, out Vector2d minor)
