@@ -332,13 +332,13 @@ namespace AtsBackgroundBuilder
             switch (attachment)
             {
                 case AttachmentPoint.MiddleRight:
-                    return TextAttachmentType.AttachmentMiddleRight;
+                    return TextAttachmentType.MiddleRight;
                 case AttachmentPoint.MiddleLeft:
-                    return TextAttachmentType.AttachmentMiddleLeft;
+                    return TextAttachmentType.MiddleLeft;
                 case AttachmentPoint.MiddleCenter:
-                    return TextAttachmentType.AttachmentMiddleCenter;
+                    return TextAttachmentType.MiddleCenter;
                 default:
-                    return TextAttachmentType.AttachmentMiddleCenter;
+                    return TextAttachmentType.MiddleCenter;
             }
         }
 

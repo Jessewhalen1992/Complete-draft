@@ -11,24 +11,24 @@ namespace AtsBackgroundBuilder
     public static class GeometryUtils
     {
         public static bool ExtentsIntersect(Extents3d a, Extents3d b)
-{
-    // AutoCAD's Extents3d does not provide an IsDisjoint helper in all versions.
-    // Treat touching as intersecting.
-    return !(
-        a.MaxPoint.X < b.MinPoint.X || a.MinPoint.X > b.MaxPoint.X ||
-        a.MaxPoint.Y < b.MinPoint.Y || a.MinPoint.Y > b.MaxPoint.Y ||
-        a.MaxPoint.Z < b.MinPoint.Z || a.MinPoint.Z > b.MaxPoint.Z
-    );
-}
+        {
+            // AutoCAD's Extents3d does not provide an IsDisjoint helper in all versions.
+            // Treat touching as intersecting.
+            return !(
+                a.MaxPoint.X < b.MinPoint.X || a.MinPoint.X > b.MaxPoint.X ||
+                a.MaxPoint.Y < b.MinPoint.Y || a.MinPoint.Y > b.MaxPoint.Y ||
+                a.MaxPoint.Z < b.MinPoint.Z || a.MinPoint.Z > b.MaxPoint.Z
+            );
+        }
 
-public static bool ExtentsIntersect(Extents2d a, Extents2d b)
-{
-    // Treat touching as intersecting.
-    return !(
-        a.MaxPoint.X < b.MinPoint.X || a.MinPoint.X > b.MaxPoint.X ||
-        a.MaxPoint.Y < b.MinPoint.Y || a.MinPoint.Y > b.MaxPoint.Y
-    );
-}
+        public static bool ExtentsIntersect(Extents2d a, Extents2d b)
+        {
+            // Treat touching as intersecting.
+            return !(
+                a.MaxPoint.X < b.MinPoint.X || a.MinPoint.X > b.MaxPoint.X ||
+                a.MaxPoint.Y < b.MinPoint.Y || a.MinPoint.Y > b.MaxPoint.Y
+            );
+        }
 
         /// <summary>
         /// Compute intersection regions between two closed polylines.
@@ -92,8 +92,7 @@ public static bool ExtentsIntersect(Extents2d a, Extents2d b)
                 exploded = new DBObjectCollection();
                 subjectRegion.Explode(exploded);
 
-                var joined = Curve.JoinCurves(exploded);
-                foreach (DBObject obj in joined)
+                foreach (DBObject obj in exploded)
                 {
                     if (obj is Polyline pl)
                     {
@@ -119,7 +118,10 @@ public static bool ExtentsIntersect(Extents2d a, Extents2d b)
                 if (exploded != null)
                 {
                     foreach (DBObject obj in exploded)
-                        obj.Dispose();
+                    {
+                        if (!(obj is Polyline pl && pieces.Any(piece => ReferenceEquals(piece, pl))))
+                            obj.Dispose();
+                    }
                 }
 
                 clipRegion?.Dispose();
