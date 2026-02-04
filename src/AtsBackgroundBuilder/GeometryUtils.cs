@@ -271,6 +271,30 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
         // Width measurement utilities (for ROW-style disposition polygons)
         // --------------------------------------------------------------------
 
+        public static bool TryWidthAtPoint(Polyline corridor, Point2d center, out double width)
+        {
+            width = 0;
+
+            double param;
+            try
+            {
+                param = corridor.GetParameterAtPoint(new Point3d(center.X, center.Y, 0));
+            }
+            catch
+            {
+                return false;
+            }
+
+            Vector3d deriv = corridor.GetFirstDerivative(param);
+            Vector2d tan2d = new Vector2d(deriv.X, deriv.Y);
+            if (tan2d.Length < 1e-6)
+                return false;
+
+            Vector2d normal = new Vector2d(-tan2d.Y, tan2d.X).GetNormal();
+            double halfLen = corridor.GeometricExtents.MaxPoint.DistanceTo(corridor.GeometricExtents.MinPoint) * 2.0;
+            return TryCrossSectionWidth(corridor, center, normal, halfLen, out width);
+        }
+
         public readonly struct WidthMeasurement
         {
             public WidthMeasurement(
