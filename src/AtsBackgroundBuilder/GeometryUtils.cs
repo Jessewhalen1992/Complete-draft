@@ -198,13 +198,20 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
 
         public readonly struct WidthMeasurement
         {
-            public WidthMeasurement(double medianWidth, double minWidth, double maxWidth, bool isVariable, bool usedSamples)
+            public WidthMeasurement(
+                double medianWidth,
+                double minWidth,
+                double maxWidth,
+                bool isVariable,
+                bool usedSamples,
+                Point2d medianCenter)
             {
                 MedianWidth = medianWidth;
                 MinWidth = minWidth;
                 MaxWidth = maxWidth;
                 IsVariable = isVariable;
                 UsedSamples = usedSamples;
+                MedianCenter = medianCenter;
             }
 
             public double MedianWidth { get; }
@@ -212,6 +219,7 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
             public double MaxWidth { get; }
             public bool IsVariable { get; }
             public bool UsedSamples { get; }
+            public Point2d MedianCenter { get; }
         }
 
         /// <summary>
@@ -239,6 +247,7 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
             GetPrincipalRanges(corridor, origin, major, minor, out double minT, out double maxT, out double minS, out double maxS);
 
             var widths = new List<double>(sampleCount);
+            var samples = new List<(double width, Point2d center)>(sampleCount);
             bool usedSamples = false;
 
             // Sample positions (skip ends) using local polyline normal
@@ -260,6 +269,7 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
                     if (TryCrossSectionWidth(corridor, center2d, normal, bigLocal, out var w))
                     {
                         widths.Add(w);
+                        samples.Add((w, center2d));
                         usedSamples = true;
                     }
                 }
@@ -270,22 +280,26 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
                 // Fallback: oriented bounding width
                 double fallback = maxS - minS;
                 if (fallback < 0) fallback = -fallback;
-                return new WidthMeasurement(fallback, fallback, fallback, false, false);
+                var fallbackCenter = GetSafeInteriorPoint(corridor);
+                return new WidthMeasurement(fallback, fallback, fallback, false, false, fallbackCenter);
             }
 
             widths.Sort();
             double preliminaryMedian = widths[widths.Count / 2];
             double maxAllowed = preliminaryMedian * 3;
             widths = widths.FindAll(w => w <= maxAllowed);
+            samples = samples.FindAll(sample => sample.width <= maxAllowed);
 
             if (widths.Count == 0)
             {
                 double fallback = maxS - minS;
                 if (fallback < 0) fallback = -fallback;
-                return new WidthMeasurement(fallback, fallback, fallback, false, false);
+                var fallbackCenter = GetSafeInteriorPoint(corridor);
+                return new WidthMeasurement(fallback, fallback, fallback, false, false, fallbackCenter);
             }
 
             widths.Sort();
+            samples.Sort((a, b) => a.width.CompareTo(b.width));
             double median = widths[widths.Count / 2];
             double minW = widths[0];
             double maxW = widths[widths.Count - 1];
@@ -293,7 +307,19 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
 
             bool isVariable = range > Math.Max(variableAbsTol, median * variableRelTol);
 
-            return new WidthMeasurement(median, minW, maxW, isVariable, usedSamples);
+            Point2d medianCenter = samples.Count > 0 ? samples[0].center : GetSafeInteriorPoint(corridor);
+            double bestDiff = double.MaxValue;
+            foreach (var sample in samples)
+            {
+                double diff = Math.Abs(sample.width - median);
+                if (diff < bestDiff)
+                {
+                    bestDiff = diff;
+                    medianCenter = sample.center;
+                }
+            }
+
+            return new WidthMeasurement(median, minW, maxW, isVariable, usedSamples, medianCenter);
         }
 
         public static double SnapWidthToAcceptable(double measured, IReadOnlyList<double> acceptable, double tolerance)

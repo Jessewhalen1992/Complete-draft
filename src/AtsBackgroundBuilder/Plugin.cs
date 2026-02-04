@@ -168,6 +168,7 @@ namespace AtsBackgroundBuilder
                             config.WidthSampleCount,
                             config.VariableWidthAbsTolerance,
                             config.VariableWidthRelTolerance);
+                        safePoint = measurement.MedianCenter;
 
                         double median = measurement.MedianWidth;
                         double nearestInt = Math.Round(median, 0, MidpointRounding.AwayFromZero);
