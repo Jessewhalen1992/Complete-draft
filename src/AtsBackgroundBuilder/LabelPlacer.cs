@@ -256,7 +256,7 @@ namespace AtsBackgroundBuilder
             mleader.SetDatabaseDefaults();
             mleader.ContentType = ContentType.MTextContent;
             mleader.MText = mtext;
-            mleader.TextAttachmentType = GetLeaderTextAttachment(attachment);
+            mleader.TextAttachmentType = TextAttachmentType.AttachmentMiddle;
             // Create a leader cluster and line
             int leaderIndex = mleader.AddLeader();
             int lineIndex = mleader.AddLeaderLine(leaderIndex);
@@ -329,8 +329,8 @@ namespace AtsBackgroundBuilder
 
         private static TextAttachmentType GetLeaderTextAttachment(AttachmentPoint attachment)
         {
-            // AutoCAD .NET API does not define MiddleRight/MiddleLeft/MiddleCenter on TextAttachmentType.
-            // Use a generic attachment type that attaches to the middle of the text block.
+            // AutoCAD 2025's TextAttachmentType enum doesn’t define MiddleLeft/MiddleRight/MiddleCenter.
+            // Use a neutral attachment type that aligns text to the middle for both left and right leaders.
             return TextAttachmentType.AttachmentMiddle;
         }
 
