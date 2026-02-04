@@ -93,21 +93,24 @@ namespace AtsBackgroundBuilder
                                         _config.VariableWidthRelTolerance);
 
                                     safePoint = measurement.MedianCenter;
-                                    measuredWidth = measurement.MedianWidth;
+                                    if (GeometryUtils.TryWidthAtPoint(polyForWidth, measurement.MedianCenter, out var pointWidth))
+                                        measuredWidth = pointWidth;
+                                    else
+                                        measuredWidth = measurement.MedianWidth;
 
-                                    double median = measurement.MedianWidth;
-                                    double nearestInt = Math.Round(median, 0, MidpointRounding.AwayFromZero);
+                                    double median = measuredWidth;
+                                    double nearestInt = Math.Round(measuredWidth, 0, MidpointRounding.AwayFromZero);
 
                                     double bestException = median;
                                     double diffException = double.MaxValue;
                                     if (_config.AcceptableRowWidths != null && _config.AcceptableRowWidths.Length > 0)
                                     {
                                         bestException = _config.AcceptableRowWidths
-                                            .OrderBy(w => Math.Abs(median - w))
+                                            .OrderBy(w => Math.Abs(measuredWidth - w))
                                             .First();
-                                        diffException = Math.Abs(median - bestException);
+                                        diffException = Math.Abs(measuredWidth - bestException);
                                     }
-                                    double diffInt = Math.Abs(median - nearestInt);
+                                    double diffInt = Math.Abs(measuredWidth - nearestInt);
 
                                     double snapped;
                                     bool snappedToAcceptable = diffException <= diffInt || diffException <= _config.WidthSnapTolerance;
@@ -117,12 +120,14 @@ namespace AtsBackgroundBuilder
                                         snapped = nearestInt;
 
                                     bool isVariable = measurement.IsVariable;
-                                    if (isVariable && Math.Abs(snapped - measurement.MedianWidth) <= _config.WidthSnapTolerance)
+                                    if (isVariable && Math.Abs(snapped - measuredWidth) <= _config.WidthSnapTolerance)
                                     {
                                         isVariable = false;
                                     }
 
-                                    bool hasMatchingWidth = !isVariable && snappedToAcceptable;
+                                    bool snappedIsInAcceptable = _config.AcceptableRowWidths != null
+                                        && _config.AcceptableRowWidths.Any(w => Math.Abs(w - snapped) < 1e-6);
+                                    bool hasMatchingWidth = !isVariable && (snappedToAcceptable || snappedIsInAcceptable);
                                     if (isVariable)
                                     {
                                         labelText = disposition.MappedCompany + "\\P" + "Variable Width" + "\\P" + disposition.PurposeTitleCase + "\\P" + disposition.DispNumFormatted;
@@ -411,8 +416,8 @@ namespace AtsBackgroundBuilder
             double measuredWidth)
         {
             var spiral = GeometryUtils.GetSpiralOffsets(target, step, maxPoints).ToList();
-            double minDistance = step;
-            double halfWidth = measuredWidth * 0.5;
+            double minDistance = step * 0.5;
+            double minHalfWidth = measuredWidth * 0.25;
 
             if (!allowOutsideDisposition)
             {
@@ -422,7 +427,7 @@ namespace AtsBackgroundBuilder
                     {
                         var p3d = new Point3d(p.X, p.Y, 0);
                         var closest = disposition.GetClosestPointTo(p3d, false);
-                        if (closest.DistanceTo(p3d) >= Math.Max(minDistance, halfWidth))
+                        if (closest.DistanceTo(p3d) >= Math.Max(minDistance, minHalfWidth))
                             yield return p;
                     }
                 }
@@ -440,14 +445,14 @@ namespace AtsBackgroundBuilder
                 {
                     var p3d = new Point3d(p.X, p.Y, 0);
                     var closest = disposition.GetClosestPointTo(p3d, false);
-                    if (closest.DistanceTo(p3d) >= Math.Max(minDistance, halfWidth))
+                    if (closest.DistanceTo(p3d) >= Math.Max(minDistance, minHalfWidth))
                         inside.Add(p);
                 }
                 else
                 {
                     var p3d = new Point3d(p.X, p.Y, 0);
                     var closest = disposition.GetClosestPointTo(p3d, false);
-                    if (closest.DistanceTo(p3d) >= Math.Max(minDistance, halfWidth))
+                    if (closest.DistanceTo(p3d) >= Math.Max(minDistance, minHalfWidth))
                         yield return p;
                 }
             }
