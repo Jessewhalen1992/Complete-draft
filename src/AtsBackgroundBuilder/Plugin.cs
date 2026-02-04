@@ -38,6 +38,7 @@ namespace AtsBackgroundBuilder
 
             var configPath = Path.Combine(dllFolder, "Config.json");
             var config = Config.Load(configPath, logger);
+            config.AllowMultiQuarterDispositions = true;
 
             var companyLookupPath = ResolveLookupPath(config.LookupFolder, config.CompanyLookupFile, dllFolder, "CompanyLookup.xlsx");
             var purposeLookupPath = ResolveLookupPath(config.LookupFolder, config.PurposeLookupFile, dllFolder, "PurposeLookup.xlsx");
@@ -163,57 +164,15 @@ namespace AtsBackgroundBuilder
 
                     if (requiresWidth)
                     {
-                        var measurement = GeometryUtils.MeasureCorridorWidth(
-                            clone,
-                            config.WidthSampleCount,
-                            config.VariableWidthAbsTolerance,
-                            config.VariableWidthRelTolerance);
-                        safePoint = measurement.MedianCenter;
-
-                        double median = measurement.MedianWidth;
-                        double nearestInt = Math.Round(median, 0, MidpointRounding.AwayFromZero);
-
-                        double bestException = median;
-                        double diffException = double.MaxValue;
-                        if (config.AcceptableRowWidths != null && config.AcceptableRowWidths.Length > 0)
-                        {
-                            bestException = config.AcceptableRowWidths
-                                .OrderBy(w => Math.Abs(median - w))
-                                .First();
-                            diffException = Math.Abs(median - bestException);
-                        }
-                        double diffInt = Math.Abs(median - nearestInt);
-
-                        double snapped;
-                        bool snappedToAcceptable = diffException <= diffInt || diffException <= config.WidthSnapTolerance;
-                        if (snappedToAcceptable)
-                            snapped = bestException;
-                        else
-                            snapped = nearestInt;
-
-                        bool isVariable = measurement.IsVariable;
-                        if (isVariable && Math.Abs(snapped - measurement.MedianWidth) <= config.WidthSnapTolerance)
-                        {
-                            isVariable = false;
-                        }
-
-                        bool hasMatchingWidth = !isVariable && snappedToAcceptable;
-                        if (isVariable)
-                        {
-                            labelText = mappedCompany + "\\P" + "Variable Width" + "\\P" + ToTitleCaseWords(purpose) + "\\P" + dispNumFormatted;
-                        }
-                        else
-                        {
-                            var widthText = snapped.ToString("0.00", CultureInfo.InvariantCulture);
-                            labelText = mappedCompany + "\\P" + widthText + " " + mappedPurpose + "\\P" + dispNumFormatted;
-                        }
-
-                        var widthLabelColor = hasMatchingWidth ? 256 : 3;
-                        var info = new DispositionInfo(id, clone, labelText, lineLayer, textLayer, safePoint)
+                        var info = new DispositionInfo(id, clone, string.Empty, lineLayer, textLayer, safePoint)
                         {
                             AllowLabelOutsideDisposition = config.AllowOutsideDispositionForWidthPurposes,
                             AddLeader = true,
-                            TextColorIndex = widthLabelColor
+                            RequiresWidth = true,
+                            MappedCompany = mappedCompany,
+                            MappedPurpose = mappedPurpose,
+                            PurposeTitleCase = ToTitleCaseWords(purpose),
+                            DispNumFormatted = dispNumFormatted
                         };
                         dispositions.Add(info);
                         continue;

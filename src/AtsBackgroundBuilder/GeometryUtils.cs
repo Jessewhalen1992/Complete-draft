@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 
@@ -65,6 +66,78 @@ public static bool ExtentsIntersect(Extents2d a, Extents2d b)
                 clipRegion?.Dispose();
                 subjectRegion?.Dispose();
             }
+        }
+
+        public static bool TryIntersectPolylines(Polyline subject, Polyline clip, out List<Polyline> pieces)
+        {
+            pieces = new List<Polyline>();
+
+            if (subject == null || clip == null)
+                return false;
+
+            Region? subjectRegion = null;
+            Region? clipRegion = null;
+            DBObjectCollection? exploded = null;
+
+            try
+            {
+                subjectRegion = CreateRegion(subject);
+                clipRegion = CreateRegion(clip);
+
+                if (subjectRegion == null || clipRegion == null)
+                    return false;
+
+                subjectRegion.BooleanOperation(BooleanOperationType.BoolIntersect, clipRegion);
+
+                exploded = new DBObjectCollection();
+                subjectRegion.Explode(exploded);
+
+                var joined = Curve.JoinCurves(exploded);
+                foreach (DBObject obj in joined)
+                {
+                    if (obj is Polyline pl)
+                    {
+                        pieces.Add(pl);
+                    }
+                    else
+                    {
+                        obj.Dispose();
+                    }
+                }
+
+                return pieces.Count > 0;
+            }
+            catch
+            {
+                foreach (var piece in pieces)
+                    piece.Dispose();
+                pieces.Clear();
+                return false;
+            }
+            finally
+            {
+                if (exploded != null)
+                {
+                    foreach (DBObject obj in exploded)
+                        obj.Dispose();
+                }
+
+                clipRegion?.Dispose();
+                subjectRegion?.Dispose();
+            }
+        }
+
+        public static Polyline? IntersectPolylineWithRect(Polyline poly, Point3d min, Point3d max)
+        {
+            using var rect = new Polyline(4);
+            rect.AddVertexAt(0, new Point2d(min.X, min.Y), 0, 0, 0);
+            rect.AddVertexAt(1, new Point2d(max.X, min.Y), 0, 0, 0);
+            rect.AddVertexAt(2, new Point2d(max.X, max.Y), 0, 0, 0);
+            rect.AddVertexAt(3, new Point2d(min.X, max.Y), 0, 0, 0);
+            rect.Closed = true;
+            if (GeometryUtils.TryIntersectPolylines(poly, rect, out var pieces) && pieces.Count > 0)
+                return pieces.OrderByDescending(p => p.Length).First();
+            return null;
         }
 
         private static Region? CreateRegion(Polyline polyline)
