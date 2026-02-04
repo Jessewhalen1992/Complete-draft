@@ -222,50 +222,62 @@ namespace AtsBackgroundBuilder
         }
 
         public static bool IsPointInsidePolyline(Polyline polyline, Point2d point)
-{
-    if (polyline == null) return false;
-    if (!polyline.Closed) return false;
+        {
+            if (polyline == null) return false;
 
-    int n = polyline.NumberOfVertices;
-    if (n < 3) return false;
+            int n = polyline.NumberOfVertices;
+            if (n < 3) return false;
 
-    bool inside = false;
+            // Tolerance (meters). Using 1e-3 avoids boundary misclassification at large coordinate values.
+            double tol = 1e-3;
 
-    for (int i = 0, j = n - 1; i < n; j = i++)
-    {
-        var pi = polyline.GetPoint2dAt(i);
-        var pj = polyline.GetPoint2dAt(j);
+            bool closed = polyline.Closed;
+            if (!closed)
+            {
+                var p0 = polyline.GetPoint2dAt(0);
+                var pn = polyline.GetPoint2dAt(n - 1);
+                if (p0.GetDistanceTo(pn) <= tol)
+                    closed = true;
+            }
 
-        // Consider points on the boundary as inside.
-        if (IsPointOnSegment(point, pj, pi, 1e-9))
-            return true;
+            if (!closed) return false;
 
-        bool intersects = ((pi.Y > point.Y) != (pj.Y > point.Y)) &&
-                          (point.X < (pj.X - pi.X) * (point.Y - pi.Y) / (pj.Y - pi.Y + 0.0) + pi.X);
+            bool inside = false;
 
-        if (intersects)
-            inside = !inside;
-    }
+            for (int i = 0, j = n - 1; i < n; j = i++)
+            {
+                var pi = polyline.GetPoint2dAt(i);
+                var pj = polyline.GetPoint2dAt(j);
 
-    return inside;
-}
+                // Consider points on the boundary as inside.
+                if (IsPointOnSegment(point, pj, pi, tol))
+                    return true;
 
-private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol)
-{
-    var ab = b - a;
-    var ap = p - a;
+                bool intersects = ((pi.Y > point.Y) != (pj.Y > point.Y)) &&
+                                  (point.X < (pj.X - pi.X) * (point.Y - pi.Y) / (pj.Y - pi.Y + 0.0) + pi.X);
 
-    double cross = ab.X * ap.Y - ab.Y * ap.X;
-    if (Math.Abs(cross) > tol) return false;
+                if (intersects)
+                    inside = !inside;
+            }
 
-    double dot = ap.X * ab.X + ap.Y * ab.Y;
-    if (dot < -tol) return false;
+            return inside;
+        }
 
-    double len2 = ab.X * ab.X + ab.Y * ab.Y;
-    if (dot > len2 + tol) return false;
+        private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol)
+        {
+            var ab = b - a;
+            double len2 = ab.X * ab.X + ab.Y * ab.Y;
+            if (len2 < 1e-12)
+                return p.GetDistanceTo(a) <= tol;
 
-    return true;
-}
+            var ap = p - a;
+            double t = (ap.X * ab.X + ap.Y * ab.Y) / len2;
+            if (t < 0) t = 0;
+            if (t > 1) t = 1;
+
+            var proj = new Point2d(a.X + ab.X * t, a.Y + ab.Y * t);
+            return p.GetDistanceTo(proj) <= tol;
+        }
 
         // --------------------------------------------------------------------
         // Width measurement utilities (for ROW-style disposition polygons)
@@ -517,6 +529,8 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
 
                     double midS = (sNeg + sPos) * 0.5;
                     midPoint = new Point2d(insidePoint.X + dir.X * midS, insidePoint.Y + dir.Y * midS);
+                    if (!IsPointInsidePolyline(corridor, midPoint))
+                        return false;
                     return true;
                 }
             }
