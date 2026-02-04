@@ -195,7 +195,7 @@ namespace AtsBackgroundBuilder
             var quarters = new List<QuarterInfo>();
             using (var transaction = database.TransactionManager.StartTransaction())
             {
-                foreach (var id in quarterPolylines)
+                foreach (var id in quarterPolylines.Distinct())
                 {
                     var polyline = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
                     if (polyline == null || !polyline.Closed)
@@ -543,8 +543,8 @@ namespace AtsBackgroundBuilder
 
         private static SectionDrawResult DrawSectionsFromRequests(Editor editor, Database database, List<SectionRequest> requests, Config config, Logger logger)
         {
-            var quarterIds = new List<ObjectId>();
-            var sectionIds = new List<ObjectId>();
+            var quarterIds = new HashSet<ObjectId>();
+            var sectionIds = new HashSet<ObjectId>();
             var createdSections = new Dictionary<string, SectionBuildResult>(StringComparer.OrdinalIgnoreCase);
             var searchFolders = BuildSectionIndexSearchFolders(config);
 
@@ -563,20 +563,13 @@ namespace AtsBackgroundBuilder
                     sectionIds.Add(buildResult.SectionPolylineId);
                 }
 
-                if (request.Quarter == QuarterSelection.All)
-                {
-                    foreach (var quarterId in buildResult.QuarterPolylineIds.Values)
-                    {
-                        quarterIds.Add(quarterId);
-                    }
-                }
-                else if (buildResult.QuarterPolylineIds.TryGetValue(request.Quarter, out var quarterId))
+                foreach (var quarterId in buildResult.QuarterPolylineIds.Values)
                 {
                     quarterIds.Add(quarterId);
                 }
             }
 
-            return new SectionDrawResult(quarterIds, sectionIds, true);
+            return new SectionDrawResult(quarterIds.ToList(), sectionIds.ToList(), true);
         }
 
         private static SectionBuildResult DrawSectionFromIndex(Editor editor, Database database, SectionOutline outline, SectionKey key)
