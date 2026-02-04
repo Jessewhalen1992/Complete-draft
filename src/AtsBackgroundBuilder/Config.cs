@@ -137,6 +137,7 @@ namespace AtsBackgroundBuilder
         public static Config Load(string configPath, Logger logger)
         {
             var defaults = new Config();
+            var baseline = new Config();
 
             // First run: write defaults.
             if (!File.Exists(configPath))
@@ -154,8 +155,11 @@ namespace AtsBackgroundBuilder
                 // Start with defaults; selectively overwrite values that exist in the JSON.
                 ApplyJson(defaults, root);
 
-                // If older configs put widths as strings or with commas, try a lenient fix.
-                defaults.AcceptableRowWidths = NormalizeWidthArray(defaults.AcceptableRowWidths);
+                // Merge with baseline defaults so older configs don't drop new widths.
+                defaults.AcceptableRowWidths = NormalizeWidthArray(
+                    (defaults.AcceptableRowWidths ?? Array.Empty<double>())
+                    .Concat(baseline.AcceptableRowWidths ?? Array.Empty<double>())
+                    .ToArray());
 
                 return defaults;
             }
