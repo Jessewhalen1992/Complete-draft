@@ -40,6 +40,8 @@ namespace AtsBackgroundBuilder
 
                 // Track extents of labels placed so far so we can avoid overlaps
                 var placedLabelExtents = new List<Extents3d>();
+                _logger.WriteLine($"Quarter polylines (unique): {quarters.Count}");
+                _logger.WriteLine($"Dispositions: {dispositions.Count}");
 
                 foreach (var quarter in quarters)
                 {
@@ -154,7 +156,11 @@ namespace AtsBackgroundBuilder
 
                                 if (candidates.Count == 0)
                                 {
-                                    // If we cannot find any point meeting the inside checks, fall back to target
+                                    // If we have no valid candidate inside this quarter, do not place a label for this quarter.
+                                    // Falling back to an out-of-quarter target causes stacked/double labels in one quarter.
+                                    if (!GeometryUtils.IsPointInsidePolyline(quarterClone, target))
+                                        continue;
+
                                     candidates.Add(target);
                                 }
 
@@ -420,7 +426,7 @@ namespace AtsBackgroundBuilder
             {
                 foreach (var p in spiral)
                 {
-                    if (PointInPolyline(quarter, p) && PointInPolyline(disposition, p))
+                    if (GeometryUtils.IsPointInsidePolyline(quarter, p) && GeometryUtils.IsPointInsidePolyline(disposition, p))
                     {
                         var p3d = new Point3d(p.X, p.Y, 0);
                         var closest = disposition.GetClosestPointTo(p3d, false);
@@ -435,10 +441,10 @@ namespace AtsBackgroundBuilder
             var inside = new List<Point2d>();
             foreach (var p in spiral)
             {
-                if (!PointInPolyline(quarter, p))
+                if (!GeometryUtils.IsPointInsidePolyline(quarter, p))
                     continue;
 
-                if (PointInPolyline(disposition, p))
+                if (GeometryUtils.IsPointInsidePolyline(disposition, p))
                 {
                     var p3d = new Point3d(p.X, p.Y, 0);
                     var closest = disposition.GetClosestPointTo(p3d, false);
@@ -468,19 +474,19 @@ namespace AtsBackgroundBuilder
                     using (region)
                     {
                         var c = GetRegionCentroidSafe(region);
-                        if (PointInPolyline(quarter, c) && PointInPolyline(disposition, c))
+                        if (GeometryUtils.IsPointInsidePolyline(quarter, c) && GeometryUtils.IsPointInsidePolyline(disposition, c))
                             return c;
                     }
                 }
             }
 
             // If safe point lies in this quarter
-            if (PointInPolyline(quarter, fallback) && PointInPolyline(disposition, fallback))
+            if (GeometryUtils.IsPointInsidePolyline(quarter, fallback) && GeometryUtils.IsPointInsidePolyline(disposition, fallback))
                 return fallback;
 
             // Try extents overlap center
             var overlap = GetExtentsOverlapCenter(quarter.GeometricExtents, disposition.GeometricExtents);
-            if (PointInPolyline(quarter, overlap) && PointInPolyline(disposition, overlap))
+            if (GeometryUtils.IsPointInsidePolyline(quarter, overlap) && GeometryUtils.IsPointInsidePolyline(disposition, overlap))
                 return overlap;
 
             // Closest point on disposition to a known interior point of quarter
@@ -489,7 +495,7 @@ namespace AtsBackgroundBuilder
             {
                 var closest = disposition.GetClosestPointTo(new Point3d(qInterior.X, qInterior.Y, 0), false);
                 var cp = new Point2d(closest.X, closest.Y);
-                if (PointInPolyline(quarter, cp))
+                if (GeometryUtils.IsPointInsidePolyline(quarter, cp))
                     return cp;
             }
             catch { }
@@ -549,23 +555,6 @@ namespace AtsBackgroundBuilder
             return !(double.IsNaN(v) || double.IsInfinity(v));
         }
 
-        private static bool PointInPolyline(Polyline pl, Point2d pt)
-        {
-            bool inside = false;
-            int n = pl.NumberOfVertices;
-            for (int i = 0, j = n - 1; i < n; j = i++)
-            {
-                var pi = pl.GetPoint2dAt(i);
-                var pj = pl.GetPoint2dAt(j);
-
-                bool intersect = ((pi.Y > pt.Y) != (pj.Y > pt.Y)) &&
-                                 (pt.X < (pj.X - pi.X) * (pt.Y - pi.Y) /
-                                     ((pj.Y - pi.Y) == 0 ? 1e-12 : (pj.Y - pi.Y)) + pi.X);
-
-                if (intersect) inside = !inside;
-            }
-            return inside;
-        }
     }
 
     public sealed class QuarterInfo
