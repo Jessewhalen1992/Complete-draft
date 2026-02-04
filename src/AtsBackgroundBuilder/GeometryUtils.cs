@@ -274,6 +274,18 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
             }
 
             widths.Sort();
+            double preliminaryMedian = widths[widths.Count / 2];
+            double maxAllowed = preliminaryMedian * 3;
+            widths = widths.FindAll(w => w <= maxAllowed);
+
+            if (widths.Count == 0)
+            {
+                double fallback = maxS - minS;
+                if (fallback < 0) fallback = -fallback;
+                return new WidthMeasurement(fallback, fallback, fallback, false, false);
+            }
+
+            widths.Sort();
             double median = widths[widths.Count / 2];
             double minW = widths[0];
             double maxW = widths[widths.Count - 1];
@@ -435,11 +447,33 @@ private static bool IsPointOnSegment(Point2d p, Point2d a, Point2d b, double tol
                     if (proj.Count < 2)
                         return false;
 
+                    // Sort the projections
                     proj.Sort();
-                    width = proj[proj.Count - 1] - proj[0];
-                    if (width < 0) width = -width;
 
-                    return width > 1e-6;
+                    // If only two intersections, width = difference as before
+                    if (proj.Count == 2)
+                    {
+                        width = Math.Abs(proj[1] - proj[0]);
+                        return width > 1e-6;
+                    }
+
+                    // For 3+ intersections, compute candidate widths between adjacent pairs
+                    double minSpan = double.MaxValue;
+                    for (int i = 0; i < proj.Count - 1; i++)
+                    {
+                        double span = Math.Abs(proj[i + 1] - proj[i]);
+                        if (span > 1e-6 && span < minSpan)
+                            minSpan = span;
+                    }
+
+                    if (double.IsFinite(minSpan) && minSpan < double.MaxValue)
+                    {
+                        width = minSpan;
+                        return true;
+                    }
+
+                    // Fallback: treat as failure
+                    return false;
                 }
             }
             catch
