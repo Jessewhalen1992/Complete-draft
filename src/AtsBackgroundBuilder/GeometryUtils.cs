@@ -96,6 +96,23 @@ namespace AtsBackgroundBuilder
                 {
                     if (obj is Polyline pl)
                     {
+                        // Region.Explode can occasionally return a boundary polyline whose Closed flag is false
+                        // even though the start/end vertices coincide. Treat such polylines as closed so downstream
+                        // logic (quarter intersections, inside tests) can work reliably.
+                        if (!pl.Closed && pl.NumberOfVertices >= 3)
+                        {
+                            try
+                            {
+                                var p0 = pl.GetPoint2dAt(0);
+                                var pn = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
+                                if (p0.GetDistanceTo(pn) <= 1e-3)
+                                    pl.Closed = true;
+                            }
+                            catch
+                            {
+                                // ignore
+                            }
+                        }
                         pieces.Add(pl);
                     }
                     else
@@ -279,9 +296,175 @@ namespace AtsBackgroundBuilder
             return p.GetDistanceTo(proj) <= tol;
         }
 
+        /// <summary>
+        /// Robust fallback: attempts to find a point that lies inside BOTH closed polylines.
+        /// This is primarily used when boolean/region intersections fail or return degenerate pieces
+        /// (often near quarter boundaries or with very long/thin corridor polygons).
+        /// </summary>
+        public static bool TryFindPointInsideBoth(Polyline a, Polyline b, out Point2d point, int sampleCount = 160)
+        {
+            point = default;
+            if (a == null || b == null) return false;
+
+            // Quick checks using safe interior points
+            try
+            {
+                var aInterior = GetSafeInteriorPoint(a);
+                if (IsPointInsidePolyline(a, aInterior) && IsPointInsidePolyline(b, aInterior))
+                {
+                    point = aInterior;
+                    return true;
+                }
+            }
+            catch { }
+
+            try
+            {
+                var bInterior = GetSafeInteriorPoint(b);
+                if (IsPointInsidePolyline(a, bInterior) && IsPointInsidePolyline(b, bInterior))
+                {
+                    point = bInterior;
+                    return true;
+                }
+            }
+            catch { }
+
+            // Sample along the boundary of 'b' and nudge inward, then test against 'a'
+            double length;
+            try { length = b.Length; }
+            catch { length = 0; }
+            if (length <= 1e-6) return false;
+            if (sampleCount < 20) sampleCount = 160;
+
+            const double nudge = 0.5; // meters
+            for (int i = 0; i < sampleCount; i++)
+            {
+                double frac = (i + 0.5) / sampleCount;
+                double dist = frac * length;
+
+                double param;
+                Point3d p3d;
+                try
+                {
+                    param = b.GetParameterAtDistance(dist);
+                    p3d = b.GetPointAtParameter(param);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                Vector3d deriv;
+                try { deriv = b.GetFirstDerivative(param); }
+                catch { continue; }
+
+                var tan2d = new Vector2d(deriv.X, deriv.Y);
+                if (tan2d.Length < 1e-6) continue;
+                var normal = new Vector2d(-tan2d.Y, tan2d.X).GetNormal();
+
+                var onEdge = new Point2d(p3d.X, p3d.Y);
+                var plus = new Point2d(onEdge.X + normal.X * nudge, onEdge.Y + normal.Y * nudge);
+                var minus = new Point2d(onEdge.X - normal.X * nudge, onEdge.Y - normal.Y * nudge);
+
+                Point2d insideCandidate;
+                if (IsPointInsidePolyline(b, plus))
+                    insideCandidate = plus;
+                else if (IsPointInsidePolyline(b, minus))
+                    insideCandidate = minus;
+                else
+                    continue;
+
+                if (IsPointInsidePolyline(a, insideCandidate))
+                {
+                    point = insideCandidate;
+                    return true;
+                }
+            }
+
+            // Last resort: expanded spiral around overlap extents center.
+            try
+            {
+                var ea = a.GeometricExtents;
+                var eb = b.GeometricExtents;
+
+                double minX = Math.Max(ea.MinPoint.X, eb.MinPoint.X);
+                double maxX = Math.Min(ea.MaxPoint.X, eb.MaxPoint.X);
+                double minY = Math.Max(ea.MinPoint.Y, eb.MinPoint.Y);
+                double maxY = Math.Min(ea.MaxPoint.Y, eb.MaxPoint.Y);
+
+                var overlapCenter = new Point2d((minX + maxX) / 2.0, (minY + maxY) / 2.0);
+                double step = Math.Max(5.0, Math.Min(a.Length, b.Length) / 200.0);
+
+                foreach (var p in GetSpiralOffsets(overlapCenter, step, 1500))
+                {
+                    if (IsPointInsidePolyline(a, p) && IsPointInsidePolyline(b, p))
+                    {
+                        point = p;
+                        return true;
+                    }
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
         // --------------------------------------------------------------------
         // Width measurement utilities (for ROW-style disposition polygons)
         // --------------------------------------------------------------------
+
+        /// <summary>
+        /// Given a point that lies inside a corridor polygon, attempts to compute the midpoint of the
+        /// corridor cross-section through that point (i.e., a centerline point) and the local width.
+        /// This is used to ensure leader endpoints land at the ROW centerline (not on an edge).
+        /// </summary>
+        public static bool TryGetCrossSectionMidpoint(
+            Polyline corridor,
+            Point2d insidePoint,
+            out Point2d midPoint,
+            out double width)
+        {
+            midPoint = insidePoint;
+            width = 0;
+
+            if (corridor == null)
+                return false;
+            if (!IsPointInsidePolyline(corridor, insidePoint))
+                return false;
+
+            double param;
+            try
+            {
+                // Use the closest point on the corridor boundary to establish a local tangent direction.
+                var closest = corridor.GetClosestPointTo(new Point3d(insidePoint.X, insidePoint.Y, corridor.Elevation), false);
+                param = corridor.GetParameterAtPoint(closest);
+            }
+            catch
+            {
+                return false;
+            }
+
+            Vector3d deriv;
+            try { deriv = corridor.GetFirstDerivative(param); }
+            catch { return false; }
+
+            var tan2d = new Vector2d(deriv.X, deriv.Y);
+            if (tan2d.Length < 1e-6)
+                return false;
+
+            var normal = new Vector2d(-tan2d.Y, tan2d.X).GetNormal();
+            double halfLen = Math.Max(corridor.Length, corridor.GeometricExtents.MaxPoint.DistanceTo(corridor.GeometricExtents.MinPoint)) * 2.0;
+
+            if (TryCrossSectionWidthStraddlingPoint(corridor, insidePoint, normal, halfLen, out width, out midPoint))
+                return true;
+
+            // Fallback: try the perpendicular normal (numerical stability in some geometries)
+            var normal2 = new Vector2d(normal.Y, -normal.X);
+            if (TryCrossSectionWidthStraddlingPoint(corridor, insidePoint, normal2, halfLen, out width, out midPoint))
+                return true;
+
+            return false;
+        }
 
         public static bool TryWidthAtPoint(Polyline corridor, Point2d center, out double width)
         {

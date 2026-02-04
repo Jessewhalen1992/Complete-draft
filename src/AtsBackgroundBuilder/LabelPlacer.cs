@@ -61,12 +61,21 @@ namespace AtsBackgroundBuilder
                             if (!GeometryUtils.ExtentsIntersect(quarter.Polyline.GeometricExtents, disposition.Polyline.GeometricExtents))
                                 continue;
 
-                            // Confirm actual intersection and compute per-quarter target
-                            if (!TryGetQuarterIntersectionTarget(quarterClone, disposition.Polyline, out var intersectionPiece, out _))
+                            // Confirm actual intersection and compute a per-quarter target.
+                            // IMPORTANT: we MUST anchor and place the label per-quarter; using the disposition's
+                            // global SafePoint will incorrectly bias labeling to the quarter containing that point.
+                            Polyline? intersectionPiece;
+                            Point2d intersectionTarget;
+                            if (!TryGetQuarterIntersectionTarget(quarterClone, disposition.Polyline, out intersectionPiece, out intersectionTarget))
                             {
-                                _logger.WriteLine($"No quarter intersection: disp={disposition.ObjectId} quarterExt={quarterClone.GeometricExtents}");
-                                result.SkippedNoIntersection++;
-                                continue;
+                                // Robust fallback (e.g. when the boolean intersection yields degenerate/open pieces):
+                                // try to find ANY interior point that lies inside BOTH the quarter and the disposition.
+                                if (!GeometryUtils.TryFindPointInsideBoth(quarterClone, disposition.Polyline, out intersectionTarget))
+                                {
+                                    _logger.WriteLine($"No quarter intersection: disp={disposition.ObjectId} quarterExt={quarterClone.GeometricExtents}");
+                                    result.SkippedNoIntersection++;
+                                    continue;
+                                }
                             }
 
                             // Label layer mapping check
@@ -87,6 +96,11 @@ namespace AtsBackgroundBuilder
                                 var textColorIndex = disposition.TextColorIndex;
                                 double measuredWidth = 0.0;
 
+                                // Default: per-quarter anchor/placement target.
+                                // (Using disposition.SafePoint will bias multi-quarter dispositions to a single quarter.)
+                                Point2d searchTarget = intersectionTarget;
+                                Point2d leaderTarget = intersectionTarget;
+
                                 if (disposition.RequiresWidth)
                                 {
                                     var polyForWidth = intersectionPiece ?? dispClone;
@@ -99,58 +113,85 @@ namespace AtsBackgroundBuilder
 
                                     measuredWidth = measurement.MedianWidth;
 
-                                    double median = measuredWidth;
-                                    double nearestInt = Math.Round(measuredWidth, 0, MidpointRounding.AwayFromZero);
-
-                                    double bestException = median;
-                                    double diffException = double.MaxValue;
+                                    // Always choose the closest acceptable width for the LABEL text.
+                                    // Tolerance is only used for colour (match vs mismatch), not snapping choice.
+                                    double snapped = measuredWidth;
+                                    double diffToSnapped = double.MaxValue;
                                     if (_config.AcceptableRowWidths != null && _config.AcceptableRowWidths.Length > 0)
                                     {
-                                        bestException = _config.AcceptableRowWidths
+                                        snapped = _config.AcceptableRowWidths
                                             .OrderBy(w => Math.Abs(measuredWidth - w))
+                                            .ThenBy(w => w)
                                             .First();
-                                        diffException = Math.Abs(measuredWidth - bestException);
+                                        diffToSnapped = Math.Abs(measuredWidth - snapped);
                                     }
-                                    double diffInt = Math.Abs(measuredWidth - nearestInt);
-
-                                    double snapped;
-                                    bool snappedToAcceptable = diffException <= diffInt || diffException <= _config.WidthSnapTolerance;
-                                    if (snappedToAcceptable)
-                                        snapped = bestException;
-                                    else
-                                        snapped = nearestInt;
 
                                     bool isVariable = measurement.IsVariable;
-                                    if (isVariable && Math.Abs(snapped - measuredWidth) <= _config.WidthSnapTolerance)
-                                    {
+                                    // If the corridor measured as variable but its median is effectively on a standard width,
+                                    // treat as fixed. (This prevents false "Variable Width" classifications.)
+                                    if (isVariable && diffToSnapped <= _config.WidthSnapTolerance)
                                         isVariable = false;
-                                    }
 
-                                    bool snappedIsInAcceptable = _config.AcceptableRowWidths != null
-                                        && _config.AcceptableRowWidths.Any(w => Math.Abs(w - snapped) <= 1e-4);
-                                    bool hasMatchingWidth = !isVariable && snappedIsInAcceptable;
                                     if (isVariable)
                                     {
                                         labelText = disposition.MappedCompany + "\\P" + "Variable Width" + "\\P" + disposition.PurposeTitleCase + "\\P" + disposition.DispNumFormatted;
+                                        textColorIndex = 3;
                                     }
                                     else
                                     {
                                         var widthText = snapped.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
                                         labelText = disposition.MappedCompany + "\\P" + widthText + " " + disposition.MappedPurpose + "\\P" + disposition.DispNumFormatted;
+
+                                        // Green = measured width does NOT match the snapped width within tolerance.
+                                        bool matches = diffToSnapped <= _config.WidthSnapTolerance;
+                                        textColorIndex = matches ? 256 : 3;
                                     }
 
-                                    textColorIndex = hasMatchingWidth ? 256 : 3;
+                                    // Leader anchor: a centerline point in THIS quarter's corridor piece.
+                                    // Prefer the measured median center sample if it's inside the quarter; otherwise use the per-quarter intersection target.
+                                    Point2d leaderCandidate = measurement.MedianCenter;
+                                    if (!GeometryUtils.IsPointInsidePolyline(quarterClone, leaderCandidate) ||
+                                        !GeometryUtils.IsPointInsidePolyline(polyForWidth, leaderCandidate))
+                                    {
+                                        leaderCandidate = intersectionTarget;
+                                    }
+
+                                    // Refine to the mid-width point so the leader endpoint doesn't land on the corridor edge.
+                                    if (GeometryUtils.TryGetCrossSectionMidpoint(polyForWidth, leaderCandidate, out var mid, out _))
+                                        leaderCandidate = mid;
+
+                                    // Final safety: keep leader target inside both the quarter and the corridor piece.
+                                    if (!GeometryUtils.IsPointInsidePolyline(quarterClone, leaderCandidate) ||
+                                        !GeometryUtils.IsPointInsidePolyline(polyForWidth, leaderCandidate))
+                                    {
+                                        leaderCandidate = intersectionTarget;
+                                        if (GeometryUtils.TryGetCrossSectionMidpoint(polyForWidth, leaderCandidate, out var mid2, out _))
+                                        {
+                                            if (GeometryUtils.IsPointInsidePolyline(quarterClone, mid2) &&
+                                                GeometryUtils.IsPointInsidePolyline(polyForWidth, mid2))
+                                                leaderCandidate = mid2;
+                                        }
+                                    }
+
+                                    leaderTarget = leaderCandidate;
                                 }
 
-                                var safePoint = disposition.SafePoint;
-                                var searchTarget = GetTargetPoint(quarterClone, dispClone, safePoint);
-
-                                var leaderTarget = searchTarget;
-                                if (disposition.RequiresWidth &&
-                                    GeometryUtils.IsPointInsidePolyline(quarterClone, safePoint) &&
-                                    GeometryUtils.IsPointInsidePolyline(dispClone, safePoint))
+                                // Defensive: if the intersection target landed just outside due to numerical issues,
+                                // find a valid in-both point; do NOT fall back to SafePoint outside this quarter.
+                                if (!GeometryUtils.IsPointInsidePolyline(quarterClone, searchTarget) ||
+                                    !GeometryUtils.IsPointInsidePolyline(dispClone, searchTarget))
                                 {
-                                    leaderTarget = safePoint;
+                                    if (GeometryUtils.TryFindPointInsideBoth(quarterClone, dispClone, out var altTarget))
+                                        searchTarget = altTarget;
+                                }
+
+                                // If we still don't have a valid in-both target, do NOT attempt a quarter label.
+                                // (This prevents "SE label" attempts from accidentally using an SW safe point / target.)
+                                if (!GeometryUtils.IsPointInsidePolyline(quarterClone, searchTarget) ||
+                                    !GeometryUtils.IsPointInsidePolyline(dispClone, searchTarget))
+                                {
+                                    _logger.WriteLine($"Skip label (no valid in-both target): disp={disposition.ObjectId}");
+                                    continue;
                                 }
 
                                 // Candidate label points around the target
@@ -563,10 +604,12 @@ namespace AtsBackgroundBuilder
                     // target = safe interior of intersection piece
                     target = GeometryUtils.GetSafeInteriorPoint(best);
 
-                    // Dispose non-best pieces (TryIntersectPolylines returns DBObjects the caller owns)
-                    foreach (var p in closed)
+                    // Dispose non-best pieces (TryIntersectPolylines returns DBObjects the caller owns).
+                    // IMPORTANT: dispose BOTH the closed and any open/degenerate pieces we aren't returning,
+                    // otherwise repeated quarter processing leaks DBObjects.
+                    foreach (var p in pieces)
                     {
-                        if (!ReferenceEquals(p, best))
+                        if (p != null && !ReferenceEquals(p, best))
                             p.Dispose();
                     }
                     return true;
