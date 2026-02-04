@@ -13,6 +13,7 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Geometry;
 
+
 namespace AtsBackgroundBuilder
 {
     public class Plugin : IExtensionApplication
@@ -46,11 +47,51 @@ namespace AtsBackgroundBuilder
             var companyLookup = ExcelLookup.Load(companyLookupPath, logger);
             var purposeLookup = ExcelLookup.Load(purposeLookupPath, logger);
 
-            var sectionDrawResult = TryPromptAndBuildSections(editor, database, config, logger);
+            // ------------------------------------------------------------------
+            // UI input (replaces command line prompts)
+            // ------------------------------------------------------------------
+            AtsBuildInput? input = null;
+            try
+            {
+                using var form = new AtsBuildForm(companyLookup.Values, config);
+                var dr = form.ShowDialog();
+                if (dr != System.Windows.Forms.DialogResult.OK || form.Result == null)
+                {
+                    editor.WriteMessage("\nATSBUILD cancelled.");
+                    return;
+                }
+
+                input = form.Result;
+            }
+            catch (System.Exception ex)
+            {
+                editor.WriteMessage($"\nATSBUILD UI error: {ex.Message}");
+                logger.WriteLine("ATSBUILD UI error: " + ex);
+                return;
+            }
+
+            if (input == null)
+            {
+                editor.WriteMessage("\nATSBUILD cancelled.");
+                return;
+            }
+
+            // Enforce your current behavior (multi-quarter labeling). Keep existing logic.
+            config.AllowMultiQuarterDispositions = true;
+            config.TextHeight = input.TextHeight;
+            config.MaxOverlapAttempts = input.MaxOverlapAttempts;
+
+            if (!config.UseSectionIndex)
+            {
+                editor.WriteMessage("\nConfig.UseSectionIndex=false. This build requires the section index workflow.");
+                return;
+            }
+
+            var sectionDrawResult = DrawSectionsFromRequests(editor, database, input.SectionRequests, config, logger);
             var quarterPolylines = sectionDrawResult.QuarterPolylineIds;
             if (quarterPolylines.Count == 0)
             {
-                editor.WriteMessage("\nNo quarter polylines selected.");
+                editor.WriteMessage("\nNo quarter polylines generated from the section index.");
                 return;
             }
 
@@ -65,20 +106,16 @@ namespace AtsBackgroundBuilder
             if (dispositionPolylines.Count == 0)
             {
                 editor.WriteMessage("\nNo disposition polylines imported from shapefiles.");
-                return;
+                // Still allow the run to complete (sections were drawn). If you later add other layers (ATS fabric),
+                // this prevents an early return from blocking those.
             }
 
-            var currentClient = PromptForClient(editor, companyLookup);
+            var currentClient = input.CurrentClient;
             if (string.IsNullOrWhiteSpace(currentClient))
             {
                 editor.WriteMessage("\nCurrent client is required.");
                 return;
             }
-
-            var textHeight = PromptForDouble(editor, "Text height", config.TextHeight, 1.0, 100.0);
-            var maxAttempts = PromptForInt(editor, "Max overlap attempts", config.MaxOverlapAttempts, 1, 200);
-            config.TextHeight = textHeight;
-            config.MaxOverlapAttempts = maxAttempts;
 
             var layerManager = new LayerManager(database);
             var dispositions = new List<DispositionInfo>();
@@ -133,7 +170,12 @@ namespace AtsBackgroundBuilder
                             suffix = suffix.Substring(1);
                         if (!string.IsNullOrEmpty(suffix))
                         {
-                            var prefix = ResolveLayerPrefix(ent.Layer, currentClient, company);
+                            // IMPORTANT: OD company is often a code (lookup key), while the UI client list comes from
+                            // the lookup VALUE column. Compare against the mapped company value first.
+                            bool isClient = string.Equals(currentClient, mappedCompany, StringComparison.InvariantCultureIgnoreCase)
+                                            || string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase);
+
+                            var prefix = isClient ? "C" : "F";
                             lineLayerName = $"{prefix}-{suffix}";
                             textLayerName = $"{lineLayerName}-T";
                         }
@@ -217,6 +259,45 @@ namespace AtsBackgroundBuilder
             result.DedupedDispositions = importSummary.DedupedDispositions;
             result.FilteredDispositions = importSummary.FilteredDispositions;
             result.ImportFailures = importSummary.ImportFailures;
+
+            // If the user excluded disposition linework, erase the imported disposition polylines
+            // after label placement is complete.
+            if (!input.IncludeDispositionLinework && dispositionPolylines.Count > 0)
+            {
+                try
+                {
+                    using (var tr = database.TransactionManager.StartTransaction())
+                    {
+                        foreach (var id in dispositionPolylines)
+                        {
+                            try
+                            {
+                                var ent = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
+                                if (ent != null && !ent.IsErased)
+                                {
+                                    ent.Erase(true);
+                                }
+                            }
+                            catch
+                            {
+                                // ignore individual failures
+                            }
+                        }
+                        tr.Commit();
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    logger.WriteLine("Failed erasing disposition linework: " + ex.Message);
+                }
+            }
+
+            // Placeholder hook for ATS fabric (future).
+            if (input.IncludeAtsFabric)
+            {
+                editor.WriteMessage("\nNOTE: ATS fabric import is not implemented yet.");
+                logger.WriteLine("ATS fabric requested but not implemented yet.");
+            }
 
             editor.WriteMessage("\nATSBUILD complete.");
             editor.WriteMessage("\nTotal dispositions: " + result.TotalDispositions);
@@ -508,26 +589,6 @@ namespace AtsBackgroundBuilder
             return title;
         }
 
-        private static string ResolveLayerPrefix(string sourceLayer, string currentClient, string company)
-        {
-            if (!string.IsNullOrWhiteSpace(currentClient) && !string.IsNullOrWhiteSpace(company))
-            {
-                return string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase)
-                    ? "C"
-                    : "F";
-            }
-
-            if (!string.IsNullOrWhiteSpace(sourceLayer))
-            {
-                if (sourceLayer.StartsWith("C-", StringComparison.InvariantCultureIgnoreCase))
-                    return "C";
-                if (sourceLayer.StartsWith("F-", StringComparison.InvariantCultureIgnoreCase))
-                    return "F";
-            }
-
-            return "F";
-        }
-
         private static IEnumerable<Polyline> GenerateQuarters(Polyline section)
         {
             var extents = section.GeometricExtents;
@@ -581,9 +642,23 @@ namespace AtsBackgroundBuilder
                     sectionIds.Add(buildResult.SectionPolylineId);
                 }
 
-                foreach (var quarterId in buildResult.QuarterPolylineIds.Values)
+                // Respect the per-row quarter selection:
+                // - ALL ... include all quarters for that section
+                // - NW/NE/SW/SE ... include only the requested quarter polyline for label placement
+                if (request.Quarter == QuarterSelection.All)
                 {
-                    quarterIds.Add(quarterId);
+                    foreach (var quarterId in buildResult.QuarterPolylineIds.Values)
+                        quarterIds.Add(quarterId);
+                }
+                else if (buildResult.QuarterPolylineIds.TryGetValue(request.Quarter, out var qId))
+                {
+                    quarterIds.Add(qId);
+                }
+                else
+                {
+                    // Fallback: if mapping is missing for some reason, include all.
+                    foreach (var quarterId in buildResult.QuarterPolylineIds.Values)
+                        quarterIds.Add(quarterId);
                 }
             }
 
