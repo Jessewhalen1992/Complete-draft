@@ -40,6 +40,9 @@ namespace AtsBackgroundBuilder
         /// </summary>
         public double LeaderCircleRadius { get; set; } = 1.0;
         public string LeaderArrowBlockName { get; set; } = "DotBlank";
+        public bool LeaderHorizontalLanding { get; set; } = true;
+        public double LeaderLandingDistance { get; set; } = 20.0;
+        public double LeaderLandingGap { get; set; } = 5.0;
 
         // -------------------------
         // Section Index (Compass / Res Manager)
@@ -274,6 +277,8 @@ namespace AtsBackgroundBuilder
             if (TryDouble(root, nameof(TextHeight), out var d) && d > 0) cfg.TextHeight = d;
             if (TryDouble(root, nameof(SectionBufferDistance), out d) && d >= 0) cfg.SectionBufferDistance = d;
             if (TryDouble(root, nameof(LeaderCircleRadius), out d) && d >= 0) cfg.LeaderCircleRadius = d;
+            if (TryDouble(root, nameof(LeaderLandingDistance), out d) && d >= 0) cfg.LeaderLandingDistance = d;
+            if (TryDouble(root, nameof(LeaderLandingGap), out d) && d >= 0) cfg.LeaderLandingGap = d;
 
             if (TryDouble(root, nameof(VariableWidthAbsTolerance), out d) && d >= 0) cfg.VariableWidthAbsTolerance = d;
             if (TryDouble(root, nameof(VariableWidthRelTolerance), out d) && d >= 0) cfg.VariableWidthRelTolerance = d;
@@ -290,6 +295,7 @@ namespace AtsBackgroundBuilder
             if (TryBool(root, nameof(AllowMultiQuarterDispositions), out b)) cfg.AllowMultiQuarterDispositions = b;
 
             if (TryBool(root, nameof(EnableLeaders), out b)) cfg.EnableLeaders = b;
+            if (TryBool(root, nameof(LeaderHorizontalLanding), out b)) cfg.LeaderHorizontalLanding = b;
             if (TryBool(root, nameof(UseSectionIndex), out b)) cfg.UseSectionIndex = b;
 
             if (TryBool(root, nameof(AllowOutsideDispositionForWidthPurposes), out b))

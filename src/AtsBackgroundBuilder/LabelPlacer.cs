@@ -188,6 +188,12 @@ namespace AtsBackgroundBuilder
             mleader.AddLastVertex(lineIndex, new Point3d(labelPoint.X, labelPoint.Y, 0));
 
             mleader.LeaderLineType = LeaderType.StraightLeader;
+            mleader.EnableLanding = _config.LeaderHorizontalLanding;
+            if (_config.LeaderHorizontalLanding)
+            {
+                mleader.DoglegLength = _config.LeaderLandingDistance;
+                mleader.LandingGap = _config.LeaderLandingGap;
+            }
 
             // Assign an arrow block (e.g. dot blank) via ArrowSymbolId as needed; no HasArrowHead property exists
             var arrowId = GetLeaderArrowId(tr);
