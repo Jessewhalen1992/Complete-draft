@@ -179,6 +179,7 @@ namespace AtsBackgroundBuilder
             mleader.SetDatabaseDefaults();
             mleader.ContentType = ContentType.MTextContent;
             mleader.MText = mtext;
+            mleader.TextAttachmentType = TextAttachmentType.AttachmentMiddle;
             // Create a leader cluster and line
             int leaderIndex = mleader.AddLeader();
             int lineIndex = mleader.AddLeaderLine(leaderIndex);

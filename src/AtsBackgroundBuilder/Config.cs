@@ -26,8 +26,8 @@ namespace AtsBackgroundBuilder
         // Back-compat: some previous iterations referenced this property name.
         public bool AllowLabelOverlap { get; set; } = false;
 
-        // When false, a single disposition only gets labeled once even if it intersects multiple quarters.
-        public bool AllowMultiQuarterDispositions { get; set; } = false;
+        // When true, a single disposition gets labeled in every quarter it intersects.
+        public bool AllowMultiQuarterDispositions { get; set; } = true;
 
         // -------------------------
         // Leaders / callouts
