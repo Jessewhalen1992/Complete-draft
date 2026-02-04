@@ -133,9 +133,7 @@ namespace AtsBackgroundBuilder
                             suffix = suffix.Substring(1);
                         if (!string.IsNullOrEmpty(suffix))
                         {
-                            var prefix = string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase)
-                                ? "C"
-                                : "F";
+                            var prefix = ResolveLayerPrefix(ent.Layer, currentClient, company);
                             lineLayerName = $"{prefix}-{suffix}";
                             textLayerName = $"{lineLayerName}-T";
                         }
@@ -508,6 +506,21 @@ namespace AtsBackgroundBuilder
             title = title.Replace(" Of ", " of ");
             title = title.Replace(" The ", " the ");
             return title;
+        }
+
+        private static string ResolveLayerPrefix(string sourceLayer, string currentClient, string company)
+        {
+            if (!string.IsNullOrWhiteSpace(sourceLayer))
+            {
+                if (sourceLayer.StartsWith("C-", StringComparison.InvariantCultureIgnoreCase))
+                    return "C";
+                if (sourceLayer.StartsWith("F-", StringComparison.InvariantCultureIgnoreCase))
+                    return "F";
+            }
+
+            return string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase)
+                ? "C"
+                : "F";
         }
 
         private static IEnumerable<Polyline> GenerateQuarters(Polyline section)
