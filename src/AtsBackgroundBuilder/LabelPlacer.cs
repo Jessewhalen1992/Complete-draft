@@ -62,7 +62,7 @@ namespace AtsBackgroundBuilder
                                 continue;
 
                             // Confirm actual intersection and compute per-quarter target
-                            if (!TryGetQuarterIntersectionTarget(quarterClone, disposition.Polyline, out var intersectionPiece, out var quarterTarget))
+                            if (!TryGetQuarterIntersectionTarget(quarterClone, disposition.Polyline, out var intersectionPiece, out _))
                             {
                                 _logger.WriteLine($"No quarter intersection: disp={disposition.ObjectId} quarterExt={quarterClone.GeometricExtents}");
                                 result.SkippedNoIntersection++;
@@ -143,14 +143,22 @@ namespace AtsBackgroundBuilder
                                     textColorIndex = hasMatchingWidth ? 256 : 3;
                                 }
 
-                                // Leader target point (inside quarter ∩ disposition whenever possible)
-                                var target = quarterTarget;
+                                var safePoint = disposition.SafePoint;
+                                var searchTarget = GetTargetPoint(quarterClone, dispClone, safePoint);
+
+                                var leaderTarget = searchTarget;
+                                if (disposition.RequiresWidth &&
+                                    GeometryUtils.IsPointInsidePolyline(quarterClone, safePoint) &&
+                                    GeometryUtils.IsPointInsidePolyline(dispClone, safePoint))
+                                {
+                                    leaderTarget = safePoint;
+                                }
 
                                 // Candidate label points around the target
                                 var candidates = GetCandidateLabelPoints(
                                         quarterClone,
                                         dispClone,
-                                        target,
+                                        searchTarget,
                                         disposition.AllowLabelOutsideDisposition,
                                         _config.TextHeight,
                                         _config.MaxOverlapAttempts,
@@ -160,13 +168,13 @@ namespace AtsBackgroundBuilder
                                 if (candidates.Count == 0)
                                 {
                                     // Only fallback if target is actually inside this quarter
-                                    if (!GeometryUtils.IsPointInsidePolyline(quarterClone, target))
+                                    if (!GeometryUtils.IsPointInsidePolyline(quarterClone, searchTarget))
                                     {
                                         skipPlacement = true;
                                     }
                                     else
                                     {
-                                        candidates.Add(target);
+                                        candidates.Add(searchTarget);
                                     }
                                 }
 
@@ -179,18 +187,18 @@ namespace AtsBackgroundBuilder
                                     {
                                         lastCandidate = pt;
 
-                                        var labelEntity = CreateLabelEntity(transaction, modelSpace, target, pt, disposition, labelText, textColorIndex);
-                                        var bounds = labelEntity.GeometricExtents;
-                                        bool overlaps = placedLabelExtents.Any(b => GeometryUtils.ExtentsIntersect(b, bounds));
+                                        var predicted = EstimateTextExtents(pt, labelText, _config.TextHeight);
+                                        bool overlaps = placedLabelExtents.Any(b => GeometryUtils.ExtentsIntersect(b, predicted));
 
                                         if (overlaps)
                                         {
-                                            labelEntity.Erase();
                                             continue;
                                         }
 
+                                        CreateLabelEntity(transaction, modelSpace, leaderTarget, pt, disposition, labelText, textColorIndex);
+
                                         // Success
-                                        placedLabelExtents.Add(bounds);
+                                        placedLabelExtents.Add(predicted);
                                         placed = true;
                                         result.LabelsPlaced++;
                                         break;
@@ -199,9 +207,10 @@ namespace AtsBackgroundBuilder
                                     if (!placed && _config.PlaceWhenOverlapFails && candidates.Count > 0)
                                     {
                                         // Forced placement at last candidate
-                                        var labelEntity = CreateLabelEntity(transaction, modelSpace, target, lastCandidate, disposition, labelText, textColorIndex);
+                                        var predicted = EstimateTextExtents(lastCandidate, labelText, _config.TextHeight);
+                                        CreateLabelEntity(transaction, modelSpace, leaderTarget, lastCandidate, disposition, labelText, textColorIndex);
 
-                                        placedLabelExtents.Add(labelEntity.GeometricExtents);
+                                        placedLabelExtents.Add(predicted);
                                         result.LabelsPlaced++;
                                         result.OverlapForced++;
 
@@ -423,6 +432,43 @@ namespace AtsBackgroundBuilder
 
             layerTable.Add(layer);
             tr.AddNewlyCreatedDBObject(layer, true);
+        }
+
+        private static Extents3d EstimateTextExtents(Point2d center, string labelText, double textHeight)
+        {
+            if (textHeight <= 0) textHeight = 10.0;
+            var lines = (labelText ?? string.Empty).Split(new[] { "\\P" }, StringSplitOptions.None);
+            int lineCount = Math.Max(1, lines.Length);
+
+            int maxChars = 0;
+            foreach (var ln in lines)
+            {
+                int c = 0;
+                for (int i = 0; i < ln.Length; i++)
+                {
+                    char ch = ln[i];
+                    if (ch == '\\')
+                    {
+                        if (i + 1 < ln.Length) i++;
+                        continue;
+                    }
+                    if (ch == '{' || ch == '}') continue;
+                    c++;
+                }
+                if (c > maxChars) maxChars = c;
+            }
+
+            double charWidth = textHeight * 0.6;
+            double width = Math.Max(textHeight, maxChars * charWidth);
+            double height = lineCount * textHeight * 1.2;
+
+            double pad = textHeight * 0.3;
+            width += pad * 2;
+            height += pad * 2;
+
+            var min = new Point3d(center.X - width / 2, center.Y - height / 2, 0);
+            var max = new Point3d(center.X + width / 2, center.Y + height / 2, 0);
+            return new Extents3d(min, max);
         }
 
 
