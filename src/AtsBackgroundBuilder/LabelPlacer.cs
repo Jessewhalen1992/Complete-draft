@@ -308,6 +308,7 @@ namespace AtsBackgroundBuilder
             int maxPoints)
         {
             var spiral = GeometryUtils.GetSpiralOffsets(target, step, maxPoints).ToList();
+            double minDistance = step * 0.5;
 
             if (!allowOutsideDisposition)
             {
@@ -317,7 +318,7 @@ namespace AtsBackgroundBuilder
                     {
                         var p3d = new Point3d(p.X, p.Y, 0);
                         var closest = disposition.GetClosestPointTo(p3d, false);
-                        if (closest.DistanceTo(p3d) >= (step * 0.5))
+                        if (closest.DistanceTo(p3d) >= minDistance)
                             yield return p;
                     }
                 }
@@ -332,9 +333,19 @@ namespace AtsBackgroundBuilder
                     continue;
 
                 if (PointInPolyline(disposition, p))
-                    inside.Add(p);
+                {
+                    var p3d = new Point3d(p.X, p.Y, 0);
+                    var closest = disposition.GetClosestPointTo(p3d, false);
+                    if (closest.DistanceTo(p3d) >= minDistance)
+                        inside.Add(p);
+                }
                 else
-                    yield return p;
+                {
+                    var p3d = new Point3d(p.X, p.Y, 0);
+                    var closest = disposition.GetClosestPointTo(p3d, false);
+                    if (closest.DistanceTo(p3d) >= minDistance)
+                        yield return p;
+                }
             }
 
             foreach (var p in inside)
