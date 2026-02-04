@@ -510,6 +510,13 @@ namespace AtsBackgroundBuilder
 
         private static string ResolveLayerPrefix(string sourceLayer, string currentClient, string company)
         {
+            if (!string.IsNullOrWhiteSpace(currentClient) && !string.IsNullOrWhiteSpace(company))
+            {
+                return string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase)
+                    ? "C"
+                    : "F";
+            }
+
             if (!string.IsNullOrWhiteSpace(sourceLayer))
             {
                 if (sourceLayer.StartsWith("C-", StringComparison.InvariantCultureIgnoreCase))
@@ -518,9 +525,7 @@ namespace AtsBackgroundBuilder
                     return "F";
             }
 
-            return string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase)
-                ? "C"
-                : "F";
+            return "F";
         }
 
         private static IEnumerable<Polyline> GenerateQuarters(Polyline section)
