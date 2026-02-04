@@ -81,7 +81,6 @@ namespace AtsBackgroundBuilder
                             // Ensure label layer exists
                             EnsureLayerInTransaction(_database, transaction, disposition.TextLayerName);
 
-                            bool skipPlacement = false;
                             using (var dispClone = (Polyline)disposition.Polyline.Clone())
                             {
                                 var labelText = disposition.LabelText;
@@ -167,65 +166,62 @@ namespace AtsBackgroundBuilder
 
                                 if (candidates.Count == 0)
                                 {
-                                    // Only fallback if target is actually inside this quarter
-                                    if (!GeometryUtils.IsPointInsidePolyline(quarterClone, searchTarget))
+                                    // Don’t place labels using an out-of-quarter/out-of-disposition fallback target
+                                    if (!GeometryUtils.IsPointInsidePolyline(quarterClone, searchTarget) ||
+                                        !GeometryUtils.IsPointInsidePolyline(dispClone, searchTarget))
                                     {
-                                        skipPlacement = true;
+                                        _logger.WriteLine($"Skip label (no valid in-shape target): disp={disposition.ObjectId}");
+                                        continue;
                                     }
-                                    else
-                                    {
-                                        candidates.Add(searchTarget);
-                                    }
+
+                                    candidates.Add(searchTarget);
                                 }
 
-                                if (!skipPlacement)
+                                bool placed = false;
+                                Point2d lastCandidate = candidates[candidates.Count - 1];
+
+                                foreach (var pt in candidates)
                                 {
-                                    bool placed = false;
-                                    Point2d lastCandidate = candidates[candidates.Count - 1];
+                                    lastCandidate = pt;
 
-                                    foreach (var pt in candidates)
+                                    var predicted = EstimateTextExtents(pt, labelText, _config.TextHeight);
+                                    bool overlaps = placedLabelExtents.Any(b => GeometryUtils.ExtentsIntersect(b, predicted));
+
+                                    if (overlaps)
                                     {
-                                        lastCandidate = pt;
-
-                                        var predicted = EstimateTextExtents(pt, labelText, _config.TextHeight);
-                                        bool overlaps = placedLabelExtents.Any(b => GeometryUtils.ExtentsIntersect(b, predicted));
-
-                                        if (overlaps)
-                                        {
-                                            continue;
-                                        }
-
-                                        CreateLabelEntity(transaction, modelSpace, leaderTarget, pt, disposition, labelText, textColorIndex);
-
-                                        // Success
-                                        placedLabelExtents.Add(predicted);
-                                        placed = true;
-                                        result.LabelsPlaced++;
-                                        break;
+                                        continue;
                                     }
 
-                                    if (!placed && _config.PlaceWhenOverlapFails && candidates.Count > 0)
-                                    {
-                                        // Forced placement at last candidate
-                                        var predicted = EstimateTextExtents(lastCandidate, labelText, _config.TextHeight);
-                                        CreateLabelEntity(transaction, modelSpace, leaderTarget, lastCandidate, disposition, labelText, textColorIndex);
+                                    CreateLabelEntity(transaction, modelSpace, leaderTarget, pt, disposition, labelText, textColorIndex);
 
-                                        placedLabelExtents.Add(predicted);
-                                        result.LabelsPlaced++;
-                                        result.OverlapForced++;
-
-                                        placed = true;
-                                    }
-
-                                    if (!placed)
-                                    {
-                                        // Not counted in legacy result, but keep debug output
-                                        _logger.WriteLine($"Could not place label for disposition {disposition.ObjectId}");
-                                    }
-
-                                    if (!_config.AllowMultiQuarterDispositions)
-                                        processedDispositionIds.Add(disposition.ObjectId);
+                                    // Success
+                                    placedLabelExtents.Add(predicted);
+                                    placed = true;
+                                    result.LabelsPlaced++;
+                                    break;
                                 }
+
+                                if (!placed && _config.PlaceWhenOverlapFails && candidates.Count > 0)
+                                {
+                                    // Forced placement at last candidate
+                                    var predicted = EstimateTextExtents(lastCandidate, labelText, _config.TextHeight);
+                                    CreateLabelEntity(transaction, modelSpace, leaderTarget, lastCandidate, disposition, labelText, textColorIndex);
+
+                                    placedLabelExtents.Add(predicted);
+                                    result.LabelsPlaced++;
+                                    result.OverlapForced++;
+
+                                    placed = true;
+                                }
+
+                                if (!placed)
+                                {
+                                    // Not counted in legacy result, but keep debug output
+                                    _logger.WriteLine($"Could not place label for disposition {disposition.ObjectId}");
+                                }
+
+                                if (!_config.AllowMultiQuarterDispositions)
+                                    processedDispositionIds.Add(disposition.ObjectId);
                             }
 
                             if (intersectionPiece != null && !ReferenceEquals(intersectionPiece, disposition.Polyline))
@@ -233,8 +229,6 @@ namespace AtsBackgroundBuilder
                                 intersectionPiece.Dispose();
                             }
 
-                            if (skipPlacement)
-                                continue;
                         }
                     }
                 }
