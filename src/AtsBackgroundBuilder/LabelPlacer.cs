@@ -329,17 +329,9 @@ namespace AtsBackgroundBuilder
 
         private static TextAttachmentType GetLeaderTextAttachment(AttachmentPoint attachment)
         {
-            switch (attachment)
-            {
-                case AttachmentPoint.MiddleRight:
-                    return TextAttachmentType.MiddleRight;
-                case AttachmentPoint.MiddleLeft:
-                    return TextAttachmentType.MiddleLeft;
-                case AttachmentPoint.MiddleCenter:
-                    return TextAttachmentType.MiddleCenter;
-                default:
-                    return TextAttachmentType.MiddleCenter;
-            }
+            // AutoCAD .NET API does not define MiddleRight/MiddleLeft/MiddleCenter on TextAttachmentType.
+            // Use a generic attachment type that attaches to the middle of the text block.
+            return TextAttachmentType.AttachmentMiddle;
         }
 
         private ObjectId GetLeaderArrowId(Transaction tr)
