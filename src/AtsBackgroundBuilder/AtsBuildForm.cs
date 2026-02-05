@@ -19,6 +19,7 @@ namespace AtsBackgroundBuilder
         public double TextHeight { get; set; } = 10.0;
         public int MaxOverlapAttempts { get; set; } = 25;
         public bool DrawLsdSubdivisionLines { get; set; } = false;
+        public bool IncludeP3Shapefiles { get; set; } = false;
 
         /// <summary>
         /// When false, imported disposition linework is removed at cleanup.
@@ -48,6 +49,7 @@ namespace AtsBackgroundBuilder
         private readonly CheckBox _includeDispoLabels = new CheckBox();
         private readonly CheckBox _includeAtsFabric = new CheckBox();
         private readonly CheckBox _includeLsds = new CheckBox();
+        private readonly CheckBox _includeP3Shapes = new CheckBox();
         private readonly DataGridView _grid = new DataGridView();
         private readonly Button _build = new Button();
         private readonly Button _cancel = new Button();
@@ -217,6 +219,11 @@ namespace AtsBackgroundBuilder
             _includeLsds.AutoSize = true;
             _includeLsds.Margin = new Padding(0, 6, 10, 6);
 
+            _includeP3Shapes.Text = "Include P3 Shapes";
+            _includeP3Shapes.Checked = false;
+            _includeP3Shapes.AutoSize = true;
+            _includeP3Shapes.Margin = new Padding(0, 6, 10, 6);
+
             var qHelp = new Label
             {
                 Text = "Quarter values: NW, NE, SW, SE, ALL. SEC TYPE values: L-USEC, L-SEC",
@@ -233,8 +240,9 @@ namespace AtsBackgroundBuilder
             panel.Controls.Add(_includeDispoLabels, 1, 1);
             panel.Controls.Add(_includeAtsFabric, 2, 1);
             panel.Controls.Add(_includeLsds, 3, 1);
-            panel.Controls.Add(qHelp, 4, 1);
-            panel.SetColumnSpan(qHelp, 4);
+            panel.Controls.Add(_includeP3Shapes, 4, 1);
+            panel.Controls.Add(qHelp, 5, 1);
+            panel.SetColumnSpan(qHelp, 3);
 
             return panel;
         }
@@ -335,6 +343,7 @@ namespace AtsBackgroundBuilder
                 IncludeDispositionLabels = _includeDispoLabels.Checked,
                 IncludeAtsFabric = _includeAtsFabric.Checked,
                 DrawLsdSubdivisionLines = _includeLsds.Checked,
+                IncludeP3Shapefiles = _includeP3Shapes.Checked,
             };
             Result.SectionRequests.AddRange(requests);
 

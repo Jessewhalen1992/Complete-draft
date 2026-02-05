@@ -12,6 +12,8 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Geometry;
+using Autodesk.Gis.Map;
+using Autodesk.Gis.Map.ImportExport;
 
 namespace AtsBackgroundBuilder
 {
@@ -109,6 +111,17 @@ namespace AtsBackgroundBuilder
 
                 logger.Dispose();
                 return;
+            }
+
+            if (input.IncludeP3Shapefiles)
+            {
+                var p3Summary = ImportP3Shapefiles(
+                    database,
+                    editor,
+                    logger,
+                    sectionDrawResult.SectionPolylineIds);
+                editor.WriteMessage($"\nP3 import: imported {p3Summary.ImportedEntities}, filtered {p3Summary.FilteredEntities}, failures {p3Summary.ImportFailures}.");
+                logger.WriteLine($"P3 import summary: imported={p3Summary.ImportedEntities}, filtered={p3Summary.FilteredEntities}, failures={p3Summary.ImportFailures}");
             }
 
             var dispositionPolylines = new List<ObjectId>();
@@ -843,6 +856,7 @@ namespace AtsBackgroundBuilder
                             database,
                             transaction,
                             modelSpace,
+                            editor,
                             quarterMap,
                             anchors,
                             key,
@@ -866,6 +880,7 @@ namespace AtsBackgroundBuilder
             Database database,
             Transaction transaction,
             BlockTableRecord modelSpace,
+            Editor editor,
             Dictionary<QuarterSelection, Polyline> quarterMap,
             QuarterAnchors sectionAnchors,
             SectionKey key,
@@ -877,7 +892,7 @@ namespace AtsBackgroundBuilder
             }
 
             var isLsec = string.Equals(secType, "L-SEC", StringComparison.OrdinalIgnoreCase);
-            var lsdLayer = isLsec ? "L-SEC" : "L-SECTION-LSD";
+            var lsdLayer = "L-SECTION-LSD";
             EnsureLayer(database, transaction, lsdLayer);
 
             var eastUnit = GetUnitVector(sectionAnchors.Left, sectionAnchors.Right, new Vector2d(1, 0));
@@ -941,6 +956,199 @@ namespace AtsBackgroundBuilder
                 transaction.AddNewlyCreatedDBObject(vertical, true);
                 modelSpace.AppendEntity(horizontal);
                 transaction.AddNewlyCreatedDBObject(horizontal, true);
+
+                var labelCenter = new Point3d(
+                    0.25 * (verticalStart.X + verticalEnd.X + horizontalStart.X + horizontalEnd.X),
+                    0.25 * (verticalStart.Y + verticalEnd.Y + horizontalStart.Y + horizontalEnd.Y),
+                    0.0);
+                InsertAndExplodeLsdLabelBlock(database, transaction, modelSpace, editor, pair.Key, labelCenter, lsdLayer);
+            }
+        }
+
+        private static void InsertAndExplodeLsdLabelBlock(
+            Database database,
+            Transaction transaction,
+            BlockTableRecord modelSpace,
+            Editor editor,
+            QuarterSelection quarter,
+            Point3d position,
+            string layerName)
+        {
+            var preferredName = GetLsdLabelBlockName(quarter);
+            if (!TryEnsureLsdBlockLoaded(database, transaction, preferredName, editor))
+            {
+                editor?.WriteMessage($"\nLSD label load failed: {preferredName}");
+            }
+
+            if (!TryResolveLsdLabelBlock(database, transaction, quarter, out var blockId))
+            {
+                editor?.WriteMessage($"\nLSD label block not found for {quarter}.");
+                return;
+            }
+
+            var blockRef = new BlockReference(position, blockId)
+            {
+                ScaleFactors = new Scale3d(1.0),
+                Layer = layerName,
+                ColorIndex = 256
+            };
+            modelSpace.AppendEntity(blockRef);
+            transaction.AddNewlyCreatedDBObject(blockRef, true);
+
+            var exploded = new DBObjectCollection();
+            blockRef.Explode(exploded);
+            foreach (DBObject dbObject in exploded)
+            {
+                if (dbObject is Entity entity)
+                {
+                    modelSpace.AppendEntity(entity);
+                    transaction.AddNewlyCreatedDBObject(entity, true);
+                }
+                else
+                {
+                    dbObject.Dispose();
+                }
+            }
+
+            blockRef.Erase();
+            editor?.WriteMessage($"\nLSD label inserted/exploded: {preferredName} ({quarter}).");
+        }
+
+        private static bool TryEnsureLsdBlockLoaded(Database database, Transaction transaction, string blockName, Editor editor)
+        {
+            if (string.IsNullOrWhiteSpace(blockName))
+            {
+                return false;
+            }
+
+            var bt = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+            if (bt.Has(blockName))
+            {
+                return true;
+            }
+
+            const string blockFolder = @"C:\AUTOCAD-SETUP CG\BLOCKS\_CG BLOCKS";
+            var blockPath = Path.Combine(blockFolder, blockName + ".dwg");
+            if (!File.Exists(blockPath))
+            {
+                editor?.WriteMessage($"\nLSD block file missing: {blockPath}");
+                return false;
+            }
+
+            try
+            {
+                using (var sourceDb = new Database(false, true))
+                {
+                    sourceDb.ReadDwgFile(blockPath, FileOpenMode.OpenForReadAndAllShare, true, string.Empty);
+                    database.Insert(blockName, sourceDb, false);
+                }
+
+                editor?.WriteMessage($"\nLSD block loaded: {blockName}");
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                editor?.WriteMessage($"\nLSD block load exception for {blockName}: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool TryResolveLsdLabelBlock(
+            Database database,
+            Transaction transaction,
+            QuarterSelection quarter,
+            out ObjectId blockId)
+        {
+            blockId = ObjectId.Null;
+
+            var targetSuffix = quarter switch
+            {
+                QuarterSelection.NorthWest => "NW",
+                QuarterSelection.NorthEast => "NE",
+                QuarterSelection.SouthWest => "SW",
+                QuarterSelection.SouthEast => "SE",
+                _ => string.Empty
+            };
+
+            if (string.IsNullOrWhiteSpace(targetSuffix))
+            {
+                return false;
+            }
+
+            var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+
+            // Preferred explicit names first.
+            var preferred = new[]
+            {
+                $"label_lsd_{targetSuffix.ToLowerInvariant()}",
+                $"LABEL_LSD_{targetSuffix}",
+                $"label-lsd-{targetSuffix.ToLowerInvariant()}",
+                $"LABEL-LSD-{targetSuffix}"
+            };
+
+            foreach (var name in preferred)
+            {
+                if (blockTable.Has(name))
+                {
+                    blockId = blockTable[name];
+                    return true;
+                }
+            }
+
+            // Fallback: fuzzy lookup by normalized block name.
+            var targetToken = $"LABELLSD{targetSuffix}";
+            foreach (ObjectId id in blockTable)
+            {
+                var btr = transaction.GetObject(id, OpenMode.ForRead) as BlockTableRecord;
+                if (btr == null || btr.IsAnonymous || btr.IsLayout || btr.IsFromExternalReference)
+                {
+                    continue;
+                }
+
+                var normalized = NormalizeBlockName(btr.Name);
+                if (normalized == targetToken || normalized.EndsWith(targetToken, StringComparison.Ordinal))
+                {
+                    blockId = id;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string NormalizeBlockName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return string.Empty;
+            }
+
+            var sb = new System.Text.StringBuilder(name.Length);
+            foreach (var ch in name)
+            {
+                if (char.IsLetterOrDigit(ch))
+                {
+                    sb.Append(char.ToUpperInvariant(ch));
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        private static string GetLsdLabelBlockName(QuarterSelection quarter)
+        {
+            switch (quarter)
+            {
+                case QuarterSelection.NorthWest:
+                    return "label_lsd_nw";
+                case QuarterSelection.NorthEast:
+                    return "label_lsd_ne";
+                case QuarterSelection.SouthWest:
+                    return "label_lsd_sw";
+                case QuarterSelection.SouthEast:
+                    return "label_lsd_se";
+                default:
+                    return string.Empty;
             }
         }
 
@@ -1814,6 +2022,288 @@ namespace AtsBackgroundBuilder
             var jsonlFallback = Path.Combine(folder, "Master_Sections.index.jsonl");
             var csvFallback = Path.Combine(folder, "Master_Sections.index.csv");
             return File.Exists(jsonl) || File.Exists(csv) || File.Exists(jsonlFallback) || File.Exists(csvFallback);
+        }
+
+        private struct P3ImportSummary
+        {
+            public int ImportedEntities;
+            public int FilteredEntities;
+            public int ImportFailures;
+        }
+
+        private static P3ImportSummary ImportP3Shapefiles(
+            Database database,
+            Editor editor,
+            Logger logger,
+            IReadOnlyList<ObjectId> sectionPolylineIds)
+        {
+            const string p3Folder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\P3";
+            const string outputLayer = "T-WATER-P3";
+            const double sectionBuffer = 100.0;
+            var shapefiles = new[]
+            {
+                "BF_Hydro_Polygon.shp",
+                "BF_SLNET_arc.shp"
+            };
+
+            var summary = new P3ImportSummary();
+            var sectionExtents = BuildSectionExtents(database, sectionPolylineIds, sectionBuffer);
+            if (sectionExtents.Count == 0)
+            {
+                logger?.WriteLine("P3 import skipped: no section extents.");
+                return summary;
+            }
+
+            Importer importer = null;
+            try
+            {
+                importer = HostMapApplicationServices.Application?.Importer;
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("P3 importer unavailable: " + ex.Message);
+            }
+
+            if (importer == null)
+            {
+                summary.ImportFailures += shapefiles.Length;
+                return summary;
+            }
+
+            foreach (var fileName in shapefiles)
+            {
+                var path = Path.Combine(p3Folder, fileName);
+                if (!File.Exists(path))
+                {
+                    logger?.WriteLine("P3 shapefile missing: " + path);
+                    summary.ImportFailures++;
+                    continue;
+                }
+
+                var beforeIds = CaptureModelSpaceEntityIds(database);
+                try
+                {
+                    importer.Init("SHP", path);
+                    TrySetImporterLocationWindow(importer, sectionExtents, logger);
+                    foreach (InputLayer layer in importer)
+                    {
+                        layer.ImportFromInputLayerOn = true;
+                    }
+
+                    importer.Import();
+                }
+                catch (System.Exception ex)
+                {
+                    logger?.WriteLine("P3 import failed for " + path + ": " + ex.Message);
+                    summary.ImportFailures++;
+                    continue;
+                }
+
+                var afterIds = CaptureModelSpaceEntityIds(database);
+                var newIds = afterIds.Where(id => !beforeIds.Contains(id)).ToList();
+
+                using (var tr = database.TransactionManager.StartTransaction())
+                {
+                    EnsureLayer(database, tr, outputLayer);
+
+                    foreach (var id in newIds)
+                    {
+                        var ent = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
+                        if (ent == null || ent.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!IsEntityInsideAnySectionExtents(ent, sectionExtents))
+                        {
+                            ent.Erase(true);
+                            summary.FilteredEntities++;
+                            continue;
+                        }
+
+                        ent.Layer = outputLayer;
+                        ent.ColorIndex = 256;
+                        summary.ImportedEntities++;
+                    }
+
+                    tr.Commit();
+                }
+            }
+
+            editor?.WriteMessage($"\nImported {summary.ImportedEntities} P3 entities.");
+            return summary;
+        }
+
+        private static HashSet<ObjectId> CaptureModelSpaceEntityIds(Database database)
+        {
+            var ids = new HashSet<ObjectId>();
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId id in modelSpace)
+                {
+                    ids.Add(id);
+                }
+
+                tr.Commit();
+            }
+
+            return ids;
+        }
+
+        private static List<Extents2d> BuildSectionExtents(
+            Database database,
+            IReadOnlyList<ObjectId> sectionPolylineIds,
+            double buffer)
+        {
+            var extents = new List<Extents2d>();
+            if (database == null || sectionPolylineIds == null || sectionPolylineIds.Count == 0)
+            {
+                return extents;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                foreach (var id in sectionPolylineIds)
+                {
+                    if (id.IsNull)
+                    {
+                        continue;
+                    }
+
+                    var ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    if (ent == null)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        var ge = ent.GeometricExtents;
+                        extents.Add(new Extents2d(
+                            ge.MinPoint.X - buffer,
+                            ge.MinPoint.Y - buffer,
+                            ge.MaxPoint.X + buffer,
+                            ge.MaxPoint.Y + buffer));
+                    }
+                    catch
+                    {
+                        // ignore invalid extents
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            return extents;
+        }
+
+        private static bool IsEntityInsideAnySectionExtents(Entity ent, List<Extents2d> sectionExtents)
+        {
+            if (ent == null || sectionExtents == null || sectionExtents.Count == 0)
+            {
+                return false;
+            }
+
+            Extents3d ge;
+            try
+            {
+                ge = ent.GeometricExtents;
+            }
+            catch
+            {
+                return false;
+            }
+
+            var e2d = new Extents2d(ge.MinPoint.X, ge.MinPoint.Y, ge.MaxPoint.X, ge.MaxPoint.Y);
+            foreach (var sectionExtent in sectionExtents)
+            {
+                if (!(e2d.MaxPoint.X < sectionExtent.MinPoint.X ||
+                      e2d.MinPoint.X > sectionExtent.MaxPoint.X ||
+                      e2d.MaxPoint.Y < sectionExtent.MinPoint.Y ||
+                      e2d.MinPoint.Y > sectionExtent.MaxPoint.Y))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void TrySetImporterLocationWindow(Importer importer, List<Extents2d> sectionExtents, Logger logger)
+        {
+            if (importer == null || sectionExtents == null || sectionExtents.Count == 0)
+            {
+                return;
+            }
+
+            var union = UnionExtents(sectionExtents);
+            try
+            {
+                var method = importer.GetType().GetMethod("SetLocationWindowAndOptions");
+                if (method == null)
+                {
+                    return;
+                }
+
+                var parameters = method.GetParameters();
+                if (parameters.Length != 5 || !parameters[4].ParameterType.IsEnum)
+                {
+                    return;
+                }
+
+                var option = GetEnumValue(parameters[4].ParameterType, 2, "kUseLocationWindow", "UseLocationWindow");
+                method.Invoke(importer, new object[]
+                {
+                    union.MinPoint.X,
+                    union.MaxPoint.X,
+                    union.MinPoint.Y,
+                    union.MaxPoint.Y,
+                    option
+                });
+                logger?.WriteLine($"P3 importer location window set: X[{union.MinPoint.X:G},{union.MaxPoint.X:G}] Y[{union.MinPoint.Y:G},{union.MaxPoint.Y:G}]");
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("P3 location window setup failed: " + ex.Message);
+            }
+        }
+
+        private static Extents2d UnionExtents(List<Extents2d> extents)
+        {
+            var minX = extents[0].MinPoint.X;
+            var minY = extents[0].MinPoint.Y;
+            var maxX = extents[0].MaxPoint.X;
+            var maxY = extents[0].MaxPoint.Y;
+
+            for (var i = 1; i < extents.Count; i++)
+            {
+                var e = extents[i];
+                minX = Math.Min(minX, e.MinPoint.X);
+                minY = Math.Min(minY, e.MinPoint.Y);
+                maxX = Math.Max(maxX, e.MaxPoint.X);
+                maxY = Math.Max(maxY, e.MaxPoint.Y);
+            }
+
+            return new Extents2d(minX, minY, maxX, maxY);
+        }
+
+        private static object GetEnumValue(Type enumType, int fallbackNumeric, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                try
+                {
+                    return Enum.Parse(enumType, name, true);
+                }
+                catch
+                {
+                    // keep trying
+                }
+            }
+
+            return Enum.ToObject(enumType, fallbackNumeric);
         }
 
         private static void EnsureLayer(Database database, Transaction transaction, string layerName)
