@@ -18,11 +18,13 @@ namespace AtsBackgroundBuilder
         public int Zone { get; set; } = 11;
         public double TextHeight { get; set; } = 10.0;
         public int MaxOverlapAttempts { get; set; } = 25;
+        public bool DrawLsdSubdivisionLines { get; set; } = false;
 
         /// <summary>
-        /// When false, dispositions are still imported/used for labeling, but are erased at the end.
+        /// When false, imported disposition linework is removed at cleanup.
         /// </summary>
         public bool IncludeDispositionLinework { get; set; } = true;
+        public bool IncludeDispositionLabels { get; set; } = true;
 
         /// <summary>
         /// Placeholder for future feature layers.
@@ -43,7 +45,9 @@ namespace AtsBackgroundBuilder
         private readonly NumericUpDown _textHeight = new NumericUpDown();
         private readonly NumericUpDown _maxAttempts = new NumericUpDown();
         private readonly CheckBox _includeDispoLinework = new CheckBox();
+        private readonly CheckBox _includeDispoLabels = new CheckBox();
         private readonly CheckBox _includeAtsFabric = new CheckBox();
+        private readonly CheckBox _includeLsds = new CheckBox();
         private readonly DataGridView _grid = new DataGridView();
         private readonly Button _build = new Button();
         private readonly Button _cancel = new Button();
@@ -57,7 +61,7 @@ namespace AtsBackgroundBuilder
             StartPosition = FormStartPosition.CenterScreen;
 
             // Slightly larger to comfortably fit the grid.
-            ClientSize = new Size(760, 520);
+            ClientSize = new Size(980, 520);
 
             var root = new TableLayoutPanel
             {
@@ -132,7 +136,7 @@ namespace AtsBackgroundBuilder
 
             var help = new Label
             {
-                Text = "Enter sections / quarters below. M, RGE, TWP, SEC carry down when left blank.",
+                Text = "Enter sections / quarters below. M, RGE, TWP, SEC, SEC TYPE carry down when left blank.",
                 AutoSize = true,
                 ForeColor = SystemColors.GrayText,
                 Margin = new Padding(0, 8, 0, 0)
@@ -154,10 +158,12 @@ namespace AtsBackgroundBuilder
             {
                 Dock = DockStyle.Top,
                 AutoSize = true,
-                ColumnCount = 6,
+                ColumnCount = 8,
                 RowCount = 2,
                 Margin = new Padding(0, 10, 0, 10)
             };
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -191,19 +197,29 @@ namespace AtsBackgroundBuilder
             _maxAttempts.Value = Math.Max(1, Math.Min(200, config?.MaxOverlapAttempts ?? 25));
             _maxAttempts.Width = 80;
 
-            _includeDispoLinework.Text = "Dispositions (linework)";
+            _includeDispoLinework.Text = "Disposition linework";
             _includeDispoLinework.Checked = true;
             _includeDispoLinework.AutoSize = true;
             _includeDispoLinework.Margin = new Padding(0, 6, 10, 6);
 
+            _includeDispoLabels.Text = "Disposition labels";
+            _includeDispoLabels.Checked = true;
+            _includeDispoLabels.AutoSize = true;
+            _includeDispoLabels.Margin = new Padding(0, 6, 10, 6);
+
             _includeAtsFabric.Text = "ATS fabric";
             _includeAtsFabric.Checked = false;
             _includeAtsFabric.AutoSize = true;
-            _includeAtsFabric.Margin = new Padding(0, 6, 0, 6);
+            _includeAtsFabric.Margin = new Padding(0, 6, 10, 6);
+
+            _includeLsds.Text = "LSDs";
+            _includeLsds.Checked = false;
+            _includeLsds.AutoSize = true;
+            _includeLsds.Margin = new Padding(0, 6, 10, 6);
 
             var qHelp = new Label
             {
-                Text = "Quarter values: NW, NE, SW, SE, ALL",
+                Text = "Quarter values: NW, NE, SW, SE, ALL. SEC TYPE values: L-USEC, L-SEC",
                 AutoSize = true,
                 ForeColor = SystemColors.GrayText,
                 Margin = new Padding(0, 0, 0, 0)
@@ -214,8 +230,10 @@ namespace AtsBackgroundBuilder
             panel.Controls.Add(maxAttemptsLabel, 2, 0);
             panel.Controls.Add(_maxAttempts, 3, 0);
             panel.Controls.Add(_includeDispoLinework, 0, 1);
-            panel.Controls.Add(_includeAtsFabric, 1, 1);
-            panel.Controls.Add(qHelp, 2, 1);
+            panel.Controls.Add(_includeDispoLabels, 1, 1);
+            panel.Controls.Add(_includeAtsFabric, 2, 1);
+            panel.Controls.Add(_includeLsds, 3, 1);
+            panel.Controls.Add(qHelp, 4, 1);
             panel.SetColumnSpan(qHelp, 4);
 
             return panel;
@@ -236,6 +254,17 @@ namespace AtsBackgroundBuilder
             _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "TWP", HeaderText = "TWP" });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "SEC", HeaderText = "SEC" });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "HQ", HeaderText = "H/QS" });
+            var secTypeColumn = new DataGridViewComboBoxColumn
+            {
+                Name = "SECTYPE",
+                HeaderText = "SEC TYPE",
+                DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton,
+                FlatStyle = FlatStyle.Standard
+            };
+            secTypeColumn.Items.Add(string.Empty);
+            secTypeColumn.Items.Add("L-USEC");
+            secTypeColumn.Items.Add("L-SEC");
+            _grid.Columns.Add(secTypeColumn);
 
             // Seed a few empty rows.
             for (int i = 0; i < 8; i++)
@@ -303,7 +332,9 @@ namespace AtsBackgroundBuilder
                 TextHeight = (double)_textHeight.Value,
                 MaxOverlapAttempts = (int)_maxAttempts.Value,
                 IncludeDispositionLinework = _includeDispoLinework.Checked,
+                IncludeDispositionLabels = _includeDispoLabels.Checked,
                 IncludeAtsFabric = _includeAtsFabric.Checked,
+                DrawLsdSubdivisionLines = _includeLsds.Checked,
             };
             Result.SectionRequests.AddRange(requests);
 
@@ -319,6 +350,7 @@ namespace AtsBackgroundBuilder
             string lastRange = string.Empty;
             string lastTownship = string.Empty;
             string lastSection = string.Empty;
+            string lastSecType = "L-USEC";
 
             foreach (DataGridViewRow row in _grid.Rows)
             {
@@ -330,13 +362,15 @@ namespace AtsBackgroundBuilder
                 string twp = GetCell(row, "TWP");
                 string sec = GetCell(row, "SEC");
                 string q = GetCell(row, "HQ");
+                string secType = GetCell(row, "SECTYPE");
 
                 bool anyFilled =
                     !string.IsNullOrWhiteSpace(m) ||
                     !string.IsNullOrWhiteSpace(rge) ||
                     !string.IsNullOrWhiteSpace(twp) ||
                     !string.IsNullOrWhiteSpace(sec) ||
-                    !string.IsNullOrWhiteSpace(q);
+                    !string.IsNullOrWhiteSpace(q) ||
+                    !string.IsNullOrWhiteSpace(secType);
 
                 if (!anyFilled)
                     continue;
@@ -346,6 +380,7 @@ namespace AtsBackgroundBuilder
                 if (string.IsNullOrWhiteSpace(rge)) rge = lastRange;
                 if (string.IsNullOrWhiteSpace(twp)) twp = lastTownship;
                 if (string.IsNullOrWhiteSpace(sec)) sec = lastSection;
+                if (string.IsNullOrWhiteSpace(secType)) secType = lastSecType;
 
                 // Quarter defaults to ALL if blank.
                 if (string.IsNullOrWhiteSpace(q)) q = "ALL";
@@ -368,6 +403,12 @@ namespace AtsBackgroundBuilder
                 lastRange = rge;
                 lastTownship = twp;
                 lastSection = sec;
+                if (!TryNormalizeSecType(secType, out var normalizedSecType))
+                {
+                    MessageBox.Show(this, $"Invalid SEC TYPE value: '{secType}'. Use L-USEC or L-SEC.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return new List<SectionRequest>();
+                }
+                lastSecType = normalizedSecType;
 
                 if (!TryParseQuarter(q, out var quarter))
                 {
@@ -376,7 +417,7 @@ namespace AtsBackgroundBuilder
                 }
 
                 var key = new SectionKey(zone, sec, twp, rge, m);
-                requests.Add(new SectionRequest(quarter, key));
+                requests.Add(new SectionRequest(quarter, key, normalizedSecType));
             }
 
             return requests;
@@ -423,6 +464,30 @@ namespace AtsBackgroundBuilder
                 default:
                     return false;
             }
+        }
+
+        private static bool TryNormalizeSecType(string raw, out string secType)
+        {
+            secType = "L-USEC";
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return true;
+            }
+
+            var s = raw.Trim().ToUpperInvariant();
+            if (s == "L-USEC" || s == "USEC")
+            {
+                secType = "L-USEC";
+                return true;
+            }
+
+            if (s == "L-SEC" || s == "SEC")
+            {
+                secType = "L-SEC";
+                return true;
+            }
+
+            return false;
         }
     }
 }

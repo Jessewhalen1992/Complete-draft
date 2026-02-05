@@ -92,7 +92,13 @@ namespace AtsBackgroundBuilder
 
             // Build the section geometry used to determine 1/4s.
             // NOTE: These entities are considered "temporary" unless ATS fabric is enabled (see cleanup at the end).
-            var sectionDrawResult = DrawSectionsFromRequests(editor, database, input.SectionRequests, config, logger);
+            var sectionDrawResult = DrawSectionsFromRequests(
+                editor,
+                database,
+                input.SectionRequests,
+                config,
+                logger,
+                input.DrawLsdSubdivisionLines);
             var quarterPolylinesForLabelling = sectionDrawResult.LabelQuarterPolylineIds;
             if (quarterPolylinesForLabelling.Count == 0)
             {
@@ -106,17 +112,25 @@ namespace AtsBackgroundBuilder
             }
 
             var dispositionPolylines = new List<ObjectId>();
-            var importSummary = ShapefileImporter.ImportShapefiles(
-                database,
-                editor,
-                logger,
-                config,
-                sectionDrawResult.SectionPolylineIds,
-                dispositionPolylines);
-            if (dispositionPolylines.Count == 0)
+            ShapefileImportSummary importSummary;
+            if (input.IncludeDispositionLinework || input.IncludeDispositionLabels)
             {
-                editor.WriteMessage("\nNo disposition polylines imported from shapefiles.");
-                // Continue so ATS fabric / cleanup behavior still runs.
+                importSummary = ShapefileImporter.ImportShapefiles(
+                    database,
+                    editor,
+                    logger,
+                    config,
+                    sectionDrawResult.SectionPolylineIds,
+                    dispositionPolylines);
+                if (dispositionPolylines.Count == 0)
+                {
+                    editor.WriteMessage("\nNo disposition polylines imported from shapefiles.");
+                    // Continue so ATS fabric / cleanup behavior still runs.
+                }
+            }
+            else
+            {
+                importSummary = new ShapefileImportSummary();
             }
 
             var currentClient = input.CurrentClient;
@@ -209,6 +223,12 @@ namespace AtsBackgroundBuilder
                         lineEntity.ColorIndex = 256;  // ensure ByLayer colour
                     }
 
+                    if (!input.IncludeDispositionLabels)
+                    {
+                        clone.Dispose();
+                        continue;
+                    }
+
                     var requiresWidth = PurposeRequiresWidth(purpose, config);
                     string labelText;
 
@@ -243,28 +263,34 @@ namespace AtsBackgroundBuilder
             }
 
             var quarters = new List<QuarterInfo>();
-            using (var transaction = database.TransactionManager.StartTransaction())
+            if (input.IncludeDispositionLabels)
             {
-                foreach (var id in quarterPolylinesForLabelling.Distinct())
+                using (var transaction = database.TransactionManager.StartTransaction())
                 {
-                    var polyline = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
-                    if (polyline == null || !polyline.Closed)
+                    foreach (var id in quarterPolylinesForLabelling.Distinct())
                     {
-                        continue;
-                    }
+                        var polyline = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
+                        if (polyline == null || !polyline.Closed)
+                        {
+                            continue;
+                        }
 
-                    quarters.Add(new QuarterInfo((Polyline)polyline.Clone()));
+                        quarters.Add(new QuarterInfo((Polyline)polyline.Clone()));
+                    }
+                    transaction.Commit();
                 }
-                transaction.Commit();
             }
 
-            var placer = new LabelPlacer(database, editor, layerManager, config, logger);
-            var placement = placer.PlaceLabels(quarters, dispositions, currentClient);
+            if (input.IncludeDispositionLabels)
+            {
+                var placer = new LabelPlacer(database, editor, layerManager, config, logger);
+                var placement = placer.PlaceLabels(quarters, dispositions, currentClient);
 
-            result.LabelsPlaced = placement.LabelsPlaced;
-            result.SkippedNoLayerMapping += placement.SkippedNoLayerMapping;
-            result.OverlapForced = placement.OverlapForced;
-            result.MultiQuarterProcessed = placement.MultiQuarterProcessed;
+                result.LabelsPlaced = placement.LabelsPlaced;
+                result.SkippedNoLayerMapping += placement.SkippedNoLayerMapping;
+                result.OverlapForced = placement.OverlapForced;
+                result.MultiQuarterProcessed = placement.MultiQuarterProcessed;
+            }
             result.ImportedDispositions = importSummary.ImportedDispositions;
             result.DedupedDispositions = importSummary.DedupedDispositions;
             result.FilteredDispositions = importSummary.FilteredDispositions;
@@ -388,7 +414,7 @@ namespace AtsBackgroundBuilder
                 var requests = PromptForSectionRequests(editor);
                 if (requests.Count > 0)
                 {
-                    var result = DrawSectionsFromRequests(editor, database, requests, config, logger);
+                    var result = DrawSectionsFromRequests(editor, database, requests, config, logger, false);
                     if (result.QuarterPolylineIds.Count == 0)
                     {
                         var searchFolders = BuildSectionIndexSearchFolders(config);
@@ -680,7 +706,13 @@ namespace AtsBackgroundBuilder
             return polyline;
         }
 
-        private static SectionDrawResult DrawSectionsFromRequests(Editor editor, Database database, List<SectionRequest> requests, Config config, Logger logger)
+        private static SectionDrawResult DrawSectionsFromRequests(
+            Editor editor,
+            Database database,
+            List<SectionRequest> requests,
+            Config config,
+            Logger logger,
+            bool drawLsds)
         {
             // We always draw the full section outline (ATS fabric on) but may label only specific quarters.
             var labelQuarterIds = new HashSet<ObjectId>();
@@ -693,7 +725,7 @@ namespace AtsBackgroundBuilder
 
             foreach (var request in requests)
             {
-                var keyId = BuildSectionKeyId(request.Key);
+                var keyId = BuildSectionKeyId(request.Key, request.SecType);
                 if (!createdSections.TryGetValue(keyId, out var buildResult))
                 {
                     if (!TryLoadSectionOutline(searchFolders, request.Key, logger, out var outline))
@@ -701,7 +733,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    buildResult = DrawSectionFromIndex(editor, database, outline, request.Key);
+                    buildResult = DrawSectionFromIndex(editor, database, outline, request.Key, drawLsds, request.SecType);
                     createdSections[keyId] = buildResult;
                     sectionIds.Add(buildResult.SectionPolylineId);
                 }
@@ -738,23 +770,32 @@ namespace AtsBackgroundBuilder
                 true);
         }
 
-        private static SectionBuildResult DrawSectionFromIndex(Editor editor, Database database, SectionOutline outline, SectionKey key)
+        private static SectionBuildResult DrawSectionFromIndex(
+            Editor editor,
+            Database database,
+            SectionOutline outline,
+            SectionKey key,
+            bool drawLsds,
+            string secType)
         {
             var quarterIds = new Dictionary<QuarterSelection, ObjectId>();
             var quarterHelperEntityIds = new List<ObjectId>();
             ObjectId sectionLabelId = ObjectId.Null;
             ObjectId sectionId;
+            var normalizedSecType = NormalizeSecType(secType);
             using (var transaction = database.TransactionManager.StartTransaction())
             {
                 var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-                EnsureLayer(database, transaction, "L-USEC");
+                EnsureLayer(database, transaction, normalizedSecType);
                 EnsureLayer(database, transaction, "L-QSEC");
+                EnsureLayer(database, transaction, "L-QSEC-BOX");
+                SetLayerVisibility(database, transaction, "L-QSEC-BOX", isOff: true, isPlottable: false);
 
                 var sectionPolyline = new Polyline(outline.Vertices.Count)
                 {
                     Closed = outline.Closed,
-                    Layer = "L-USEC",
+                    Layer = normalizedSecType,
                     ColorIndex = 256
                 };
 
@@ -771,7 +812,7 @@ namespace AtsBackgroundBuilder
                 {
                     foreach (var quarter in quarterMap)
                     {
-                        quarter.Value.Layer = "L-QSEC";
+                        quarter.Value.Layer = "L-QSEC-BOX";
                         quarter.Value.ColorIndex = 256;
                         var quarterId = modelSpace.AppendEntity(quarter.Value);
                         transaction.AddNewlyCreatedDBObject(quarter.Value, true);
@@ -796,6 +837,18 @@ namespace AtsBackgroundBuilder
                     quarterHelperEntityIds.Add(qvId);
                     quarterHelperEntityIds.Add(qhId);
 
+                    if (drawLsds)
+                    {
+                        DrawLsdSubdivisionLines(
+                            database,
+                            transaction,
+                            modelSpace,
+                            quarterMap,
+                            anchors,
+                            key,
+                            normalizedSecType);
+                    }
+
                     var center = new Point3d(
                         0.5 * (anchors.Top.X + anchors.Bottom.X),
                         0.5 * (anchors.Left.Y + anchors.Right.Y),
@@ -807,6 +860,242 @@ namespace AtsBackgroundBuilder
             }
 
             return new SectionBuildResult(sectionId, quarterIds, quarterHelperEntityIds, sectionLabelId);
+        }
+
+        private static void DrawLsdSubdivisionLines(
+            Database database,
+            Transaction transaction,
+            BlockTableRecord modelSpace,
+            Dictionary<QuarterSelection, Polyline> quarterMap,
+            QuarterAnchors sectionAnchors,
+            SectionKey key,
+            string secType)
+        {
+            if (quarterMap == null || quarterMap.Count == 0)
+            {
+                return;
+            }
+
+            var isLsec = string.Equals(secType, "L-SEC", StringComparison.OrdinalIgnoreCase);
+            var lsdLayer = isLsec ? "L-SEC" : "L-SECTION-LSD";
+            EnsureLayer(database, transaction, lsdLayer);
+
+            var eastUnit = GetUnitVector(sectionAnchors.Left, sectionAnchors.Right, new Vector2d(1, 0));
+            var northUnit = GetUnitVector(sectionAnchors.Bottom, sectionAnchors.Top, new Vector2d(0, 1));
+            var westUnit = -eastUnit;
+            var southUnit = -northUnit;
+
+            var usecSouthExtension = !isLsec && IsUsecSouthExtensionSection(key.Section);
+
+            foreach (var pair in quarterMap)
+            {
+                var quarterAnchors = GetLsdAnchorsForQuarter(pair.Value, eastUnit, northUnit);
+
+                var verticalStart = quarterAnchors.Top;
+                var verticalEnd = quarterAnchors.Bottom;
+                var horizontalStart = quarterAnchors.Left;
+                var horizontalEnd = quarterAnchors.Right;
+
+                if (!isLsec)
+                {
+                    if (pair.Key == QuarterSelection.NorthWest)
+                    {
+                        verticalStart = GetTrimmedNorthMidpoint(pair.Value, eastUnit, northUnit, 10.06, quarterAnchors.Top);
+                    }
+
+                    if (pair.Key == QuarterSelection.NorthWest || pair.Key == QuarterSelection.SouthWest)
+                    {
+                        horizontalStart = OffsetPoint(horizontalStart, westUnit, 10.06);
+                    }
+
+                    if (usecSouthExtension &&
+                        (pair.Key == QuarterSelection.SouthWest || pair.Key == QuarterSelection.SouthEast))
+                    {
+                        verticalEnd = OffsetPoint(verticalEnd, southUnit, 10.06);
+                    }
+
+                    // L-USEC special: move the NW/SW N-S LSD split line 10.06 west.
+                    if (pair.Key == QuarterSelection.NorthWest || pair.Key == QuarterSelection.SouthWest)
+                    {
+                        verticalStart = OffsetPoint(verticalStart, westUnit, 10.06);
+                        verticalEnd = OffsetPoint(verticalEnd, westUnit, 10.06);
+                    }
+                }
+
+                var vertical = new Line(
+                    new Point3d(verticalStart.X, verticalStart.Y, 0),
+                    new Point3d(verticalEnd.X, verticalEnd.Y, 0))
+                {
+                    Layer = lsdLayer,
+                    ColorIndex = 256
+                };
+                var horizontal = new Line(
+                    new Point3d(horizontalStart.X, horizontalStart.Y, 0),
+                    new Point3d(horizontalEnd.X, horizontalEnd.Y, 0))
+                {
+                    Layer = lsdLayer,
+                    ColorIndex = 256
+                };
+
+                modelSpace.AppendEntity(vertical);
+                transaction.AddNewlyCreatedDBObject(vertical, true);
+                modelSpace.AppendEntity(horizontal);
+                transaction.AddNewlyCreatedDBObject(horizontal, true);
+            }
+        }
+
+        private static QuarterAnchors GetLsdAnchorsForQuarter(Polyline quarter, Vector2d eastUnit, Vector2d northUnit)
+        {
+            if (TryGetQuarterCorner(quarter, eastUnit, northUnit, QuarterCorner.NorthWest, out var nw) &&
+                TryGetQuarterCorner(quarter, eastUnit, northUnit, QuarterCorner.NorthEast, out var ne) &&
+                TryGetQuarterCorner(quarter, eastUnit, northUnit, QuarterCorner.SouthWest, out var sw) &&
+                TryGetQuarterCorner(quarter, eastUnit, northUnit, QuarterCorner.SouthEast, out var se))
+            {
+                return new QuarterAnchors(
+                    Midpoint(nw, ne), // top
+                    Midpoint(sw, se), // bottom
+                    Midpoint(nw, sw), // left
+                    Midpoint(ne, se)); // right
+            }
+
+            // Fallback: quarter extents midpoint anchors.
+            return GetFallbackAnchors(quarter);
+        }
+
+        private static string NormalizeSecType(string secType)
+        {
+            return string.Equals(secType?.Trim(), "L-SEC", StringComparison.OrdinalIgnoreCase)
+                ? "L-SEC"
+                : "L-USEC";
+        }
+
+        private static bool IsUsecSouthExtensionSection(string section)
+        {
+            if (string.IsNullOrWhiteSpace(section))
+            {
+                return false;
+            }
+
+            var raw = section.Trim();
+            var match = Regex.Match(raw, "\\d+");
+            if (!match.Success)
+            {
+                return false;
+            }
+
+            if (!int.TryParse(match.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
+            {
+                return false;
+            }
+
+            return (n >= 1 && n <= 6) || (n >= 13 && n <= 18) || (n >= 25 && n <= 30);
+        }
+
+        private static Vector2d GetUnitVector(Point2d from, Point2d to, Vector2d fallback)
+        {
+            var v = to - from;
+            if (v.Length <= 1e-9)
+            {
+                return fallback;
+            }
+
+            return v / v.Length;
+        }
+
+        private static Point2d OffsetPoint(Point2d point, Vector2d directionUnit, double distance)
+        {
+            return point + (directionUnit * distance);
+        }
+
+        private static Point2d Midpoint(Point2d a, Point2d b)
+        {
+            return new Point2d((a.X + b.X) * 0.5, (a.Y + b.Y) * 0.5);
+        }
+
+        private static Point2d GetTrimmedNorthMidpoint(
+            Polyline quarter,
+            Vector2d eastUnit,
+            Vector2d northUnit,
+            double trimDistance,
+            Point2d fallback)
+        {
+            if (!TryGetQuarterCorner(quarter, eastUnit, northUnit, QuarterCorner.NorthWest, out var nw) ||
+                !TryGetQuarterCorner(quarter, eastUnit, northUnit, QuarterCorner.NorthEast, out var ne))
+            {
+                return fallback;
+            }
+
+            var edge = ne - nw;
+            if (edge.Length <= (2.0 * trimDistance) + 1e-6)
+            {
+                return fallback;
+            }
+
+            var edgeUnit = edge / edge.Length;
+            var start = nw + (edgeUnit * trimDistance);
+            var end = ne - (edgeUnit * trimDistance);
+            return new Point2d((start.X + end.X) * 0.5, (start.Y + end.Y) * 0.5);
+        }
+
+        private enum QuarterCorner
+        {
+            NorthWest,
+            NorthEast,
+            SouthWest,
+            SouthEast
+        }
+
+        private static bool TryGetQuarterCorner(
+            Polyline quarter,
+            Vector2d eastUnit,
+            Vector2d northUnit,
+            QuarterCorner corner,
+            out Point2d point)
+        {
+            point = default;
+            if (quarter == null || quarter.NumberOfVertices <= 0)
+            {
+                return false;
+            }
+
+            double bestScore = double.MinValue;
+            bool found = false;
+
+            for (var i = 0; i < quarter.NumberOfVertices; i++)
+            {
+                var p = quarter.GetPoint2dAt(i);
+                var e = (p.X * eastUnit.X) + (p.Y * eastUnit.Y);
+                var n = (p.X * northUnit.X) + (p.Y * northUnit.Y);
+
+                double score;
+                switch (corner)
+                {
+                    case QuarterCorner.NorthWest:
+                        score = n - e;
+                        break;
+                    case QuarterCorner.NorthEast:
+                        score = n + e;
+                        break;
+                    case QuarterCorner.SouthWest:
+                        score = -n - e;
+                        break;
+                    case QuarterCorner.SouthEast:
+                        score = -n + e;
+                        break;
+                    default:
+                        score = double.MinValue;
+                        break;
+                }
+
+                if (!found || score > bestScore)
+                {
+                    bestScore = score;
+                    point = p;
+                    found = true;
+                }
+            }
+
+            return found;
         }
 
         private static QuarterSelection PromptForQuarter(Editor editor)
@@ -1544,6 +1833,25 @@ namespace AtsBackgroundBuilder
             transaction.AddNewlyCreatedDBObject(record, true);
         }
 
+        private static void SetLayerVisibility(
+            Database database,
+            Transaction transaction,
+            string layerName,
+            bool isOff,
+            bool isPlottable)
+        {
+            var table = (LayerTable)transaction.GetObject(database.LayerTableId, OpenMode.ForRead);
+            if (!table.Has(layerName))
+            {
+                return;
+            }
+
+            var layerId = table[layerName];
+            var layer = (LayerTableRecord)transaction.GetObject(layerId, OpenMode.ForWrite);
+            layer.IsOff = isOff;
+            layer.IsPlottable = isPlottable;
+        }
+
         private static ObjectId InsertSectionLabelBlock(
             BlockTableRecord modelSpace,
             BlockTable blockTable,
@@ -1653,9 +1961,10 @@ namespace AtsBackgroundBuilder
             public double TotalLen;
         }
 
-        private static string BuildSectionKeyId(SectionKey key)
+        private static string BuildSectionKeyId(SectionKey key, string secType)
         {
-            return $"Z{key.Zone}_SEC{key.Section}_TWP{key.Township}_RGE{key.Range}_MER{key.Meridian}";
+            var normalizedSecType = NormalizeSecType(secType);
+            return $"Z{key.Zone}_SEC{key.Section}_TWP{key.Township}_RGE{key.Range}_MER{key.Meridian}_TYPE{normalizedSecType}";
         }
     }
 
@@ -1706,14 +2015,16 @@ namespace AtsBackgroundBuilder
 
     public sealed class SectionRequest
     {
-        public SectionRequest(QuarterSelection quarter, SectionKey key)
+        public SectionRequest(QuarterSelection quarter, SectionKey key, string secType = "L-USEC")
         {
             Quarter = quarter;
             Key = key;
+            SecType = string.IsNullOrWhiteSpace(secType) ? "L-USEC" : secType.Trim().ToUpperInvariant();
         }
 
         public QuarterSelection Quarter { get; }
         public SectionKey Key { get; }
+        public string SecType { get; }
     }
 
     public enum QuarterSelection
