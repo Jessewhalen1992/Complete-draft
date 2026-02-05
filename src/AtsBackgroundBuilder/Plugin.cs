@@ -13,7 +13,6 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Geometry;
 
-
 namespace AtsBackgroundBuilder
 {
     public class Plugin : IExtensionApplication
@@ -50,23 +49,26 @@ namespace AtsBackgroundBuilder
             // ------------------------------------------------------------------
             // UI input (replaces command line prompts)
             // ------------------------------------------------------------------
-            AtsBuildInput? input = null;
+            AtsBuildInput input = null;
             try
             {
-                using var form = new AtsBuildForm(companyLookup.Values, config);
-                var dr = form.ShowDialog();
-                if (dr != System.Windows.Forms.DialogResult.OK || form.Result == null)
+                using (var form = new AtsBuildForm(companyLookup.Values, config))
                 {
-                    editor.WriteMessage("\nATSBUILD cancelled.");
-                    return;
-                }
+                    var dr = form.ShowDialog();
+                    if (dr != System.Windows.Forms.DialogResult.OK || form.Result == null)
+                    {
+                        editor.WriteMessage("\nATSBUILD cancelled.");
+                        return;
+                    }
 
-                input = form.Result;
+                    input = form.Result;
+                }
             }
             catch (System.Exception ex)
             {
                 editor.WriteMessage($"\nATSBUILD UI error: {ex.Message}");
                 logger.WriteLine("ATSBUILD UI error: " + ex);
+                logger.Dispose();
                 return;
             }
 
@@ -76,7 +78,7 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            // Enforce your current behavior (multi-quarter labeling). Keep existing logic.
+            // Enforce existing behavior (multi-quarter labeling) unless you later decide to expose this in the UI.
             config.AllowMultiQuarterDispositions = true;
             config.TextHeight = input.TextHeight;
             config.MaxOverlapAttempts = input.MaxOverlapAttempts;
@@ -84,14 +86,22 @@ namespace AtsBackgroundBuilder
             if (!config.UseSectionIndex)
             {
                 editor.WriteMessage("\nConfig.UseSectionIndex=false. This build requires the section index workflow.");
+                logger.Dispose();
                 return;
             }
 
+            // Build the section geometry used to determine 1/4s.
+            // NOTE: These entities are considered "temporary" unless ATS fabric is enabled (see cleanup at the end).
             var sectionDrawResult = DrawSectionsFromRequests(editor, database, input.SectionRequests, config, logger);
-            var quarterPolylines = sectionDrawResult.QuarterPolylineIds;
-            if (quarterPolylines.Count == 0)
+            var quarterPolylinesForLabelling = sectionDrawResult.LabelQuarterPolylineIds;
+            if (quarterPolylinesForLabelling.Count == 0)
             {
-                editor.WriteMessage("\nNo quarter polylines generated from the section index.");
+                editor.WriteMessage("\nNo quarter polylines generated from the section index (check your grid inputs)." );
+
+                // Ensure we don't leave temporary section outlines behind when ATS fabric is unchecked.
+                CleanupAfterBuild(database, sectionDrawResult, new List<ObjectId>(), input, logger);
+
+                logger.Dispose();
                 return;
             }
 
@@ -106,14 +116,14 @@ namespace AtsBackgroundBuilder
             if (dispositionPolylines.Count == 0)
             {
                 editor.WriteMessage("\nNo disposition polylines imported from shapefiles.");
-                // Still allow the run to complete (sections were drawn). If you later add other layers (ATS fabric),
-                // this prevents an early return from blocking those.
+                // Continue so ATS fabric / cleanup behavior still runs.
             }
 
             var currentClient = input.CurrentClient;
             if (string.IsNullOrWhiteSpace(currentClient))
             {
                 editor.WriteMessage("\nCurrent client is required.");
+                logger.Dispose();
                 return;
             }
 
@@ -170,8 +180,8 @@ namespace AtsBackgroundBuilder
                             suffix = suffix.Substring(1);
                         if (!string.IsNullOrEmpty(suffix))
                         {
-                            // IMPORTANT: OD company is often a code (lookup key), while the UI client list comes from
-                            // the lookup VALUE column. Compare against the mapped company value first.
+                            // OD COMPANY is often a code (lookup key), while the UI client list comes from
+                            // the lookup VALUE column. Compare against the mapped company first.
                             bool isClient = string.Equals(currentClient, mappedCompany, StringComparison.InvariantCultureIgnoreCase)
                                             || string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase);
 
@@ -235,7 +245,7 @@ namespace AtsBackgroundBuilder
             var quarters = new List<QuarterInfo>();
             using (var transaction = database.TransactionManager.StartTransaction())
             {
-                foreach (var id in quarterPolylines.Distinct())
+                foreach (var id in quarterPolylinesForLabelling.Distinct())
                 {
                     var polyline = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
                     if (polyline == null || !polyline.Closed)
@@ -260,44 +270,14 @@ namespace AtsBackgroundBuilder
             result.FilteredDispositions = importSummary.FilteredDispositions;
             result.ImportFailures = importSummary.ImportFailures;
 
-            // If the user excluded disposition linework, erase the imported disposition polylines
-            // after label placement is complete.
-            if (!input.IncludeDispositionLinework && dispositionPolylines.Count > 0)
-            {
-                try
-                {
-                    using (var tr = database.TransactionManager.StartTransaction())
-                    {
-                        foreach (var id in dispositionPolylines)
-                        {
-                            try
-                            {
-                                var ent = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
-                                if (ent != null && !ent.IsErased)
-                                {
-                                    ent.Erase(true);
-                                }
-                            }
-                            catch
-                            {
-                                // ignore individual failures
-                            }
-                        }
-                        tr.Commit();
-                    }
-                }
-                catch (System.Exception ex)
-                {
-                    logger.WriteLine("Failed erasing disposition linework: " + ex.Message);
-                }
-            }
-
-            // Placeholder hook for ATS fabric (future).
-            if (input.IncludeAtsFabric)
-            {
-                editor.WriteMessage("\nNOTE: ATS fabric import is not implemented yet.");
-                logger.WriteLine("ATS fabric requested but not implemented yet.");
-            }
+            // ------------------------------------------------------------------
+            // Cleanup / output control
+            // ------------------------------------------------------------------
+            // Per your UI rules:
+            //  - Quarter boxes used to determine 1/4s are ALWAYS removed.
+            //  - If ATS fabric is unchecked, section outlines/labels created for calculation are removed.
+            //  - If Dispositions (linework) is unchecked, imported disposition polylines are removed (labels remain).
+            CleanupAfterBuild(database, sectionDrawResult, dispositionPolylines, input, logger);
 
             editor.WriteMessage("\nATSBUILD complete.");
             editor.WriteMessage("\nTotal dispositions: " + result.TotalDispositions);
@@ -325,6 +305,79 @@ namespace AtsBackgroundBuilder
             logger.WriteLine("Deduped: " + result.DedupedDispositions);
             logger.WriteLine("Import failures: " + result.ImportFailures);
             logger.Dispose();
+        }
+
+        private static void CleanupAfterBuild(
+            Database database,
+            SectionDrawResult sectionDrawResult,
+            List<ObjectId> dispositionPolylineIds,
+            AtsBuildInput input,
+            Logger logger)
+        {
+            if (database == null || sectionDrawResult == null || input == null)
+                return;
+
+            try
+            {
+                // Always remove the quarter boxes (used only for determining 1/4s and label targeting)
+                EraseEntities(database, sectionDrawResult.QuarterPolylineIds, logger, "quarter boxes");
+                EraseEntities(database, sectionDrawResult.QuarterHelperEntityIds, logger, "quarter helper lines");
+
+                // If ATS fabric is NOT requested, remove the temporary section outline + label block we drew to compute quarters.
+                if (!input.IncludeAtsFabric)
+                {
+                    EraseEntities(database, sectionDrawResult.SectionPolylineIds, logger, "section outlines");
+                    EraseEntities(database, sectionDrawResult.SectionLabelEntityIds, logger, "section labels");
+                }
+
+                // If disposition linework is NOT requested, erase imported disposition polylines after labels are placed.
+                if (!input.IncludeDispositionLinework)
+                {
+                    EraseEntities(database, dispositionPolylineIds, logger, "disposition linework");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("CleanupAfterBuild error: " + ex);
+            }
+        }
+
+        private static void EraseEntities(Database database, IEnumerable<ObjectId> ids, Logger logger, string label)
+        {
+            if (database == null || ids == null)
+                return;
+
+            var unique = ids.Where(id => !id.IsNull).Distinct().ToList();
+            if (unique.Count == 0)
+                return;
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                int erased = 0;
+                foreach (var id in unique)
+                {
+                    try
+                    {
+                        var obj = tr.GetObject(id, OpenMode.ForWrite, false);
+                        if (obj == null || obj.IsErased)
+                            continue;
+
+                        obj.Erase(true);
+                        erased++;
+                    }
+                    catch
+                    {
+                        // Ignore failures (object may already be erased, on locked layer, etc.)
+                    }
+                }
+
+                tr.Commit();
+
+                if (erased > 0)
+                {
+                    logger?.WriteLine($"Cleanup: erased {erased} {label} entities");
+                }
+            }
         }
 
         private static SectionDrawResult TryPromptAndBuildSections(Editor editor, Database database, Config config, Logger logger)
@@ -357,7 +410,13 @@ namespace AtsBackgroundBuilder
             }
 
             editor.WriteMessage("\nSection input required.");
-            return new SectionDrawResult(new List<ObjectId>(), new List<ObjectId>(), false);
+            return new SectionDrawResult(
+                new List<ObjectId>(),
+                new List<ObjectId>(),
+                new List<ObjectId>(),
+                new List<ObjectId>(),
+                new List<ObjectId>(),
+                false);
         }
 
         private static List<SectionRequest> PromptForSectionRequests(Editor editor)
@@ -622,7 +681,11 @@ namespace AtsBackgroundBuilder
 
         private static SectionDrawResult DrawSectionsFromRequests(Editor editor, Database database, List<SectionRequest> requests, Config config, Logger logger)
         {
-            var quarterIds = new HashSet<ObjectId>();
+            // We always draw the full section outline (ATS fabric on) but may label only specific quarters.
+            var labelQuarterIds = new HashSet<ObjectId>();
+            var allQuarterIds = new HashSet<ObjectId>();
+            var quarterHelperIds = new HashSet<ObjectId>();
+            var sectionLabelIds = new HashSet<ObjectId>();
             var sectionIds = new HashSet<ObjectId>();
             var createdSections = new Dictionary<string, SectionBuildResult>(StringComparer.OrdinalIgnoreCase);
             var searchFolders = BuildSectionIndexSearchFolders(config);
@@ -642,32 +705,43 @@ namespace AtsBackgroundBuilder
                     sectionIds.Add(buildResult.SectionPolylineId);
                 }
 
-                // Respect the per-row quarter selection:
-                // - ALL ... include all quarters for that section
-                // - NW/NE/SW/SE ... include only the requested quarter polyline for label placement
+                // Track all quarter geometry we created (always removed during cleanup).
+                foreach (var quarterId in buildResult.QuarterPolylineIds.Values)
+                    allQuarterIds.Add(quarterId);
+
+                foreach (var helperId in buildResult.QuarterHelperEntityIds)
+                    quarterHelperIds.Add(helperId);
+
+                if (!buildResult.SectionLabelEntityId.IsNull)
+                    sectionLabelIds.Add(buildResult.SectionLabelEntityId);
+
+                // Track the quarters that should actually be labelled.
                 if (request.Quarter == QuarterSelection.All)
                 {
                     foreach (var quarterId in buildResult.QuarterPolylineIds.Values)
-                        quarterIds.Add(quarterId);
-                }
-                else if (buildResult.QuarterPolylineIds.TryGetValue(request.Quarter, out var qId))
-                {
-                    quarterIds.Add(qId);
+                        labelQuarterIds.Add(quarterId);
                 }
                 else
                 {
-                    // Fallback: if mapping is missing for some reason, include all.
-                    foreach (var quarterId in buildResult.QuarterPolylineIds.Values)
-                        quarterIds.Add(quarterId);
+                    if (buildResult.QuarterPolylineIds.TryGetValue(request.Quarter, out var qid))
+                        labelQuarterIds.Add(qid);
                 }
             }
 
-            return new SectionDrawResult(quarterIds.ToList(), sectionIds.ToList(), true);
+            return new SectionDrawResult(
+                labelQuarterIds.ToList(),
+                allQuarterIds.ToList(),
+                quarterHelperIds.ToList(),
+                sectionIds.ToList(),
+                sectionLabelIds.ToList(),
+                true);
         }
 
         private static SectionBuildResult DrawSectionFromIndex(Editor editor, Database database, SectionOutline outline, SectionKey key)
         {
             var quarterIds = new Dictionary<QuarterSelection, ObjectId>();
+            var quarterHelperEntityIds = new List<ObjectId>();
+            ObjectId sectionLabelId = ObjectId.Null;
             ObjectId sectionId;
             using (var transaction = database.TransactionManager.StartTransaction())
             {
@@ -713,22 +787,25 @@ namespace AtsBackgroundBuilder
                         Layer = "L-QSEC",
                         ColorIndex = 256
                     };
-                    modelSpace.AppendEntity(qv);
+                    var qvId = modelSpace.AppendEntity(qv);
                     transaction.AddNewlyCreatedDBObject(qv, true);
-                    modelSpace.AppendEntity(qh);
+                    var qhId = modelSpace.AppendEntity(qh);
                     transaction.AddNewlyCreatedDBObject(qh, true);
+
+                    quarterHelperEntityIds.Add(qvId);
+                    quarterHelperEntityIds.Add(qhId);
 
                     var center = new Point3d(
                         0.5 * (anchors.Top.X + anchors.Bottom.X),
                         0.5 * (anchors.Left.Y + anchors.Right.Y),
                         0);
-                    InsertSectionLabelBlock(modelSpace, blockTable, transaction, editor, center, key);
+                    sectionLabelId = InsertSectionLabelBlock(modelSpace, blockTable, transaction, editor, center, key);
                 }
 
                 transaction.Commit();
             }
 
-            return new SectionBuildResult(sectionId, quarterIds);
+            return new SectionBuildResult(sectionId, quarterIds, quarterHelperEntityIds, sectionLabelId);
         }
 
         private static QuarterSelection PromptForQuarter(Editor editor)
@@ -1466,7 +1543,7 @@ namespace AtsBackgroundBuilder
             transaction.AddNewlyCreatedDBObject(record, true);
         }
 
-        private static void InsertSectionLabelBlock(
+        private static ObjectId InsertSectionLabelBlock(
             BlockTableRecord modelSpace,
             BlockTable blockTable,
             Transaction transaction,
@@ -1479,7 +1556,7 @@ namespace AtsBackgroundBuilder
             if (!blockTable.Has(blockName))
             {
                 editor?.WriteMessage($"\nBUILDSEC: Block '{blockName}' not found; skipped section label.");
-                return;
+                return ObjectId.Null;
             }
 
             var blockId = blockTable[blockName];
@@ -1487,7 +1564,7 @@ namespace AtsBackgroundBuilder
             {
                 ScaleFactors = new Scale3d(1.0)
             };
-            modelSpace.AppendEntity(blockRef);
+            var blockRefId = modelSpace.AppendEntity(blockRef);
             transaction.AddNewlyCreatedDBObject(blockRef, true);
 
             var blockDef = (BlockTableRecord)transaction.GetObject(blockId, OpenMode.ForRead);
@@ -1516,6 +1593,8 @@ namespace AtsBackgroundBuilder
             SetBlockAttribute(blockRef, transaction, "TWP", key.Township);
             SetBlockAttribute(blockRef, transaction, "RGE", key.Range);
             SetBlockAttribute(blockRef, transaction, "MER", key.Meridian);
+
+            return blockRefId;
         }
 
         private static void SetBlockAttribute(BlockReference blockRef, Transaction transaction, string tag, string value)
@@ -1581,28 +1660,47 @@ namespace AtsBackgroundBuilder
 
     public sealed class SectionDrawResult
     {
-        public SectionDrawResult(List<ObjectId> quarterPolylineIds, List<ObjectId> sectionPolylineIds, bool generatedFromIndex)
+        public SectionDrawResult(
+            List<ObjectId> labelQuarterPolylineIds,
+            List<ObjectId> quarterPolylineIds,
+            List<ObjectId> quarterHelperEntityIds,
+            List<ObjectId> sectionPolylineIds,
+            List<ObjectId> sectionLabelEntityIds,
+            bool generatedFromIndex)
         {
-            QuarterPolylineIds = quarterPolylineIds;
-            SectionPolylineIds = sectionPolylineIds;
+            LabelQuarterPolylineIds = labelQuarterPolylineIds ?? new List<ObjectId>();
+            QuarterPolylineIds = quarterPolylineIds ?? new List<ObjectId>();
+            QuarterHelperEntityIds = quarterHelperEntityIds ?? new List<ObjectId>();
+            SectionPolylineIds = sectionPolylineIds ?? new List<ObjectId>();
+            SectionLabelEntityIds = sectionLabelEntityIds ?? new List<ObjectId>();
             GeneratedFromIndex = generatedFromIndex;
         }
-
+        public List<ObjectId> LabelQuarterPolylineIds { get; }
         public List<ObjectId> QuarterPolylineIds { get; }
+        public List<ObjectId> QuarterHelperEntityIds { get; }
         public List<ObjectId> SectionPolylineIds { get; }
+        public List<ObjectId> SectionLabelEntityIds { get; }
         public bool GeneratedFromIndex { get; }
     }
 
     public sealed class SectionBuildResult
     {
-        public SectionBuildResult(ObjectId sectionPolylineId, Dictionary<QuarterSelection, ObjectId> quarterPolylineIds)
+        public SectionBuildResult(
+            ObjectId sectionPolylineId,
+            Dictionary<QuarterSelection, ObjectId> quarterPolylineIds,
+            List<ObjectId> quarterHelperEntityIds,
+            ObjectId sectionLabelEntityId)
         {
             SectionPolylineId = sectionPolylineId;
-            QuarterPolylineIds = quarterPolylineIds;
+            QuarterPolylineIds = quarterPolylineIds ?? new Dictionary<QuarterSelection, ObjectId>();
+            QuarterHelperEntityIds = quarterHelperEntityIds ?? new List<ObjectId>();
+            SectionLabelEntityId = sectionLabelEntityId;
         }
 
         public ObjectId SectionPolylineId { get; }
         public Dictionary<QuarterSelection, ObjectId> QuarterPolylineIds { get; }
+        public List<ObjectId> QuarterHelperEntityIds { get; }
+        public ObjectId SectionLabelEntityId { get; }
     }
 
     public sealed class SectionRequest

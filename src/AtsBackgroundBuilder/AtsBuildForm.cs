@@ -82,7 +82,7 @@ namespace AtsBackgroundBuilder
             CancelButton = _cancel;
         }
 
-        public AtsBuildInput? Result { get; private set; }
+        public AtsBuildInput Result { get; private set; }
 
         private Control BuildTopPanel(IEnumerable<string> clientNames, Config config)
         {
