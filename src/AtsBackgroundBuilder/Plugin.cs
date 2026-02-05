@@ -321,11 +321,12 @@ namespace AtsBackgroundBuilder
             {
                 // Always remove the quarter boxes (used only for determining 1/4s and label targeting)
                 EraseEntities(database, sectionDrawResult.QuarterPolylineIds, logger, "quarter boxes");
-                EraseEntities(database, sectionDrawResult.QuarterHelperEntityIds, logger, "quarter helper lines");
 
                 // If ATS fabric is NOT requested, remove the temporary section outline + label block we drew to compute quarters.
+                // This includes the quarter divider helper lines (single line/polyline 1/4 marks).
                 if (!input.IncludeAtsFabric)
                 {
+                    EraseEntities(database, sectionDrawResult.QuarterHelperEntityIds, logger, "quarter helper lines");
                     EraseEntities(database, sectionDrawResult.SectionPolylineIds, logger, "section outlines");
                     EraseEntities(database, sectionDrawResult.SectionLabelEntityIds, logger, "section labels");
                 }
