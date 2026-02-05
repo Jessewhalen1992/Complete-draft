@@ -160,40 +160,86 @@ namespace AtsBackgroundBuilder
 
             using (var transaction = database.TransactionManager.StartTransaction())
             {
-                foreach (var id in dispositionPolylines)
+                var lsdCells = BuildSectionLsdCells(transaction, sectionDrawResult.SectionNumberByPolylineId);
+                var sectionInfos = BuildSectionSpatialInfos(transaction, sectionDrawResult.SectionNumberByPolylineId);
+                try
                 {
-                    var ent = transaction.GetObject(id, OpenMode.ForRead) as Entity;
-                    if (ent == null || !GeometryUtils.TryGetClosedBoundaryClone(ent, out var clone))
+                    foreach (var id in dispositionPolylines)
                     {
-                        result.SkippedNotClosed++;
-                        continue;
-                    }
+                        var ent = transaction.GetObject(id, OpenMode.ForRead) as Entity;
+                        if (ent == null || !GeometryUtils.TryGetClosedBoundaryClone(ent, out var clone))
+                        {
+                            result.SkippedNotClosed++;
+                            continue;
+                        }
 
-                    // Work with an in-memory clone after the transaction ends.
-                    // NOTE: clone is a DBObject not in the database; keep it alive for label placement.
+                        // Work with an in-memory clone after the transaction ends.
+                        // NOTE: clone is a DBObject not in the database; keep it alive for label placement.
 
-                    result.TotalDispositions++;
-                    var od = OdHelpers.ReadObjectData(id, logger);
-                    if (od == null)
-                    {
-                        result.SkippedNoOd++;
-                        continue;
-                    }
+                        result.TotalDispositions++;
+                        var od = OdHelpers.ReadObjectData(id, logger);
+                        if (od == null)
+                        {
+                            result.SkippedNoOd++;
+                            continue;
+                        }
 
-                    var dispNum = od.TryGetValue("DISP_NUM", out var dispRaw) ? dispRaw : string.Empty;
-                    var company = od.TryGetValue("COMPANY", out var companyRaw) ? companyRaw : string.Empty;
-                    var purpose = od.TryGetValue("PURPCD", out var purposeRaw) ? purposeRaw : string.Empty;
+                        var dispNum = od.TryGetValue("DISP_NUM", out var dispRaw) ? dispRaw : string.Empty;
+                        var company = od.TryGetValue("COMPANY", out var companyRaw) ? companyRaw : string.Empty;
+                        var purpose = od.TryGetValue("PURPCD", out var purposeRaw) ? purposeRaw : string.Empty;
 
-                    var mappedCompany = MapValue(companyLookup, company, company);
-                    var mappedPurpose = MapValue(purposeLookup, purpose, purpose);
-                    var purposeExtra = purposeLookup.Lookup(purpose)?.Extra ?? string.Empty;
+                        var mappedCompany = MapValue(companyLookup, company, company);
+                        var mappedPurpose = MapValue(purposeLookup, purpose, purpose);
+                        var purposeExtra = purposeLookup.Lookup(purpose)?.Extra ?? string.Empty;
 
                     var dispNumFormatted = FormatDispNum(dispNum);
                     var safePoint = GeometryUtils.GetSafeInteriorPoint(clone);
 
-                    // Default output layers; will be overridden when mapping succeeds.
-                    string lineLayer = ent.Layer;
-                    string textLayer = ent.Layer;
+                    var isSurfaceLabel = (mappedPurpose ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0;
+                    if (IsWellSitePurpose(purpose) || isSurfaceLabel)
+                    {
+                        var normalizedPurpose = NormalizePurposeCode(purpose);
+                        editor.WriteMessage($"\nWELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}' surface={isSurfaceLabel}");
+                        logger.WriteLine($"WELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}' surface={isSurfaceLabel}");
+
+                        var lsdSecToken = GetDominantLsdSectionToken(clone, lsdCells);
+                        editor.WriteMessage($"\nWELLSITE DEBUG: primary-token='{lsdSecToken}' lsd-cells={lsdCells.Count}");
+                        logger.WriteLine($"WELLSITE DEBUG: primary-token='{lsdSecToken}' lsd-cells={lsdCells.Count}");
+                        if (string.IsNullOrWhiteSpace(lsdSecToken))
+                        {
+                            lsdSecToken = GetDominantLsdSectionTokenBySection(clone, sectionInfos);
+                            editor.WriteMessage($"\nWELLSITE DEBUG: fallback-token='{lsdSecToken}' section-infos={sectionInfos.Count}");
+                            logger.WriteLine($"WELLSITE DEBUG: fallback-token='{lsdSecToken}' section-infos={sectionInfos.Count}");
+                            if (string.IsNullOrWhiteSpace(lsdSecToken))
+                            {
+                                lsdSecToken = GetPointBasedLsdSectionToken(clone, sectionInfos, out var pointDebug);
+                                editor.WriteMessage($"\nWELLSITE DEBUG: point-token='{lsdSecToken}' detail={pointDebug}");
+                                logger.WriteLine($"WELLSITE DEBUG: point-token='{lsdSecToken}' detail={pointDebug}");
+                            }
+                            if (string.IsNullOrWhiteSpace(lsdSecToken))
+                            {
+                                var overlapDebug = GetSectionOverlapDebugString(clone, sectionInfos);
+                                editor.WriteMessage($"\nWELLSITE DEBUG: overlaps {overlapDebug}");
+                                logger.WriteLine($"WELLSITE DEBUG: overlaps {overlapDebug}");
+                            }
+                        }
+                        if (!string.IsNullOrWhiteSpace(lsdSecToken))
+                        {
+                            mappedPurpose = lsdSecToken + " " + mappedPurpose;
+                            editor.WriteMessage($"\nWELLSITE DEBUG: final surface line='{mappedPurpose}'");
+                            logger.WriteLine($"WELLSITE DEBUG: final surface line='{mappedPurpose}'");
+                        }
+                    }
+                    else if ((mappedPurpose ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        var normalizedPurpose = NormalizePurposeCode(purpose);
+                        editor.WriteMessage($"\nWELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}'");
+                        logger.WriteLine($"WELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}'");
+                    }
+
+                        // Default output layers; will be overridden when mapping succeeds.
+                        string lineLayer = ent.Layer;
+                        string textLayer = ent.Layer;
 
                     // Determine client/foreign layer names based on company and purpose.
                     // Purpose extra column supplies the layer suffix (e.g. ROW, PIPE, etc.).
@@ -269,9 +315,14 @@ namespace AtsBackgroundBuilder
                         AddLeader = false
                     };
 
-                    dispositions.Add(nonWidthInfo);
+                        dispositions.Add(nonWidthInfo);
+                    }
                 }
-
+                finally
+                {
+                    DisposeLsdCells(lsdCells);
+                    DisposeSectionInfos(sectionInfos);
+                }
                 transaction.Commit();
             }
 
@@ -456,6 +507,7 @@ namespace AtsBackgroundBuilder
                 new List<ObjectId>(),
                 new List<ObjectId>(),
                 new List<ObjectId>(),
+                new Dictionary<ObjectId, int>(),
                 false);
         }
 
@@ -688,6 +740,571 @@ namespace AtsBackgroundBuilder
             return title;
         }
 
+        private static bool IsWellSitePurpose(string purpose)
+        {
+            var normalized = NormalizePurposeCode(purpose);
+            return string.Equals(normalized, "WELL SITE", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(normalized, "WELLSITE", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int ParseSectionNumber(string section)
+        {
+            if (string.IsNullOrWhiteSpace(section))
+            {
+                return 0;
+            }
+
+            var match = Regex.Match(section, "\\d+");
+            if (!match.Success)
+            {
+                return 0;
+            }
+
+            return int.TryParse(match.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+                ? value
+                : 0;
+        }
+
+        private static List<LsdCellInfo> BuildSectionLsdCells(Transaction transaction, Dictionary<ObjectId, int> sectionNumberById)
+        {
+            var cells = new List<LsdCellInfo>();
+            if (sectionNumberById == null || sectionNumberById.Count == 0)
+            {
+                return cells;
+            }
+
+            foreach (var pair in sectionNumberById)
+            {
+                if (pair.Key.IsNull || pair.Key.IsErased)
+                {
+                    continue;
+                }
+
+                var section = transaction.GetObject(pair.Key, OpenMode.ForRead) as Polyline;
+                if (section == null || !section.Closed || section.NumberOfVertices < 3)
+                {
+                    continue;
+                }
+
+                BuildLsdCellsForSection(section, pair.Value, cells);
+            }
+
+            return cells;
+        }
+
+        private static void BuildLsdCellsForSection(Polyline section, int sectionNumber, List<LsdCellInfo> destination)
+        {
+            var outline = GetPolylinePoints(section);
+            if (outline.Count < 3)
+            {
+                return;
+            }
+
+            QuarterAnchors anchors;
+            if (!TryGetQuarterAnchors(section, out anchors))
+            {
+                anchors = GetFallbackAnchors(section);
+            }
+
+            var eastUnit = GetUnitVector(anchors.Left, anchors.Right, new Vector2d(1, 0));
+            var northUnit = GetUnitVector(anchors.Bottom, anchors.Top, new Vector2d(0, 1));
+
+            if (!TryGetQuarterCorner(section, eastUnit, northUnit, QuarterCorner.NorthWest, out var nw) ||
+                !TryGetQuarterCorner(section, eastUnit, northUnit, QuarterCorner.NorthEast, out var ne) ||
+                !TryGetQuarterCorner(section, eastUnit, northUnit, QuarterCorner.SouthWest, out var sw) ||
+                !TryGetQuarterCorner(section, eastUnit, northUnit, QuarterCorner.SouthEast, out var se))
+            {
+                var ext = section.GeometricExtents;
+                sw = new Point2d(ext.MinPoint.X, ext.MinPoint.Y);
+                se = new Point2d(ext.MaxPoint.X, ext.MinPoint.Y);
+                nw = new Point2d(ext.MinPoint.X, ext.MaxPoint.Y);
+                ne = new Point2d(ext.MaxPoint.X, ext.MaxPoint.Y);
+            }
+
+            for (var row = 0; row < 4; row++)
+            {
+                for (var col = 0; col < 4; col++)
+                {
+                    var u0 = col / 4.0;
+                    var u1 = (col + 1) / 4.0;
+                    var t0 = row / 4.0;
+                    var t1 = (row + 1) / 4.0;
+
+                    var sample = BilinearPoint(sw, se, nw, ne, 0.5 * (u0 + u1), 0.5 * (t0 + t1));
+                    var points = new List<Point2d>(outline);
+
+                    var leftSouth = BilinearPoint(sw, se, nw, ne, u0, 0.0);
+                    var leftNorth = BilinearPoint(sw, se, nw, ne, u0, 1.0);
+                    var rightSouth = BilinearPoint(sw, se, nw, ne, u1, 0.0);
+                    var rightNorth = BilinearPoint(sw, se, nw, ne, u1, 1.0);
+                    var bottomWest = BilinearPoint(sw, se, nw, ne, 0.0, t0);
+                    var bottomEast = BilinearPoint(sw, se, nw, ne, 1.0, t0);
+                    var topWest = BilinearPoint(sw, se, nw, ne, 0.0, t1);
+                    var topEast = BilinearPoint(sw, se, nw, ne, 1.0, t1);
+
+                    var keepLeft = GetSideSign(leftSouth, leftNorth, sample);
+                    var keepRight = GetSideSign(rightSouth, rightNorth, sample);
+                    var keepBottom = GetSideSign(bottomWest, bottomEast, sample);
+                    var keepTop = GetSideSign(topWest, topEast, sample);
+
+                    if (keepLeft == 0 || keepRight == 0 || keepBottom == 0 || keepTop == 0)
+                    {
+                        continue;
+                    }
+
+                    points = ClipPolygon(points, leftSouth, leftNorth, keepLeft);
+                    points = ClipPolygon(points, rightSouth, rightNorth, keepRight);
+                    points = ClipPolygon(points, bottomWest, bottomEast, keepBottom);
+                    points = ClipPolygon(points, topWest, topEast, keepTop);
+
+                    var cell = BuildPolylineFromPoints(points);
+                    if (cell == null)
+                    {
+                        continue;
+                    }
+
+                    var lsd = GetLsdNumber(row, col);
+                    destination.Add(new LsdCellInfo(cell, lsd, sectionNumber));
+                }
+            }
+        }
+
+        private static int GetLsdNumber(int rowFromSouth, int colFromWest)
+        {
+            if ((rowFromSouth % 2) == 0)
+            {
+                return (rowFromSouth * 4) + (4 - colFromWest);
+            }
+
+            return (rowFromSouth * 4) + (colFromWest + 1);
+        }
+
+        private static Point2d BilinearPoint(Point2d sw, Point2d se, Point2d nw, Point2d ne, double u, double t)
+        {
+            var south = sw + ((se - sw) * u);
+            var north = nw + ((ne - nw) * u);
+            return south + ((north - south) * t);
+        }
+
+        private static string GetDominantLsdSectionToken(Polyline disposition, List<LsdCellInfo> lsdCells)
+        {
+            if (disposition == null || lsdCells == null || lsdCells.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            double bestArea = 0.0;
+            int bestLsd = 0;
+            int bestSection = 0;
+
+            Extents3d dispExtents;
+            try
+            {
+                dispExtents = disposition.GeometricExtents;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+
+            foreach (var cell in lsdCells)
+            {
+                if (cell.Cell == null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (!GeometryUtils.ExtentsIntersect(dispExtents, cell.Cell.GeometricExtents))
+                    {
+                        continue;
+                    }
+                }
+                catch
+                {
+                    // ignore extents failures and try geometric intersection directly
+                }
+
+                var overlapArea = GetIntersectionArea(disposition, cell.Cell);
+                if (overlapArea > bestArea)
+                {
+                    bestArea = overlapArea;
+                    bestLsd = cell.Lsd;
+                    bestSection = cell.Section;
+                }
+            }
+
+            return bestArea > 1e-6 && bestLsd > 0 && bestSection > 0
+                ? $"{bestLsd}-{bestSection}"
+                : string.Empty;
+        }
+
+        private static List<SectionSpatialInfo> BuildSectionSpatialInfos(Transaction transaction, Dictionary<ObjectId, int> sectionNumberById)
+        {
+            var infos = new List<SectionSpatialInfo>();
+            if (sectionNumberById == null || sectionNumberById.Count == 0)
+            {
+                return infos;
+            }
+
+            foreach (var pair in sectionNumberById)
+            {
+                if (pair.Key.IsNull || pair.Key.IsErased)
+                {
+                    continue;
+                }
+
+                var section = transaction.GetObject(pair.Key, OpenMode.ForRead) as Polyline;
+                if (section == null || !section.Closed || section.NumberOfVertices < 3)
+                {
+                    continue;
+                }
+
+                if (TryCreateSectionSpatialInfo(section, pair.Value, out var info))
+                {
+                    infos.Add(info);
+                }
+            }
+
+            return infos;
+        }
+
+        private static bool TryCreateSectionSpatialInfo(Polyline section, int sectionNumber, out SectionSpatialInfo info)
+        {
+            info = default;
+            var clone = section.Clone() as Polyline;
+            if (clone == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                QuarterAnchors anchors;
+                if (!TryGetQuarterAnchors(clone, out anchors))
+                {
+                    anchors = GetFallbackAnchors(clone);
+                }
+
+                var eastUnit = GetUnitVector(anchors.Left, anchors.Right, new Vector2d(1, 0));
+                var northUnit = GetUnitVector(anchors.Bottom, anchors.Top, new Vector2d(0, 1));
+
+                if (!TryGetQuarterCorner(clone, eastUnit, northUnit, QuarterCorner.SouthWest, out var sw) ||
+                    !TryGetQuarterCorner(clone, eastUnit, northUnit, QuarterCorner.SouthEast, out var se) ||
+                    !TryGetQuarterCorner(clone, eastUnit, northUnit, QuarterCorner.NorthWest, out var nw))
+                {
+                    var ext = clone.GeometricExtents;
+                    sw = new Point2d(ext.MinPoint.X, ext.MinPoint.Y);
+                    se = new Point2d(ext.MaxPoint.X, ext.MinPoint.Y);
+                    nw = new Point2d(ext.MinPoint.X, ext.MaxPoint.Y);
+                }
+
+                var width = Math.Abs((se - sw).DotProduct(eastUnit));
+                var height = Math.Abs((nw - sw).DotProduct(northUnit));
+                if (width <= 1e-6 || height <= 1e-6)
+                {
+                    clone.Dispose();
+                    return false;
+                }
+
+                info = new SectionSpatialInfo(clone, sectionNumber, sw, eastUnit, northUnit, width, height);
+                return true;
+            }
+            catch
+            {
+                clone.Dispose();
+                return false;
+            }
+        }
+
+        private static string GetDominantLsdSectionTokenBySection(Polyline disposition, List<SectionSpatialInfo> sections)
+        {
+            if (disposition == null || sections == null || sections.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            SectionSpatialInfo? best = null;
+            double bestArea = 0.0;
+
+            foreach (var section in sections)
+            {
+                var area = GetIntersectionArea(disposition, section.SectionPolyline);
+                if (area > bestArea)
+                {
+                    bestArea = area;
+                    best = section;
+                }
+            }
+
+            if (best == null || bestArea <= 1e-6)
+            {
+                return string.Empty;
+            }
+
+            if (!TryGetRepresentativePointInSection(disposition, best.SectionPolyline, out var point))
+            {
+                return string.Empty;
+            }
+
+            var rowCol = GetLsdRowCol(point, best);
+            if (rowCol == null)
+            {
+                return string.Empty;
+            }
+
+            var lsd = GetLsdNumber(rowCol.Value.row, rowCol.Value.col);
+            return (lsd > 0 && best.Section > 0) ? $"{lsd}-{best.Section}" : string.Empty;
+        }
+
+        private static bool TryGetRepresentativePointInSection(Polyline disposition, Polyline section, out Point2d point)
+        {
+            point = default;
+            if (disposition == null || section == null)
+            {
+                return false;
+            }
+
+            if (GeometryUtils.TryIntersectPolylines(disposition, section, out var pieces) && pieces.Count > 0)
+            {
+                Polyline? best = null;
+                double bestArea = 0.0;
+                foreach (var p in pieces)
+                {
+                    double area = 0.0;
+                    try { area = Math.Abs(p.Area); } catch { }
+                    if (area > bestArea)
+                    {
+                        best?.Dispose();
+                        best = p;
+                        bestArea = area;
+                    }
+                    else
+                    {
+                        p.Dispose();
+                    }
+                }
+
+                if (best != null)
+                {
+                    try
+                    {
+                        point = GeometryUtils.GetSafeInteriorPoint(best);
+                        return true;
+                    }
+                    finally
+                    {
+                        best.Dispose();
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static (int row, int col)? GetLsdRowCol(Point2d point, SectionSpatialInfo section)
+        {
+            var v = point - section.SouthWest;
+            var u = v.DotProduct(section.EastUnit) / section.Width;
+            var t = v.DotProduct(section.NorthUnit) / section.Height;
+
+            if (double.IsNaN(u) || double.IsInfinity(u) || double.IsNaN(t) || double.IsInfinity(t))
+            {
+                return null;
+            }
+
+            u = Math.Max(0.0, Math.Min(0.999999, u));
+            t = Math.Max(0.0, Math.Min(0.999999, t));
+
+            var col = (int)Math.Floor(u * 4.0);
+            var row = (int)Math.Floor(t * 4.0);
+
+            if (col < 0 || col > 3 || row < 0 || row > 3)
+            {
+                return null;
+            }
+
+            return (row, col);
+        }
+
+        private static string GetSectionOverlapDebugString(Polyline disposition, List<SectionSpatialInfo> sections)
+        {
+            if (disposition == null || sections == null || sections.Count == 0)
+            {
+                return "(no section infos)";
+            }
+
+            var rows = new List<(int section, double area)>();
+            foreach (var section in sections)
+            {
+                var area = GetIntersectionArea(disposition, section.SectionPolyline);
+                if (area > 1e-6)
+                {
+                    rows.Add((section.Section, area));
+                }
+            }
+
+            if (rows.Count == 0)
+            {
+                return "(no overlaps > 0)";
+            }
+
+            rows.Sort((a, b) => b.area.CompareTo(a.area));
+            var top = rows.Take(3).Select(r => $"SEC{r.section}={r.area:0.###}");
+            return string.Join(", ", top);
+        }
+
+        private static string GetPointBasedLsdSectionToken(Polyline disposition, List<SectionSpatialInfo> sections, out string debug)
+        {
+            debug = "no-sections";
+            if (disposition == null || sections == null || sections.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var samplePoints = new List<Point2d>();
+            try
+            {
+                samplePoints.Add(GeometryUtils.GetSafeInteriorPoint(disposition));
+            }
+            catch
+            {
+                // ignore
+            }
+
+            for (var i = 0; i < disposition.NumberOfVertices; i++)
+            {
+                samplePoints.Add(disposition.GetPoint2dAt(i));
+            }
+
+            if (samplePoints.Count == 0)
+            {
+                debug = "no-samples";
+                return string.Empty;
+            }
+
+            SectionSpatialInfo? bestSection = null;
+            int bestHits = -1;
+            Point2d bestPoint = default;
+
+            foreach (var section in sections)
+            {
+                int hits = 0;
+                Point2d firstHit = default;
+                bool hasFirst = false;
+
+                foreach (var p in samplePoints)
+                {
+                    if (GeometryUtils.IsPointInsidePolyline(section.SectionPolyline, p))
+                    {
+                        hits++;
+                        if (!hasFirst)
+                        {
+                            firstHit = p;
+                            hasFirst = true;
+                        }
+                    }
+                }
+
+                if (hits > bestHits)
+                {
+                    bestHits = hits;
+                    bestSection = section;
+                    bestPoint = hasFirst ? firstHit : samplePoints[0];
+                }
+            }
+
+            if (bestSection == null || bestHits <= 0)
+            {
+                debug = "no-section-hit";
+                return string.Empty;
+            }
+
+            var rowCol = GetLsdRowCol(bestPoint, bestSection);
+            if (rowCol == null)
+            {
+                debug = $"section={bestSection.Section} hits={bestHits} rowcol=none";
+                return string.Empty;
+            }
+
+            var lsd = GetLsdNumber(rowCol.Value.row, rowCol.Value.col);
+            debug = $"section={bestSection.Section} hits={bestHits} point=({bestPoint.X:0.###},{bestPoint.Y:0.###}) row={rowCol.Value.row} col={rowCol.Value.col} lsd={lsd}";
+            return (lsd > 0 && bestSection.Section > 0) ? $"{lsd}-{bestSection.Section}" : string.Empty;
+        }
+
+        private static double GetIntersectionArea(Polyline a, Polyline b)
+        {
+            if (a == null || b == null)
+            {
+                return 0.0;
+            }
+
+            if (!GeometryUtils.TryIntersectPolylines(a, b, out var pieces) || pieces == null || pieces.Count == 0)
+            {
+                return 0.0;
+            }
+
+            double area = 0.0;
+            foreach (var piece in pieces)
+            {
+                try
+                {
+                    area += Math.Abs(piece.Area);
+                }
+                catch
+                {
+                    // ignore individual piece area failures
+                }
+                finally
+                {
+                    piece.Dispose();
+                }
+            }
+
+            return area;
+        }
+
+        private static void DisposeLsdCells(List<LsdCellInfo> cells)
+        {
+            if (cells == null)
+            {
+                return;
+            }
+
+            foreach (var cell in cells)
+            {
+                try
+                {
+                    cell.Cell?.Dispose();
+                }
+                catch
+                {
+                    // ignore cleanup failures
+                }
+            }
+        }
+
+        private static void DisposeSectionInfos(List<SectionSpatialInfo> infos)
+        {
+            if (infos == null)
+            {
+                return;
+            }
+
+            foreach (var info in infos)
+            {
+                try
+                {
+                    info.SectionPolyline?.Dispose();
+                }
+                catch
+                {
+                    // ignore cleanup failures
+                }
+            }
+        }
+
         private static IEnumerable<Polyline> GenerateQuarters(Polyline section)
         {
             var extents = section.GeometricExtents;
@@ -733,6 +1350,7 @@ namespace AtsBackgroundBuilder
             var quarterHelperIds = new HashSet<ObjectId>();
             var sectionLabelIds = new HashSet<ObjectId>();
             var sectionIds = new HashSet<ObjectId>();
+            var sectionNumberById = new Dictionary<ObjectId, int>();
             var createdSections = new Dictionary<string, SectionBuildResult>(StringComparer.OrdinalIgnoreCase);
             var searchFolders = BuildSectionIndexSearchFolders(config);
 
@@ -749,6 +1367,7 @@ namespace AtsBackgroundBuilder
                     buildResult = DrawSectionFromIndex(editor, database, outline, request.Key, drawLsds, request.SecType);
                     createdSections[keyId] = buildResult;
                     sectionIds.Add(buildResult.SectionPolylineId);
+                    sectionNumberById[buildResult.SectionPolylineId] = ParseSectionNumber(request.Key.Section);
                 }
 
                 // Track all quarter geometry we created (always removed during cleanup).
@@ -780,6 +1399,7 @@ namespace AtsBackgroundBuilder
                 quarterHelperIds.ToList(),
                 sectionIds.ToList(),
                 sectionLabelIds.ToList(),
+                sectionNumberById,
                 true);
         }
 
@@ -2466,6 +3086,7 @@ namespace AtsBackgroundBuilder
             List<ObjectId> quarterHelperEntityIds,
             List<ObjectId> sectionPolylineIds,
             List<ObjectId> sectionLabelEntityIds,
+            Dictionary<ObjectId, int> sectionNumberByPolylineId,
             bool generatedFromIndex)
         {
             LabelQuarterPolylineIds = labelQuarterPolylineIds ?? new List<ObjectId>();
@@ -2473,6 +3094,7 @@ namespace AtsBackgroundBuilder
             QuarterHelperEntityIds = quarterHelperEntityIds ?? new List<ObjectId>();
             SectionPolylineIds = sectionPolylineIds ?? new List<ObjectId>();
             SectionLabelEntityIds = sectionLabelEntityIds ?? new List<ObjectId>();
+            SectionNumberByPolylineId = sectionNumberByPolylineId ?? new Dictionary<ObjectId, int>();
             GeneratedFromIndex = generatedFromIndex;
         }
         public List<ObjectId> LabelQuarterPolylineIds { get; }
@@ -2480,7 +3102,51 @@ namespace AtsBackgroundBuilder
         public List<ObjectId> QuarterHelperEntityIds { get; }
         public List<ObjectId> SectionPolylineIds { get; }
         public List<ObjectId> SectionLabelEntityIds { get; }
+        public Dictionary<ObjectId, int> SectionNumberByPolylineId { get; }
         public bool GeneratedFromIndex { get; }
+    }
+
+    public sealed class LsdCellInfo
+    {
+        public LsdCellInfo(Polyline cell, int lsd, int section)
+        {
+            Cell = cell;
+            Lsd = lsd;
+            Section = section;
+        }
+
+        public Polyline Cell { get; }
+        public int Lsd { get; }
+        public int Section { get; }
+    }
+
+    public sealed class SectionSpatialInfo
+    {
+        public SectionSpatialInfo(
+            Polyline sectionPolyline,
+            int section,
+            Point2d southWest,
+            Vector2d eastUnit,
+            Vector2d northUnit,
+            double width,
+            double height)
+        {
+            SectionPolyline = sectionPolyline;
+            Section = section;
+            SouthWest = southWest;
+            EastUnit = eastUnit;
+            NorthUnit = northUnit;
+            Width = width;
+            Height = height;
+        }
+
+        public Polyline SectionPolyline { get; }
+        public int Section { get; }
+        public Point2d SouthWest { get; }
+        public Vector2d EastUnit { get; }
+        public Vector2d NorthUnit { get; }
+        public double Width { get; }
+        public double Height { get; }
     }
 
     public sealed class SectionBuildResult

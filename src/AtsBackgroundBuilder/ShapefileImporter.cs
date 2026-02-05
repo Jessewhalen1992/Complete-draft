@@ -357,8 +357,10 @@ namespace AtsBackgroundBuilder
         private static IReadOnlyList<string> BuildShapefileSearchFolders(Config config)
         {
             var folders = new List<string>();
+            AddFolder(folders, config.DispositionShapefileFolder);
             AddFolder(folders, config.ShapefileFolder);
 
+            try { AddFolder(folders, new Config().DispositionShapefileFolder); } catch { }
             try { AddFolder(folders, new Config().ShapefileFolder); } catch { }
 
             AddFolder(folders, Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? Environment.CurrentDirectory);

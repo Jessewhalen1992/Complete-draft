@@ -59,6 +59,7 @@ namespace AtsBackgroundBuilder
         // Shapefile import
         // -------------------------
         public string ShapefileFolder { get; set; } = @"C:\AUTOCAD-SETUP CG\SHAPE FILES";
+        public string DispositionShapefileFolder { get; set; } = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\DISPOS";
 
         /// <summary>
         /// Shapefiles to import dispositions from (filenames only).
@@ -317,6 +318,9 @@ namespace AtsBackgroundBuilder
 
             if (TryString(root, nameof(ShapefileFolder), out s) && !string.IsNullOrWhiteSpace(s))
                 cfg.ShapefileFolder = s.Trim();
+
+            if (TryString(root, nameof(DispositionShapefileFolder), out s) && !string.IsNullOrWhiteSpace(s))
+                cfg.DispositionShapefileFolder = s.Trim();
 
             if (TryString(root, nameof(LookupFolder), out s) && !string.IsNullOrWhiteSpace(s))
                 cfg.LookupFolder = s.Trim();
