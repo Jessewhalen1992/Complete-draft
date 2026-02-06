@@ -1418,20 +1418,12 @@ namespace AtsBackgroundBuilder
                     sectionLabelIds.Add(buildResult.SectionLabelEntityId);
 
                 // Track the quarters that should actually be labelled.
-                if (request.Quarter == QuarterSelection.All)
+                foreach (var quarter in ExpandQuarterSelections(request.Quarter))
                 {
-                    foreach (var pair in buildResult.QuarterPolylineIds)
-                    {
-                        labelQuarterIds.Add(pair.Value);
-                        labelQuarterInfos.Add(new QuarterLabelInfo(pair.Value, request.Key, pair.Key));
-                    }
-                }
-                else
-                {
-                    if (buildResult.QuarterPolylineIds.TryGetValue(request.Quarter, out var qid))
+                    if (buildResult.QuarterPolylineIds.TryGetValue(quarter, out var qid))
                     {
                         labelQuarterIds.Add(qid);
-                        labelQuarterInfos.Add(new QuarterLabelInfo(qid, request.Key, request.Quarter));
+                        labelQuarterInfos.Add(new QuarterLabelInfo(qid, request.Key, quarter));
                     }
                 }
             }
@@ -1980,6 +1972,10 @@ namespace AtsBackgroundBuilder
             options.Keywords.Add("NE");
             options.Keywords.Add("SW");
             options.Keywords.Add("SE");
+            options.Keywords.Add("N");
+            options.Keywords.Add("S");
+            options.Keywords.Add("E");
+            options.Keywords.Add("W");
             options.Keywords.Add("ALL");
 
             var result = editor.GetKeywords(options);
@@ -1998,6 +1994,14 @@ namespace AtsBackgroundBuilder
                     return QuarterSelection.SouthWest;
                 case "SE":
                     return QuarterSelection.SouthEast;
+                case "N":
+                    return QuarterSelection.NorthHalf;
+                case "S":
+                    return QuarterSelection.SouthHalf;
+                case "E":
+                    return QuarterSelection.EastHalf;
+                case "W":
+                    return QuarterSelection.WestHalf;
                 case "ALL":
                     return QuarterSelection.All;
                 default:
@@ -3516,23 +3520,48 @@ namespace AtsBackgroundBuilder
 
         private static List<string> BuildRequestedQuarterKeys(IEnumerable<SectionRequest> requests)
         {
-            var keys = new List<string>();
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var request in requests)
             {
-                if (request.Quarter == QuarterSelection.All)
+                foreach (var quarter in ExpandQuarterSelections(request.Quarter))
                 {
-                    keys.Add(BuildQuarterKey(request.Key, QuarterSelection.NorthWest));
-                    keys.Add(BuildQuarterKey(request.Key, QuarterSelection.NorthEast));
-                    keys.Add(BuildQuarterKey(request.Key, QuarterSelection.SouthWest));
-                    keys.Add(BuildQuarterKey(request.Key, QuarterSelection.SouthEast));
-                }
-                else if (request.Quarter != QuarterSelection.None)
-                {
-                    keys.Add(BuildQuarterKey(request.Key, request.Quarter));
+                    var key = BuildQuarterKey(request.Key, quarter);
+                    if (!string.IsNullOrWhiteSpace(key))
+                        keys.Add(key);
                 }
             }
 
-            return keys.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            return keys.ToList();
+        }
+
+        private static IEnumerable<QuarterSelection> ExpandQuarterSelections(QuarterSelection selection)
+        {
+            switch (selection)
+            {
+                case QuarterSelection.NorthHalf:
+                    return new[] { QuarterSelection.NorthWest, QuarterSelection.NorthEast };
+                case QuarterSelection.SouthHalf:
+                    return new[] { QuarterSelection.SouthWest, QuarterSelection.SouthEast };
+                case QuarterSelection.WestHalf:
+                    return new[] { QuarterSelection.NorthWest, QuarterSelection.SouthWest };
+                case QuarterSelection.EastHalf:
+                    return new[] { QuarterSelection.NorthEast, QuarterSelection.SouthEast };
+                case QuarterSelection.All:
+                    return new[]
+                    {
+                        QuarterSelection.NorthWest,
+                        QuarterSelection.NorthEast,
+                        QuarterSelection.SouthWest,
+                        QuarterSelection.SouthEast
+                    };
+                case QuarterSelection.NorthWest:
+                case QuarterSelection.NorthEast:
+                case QuarterSelection.SouthWest:
+                case QuarterSelection.SouthEast:
+                    return new[] { selection };
+                default:
+                    return Array.Empty<QuarterSelection>();
+            }
         }
 
         private static string BuildQuarterKey(SectionKey key, QuarterSelection quarter)
@@ -3542,6 +3571,8 @@ namespace AtsBackgroundBuilder
             var township = NormalizeNumberToken(key.Township);
             var section = NormalizeNumberToken(key.Section);
             var q = QuarterSelectionToToken(quarter);
+            if (string.IsNullOrWhiteSpace(q))
+                return string.Empty;
             return BuildQuarterKey(meridian, range, township, section, q);
         }
 
@@ -3601,12 +3632,6 @@ namespace AtsBackgroundBuilder
                     quarterMap.Add(key, q);
             }
 
-            int totalLabels = 0;
-            int leaderLabels = 0;
-            int leaderAnchored = 0;
-            int leaderFallback = 0;
-            int labelsUnassigned = 0;
-
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
@@ -3628,12 +3653,7 @@ namespace AtsBackgroundBuilder
                         {
                             var contents = leaderText.Contents ?? string.Empty;
                             var anchor = GetLeaderAnchorPoint(mleader, leaderText, logger);
-                            if (anchor.X == leaderText.Location.X && anchor.Y == leaderText.Location.Y)
-                                leaderFallback++;
-                            else
-                                leaderAnchored++;
                             entry = BuildLabelEntry(id, true, contents, anchor);
-                            leaderLabels++;
                         }
                     }
 
@@ -3647,7 +3667,6 @@ namespace AtsBackgroundBuilder
                     if (string.IsNullOrWhiteSpace(prefix) || !PlsrDispositionPrefixes.Contains(prefix))
                         continue;
 
-                    totalLabels++;
                     bool assigned = false;
                     foreach (var pair in quarterMap)
                     {
@@ -3665,17 +3684,11 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
-                    if (!assigned)
-                    {
-                        labelsUnassigned++;
-                        logger.WriteLine($"PLSR DEBUG: label not assigned to quarter. Disp='{entry.DispNum}' Owner='{entry.Owner}' Pt=({entry.Location.X:0.###},{entry.Location.Y:0.###})");
-                    }
+                    _ = assigned;
                 }
 
                 tr.Commit();
             }
-
-            logger.WriteLine($"PLSR DEBUG: labels scanned={totalLabels}, leaders={leaderLabels}, leaderAnchored={leaderAnchored}, leaderFallback={leaderFallback}, unassigned={labelsUnassigned}");
             return byQuarter;
         }
 
@@ -3698,8 +3711,6 @@ namespace AtsBackgroundBuilder
                 Location = location
             };
         }
-
-        private static bool _plsrLeaderReflectionLogged = false;
 
         private static Point2d GetLeaderAnchorPoint(MLeader leader, MText leaderText, Logger logger)
         {
@@ -3737,6 +3748,12 @@ namespace AtsBackgroundBuilder
                 var method1 = type.GetMethod("GetLeaderLineVertices", new[] { typeof(int) });
                 var method3 = type.GetMethod("GetLeaderLineVertices", new[] { typeof(int), typeof(int), typeof(bool) });
 
+                var getLeaderIndexes = type.GetMethod("GetLeaderIndexes", Type.EmptyTypes);
+                var getLeaderLineIndexes = type.GetMethod("GetLeaderLineIndexes", new[] { typeof(int) });
+                var getFirstVertex = type.GetMethods().FirstOrDefault(m => m.Name == "GetFirstVertex");
+                var getLastVertex = type.GetMethods().FirstOrDefault(m => m.Name == "GetLastVertex");
+                var getVertex = type.GetMethods().FirstOrDefault(m => m.Name == "GetVertex");
+
                 int? TryGetLineCount(int leaderIndex)
                 {
                     var method = type.GetMethod("GetLeaderLineCount", new[] { typeof(int) });
@@ -3748,12 +3765,58 @@ namespace AtsBackgroundBuilder
                     return null;
                 }
 
-                for (int leaderIndex = 0; leaderIndex < maxLeaders; leaderIndex++)
+                IEnumerable<int> EnumerateLeaderIndexes()
+                {
+                    if (getLeaderIndexes != null)
+                    {
+                        var result = getLeaderIndexes.Invoke(leader, Array.Empty<object>());
+                        if (result is IEnumerable<int> ints)
+                            return ints;
+                        if (result is System.Collections.IEnumerable enumerable)
+                            return enumerable.Cast<object>().Select(o => Convert.ToInt32(o));
+                    }
+                    return Enumerable.Range(0, maxLeaders);
+                }
+
+                IEnumerable<int> EnumerateLeaderLineIndexes(int leaderIndex, int maxLines)
+                {
+                    if (getLeaderLineIndexes != null)
+                    {
+                        var result = getLeaderLineIndexes.Invoke(leader, new object[] { leaderIndex });
+                        if (result is IEnumerable<int> ints)
+                            return ints;
+                        if (result is System.Collections.IEnumerable enumerable)
+                            return enumerable.Cast<object>().Select(o => Convert.ToInt32(o));
+                    }
+                    return Enumerable.Range(0, maxLines);
+                }
+
+                Point3d? TryInvokePoint3d(MethodInfo? method, params object[] args)
+                {
+                    if (method == null)
+                        return null;
+                    try
+                    {
+                        var paramCount = method.GetParameters().Length;
+                        if (paramCount != args.Length)
+                            return null;
+                        var result = method.Invoke(leader, args);
+                        if (result is Point3d p)
+                            return p;
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+                    return null;
+                }
+
+                foreach (int leaderIndex in EnumerateLeaderIndexes())
                 {
                     int? lineCount = TryGetLineCount(leaderIndex);
                     var maxLines = lineCount.HasValue ? Math.Max(1, lineCount.Value) : 4;
 
-                    for (int lineIndex = 0; lineIndex < maxLines; lineIndex++)
+                    foreach (int lineIndex in EnumerateLeaderLineIndexes(leaderIndex, maxLines))
                     {
                         if (method2 != null)
                         {
@@ -3767,6 +3830,30 @@ namespace AtsBackgroundBuilder
                             AddVertices(resultFalse, "GetLeaderLineVertices(int,int,bool=false)");
                             var resultTrue = method3.Invoke(leader, new object[] { leaderIndex, lineIndex, true }) as Point3dCollection;
                             AddVertices(resultTrue, "GetLeaderLineVertices(int,int,bool=true)");
+                        }
+
+                        var first = TryInvokePoint3d(getFirstVertex, leaderIndex, lineIndex)
+                            ?? TryInvokePoint3d(getFirstVertex, leaderIndex)
+                            ?? TryInvokePoint3d(getFirstVertex, lineIndex);
+                        if (first.HasValue)
+                            AddVertices(new Point3dCollection { first.Value }, "GetFirstVertex");
+
+                        var last = TryInvokePoint3d(getLastVertex, leaderIndex, lineIndex)
+                            ?? TryInvokePoint3d(getLastVertex, leaderIndex)
+                            ?? TryInvokePoint3d(getLastVertex, lineIndex);
+                        if (last.HasValue)
+                            AddVertices(new Point3dCollection { last.Value }, "GetLastVertex");
+
+                        if (getVertex != null)
+                        {
+                            for (int v = 0; v < 6; v++)
+                            {
+                                var vtx = TryInvokePoint3d(getVertex, leaderIndex, lineIndex, v)
+                                    ?? TryInvokePoint3d(getVertex, leaderIndex, v)
+                                    ?? TryInvokePoint3d(getVertex, lineIndex, v);
+                                if (vtx.HasValue)
+                                    AddVertices(new Point3dCollection { vtx.Value }, "GetVertex");
+                            }
                         }
                     }
 
@@ -3799,47 +3886,11 @@ namespace AtsBackgroundBuilder
                 }
 
                 if (allVertices.Count > 0)
-                {
-                    if (!_plsrLeaderReflectionLogged && source != null)
-                    {
-                        _plsrLeaderReflectionLogged = true;
-                        logger.WriteLine($"PLSR DEBUG: MLeader vertices found via {source}, count={allVertices.Count}");
-                    }
                     return SelectLeaderHeadPoint(allVertices, leaderText.Location);
-                }
             }
             catch
             {
                 // fall back to text location
-            }
-
-            if (!_plsrLeaderReflectionLogged)
-            {
-                _plsrLeaderReflectionLogged = true;
-                try
-                {
-                    var type = leader.GetType();
-                    var methodNames = type.GetMethods()
-                        .Where(m => m.Name.IndexOf("Leader", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                    m.Name.IndexOf("Vertex", StringComparison.OrdinalIgnoreCase) >= 0)
-                        .Select(m => m.Name)
-                        .Distinct()
-                        .OrderBy(n => n)
-                        .ToList();
-                    var propNames = type.GetProperties()
-                        .Where(p => p.Name.IndexOf("Leader", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                    p.Name.IndexOf("Vertex", StringComparison.OrdinalIgnoreCase) >= 0)
-                        .Select(p => p.Name)
-                        .Distinct()
-                        .OrderBy(n => n)
-                        .ToList();
-                    logger.WriteLine("PLSR DEBUG: MLeader methods: " + string.Join(", ", methodNames));
-                    logger.WriteLine("PLSR DEBUG: MLeader properties: " + string.Join(", ", propNames));
-                }
-                catch
-                {
-                    // ignore
-                }
             }
 
             return new Point2d(leaderText.Location.X, leaderText.Location.Y);
@@ -4140,6 +4191,10 @@ namespace AtsBackgroundBuilder
         NorthEast,
         SouthWest,
         SouthEast,
+        NorthHalf,
+        SouthHalf,
+        EastHalf,
+        WestHalf,
         All
     }
 

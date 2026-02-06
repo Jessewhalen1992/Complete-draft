@@ -66,13 +66,14 @@ namespace AtsBackgroundBuilder
         public AtsBuildForm(IEnumerable<string> clientNames, Config config)
         {
             Text = "ATS Background Builder";
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            MaximizeBox = true;
+            MinimizeBox = true;
             StartPosition = FormStartPosition.CenterScreen;
 
             // Slightly larger to comfortably fit the grid.
-            ClientSize = new Size(980, 520);
+            ClientSize = new Size(1200, 650);
+            MinimumSize = new Size(1000, 600);
 
             var root = new TableLayoutPanel
             {
@@ -240,7 +241,7 @@ namespace AtsBackgroundBuilder
 
             var qHelp = new Label
             {
-                Text = "Quarter values: NW, NE, SW, SE, ALL. SEC TYPE values: L-USEC, L-SEC",
+                Text = "Quarter values: NW, NE, SW, SE, N, S, E, W, ALL. SEC TYPE values: L-USEC, L-SEC",
                 AutoSize = true,
                 ForeColor = SystemColors.GrayText,
                 Margin = new Padding(0, 0, 0, 0)
@@ -271,6 +272,7 @@ namespace AtsBackgroundBuilder
             _grid.RowHeadersVisible = false;
             _grid.SelectionMode = DataGridViewSelectionMode.CellSelect;
             _grid.MultiSelect = false;
+            _grid.ScrollBars = ScrollBars.Both;
 
             _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "M", HeaderText = "M" });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "RGE", HeaderText = "RGE" });
@@ -290,7 +292,7 @@ namespace AtsBackgroundBuilder
             _grid.Columns.Add(secTypeColumn);
 
             // Seed a few empty rows.
-            for (int i = 0; i < 8; i++)
+            for (int i = 0; i < 50; i++)
                 _grid.Rows.Add();
 
             var panel = new Panel { Dock = DockStyle.Fill };
@@ -465,7 +467,7 @@ namespace AtsBackgroundBuilder
 
                 if (!TryParseQuarter(q, out var quarter))
                 {
-                    MessageBox.Show(this, $"Invalid quarter value: '{q}'. Use NW, NE, SW, SE, or ALL.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(this, $"Invalid quarter value: '{q}'. Use NW, NE, SW, SE, N, S, E, W, or ALL.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return new List<SectionRequest>();
                 }
 
@@ -509,6 +511,18 @@ namespace AtsBackgroundBuilder
                     return true;
                 case "SE":
                     quarter = QuarterSelection.SouthEast;
+                    return true;
+                case "N":
+                    quarter = QuarterSelection.NorthHalf;
+                    return true;
+                case "S":
+                    quarter = QuarterSelection.SouthHalf;
+                    return true;
+                case "E":
+                    quarter = QuarterSelection.EastHalf;
+                    return true;
+                case "W":
+                    quarter = QuarterSelection.WestHalf;
                     return true;
                 case "ALL":
                 case "A":

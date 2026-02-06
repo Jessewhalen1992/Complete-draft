@@ -195,14 +195,21 @@ namespace AtsBackgroundBuilder
                                 }
 
                                 // Candidate label points around the target
+                                int maxPoints = _config.MaxOverlapAttempts;
+                                if (disposition.AddLeader)
+                                    maxPoints = Math.Max(maxPoints, 80);
+
+                                double maxLeaderLength = disposition.AddLeader ? 200.0 : double.PositiveInfinity;
+
                                 var candidates = GetCandidateLabelPoints(
                                         quarterClone,
                                         dispClone,
                                         searchTarget,
                                         disposition.AllowLabelOutsideDisposition,
                                         _config.TextHeight,
-                                        _config.MaxOverlapAttempts,
-                                        measuredWidth)
+                                        maxPoints,
+                                        measuredWidth,
+                                        maxLeaderLength)
                                     .ToList();
 
                                 if (candidates.Count == 0)
@@ -514,29 +521,40 @@ namespace AtsBackgroundBuilder
             bool allowOutsideDisposition,
             double step,
             int maxPoints,
-            double measuredWidth)
+            double measuredWidth,
+            double maxLeaderLength)
         {
             var spiral = GeometryUtils.GetSpiralOffsets(target, step, maxPoints).ToList();
             double minDistance = step * 0.5;
             double minHalfWidth = measuredWidth * 0.25;
+            double minQuarterClearance = step * 0.5;
 
             if (!allowOutsideDisposition)
             {
+                var candidates = new List<(Point2d pt, double score)>();
                 foreach (var p in spiral)
                 {
                     if (GeometryUtils.IsPointInsidePolyline(quarter, p) && GeometryUtils.IsPointInsidePolyline(disposition, p))
                     {
                         var p3d = new Point3d(p.X, p.Y, 0);
                         var closest = disposition.GetClosestPointTo(p3d, false);
-                        if (closest.DistanceTo(p3d) >= Math.Max(minDistance, minHalfWidth))
-                            yield return p;
+                        if (closest.DistanceTo(p3d) >= Math.Max(minDistance, minHalfWidth) &&
+                            DistanceToPolyline(quarter, p3d) >= minQuarterClearance &&
+                            IsWithinLeaderLength(target, p, maxLeaderLength))
+                        {
+                            var score = ScoreLabelCandidate(quarter, disposition, target, p);
+                            candidates.Add((p, score));
+                        }
                     }
                 }
+                foreach (var item in candidates.OrderByDescending(c => c.score))
+                    yield return item.pt;
                 yield break;
             }
 
             // Prefer points in quarter but outside the disposition first (PDF-style callouts)
-            var inside = new List<Point2d>();
+            var outside = new List<(Point2d pt, double score)>();
+            var inside = new List<(Point2d pt, double score)>();
             foreach (var p in spiral)
             {
                 if (!GeometryUtils.IsPointInsidePolyline(quarter, p))
@@ -546,20 +564,61 @@ namespace AtsBackgroundBuilder
                 {
                     var p3d = new Point3d(p.X, p.Y, 0);
                     var closest = disposition.GetClosestPointTo(p3d, false);
-                    if (closest.DistanceTo(p3d) >= Math.Max(minDistance, minHalfWidth))
-                        inside.Add(p);
+                    if (closest.DistanceTo(p3d) >= Math.Max(minDistance, minHalfWidth) &&
+                        DistanceToPolyline(quarter, p3d) >= minQuarterClearance &&
+                        IsWithinLeaderLength(target, p, maxLeaderLength))
+                    {
+                        var score = ScoreLabelCandidate(quarter, disposition, target, p);
+                        inside.Add((p, score));
+                    }
                 }
                 else
                 {
                     var p3d = new Point3d(p.X, p.Y, 0);
                     var closest = disposition.GetClosestPointTo(p3d, false);
-                    if (closest.DistanceTo(p3d) >= Math.Max(minDistance, minHalfWidth))
-                        yield return p;
+                    if (closest.DistanceTo(p3d) >= Math.Max(minDistance, minHalfWidth) &&
+                        DistanceToPolyline(quarter, p3d) >= minQuarterClearance &&
+                        IsWithinLeaderLength(target, p, maxLeaderLength))
+                    {
+                        var score = ScoreLabelCandidate(quarter, disposition, target, p);
+                        outside.Add((p, score));
+                    }
                 }
             }
 
-            foreach (var p in inside)
-                yield return p;
+            foreach (var item in outside.OrderByDescending(c => c.score))
+                yield return item.pt;
+            foreach (var item in inside.OrderByDescending(c => c.score))
+                yield return item.pt;
+        }
+
+        private static double ScoreLabelCandidate(Polyline quarter, Polyline disposition, Point2d target, Point2d p)
+        {
+            var p3d = new Point3d(p.X, p.Y, 0);
+            double distToDisp = DistanceToPolyline(disposition, p3d);
+            double distToQuarter = DistanceToPolyline(quarter, p3d);
+            double distToTarget = p.GetDistanceTo(target);
+            return Math.Min(distToDisp, distToQuarter) - (distToTarget * 0.01);
+        }
+
+        private static double DistanceToPolyline(Polyline polyline, Point3d p3d)
+        {
+            try
+            {
+                var closest = polyline.GetClosestPointTo(p3d, false);
+                return closest.DistanceTo(p3d);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private static bool IsWithinLeaderLength(Point2d target, Point2d candidate, double maxLeaderLength)
+        {
+            if (double.IsInfinity(maxLeaderLength) || maxLeaderLength <= 0)
+                return true;
+            return target.GetDistanceTo(candidate) <= maxLeaderLength;
         }
 
         private bool TryGetQuarterIntersectionTarget(
