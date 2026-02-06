@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
@@ -127,10 +128,32 @@ namespace AtsBackgroundBuilder
                                     }
 
                                     bool isVariable = measurement.IsVariable;
+                                    bool usedOdFallbackWidth = false;
+
                                     // If the corridor measured as variable but its median is effectively on a standard width,
                                     // treat as fixed. (This prevents false "Variable Width" classifications.)
                                     if (isVariable && diffToSnapped <= _config.WidthSnapTolerance)
                                         isVariable = false;
+
+                                    // Fallback: if measured as variable near complex corners, use OD DIMENSION width
+                                    // when it clearly matches a standard width. Keep label green for awareness.
+                                    if (isVariable &&
+                                        TryParseOdDimensionWidth(disposition.OdDimension, out var odWidthMeters) &&
+                                        _config.AcceptableRowWidths != null &&
+                                        _config.AcceptableRowWidths.Length > 0)
+                                    {
+                                        var odSnapped = _config.AcceptableRowWidths
+                                            .OrderBy(w => Math.Abs(odWidthMeters - w))
+                                            .ThenBy(w => w)
+                                            .First();
+                                        var odDiff = Math.Abs(odWidthMeters - odSnapped);
+                                        if (odDiff <= _config.WidthSnapTolerance)
+                                        {
+                                            snapped = odSnapped;
+                                            isVariable = false;
+                                            usedOdFallbackWidth = true;
+                                        }
+                                    }
 
                                     if (isVariable)
                                     {
@@ -144,7 +167,7 @@ namespace AtsBackgroundBuilder
 
                                         // Green = measured width does NOT match the snapped width within tolerance.
                                         bool matches = diffToSnapped <= _config.WidthSnapTolerance;
-                                        textColorIndex = matches ? 256 : 3;
+                                        textColorIndex = (matches && !usedOdFallbackWidth) ? 256 : 3;
                                     }
 
                                     // Leader anchor: a centerline point in THIS quarter's corridor piece.
@@ -173,7 +196,13 @@ namespace AtsBackgroundBuilder
                                         }
                                     }
 
-                                    leaderTarget = leaderCandidate;
+                                    leaderTarget = ChooseLeaderTargetAvoidingOtherDispositions(
+                                        leaderCandidate,
+                                        intersectionTarget,
+                                        quarterClone,
+                                        polyForWidth,
+                                        disposition,
+                                        dispositions);
                                 }
 
                                 // Defensive: if the intersection target landed just outside due to numerical issues,
@@ -227,16 +256,31 @@ namespace AtsBackgroundBuilder
 
                                 bool placed = false;
                                 Point2d lastCandidate = candidates[candidates.Count - 1];
+                                Point2d bestFallback = lastCandidate;
+                                double bestFallbackScore = double.MaxValue;
+                                var labelGap = _config.TextHeight * 1.6;
 
                                 foreach (var pt in candidates)
                                 {
                                     lastCandidate = pt;
 
-                                    var predicted = EstimateTextExtents(pt, labelText, _config.TextHeight);
-                                    bool overlaps = placedLabelExtents.Any(b => GeometryUtils.ExtentsIntersect(b, predicted));
+                                    var predicted = InflateExtents(EstimateTextExtents(pt, labelText, _config.TextHeight), labelGap);
+                                    int labelOverlapCount = placedLabelExtents.Count(b => GeometryUtils.ExtentsIntersect(b, predicted));
+                                    int crowdednessCount = CountNearbyPlacedLabels(placedLabelExtents, predicted, _config.TextHeight * 3.0);
+                                    int lineworkOverlapCount = CountIntersectingDispositionLinework(predicted, dispositions);
+                                    bool overlaps = labelOverlapCount > 0 || lineworkOverlapCount > 0;
 
                                     if (overlaps)
                                     {
+                                        var fallbackScore = (labelOverlapCount * 100000.0) +
+                                                            (lineworkOverlapCount * 1000.0) +
+                                                            (crowdednessCount * 200.0) +
+                                                            pt.GetDistanceTo(searchTarget);
+                                        if (fallbackScore < bestFallbackScore)
+                                        {
+                                            bestFallbackScore = fallbackScore;
+                                            bestFallback = pt;
+                                        }
                                         continue;
                                     }
 
@@ -252,8 +296,8 @@ namespace AtsBackgroundBuilder
                                 if (!placed && _config.PlaceWhenOverlapFails && candidates.Count > 0)
                                 {
                                     // Forced placement at last candidate
-                                    var predicted = EstimateTextExtents(lastCandidate, labelText, _config.TextHeight);
-                                    CreateLabelEntity(transaction, modelSpace, leaderTarget, lastCandidate, disposition, labelText, textColorIndex);
+                                    var predicted = InflateExtents(EstimateTextExtents(bestFallback, labelText, _config.TextHeight), labelGap);
+                                    CreateLabelEntity(transaction, modelSpace, leaderTarget, bestFallback, disposition, labelText, textColorIndex);
 
                                     placedLabelExtents.Add(predicted);
                                     result.LabelsPlaced++;
@@ -500,11 +544,12 @@ namespace AtsBackgroundBuilder
                 if (c > maxChars) maxChars = c;
             }
 
-            double charWidth = textHeight * 0.6;
+            // Conservative footprint estimate so collision checks better match actual MLeader text.
+            double charWidth = textHeight * 0.92;
             double width = Math.Max(textHeight, maxChars * charWidth);
-            double height = lineCount * textHeight * 1.2;
+            double height = lineCount * textHeight * 1.55;
 
-            double pad = textHeight * 0.3;
+            double pad = textHeight * 0.9;
             width += pad * 2;
             height += pad * 2;
 
@@ -531,74 +576,66 @@ namespace AtsBackgroundBuilder
 
             if (!allowOutsideDisposition)
             {
-                var candidates = new List<(Point2d pt, double score)>();
+                var candidates = new List<(Point2d pt, double distToTarget, double clearance)>();
                 foreach (var p in spiral)
                 {
                     if (GeometryUtils.IsPointInsidePolyline(quarter, p) && GeometryUtils.IsPointInsidePolyline(disposition, p))
                     {
                         var p3d = new Point3d(p.X, p.Y, 0);
                         var closest = disposition.GetClosestPointTo(p3d, false);
+                        var quarterClearance = DistanceToPolyline(quarter, p3d);
+                        var dispClearance = closest.DistanceTo(p3d);
                         if (closest.DistanceTo(p3d) >= Math.Max(minDistance, minHalfWidth) &&
-                            DistanceToPolyline(quarter, p3d) >= minQuarterClearance &&
+                            quarterClearance >= minQuarterClearance &&
                             IsWithinLeaderLength(target, p, maxLeaderLength))
                         {
-                            var score = ScoreLabelCandidate(quarter, disposition, target, p);
-                            candidates.Add((p, score));
+                            candidates.Add((p, p.GetDistanceTo(target), Math.Min(quarterClearance, dispClearance)));
                         }
                     }
                 }
-                foreach (var item in candidates.OrderByDescending(c => c.score))
+                foreach (var item in candidates.OrderBy(c => c.distToTarget).ThenByDescending(c => c.clearance))
                     yield return item.pt;
                 yield break;
             }
 
-            // Prefer points in quarter but outside the disposition first (PDF-style callouts)
-            var outside = new List<(Point2d pt, double score)>();
-            var inside = new List<(Point2d pt, double score)>();
+            // For leader labels, allow both inside and outside white space.
+            // We prioritize proximity first, then clearance; overlap checks later reject bad fits.
+            var allCandidates = new List<(Point2d pt, double distToTarget, double clearance)>();
             foreach (var p in spiral)
             {
                 if (!GeometryUtils.IsPointInsidePolyline(quarter, p))
                     continue;
 
+                var p3d = new Point3d(p.X, p.Y, 0);
+                var quarterClearance = DistanceToPolyline(quarter, p3d);
+                var closest = disposition.GetClosestPointTo(p3d, false);
+                var dispClearance = closest.DistanceTo(p3d);
+                var insideDisposition = GeometryUtils.IsPointInsidePolyline(disposition, p);
+
                 if (GeometryUtils.IsPointInsidePolyline(disposition, p))
                 {
-                    var p3d = new Point3d(p.X, p.Y, 0);
-                    var closest = disposition.GetClosestPointTo(p3d, false);
                     if (closest.DistanceTo(p3d) >= Math.Max(minDistance, minHalfWidth) &&
-                        DistanceToPolyline(quarter, p3d) >= minQuarterClearance &&
+                        quarterClearance >= minQuarterClearance &&
                         IsWithinLeaderLength(target, p, maxLeaderLength))
                     {
-                        var score = ScoreLabelCandidate(quarter, disposition, target, p);
-                        inside.Add((p, score));
+                        allCandidates.Add((p, p.GetDistanceTo(target), Math.Min(quarterClearance, dispClearance)));
                     }
                 }
                 else
                 {
-                    var p3d = new Point3d(p.X, p.Y, 0);
-                    var closest = disposition.GetClosestPointTo(p3d, false);
                     if (closest.DistanceTo(p3d) >= Math.Max(minDistance, minHalfWidth) &&
-                        DistanceToPolyline(quarter, p3d) >= minQuarterClearance &&
+                        quarterClearance >= minQuarterClearance &&
                         IsWithinLeaderLength(target, p, maxLeaderLength))
                     {
-                        var score = ScoreLabelCandidate(quarter, disposition, target, p);
-                        outside.Add((p, score));
+                        allCandidates.Add((p, p.GetDistanceTo(target), Math.Min(quarterClearance, dispClearance)));
                     }
                 }
             }
 
-            foreach (var item in outside.OrderByDescending(c => c.score))
+            foreach (var item in allCandidates
+                .OrderBy(c => c.distToTarget)
+                .ThenByDescending(c => c.clearance))
                 yield return item.pt;
-            foreach (var item in inside.OrderByDescending(c => c.score))
-                yield return item.pt;
-        }
-
-        private static double ScoreLabelCandidate(Polyline quarter, Polyline disposition, Point2d target, Point2d p)
-        {
-            var p3d = new Point3d(p.X, p.Y, 0);
-            double distToDisp = DistanceToPolyline(disposition, p3d);
-            double distToQuarter = DistanceToPolyline(quarter, p3d);
-            double distToTarget = p.GetDistanceTo(target);
-            return Math.Min(distToDisp, distToQuarter) - (distToTarget * 0.01);
         }
 
         private static double DistanceToPolyline(Polyline polyline, Point3d p3d)
@@ -785,6 +822,224 @@ namespace AtsBackgroundBuilder
             return !(double.IsNaN(v) || double.IsInfinity(v));
         }
 
+        private static Extents3d InflateExtents(Extents3d extents, double pad)
+        {
+            if (pad <= 0)
+                return extents;
+
+            return new Extents3d(
+                new Point3d(extents.MinPoint.X - pad, extents.MinPoint.Y - pad, extents.MinPoint.Z),
+                new Point3d(extents.MaxPoint.X + pad, extents.MaxPoint.Y + pad, extents.MaxPoint.Z));
+        }
+
+        private static int CountIntersectingDispositionLinework(
+            Extents3d labelExtents,
+            List<DispositionInfo> dispositions)
+        {
+            if (dispositions == null || dispositions.Count == 0)
+                return 0;
+
+            int count = 0;
+            foreach (var disposition in dispositions)
+            {
+                if (disposition?.Polyline == null)
+                    continue;
+
+                if (!GeometryUtils.ExtentsIntersect(labelExtents, disposition.Bounds))
+                    continue;
+
+                if (RectangleIntersectsPolyline(labelExtents, disposition.Polyline))
+                    count++;
+            }
+
+            return count;
+        }
+
+        private static int CountNearbyPlacedLabels(List<Extents3d> placedLabelExtents, Extents3d candidate, double radius)
+        {
+            if (placedLabelExtents == null || placedLabelExtents.Count == 0 || radius <= 0)
+                return 0;
+
+            var expanded = InflateExtents(candidate, radius);
+            int count = 0;
+            foreach (var ext in placedLabelExtents)
+            {
+                if (GeometryUtils.ExtentsIntersect(expanded, ext))
+                    count++;
+            }
+
+            return count;
+        }
+
+        private static bool RectangleIntersectsPolyline(Extents3d rect, Polyline polyline)
+        {
+            if (polyline == null || polyline.NumberOfVertices < 2)
+                return false;
+
+            var min = rect.MinPoint;
+            var max = rect.MaxPoint;
+            var rmin = new Point2d(min.X, min.Y);
+            var rmax = new Point2d(max.X, max.Y);
+            var rbl = new Point2d(rmin.X, rmin.Y);
+            var rbr = new Point2d(rmax.X, rmin.Y);
+            var rtr = new Point2d(rmax.X, rmax.Y);
+            var rtl = new Point2d(rmin.X, rmax.Y);
+
+            bool PointInRect(Point2d p) => p.X >= rmin.X && p.X <= rmax.X && p.Y >= rmin.Y && p.Y <= rmax.Y;
+
+            int last = polyline.Closed ? polyline.NumberOfVertices : polyline.NumberOfVertices - 1;
+            for (int i = 0; i < last; i++)
+            {
+                int j = (i + 1) % polyline.NumberOfVertices;
+                var a = polyline.GetPoint2dAt(i);
+                var b = polyline.GetPoint2dAt(j);
+
+                if (PointInRect(a) || PointInRect(b))
+                    return true;
+
+                if (SegmentsIntersect(a, b, rbl, rbr) ||
+                    SegmentsIntersect(a, b, rbr, rtr) ||
+                    SegmentsIntersect(a, b, rtr, rtl) ||
+                    SegmentsIntersect(a, b, rtl, rbl))
+                    return true;
+            }
+
+            // Rectangle center inside closed disposition still means the label sits on/in that polygon.
+            if (polyline.Closed)
+            {
+                var center = new Point2d((rmin.X + rmax.X) * 0.5, (rmin.Y + rmax.Y) * 0.5);
+                if (GeometryUtils.IsPointInsidePolyline(polyline, center))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool SegmentsIntersect(Point2d p1, Point2d p2, Point2d q1, Point2d q2)
+        {
+            static double Cross(Point2d a, Point2d b, Point2d c)
+            {
+                return (b.X - a.X) * (c.Y - a.Y) - (b.Y - a.Y) * (c.X - a.X);
+            }
+
+            static bool OnSegment(Point2d a, Point2d b, Point2d p)
+            {
+                return p.X >= Math.Min(a.X, b.X) - 1e-9 && p.X <= Math.Max(a.X, b.X) + 1e-9 &&
+                       p.Y >= Math.Min(a.Y, b.Y) - 1e-9 && p.Y <= Math.Max(a.Y, b.Y) + 1e-9;
+            }
+
+            var d1 = Cross(p1, p2, q1);
+            var d2 = Cross(p1, p2, q2);
+            var d3 = Cross(q1, q2, p1);
+            var d4 = Cross(q1, q2, p2);
+
+            if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+                ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0)))
+                return true;
+
+            if (Math.Abs(d1) <= 1e-9 && OnSegment(p1, p2, q1)) return true;
+            if (Math.Abs(d2) <= 1e-9 && OnSegment(p1, p2, q2)) return true;
+            if (Math.Abs(d3) <= 1e-9 && OnSegment(q1, q2, p1)) return true;
+            if (Math.Abs(d4) <= 1e-9 && OnSegment(q1, q2, p2)) return true;
+
+            return false;
+        }
+
+        private static Point2d ChooseLeaderTargetAvoidingOtherDispositions(
+            Point2d preferred,
+            Point2d intersectionTarget,
+            Polyline quarter,
+            Polyline targetCorridor,
+            DispositionInfo current,
+            List<DispositionInfo> allDispositions)
+        {
+            var candidates = new List<Point2d>();
+            void AddCandidate(Point2d p)
+            {
+                foreach (var c in candidates)
+                {
+                    if (Math.Abs(c.X - p.X) < 1e-6 && Math.Abs(c.Y - p.Y) < 1e-6)
+                        return;
+                }
+                candidates.Add(p);
+            }
+
+            AddCandidate(preferred);
+            AddCandidate(intersectionTarget);
+
+            var safe = GeometryUtils.GetSafeInteriorPoint(targetCorridor);
+            AddCandidate(safe);
+
+            if (GeometryUtils.TryGetCrossSectionMidpoint(targetCorridor, intersectionTarget, out var mid, out _))
+                AddCandidate(mid);
+
+            if (GeometryUtils.TryFindPointInsideBoth(quarter, targetCorridor, out var overlapPoint))
+                AddCandidate(overlapPoint);
+
+            foreach (var p in candidates)
+            {
+                if (!GeometryUtils.IsPointInsidePolyline(quarter, p) || !GeometryUtils.IsPointInsidePolyline(targetCorridor, p))
+                    continue;
+                if (!IsPointInsideAnyOtherDisposition(p, current, allDispositions))
+                    return p;
+            }
+
+            foreach (var p in candidates)
+            {
+                if (GeometryUtils.IsPointInsidePolyline(quarter, p) && GeometryUtils.IsPointInsidePolyline(targetCorridor, p))
+                    return p;
+            }
+
+            return preferred;
+        }
+
+        private static bool IsPointInsideAnyOtherDisposition(
+            Point2d point,
+            DispositionInfo current,
+            List<DispositionInfo> allDispositions)
+        {
+            if (allDispositions == null || allDispositions.Count == 0)
+                return false;
+
+            foreach (var other in allDispositions)
+            {
+                if (other == null || ReferenceEquals(other, current))
+                    continue;
+                if (!other.ObjectId.IsNull && other.ObjectId == current.ObjectId)
+                    continue;
+
+                var b = other.Bounds;
+                if (point.X < b.MinPoint.X || point.X > b.MaxPoint.X || point.Y < b.MinPoint.Y || point.Y > b.MaxPoint.Y)
+                    continue;
+
+                if (GeometryUtils.IsPointInsidePolyline(other.Polyline, point))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryParseOdDimensionWidth(string raw, out double widthMeters)
+        {
+            widthMeters = 0.0;
+            if (string.IsNullOrWhiteSpace(raw))
+                return false;
+
+            // Examples: "15 M X 2.4", "15.24m", "20 x ..."
+            var match = Regex.Match(raw, @"(?<!\d)(\d+(?:\.\d+)?)\s*(?:M|m)?");
+            if (!match.Success)
+                return false;
+
+            if (!double.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+                return false;
+
+            if (!IsFinite(parsed) || parsed <= 0)
+                return false;
+
+            widthMeters = parsed;
+            return true;
+        }
+
     }
 
     public sealed class QuarterInfo
@@ -830,6 +1085,7 @@ namespace AtsBackgroundBuilder
         public string MappedPurpose { get; set; } = string.Empty;
         public string PurposeTitleCase { get; set; } = string.Empty;
         public string DispNumFormatted { get; set; } = string.Empty;
+        public string OdDimension { get; set; } = string.Empty;
 
         // For width-required purposes, allow label to be placed in the quarter (not necessarily in the disposition)
         public bool AllowLabelOutsideDisposition { get; set; }

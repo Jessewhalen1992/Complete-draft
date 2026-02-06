@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Data.OleDb;
 using System.IO;
+using System.Linq;
 
 namespace AtsBackgroundBuilder
 {
@@ -78,6 +79,23 @@ namespace AtsBackgroundBuilder
         }
 
         public IReadOnlyList<string> Values => _values;
+
+        public IReadOnlyList<string> ValuesByExtra(string extraValue)
+        {
+            if (string.IsNullOrWhiteSpace(extraValue))
+            {
+                return Array.Empty<string>();
+            }
+
+            var marker = extraValue.Trim();
+            return _lookup.Values
+                .Where(e => string.Equals((e.Extra ?? string.Empty).Trim(), marker, StringComparison.OrdinalIgnoreCase))
+                .Select(e => e.Value)
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(v => v, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
 
         private void LoadWithOleDb(string xlsxPath, Logger logger)
         {

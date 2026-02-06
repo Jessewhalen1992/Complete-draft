@@ -40,6 +40,13 @@ namespace AtsBackgroundBuilder
             var logger = new Logger();
             var dllFolder = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? Environment.CurrentDirectory;
             logger.Initialize(Path.Combine(dllFolder, "AtsBackgroundBuilder.log"));
+            var exitStage = "startup";
+            void EmitExit(string reason)
+            {
+                var msg = $"ATSBUILD exit stage: {exitStage} ({reason})";
+                editor.WriteMessage("\n" + msg);
+                logger.WriteLine(msg);
+            }
 
             var configPath = Path.Combine(dllFolder, "Config.json");
             var config = Config.Load(configPath, logger);
@@ -57,12 +64,22 @@ namespace AtsBackgroundBuilder
             AtsBuildInput? input = null;
             try
             {
-                using (var form = new AtsBuildForm(companyLookup.Values, config))
+                var clientNames = companyLookup.ValuesByExtra("C");
+                if (clientNames.Count == 0)
+                {
+                    logger.WriteLine("No company rows flagged with Extra='C'; using full company list for client dropdown.");
+                    clientNames = companyLookup.Values;
+                }
+
+                using (var form = new AtsBuildForm(clientNames, config))
                 {
                     var dr = form.ShowDialog();
                     if (dr != System.Windows.Forms.DialogResult.OK || form.Result == null)
                     {
+                        exitStage = "ui_cancelled";
                         editor.WriteMessage("\nATSBUILD cancelled.");
+                        EmitExit("cancelled");
+                        logger.Dispose();
                         return;
                     }
 
@@ -71,15 +88,20 @@ namespace AtsBackgroundBuilder
             }
             catch (System.Exception ex)
             {
+                exitStage = "ui_error";
                 editor.WriteMessage($"\nATSBUILD UI error: {ex.Message}");
                 logger.WriteLine("ATSBUILD UI error: " + ex);
+                EmitExit("error");
                 logger.Dispose();
                 return;
             }
 
             if (input == null)
             {
+                exitStage = "input_null";
                 editor.WriteMessage("\nATSBUILD cancelled.");
+                EmitExit("cancelled");
+                logger.Dispose();
                 return;
             }
 
@@ -90,7 +112,9 @@ namespace AtsBackgroundBuilder
 
             if (!config.UseSectionIndex)
             {
+                exitStage = "config_use_section_index_false";
                 editor.WriteMessage("\nConfig.UseSectionIndex=false. This build requires the section index workflow.");
+                EmitExit("error");
                 logger.Dispose();
                 return;
             }
@@ -104,20 +128,24 @@ namespace AtsBackgroundBuilder
                 config,
                 logger,
                 input.DrawLsdSubdivisionLines);
+            exitStage = "sections_built";
             var quarterPolylinesForLabelling = sectionDrawResult.LabelQuarterPolylineIds;
             if (quarterPolylinesForLabelling.Count == 0)
             {
+                exitStage = "no_quarters_generated";
                 editor.WriteMessage("\nNo quarter polylines generated from the section index (check your grid inputs)." );
 
                 // Ensure we don't leave temporary section outlines behind when ATS fabric is unchecked.
                 CleanupAfterBuild(database, sectionDrawResult, new List<ObjectId>(), input, logger);
 
+                EmitExit("error");
                 logger.Dispose();
                 return;
             }
 
             if (input.IncludeP3Shapefiles)
             {
+                exitStage = "p3_import";
                 var p3Summary = ImportP3Shapefiles(
                     database,
                     editor,
@@ -131,6 +159,7 @@ namespace AtsBackgroundBuilder
             ShapefileImportSummary importSummary;
             if (input.IncludeDispositionLinework || input.IncludeDispositionLabels)
             {
+                exitStage = "disposition_import";
                 importSummary = ShapefileImporter.ImportShapefiles(
                     database,
                     editor,
@@ -152,7 +181,9 @@ namespace AtsBackgroundBuilder
             var currentClient = input.CurrentClient;
             if (string.IsNullOrWhiteSpace(currentClient))
             {
+                exitStage = "missing_current_client";
                 editor.WriteMessage("\nCurrent client is required.");
+                EmitExit("error");
                 logger.Dispose();
                 return;
             }
@@ -160,13 +191,21 @@ namespace AtsBackgroundBuilder
             var layerManager = new LayerManager(database);
             var dispositions = new List<DispositionInfo>();
             var result = new SummaryResult();
+            var supplementalSectionInfos = LoadSupplementalSectionSpatialInfos(input.SectionRequests, config, logger);
 
             using (var transaction = database.TransactionManager.StartTransaction())
             {
+                exitStage = "processing_dispositions";
                 var lsdCells = BuildSectionLsdCells(transaction, sectionDrawResult.SectionNumberByPolylineId);
                 var sectionInfos = BuildSectionSpatialInfos(transaction, sectionDrawResult.SectionNumberByPolylineId);
                 try
                 {
+                    foreach (var info in supplementalSectionInfos)
+                    {
+                        sectionInfos.Add(info);
+                        BuildLsdCellsForSection(info.SectionPolyline, info.Section, lsdCells);
+                    }
+
                     foreach (var id in dispositionPolylines)
                     {
                         var ent = transaction.GetObject(id, OpenMode.ForRead) as Entity;
@@ -187,9 +226,10 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var dispNum = od.TryGetValue("DISP_NUM", out var dispRaw) ? dispRaw : string.Empty;
-                        var company = od.TryGetValue("COMPANY", out var companyRaw) ? companyRaw : string.Empty;
-                        var purpose = od.TryGetValue("PURPCD", out var purposeRaw) ? purposeRaw : string.Empty;
+                    var dispNum = od.TryGetValue("DISP_NUM", out var dispRaw) ? dispRaw : string.Empty;
+                    var company = od.TryGetValue("COMPANY", out var companyRaw) ? companyRaw : string.Empty;
+                    var purpose = od.TryGetValue("PURPCD", out var purposeRaw) ? purposeRaw : string.Empty;
+                    var odDimension = od.TryGetValue("DIMENSION", out var dimensionRaw) ? dimensionRaw : string.Empty;
 
                         var mappedCompany = MapValue(companyLookup, company, company);
                         var mappedPurpose = MapValue(purposeLookup, purpose, purpose);
@@ -304,7 +344,8 @@ namespace AtsBackgroundBuilder
                             MappedCompany = mappedCompany ?? string.Empty,
                             MappedPurpose = mappedPurpose ?? string.Empty,
                             PurposeTitleCase = ToTitleCaseWords(purpose),
-                            DispNumFormatted = dispNumFormatted
+                            DispNumFormatted = dispNumFormatted,
+                            OdDimension = odDimension ?? string.Empty
                         };
                         dispositions.Add(info);
                         continue;
@@ -366,6 +407,7 @@ namespace AtsBackgroundBuilder
 
             if (input.IncludeDispositionLabels)
             {
+                exitStage = "placing_labels";
                 var placer = new LabelPlacer(database, editor, layerManager, config, logger);
                 var placement = placer.PlaceLabels(quarters, dispositions, currentClient);
 
@@ -381,6 +423,7 @@ namespace AtsBackgroundBuilder
 
             if (input.CheckPlsr)
             {
+                exitStage = "plsr_check";
                 if (!input.IncludeDispositionLabels)
                 {
                     editor.WriteMessage("\nPLSR check skipped: Disposition labels are disabled.");
@@ -399,8 +442,10 @@ namespace AtsBackgroundBuilder
             //  - Quarter boxes used to determine 1/4s are ALWAYS removed.
             //  - If ATS fabric is unchecked, section outlines/labels created for calculation are removed.
             //  - If Dispositions (linework) is unchecked, imported disposition polylines are removed (labels remain).
+            exitStage = "cleanup";
             CleanupAfterBuild(database, sectionDrawResult, dispositionPolylines, input, logger);
 
+            exitStage = "summary";
             editor.WriteMessage("\nATSBUILD complete.");
             editor.WriteMessage("\nTotal dispositions: " + result.TotalDispositions);
             editor.WriteMessage("\nLabels placed: " + result.LabelsPlaced);
@@ -426,6 +471,8 @@ namespace AtsBackgroundBuilder
             logger.WriteLine("Filtered out: " + result.FilteredDispositions);
             logger.WriteLine("Deduped: " + result.DedupedDispositions);
             logger.WriteLine("Import failures: " + result.ImportFailures);
+            exitStage = "completed";
+            EmitExit("ok");
             logger.Dispose();
         }
 
@@ -1001,6 +1048,94 @@ namespace AtsBackgroundBuilder
             }
 
             return infos;
+        }
+
+        private static List<SectionSpatialInfo> LoadSupplementalSectionSpatialInfos(
+            IReadOnlyList<SectionRequest> requests,
+            Config config,
+            Logger logger)
+        {
+            var infos = new List<SectionSpatialInfo>();
+            if (requests == null || requests.Count == 0)
+            {
+                return infos;
+            }
+
+            var searchFolders = BuildSectionIndexSearchFolders(config);
+            var townshipKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var sectionKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var request in requests)
+            {
+                var key = request.Key;
+                var townshipKey = $"{key.Zone}|{NormalizeNumberToken(key.Meridian)}|{NormalizeNumberToken(key.Range)}|{NormalizeNumberToken(key.Township)}";
+                if (!townshipKeys.Add(townshipKey))
+                {
+                    continue;
+                }
+
+                for (var section = 1; section <= 36; section++)
+                {
+                    var sectionKey = new SectionKey(
+                        key.Zone,
+                        section.ToString(CultureInfo.InvariantCulture),
+                        key.Township,
+                        key.Range,
+                        key.Meridian);
+                    var keyId = BuildSectionKeyId(sectionKey, request.SecType);
+                    if (!sectionKeys.Add(keyId))
+                    {
+                        continue;
+                    }
+
+                    if (!TryLoadSectionOutline(searchFolders, sectionKey, logger, out var outline))
+                    {
+                        continue;
+                    }
+
+                    if (TryCreateSectionSpatialInfo(outline, section, out var info))
+                    {
+                        infos.Add(info);
+                    }
+                }
+            }
+
+            if (infos.Count > 0)
+            {
+                logger.WriteLine($"Loaded {infos.Count} supplemental section outlines for wellsite section matching.");
+            }
+
+            return infos;
+        }
+
+        private static bool TryCreateSectionSpatialInfo(
+            SectionOutline outline,
+            int sectionNumber,
+            [NotNullWhen(true)] out SectionSpatialInfo? info)
+        {
+            info = null;
+            if (outline == null || outline.Vertices == null || outline.Vertices.Count < 3)
+            {
+                return false;
+            }
+
+            var section = new Polyline(outline.Vertices.Count)
+            {
+                Closed = outline.Closed
+            };
+            for (var i = 0; i < outline.Vertices.Count; i++)
+            {
+                section.AddVertexAt(i, outline.Vertices[i], 0, 0, 0);
+            }
+
+            try
+            {
+                return TryCreateSectionSpatialInfo(section, sectionNumber, out info);
+            }
+            finally
+            {
+                section.Dispose();
+            }
         }
 
         private static bool TryCreateSectionSpatialInfo(

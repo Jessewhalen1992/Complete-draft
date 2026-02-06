@@ -5,7 +5,9 @@
     <RootNamespace>AtsBackgroundBuilder</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Platforms>AnyCPU</Platforms>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
     <DefineConstants>NET8_0_WINDOWS;$(DefineConstants)</DefineConstants>
     <UseWindowsForms>true</UseWindowsForms>
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
@@ -44,3 +46,5 @@
     <Compile Remove="REFERENCE ONLY\**\*.cs" />
   </ItemGroup>
 </Project>
+
+

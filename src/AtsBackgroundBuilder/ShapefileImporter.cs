@@ -55,7 +55,9 @@ namespace AtsBackgroundBuilder
                 return summary;
             }
 
-            var existingKeys = BuildExistingFeatureKeys(database, logger);
+            ZoomToSectionExtents(editor, sectionExtents, logger);
+
+            var existingKeys = BuildExistingFeatureKeys(database, logger, sectionExtents);
             var existingCandidates = CaptureDispositionCandidateIds(database); // LWPOLYLINE + MPOLYGON
 
             var searchFolders = BuildShapefileSearchFolders(config);
@@ -104,7 +106,7 @@ namespace AtsBackgroundBuilder
                     LogShapefileSidecars(shapefilePath, logger);
 
                     logger.WriteLine("Starting shapefile import.");
-                    if (!TryImportShapefile(importer, shapefilePath, sectionExtents, logger, out var odTableName))
+                    if (!TryImportShapefile(importer, shapefilePath, sectionExtents, logger, out var odTableName, true))
                     {
                         logger.WriteLine("Shapefile import failed.");
                         summary.ImportFailures++;
@@ -119,6 +121,19 @@ namespace AtsBackgroundBuilder
                     var newMPolygons = newCandidates.Where(IsMPolygonId).ToList();
 
                     logger.WriteLine($"Post-import candidates: {newPolylines.Count} LWPOLYLINE, {newMPolygons.Count} MPOLYGON.");
+
+                    if (newPolylines.Count == 0 && newMPolygons.Count == 0)
+                    {
+                        logger.WriteLine("No candidates found with location window; retrying import once without location window.");
+                        if (TryImportShapefile(importer, shapefilePath, sectionExtents, logger, out odTableName, false))
+                        {
+                            newCandidates = CaptureNewDispositionCandidateIds(database, existingCandidates);
+                            existingCandidates.UnionWith(newCandidates);
+                            newPolylines = newCandidates.Where(IsLwPolylineId).ToList();
+                            newMPolygons = newCandidates.Where(IsMPolygonId).ToList();
+                            logger.WriteLine($"Retry (no location window) candidates: {newPolylines.Count} LWPOLYLINE, {newMPolygons.Count} MPOLYGON.");
+                        }
+                    }
 
                     // Fallback: If Map still made MPOLYGON, convert to LWPOLYLINE and erase MPOLYGON.
                     if (newMPolygons.Count > 0)
@@ -221,7 +236,8 @@ namespace AtsBackgroundBuilder
             string shapefilePath,
             List<Extents2d> sectionExtents,
             Logger logger,
-            out string odTableName)
+            out string odTableName,
+            bool useLocationWindow)
         {
             odTableName = BuildOdTableName(shapefilePath);
 
@@ -230,7 +246,10 @@ namespace AtsBackgroundBuilder
                 importer.Init("SHP", shapefilePath);
 
                 // Import window restriction to reduce heavy loads
-                TrySetLocationWindow(importer, sectionExtents, logger);
+                if (useLocationWindow)
+                {
+                    TrySetLocationWindow(importer, sectionExtents, logger);
+                }
 
                 // Ensure DBF attributes become Object Data (OD)
                 var mappingMode = DetermineDataMappingMode(odTableName, logger);
@@ -752,7 +771,38 @@ namespace AtsBackgroundBuilder
             return new Extents2d(new Point2d(minX, minY), new Point2d(maxX, maxY));
         }
 
-        private static HashSet<string> BuildExistingFeatureKeys(Database database, Logger logger)
+        private static void ZoomToSectionExtents(Editor editor, List<Extents2d> sectionExtents, Logger logger)
+        {
+            if (sectionExtents == null || sectionExtents.Count == 0)
+                return;
+
+            try
+            {
+                var union = UnionExtents(sectionExtents);
+                using (var view = editor.GetCurrentView())
+                {
+                    var min = union.MinPoint;
+                    var max = union.MaxPoint;
+                    var width = Math.Max(1.0, max.X - min.X);
+                    var height = Math.Max(1.0, max.Y - min.Y);
+                    const double marginFactor = 1.2;
+
+                    view.CenterPoint = new Point2d((min.X + max.X) * 0.5, (min.Y + max.Y) * 0.5);
+                    view.Width = width * marginFactor;
+                    view.Height = height * marginFactor;
+
+                    editor.SetCurrentView(view);
+                }
+
+                logger.WriteLine("Temporarily zoomed view to section extents for shapefile import.");
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine("Failed to zoom view to section extents: " + ex.Message);
+            }
+        }
+
+        private static HashSet<string> BuildExistingFeatureKeys(Database database, Logger logger, List<Extents2d> sectionExtents)
         {
             var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -766,6 +816,22 @@ namespace AtsBackgroundBuilder
                     var pl = tr.GetObject(id, OpenMode.ForRead) as Polyline;
                     if (pl == null)
                         continue;
+
+                    try
+                    {
+                        var ext = pl.GeometricExtents;
+                        var e2d = new Extents2d(
+                            new Point2d(ext.MinPoint.X, ext.MinPoint.Y),
+                            new Point2d(ext.MaxPoint.X, ext.MaxPoint.Y));
+
+                        if (!IsWithinSections(e2d, sectionExtents))
+                            continue;
+                    }
+                    catch
+                    {
+                        // Ignore malformed extents and continue scanning.
+                        continue;
+                    }
 
                     var key = BuildFeatureKey(pl, id, logger);
                     if (!string.IsNullOrWhiteSpace(key))
