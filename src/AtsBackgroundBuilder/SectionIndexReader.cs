@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Diagnostics.CodeAnalysis;
 using Autodesk.AutoCAD.Geometry;
 
 namespace AtsBackgroundBuilder
@@ -44,7 +45,11 @@ namespace AtsBackgroundBuilder
 
     public static class SectionIndexReader
     {
-        public static bool TryLoadSectionOutline(string baseFolder, SectionKey key, Logger logger, out SectionOutline outline)
+        public static bool TryLoadSectionOutline(
+            string baseFolder,
+            SectionKey key,
+            Logger logger,
+            [NotNullWhen(true)] out SectionOutline? outline)
         {
             outline = null;
 
@@ -91,7 +96,7 @@ namespace AtsBackgroundBuilder
             return preferred;
         }
 
-        private static bool TryReadFromJsonl(string path, SectionKey key, out SectionOutline outline)
+        private static bool TryReadFromJsonl(string path, SectionKey key, [NotNullWhen(true)] out SectionOutline? outline)
         {
             outline = null;
             var keySection = NormalizeKey(key.Section);
@@ -131,7 +136,7 @@ namespace AtsBackgroundBuilder
             return false;
         }
 
-        private static bool TryReadFromCsv(string path, SectionKey key, out SectionOutline outline)
+        private static bool TryReadFromCsv(string path, SectionKey key, [NotNullWhen(true)] out SectionOutline? outline)
         {
             outline = null;
             var keySection = NormalizeKey(key.Section);

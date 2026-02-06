@@ -76,7 +76,7 @@ namespace AtsBackgroundBuilder
                 case Autodesk.Gis.Map.Constants.DataType.Character:
                     return value.StrValue ?? string.Empty;
                 default:
-                    return value.ToString();
+                    return value.ToString() ?? string.Empty;
             }
         }
     }

@@ -6,7 +6,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
+using System.Diagnostics.CodeAnalysis;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
@@ -51,7 +54,7 @@ namespace AtsBackgroundBuilder
             // ------------------------------------------------------------------
             // UI input (replaces command line prompts)
             // ------------------------------------------------------------------
-            AtsBuildInput input = null;
+            AtsBuildInput? input = null;
             try
             {
                 using (var form = new AtsBuildForm(companyLookup.Values, config))
@@ -298,8 +301,8 @@ namespace AtsBackgroundBuilder
                             AllowLabelOutsideDisposition = config.AllowOutsideDispositionForWidthPurposes,
                             AddLeader = true,
                             RequiresWidth = true,
-                            MappedCompany = mappedCompany,
-                            MappedPurpose = mappedPurpose,
+                            MappedCompany = mappedCompany ?? string.Empty,
+                            MappedPurpose = mappedPurpose ?? string.Empty,
                             PurposeTitleCase = ToTitleCaseWords(purpose),
                             DispNumFormatted = dispNumFormatted
                         };
@@ -331,15 +334,31 @@ namespace AtsBackgroundBuilder
             {
                 using (var transaction = database.TransactionManager.StartTransaction())
                 {
-                    foreach (var id in quarterPolylinesForLabelling.Distinct())
+                    if (sectionDrawResult.LabelQuarterInfos != null && sectionDrawResult.LabelQuarterInfos.Count > 0)
                     {
-                        var polyline = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
-                        if (polyline == null || !polyline.Closed)
+                        foreach (var info in sectionDrawResult.LabelQuarterInfos)
                         {
-                            continue;
-                        }
+                            var polyline = transaction.GetObject(info.QuarterId, OpenMode.ForRead) as Polyline;
+                            if (polyline == null || !polyline.Closed)
+                            {
+                                continue;
+                            }
 
-                        quarters.Add(new QuarterInfo((Polyline)polyline.Clone()));
+                            quarters.Add(new QuarterInfo((Polyline)polyline.Clone(), info.SectionKey, info.Quarter));
+                        }
+                    }
+                    else
+                    {
+                        foreach (var id in quarterPolylinesForLabelling.Distinct())
+                        {
+                            var polyline = transaction.GetObject(id, OpenMode.ForRead) as Polyline;
+                            if (polyline == null || !polyline.Closed)
+                            {
+                                continue;
+                            }
+
+                            quarters.Add(new QuarterInfo((Polyline)polyline.Clone()));
+                        }
                     }
                     transaction.Commit();
                 }
@@ -359,6 +378,19 @@ namespace AtsBackgroundBuilder
             result.DedupedDispositions = importSummary.DedupedDispositions;
             result.FilteredDispositions = importSummary.FilteredDispositions;
             result.ImportFailures = importSummary.ImportFailures;
+
+            if (input.CheckPlsr)
+            {
+                if (!input.IncludeDispositionLabels)
+                {
+                    editor.WriteMessage("\nPLSR check skipped: Disposition labels are disabled.");
+                    logger.WriteLine("PLSR check skipped: Disposition labels are disabled.");
+                }
+                else
+                {
+                    RunPlsrCheck(database, editor, logger, companyLookup, input, quarters);
+                }
+            }
 
             // ------------------------------------------------------------------
             // Cleanup / output control
@@ -503,6 +535,7 @@ namespace AtsBackgroundBuilder
             editor.WriteMessage("\nSection input required.");
             return new SectionDrawResult(
                 new List<ObjectId>(),
+                new List<QuarterLabelInfo>(),
                 new List<ObjectId>(),
                 new List<ObjectId>(),
                 new List<ObjectId>(),
@@ -627,16 +660,16 @@ namespace AtsBackgroundBuilder
         private static string MapValue(ExcelLookup lookup, string key, string fallback)
         {
             var entry = lookup.Lookup(key);
-            return entry == null || string.IsNullOrWhiteSpace(entry.Value) ? fallback : entry.Value;
+            return string.IsNullOrWhiteSpace(entry?.Value) ? fallback : entry.Value!;
         }
 
-        private static string FormatDispNum(string dispNum)
+        private static string FormatDispNum(string? dispNum)
         {
             var regex = new Regex("^([A-Z]{3})(\\d+)");
             var match = regex.Match(dispNum ?? string.Empty);
             if (!match.Success)
             {
-                return dispNum;
+                return dispNum ?? string.Empty;
             }
 
             return match.Groups[1].Value + " " + match.Groups[2].Value;
@@ -970,9 +1003,12 @@ namespace AtsBackgroundBuilder
             return infos;
         }
 
-        private static bool TryCreateSectionSpatialInfo(Polyline section, int sectionNumber, out SectionSpatialInfo info)
+        private static bool TryCreateSectionSpatialInfo(
+            Polyline section,
+            int sectionNumber,
+            [NotNullWhen(true)] out SectionSpatialInfo? info)
         {
-            info = default;
+            info = null;
             var clone = section.Clone() as Polyline;
             if (clone == null)
             {
@@ -1346,6 +1382,7 @@ namespace AtsBackgroundBuilder
         {
             // We always draw the full section outline (ATS fabric on) but may label only specific quarters.
             var labelQuarterIds = new HashSet<ObjectId>();
+            var labelQuarterInfos = new List<QuarterLabelInfo>();
             var allQuarterIds = new HashSet<ObjectId>();
             var quarterHelperIds = new HashSet<ObjectId>();
             var sectionLabelIds = new HashSet<ObjectId>();
@@ -1383,18 +1420,25 @@ namespace AtsBackgroundBuilder
                 // Track the quarters that should actually be labelled.
                 if (request.Quarter == QuarterSelection.All)
                 {
-                    foreach (var quarterId in buildResult.QuarterPolylineIds.Values)
-                        labelQuarterIds.Add(quarterId);
+                    foreach (var pair in buildResult.QuarterPolylineIds)
+                    {
+                        labelQuarterIds.Add(pair.Value);
+                        labelQuarterInfos.Add(new QuarterLabelInfo(pair.Value, request.Key, pair.Key));
+                    }
                 }
                 else
                 {
                     if (buildResult.QuarterPolylineIds.TryGetValue(request.Quarter, out var qid))
+                    {
                         labelQuarterIds.Add(qid);
+                        labelQuarterInfos.Add(new QuarterLabelInfo(qid, request.Key, request.Quarter));
+                    }
                 }
             }
 
             return new SectionDrawResult(
                 labelQuarterIds.ToList(),
+                labelQuarterInfos,
                 allQuarterIds.ToList(),
                 quarterHelperIds.ToList(),
                 sectionIds.ToList(),
@@ -2604,7 +2648,7 @@ namespace AtsBackgroundBuilder
             IReadOnlyList<string> searchFolders,
             SectionKey key,
             Logger logger,
-            out SectionOutline outline)
+            [NotNullWhen(true)] out SectionOutline? outline)
         {
             outline = null;
             var checkedAny = false;
@@ -2674,7 +2718,7 @@ namespace AtsBackgroundBuilder
                 return summary;
             }
 
-            Importer importer = null;
+            Importer? importer = null;
             try
             {
                 importer = HostMapApplicationServices.Application?.Importer;
@@ -2851,7 +2895,7 @@ namespace AtsBackgroundBuilder
             return false;
         }
 
-        private static void TrySetImporterLocationWindow(Importer importer, List<Extents2d> sectionExtents, Logger logger)
+        private static void TrySetImporterLocationWindow(Importer importer, List<Extents2d> sectionExtents, Logger? logger)
         {
             if (importer == null || sectionExtents == null || sectionExtents.Count == 0)
             {
@@ -3071,6 +3115,895 @@ namespace AtsBackgroundBuilder
             public double TotalLen;
         }
 
+        // ------------------------------------------------------------------
+        // PLSR XML check
+        // ------------------------------------------------------------------
+
+        private sealed class PlsrActivity
+        {
+            public string DispNum { get; set; } = string.Empty;
+            public string Owner { get; set; } = string.Empty;
+            public DateTime? ExpiryDate { get; set; }
+        }
+
+        private sealed class PlsrQuarterData
+        {
+            public DateTime ReportDate { get; set; }
+            public List<PlsrActivity> Activities { get; } = new List<PlsrActivity>();
+        }
+
+        private sealed class PlsrLabelEntry
+        {
+            public ObjectId Id { get; set; }
+            public bool IsLeader { get; set; }
+            public string Owner { get; set; } = string.Empty;
+            public string DispNum { get; set; } = string.Empty;
+            public string RawContents { get; set; } = string.Empty;
+            public Point2d Location { get; set; }
+        }
+
+        private static readonly HashSet<string> PlsrDispositionPrefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "LOC","PLA","MSL","MLL","DML","EZE","PIL","RME","RML","DLO","ROE","RRD","DPI","DPL","VCE","DRS","SML","SME"
+        };
+
+        private static void RunPlsrCheck(
+            Database database,
+            Editor editor,
+            Logger logger,
+            ExcelLookup companyLookup,
+            AtsBuildInput input,
+            List<QuarterInfo> quarters)
+        {
+            if (input.PlsrXmlPaths == null || input.PlsrXmlPaths.Count == 0)
+            {
+                editor.WriteMessage("\nPLSR check skipped: no XML files selected.");
+                logger.WriteLine("PLSR check skipped: no XML files selected.");
+                return;
+            }
+
+            var notIncludedPrefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var quarterData = LoadPlsrQuarterData(input.PlsrXmlPaths, logger, notIncludedPrefixes);
+
+            var requestedQuarterKeys = BuildRequestedQuarterKeys(input.SectionRequests);
+            var missingQuarterKeys = requestedQuarterKeys.Where(k => !quarterData.ContainsKey(k)).ToList();
+
+            var labelByQuarter = CollectPlsrLabels(database, quarters, logger);
+
+            var summary = new StringBuilder();
+            summary.AppendLine("PLSR Check Summary");
+            summary.AppendLine("-------------------");
+
+            int missingLabels = 0;
+            int ownerMismatches = 0;
+            int extraLabels = 0;
+            int expiredTagged = 0;
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                foreach (var quarterKey in requestedQuarterKeys)
+                {
+                    labelByQuarter.TryGetValue(quarterKey, out var labels);
+                    quarterData.TryGetValue(quarterKey, out var expected);
+
+                    labels ??= new List<PlsrLabelEntry>();
+                    var expectedActivities = expected?.Activities ?? new List<PlsrActivity>();
+
+                    var expectedByDisp = new Dictionary<string, PlsrActivity>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var act in expectedActivities)
+                    {
+                        var normDisp = NormalizeDispNum(act.DispNum);
+                        if (string.IsNullOrWhiteSpace(normDisp))
+                            continue;
+                        if (!expectedByDisp.ContainsKey(normDisp))
+                            expectedByDisp.Add(normDisp, act);
+                    }
+
+                    var labelByDisp = new Dictionary<string, PlsrLabelEntry>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var label in labels)
+                    {
+                        var normDisp = NormalizeDispNum(label.DispNum);
+                        if (string.IsNullOrWhiteSpace(normDisp))
+                            continue;
+
+                        var prefix = GetDispositionPrefix(normDisp);
+                        if (string.IsNullOrWhiteSpace(prefix))
+                            continue;
+
+                        if (!PlsrDispositionPrefixes.Contains(prefix))
+                        {
+                            notIncludedPrefixes.Add(prefix);
+                            continue;
+                        }
+
+                        if (!labelByDisp.ContainsKey(normDisp))
+                            labelByDisp.Add(normDisp, label);
+                    }
+
+                    foreach (var pair in expectedByDisp)
+                    {
+                        var dispNum = pair.Key;
+                        var act = pair.Value;
+                        var prefix = GetDispositionPrefix(dispNum);
+                        if (string.IsNullOrWhiteSpace(prefix))
+                            continue;
+
+                        if (!PlsrDispositionPrefixes.Contains(prefix))
+                        {
+                            notIncludedPrefixes.Add(prefix);
+                            continue;
+                        }
+
+                        if (!labelByDisp.TryGetValue(dispNum, out var label))
+                        {
+                            missingLabels++;
+                            summary.AppendLine($"Missing label: {dispNum} in {quarterKey}");
+                            continue;
+                        }
+
+                        var labelOwner = NormalizeOwner(label.Owner);
+                        var expectedOwner = NormalizeOwner(MapClientNameForCompare(companyLookup, act.Owner));
+                        if (!string.Equals(labelOwner, expectedOwner, StringComparison.OrdinalIgnoreCase))
+                        {
+                            ownerMismatches++;
+                            summary.AppendLine($"Owner mismatch: {dispNum} in {quarterKey} (label='{label.Owner}' vs xml='{act.Owner}')");
+                        }
+
+                        if (expected != null && act.ExpiryDate.HasValue && act.ExpiryDate.Value < expected.ReportDate)
+                        {
+                            if (TryApplyExpiredMarker(tr, label, out var updated))
+                            {
+                                expiredTagged++;
+                                if (updated)
+                                {
+                                    // already tagged
+                                }
+                            }
+                        }
+                    }
+
+                    foreach (var labelPair in labelByDisp)
+                    {
+                        if (!expectedByDisp.ContainsKey(labelPair.Key))
+                        {
+                            extraLabels++;
+                            summary.AppendLine($"Not in PLSR: {labelPair.Key} in {quarterKey}");
+                        }
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            if (missingQuarterKeys.Count > 0)
+            {
+                summary.AppendLine();
+                summary.AppendLine("Quarters requested but not found in XML:");
+                foreach (var q in missingQuarterKeys)
+                    summary.AppendLine($"- {q}");
+            }
+
+            if (notIncludedPrefixes.Count > 0)
+            {
+                summary.AppendLine();
+                summary.AppendLine("Not Included in check: " + string.Join(", ", notIncludedPrefixes.OrderBy(p => p)));
+            }
+
+            summary.AppendLine();
+            summary.AppendLine($"Missing labels: {missingLabels}");
+            summary.AppendLine($"Owner mismatches: {ownerMismatches}");
+            summary.AppendLine($"Extra labels not in PLSR: {extraLabels}");
+            summary.AppendLine($"Expired tags added: {expiredTagged}");
+
+            var summaryText = summary.ToString().TrimEnd();
+            try
+            {
+                System.Windows.Forms.MessageBox.Show(summaryText, "PLSR Check", System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Information);
+            }
+            catch
+            {
+                editor.WriteMessage("\n" + summaryText);
+            }
+
+            WritePlsrLog(database, summaryText, logger);
+        }
+
+        private static Dictionary<string, PlsrQuarterData> LoadPlsrQuarterData(
+            IEnumerable<string> xmlPaths,
+            Logger logger,
+            HashSet<string> notIncludedPrefixes)
+        {
+            var result = new Dictionary<string, PlsrQuarterData>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var path in xmlPaths)
+            {
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                {
+                    logger.WriteLine("PLSR XML missing: " + path);
+                    continue;
+                }
+
+                if (!TryParsePlsrXml(path, logger, out var reportDate, out var activities))
+                {
+                    logger.WriteLine("PLSR XML parse failed: " + path);
+                    continue;
+                }
+
+                var reportQuarterActivities = new Dictionary<string, List<PlsrActivity>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var activity in activities)
+                {
+                    var prefix = GetDispositionPrefix(NormalizeDispNum(activity.Item1.DispNum));
+                    if (!string.IsNullOrWhiteSpace(prefix) && !PlsrDispositionPrefixes.Contains(prefix))
+                    {
+                        notIncludedPrefixes.Add(prefix);
+                        continue;
+                    }
+
+                    foreach (var landId in activity.Item2)
+                    {
+                        foreach (var quarterKey in BuildQuarterKeysFromLandId(landId))
+                        {
+                            if (!reportQuarterActivities.TryGetValue(quarterKey, out var list))
+                            {
+                                list = new List<PlsrActivity>();
+                                reportQuarterActivities[quarterKey] = list;
+                            }
+
+                            list.Add(activity.Item1);
+                        }
+                    }
+                }
+
+                foreach (var pair in reportQuarterActivities)
+                {
+                    if (!result.TryGetValue(pair.Key, out var existing) || reportDate > existing.ReportDate)
+                    {
+                        var data = new PlsrQuarterData { ReportDate = reportDate };
+                        data.Activities.AddRange(pair.Value);
+                        result[pair.Key] = data;
+                    }
+                    else if (reportDate == existing.ReportDate)
+                    {
+                        existing.Activities.AddRange(pair.Value);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static bool TryParsePlsrXml(
+            string path,
+            Logger logger,
+            out DateTime reportDate,
+            out List<(PlsrActivity, List<string>)> activities)
+        {
+            reportDate = DateTime.MinValue;
+            activities = new List<(PlsrActivity, List<string>)>();
+
+            try
+            {
+                var doc = XDocument.Load(path);
+                if (doc.Root == null)
+                    return false;
+
+                XNamespace ns = "urn:srd.gov.ab.ca:glimps:data:reports";
+
+                var reportDateText = doc.Root.Element(ns + "ReportRunDate")?.Value;
+                if (!DateTime.TryParse(reportDateText, out reportDate))
+                    reportDate = DateTime.MinValue;
+
+                var activitiesElement = doc.Root.Element(ns + "Activities");
+                if (activitiesElement == null)
+                    return true;
+
+                foreach (var activity in activitiesElement.Elements(ns + "Activity"))
+                {
+                    var dispNum = activity.Element(ns + "ActivityNumber")?.Value?.Trim() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(dispNum))
+                        continue;
+
+                    var owner = activity.Element(ns + "ServiceClientName")?.Value?.Trim();
+                    if (string.IsNullOrWhiteSpace(owner))
+                    {
+                        owner = activity
+                            .Element(ns + "Clients")?
+                            .Elements(ns + "ActivityClient")
+                            .Select(c => c.Element(ns + "ClientName")?.Value?.Trim())
+                            .FirstOrDefault(s => !string.IsNullOrWhiteSpace(s));
+                    }
+
+                    owner ??= string.Empty;
+
+                    DateTime? expiryDate = null;
+                    var expiryText = activity.Element(ns + "ExpiryDate")?.Value?.Trim();
+                    if (DateTime.TryParse(expiryText, out var expiryParsed))
+                        expiryDate = expiryParsed;
+
+                    var landIds = new List<string>();
+                    var lands = activity.Element(ns + "Lands");
+                    if (lands != null)
+                    {
+                        foreach (var land in lands.Elements(ns + "ActivityLand"))
+                        {
+                            var landId = land.Element(ns + "LandId")?.Value?.Trim();
+                            if (!string.IsNullOrWhiteSpace(landId))
+                                landIds.Add(landId);
+                        }
+                    }
+
+                    if (landIds.Count == 0)
+                        continue;
+
+                    activities.Add((new PlsrActivity
+                    {
+                        DispNum = dispNum,
+                        Owner = owner,
+                        ExpiryDate = expiryDate
+                    }, landIds));
+                }
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine("PLSR XML read failed: " + ex.Message);
+                return false;
+            }
+        }
+
+        private static List<string> BuildQuarterKeysFromLandId(string landId)
+        {
+            var keys = new List<string>();
+            if (!TryParseLandId(landId, out var meridian, out var range, out var township, out var section, out var quarter))
+                return keys;
+
+            if (string.IsNullOrWhiteSpace(quarter))
+            {
+                keys.Add(BuildQuarterKey(meridian, range, township, section, "NW"));
+                keys.Add(BuildQuarterKey(meridian, range, township, section, "NE"));
+                keys.Add(BuildQuarterKey(meridian, range, township, section, "SW"));
+                keys.Add(BuildQuarterKey(meridian, range, township, section, "SE"));
+                return keys;
+            }
+
+            keys.Add(BuildQuarterKey(meridian, range, township, section, quarter));
+            return keys;
+        }
+
+        private static bool TryParseLandId(
+            string landId,
+            out string meridian,
+            out string range,
+            out string township,
+            out string section,
+            out string? quarter)
+        {
+            meridian = string.Empty;
+            range = string.Empty;
+            township = string.Empty;
+            section = string.Empty;
+            quarter = null;
+
+            if (string.IsNullOrWhiteSpace(landId))
+                return false;
+
+            var tokens = landId.Split(new[] { '-' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length < 4)
+                return false;
+
+            meridian = NormalizeMeridianToken(tokens[0]);
+            range = NormalizeNumberToken(tokens[1]);
+            township = NormalizeNumberToken(tokens[2]);
+            section = NormalizeNumberToken(tokens[3]);
+
+            if (tokens.Length >= 5)
+            {
+                var last = tokens[tokens.Length - 1].Trim().ToUpperInvariant();
+                if (IsQuarterToken(last))
+                {
+                    quarter = last;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsQuarterToken(string token)
+        {
+            return token == "NW" || token == "NE" || token == "SW" || token == "SE";
+        }
+
+        private static List<string> BuildRequestedQuarterKeys(IEnumerable<SectionRequest> requests)
+        {
+            var keys = new List<string>();
+            foreach (var request in requests)
+            {
+                if (request.Quarter == QuarterSelection.All)
+                {
+                    keys.Add(BuildQuarterKey(request.Key, QuarterSelection.NorthWest));
+                    keys.Add(BuildQuarterKey(request.Key, QuarterSelection.NorthEast));
+                    keys.Add(BuildQuarterKey(request.Key, QuarterSelection.SouthWest));
+                    keys.Add(BuildQuarterKey(request.Key, QuarterSelection.SouthEast));
+                }
+                else if (request.Quarter != QuarterSelection.None)
+                {
+                    keys.Add(BuildQuarterKey(request.Key, request.Quarter));
+                }
+            }
+
+            return keys.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        private static string BuildQuarterKey(SectionKey key, QuarterSelection quarter)
+        {
+            var meridian = NormalizeMeridianToken(key.Meridian);
+            var range = NormalizeNumberToken(key.Range);
+            var township = NormalizeNumberToken(key.Township);
+            var section = NormalizeNumberToken(key.Section);
+            var q = QuarterSelectionToToken(quarter);
+            return BuildQuarterKey(meridian, range, township, section, q);
+        }
+
+        private static string BuildQuarterKey(string meridian, string range, string township, string section, string quarter)
+        {
+            return $"{meridian}|{range}|{township}|{section}|{quarter}";
+        }
+
+        private static string QuarterSelectionToToken(QuarterSelection quarter)
+        {
+            return quarter switch
+            {
+                QuarterSelection.NorthWest => "NW",
+                QuarterSelection.NorthEast => "NE",
+                QuarterSelection.SouthWest => "SW",
+                QuarterSelection.SouthEast => "SE",
+                _ => string.Empty
+            };
+        }
+
+        private static string NormalizeMeridianToken(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+                return string.Empty;
+
+            var digits = new string(token.Where(char.IsDigit).ToArray());
+            if (int.TryParse(digits, out var num))
+                return num.ToString();
+
+            return token.Trim().ToUpperInvariant();
+        }
+
+        private static string NormalizeNumberToken(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+                return string.Empty;
+
+            if (int.TryParse(token.Trim(), out var num))
+                return num.ToString();
+
+            return token.Trim().TrimStart('0');
+        }
+
+        private static Dictionary<string, List<PlsrLabelEntry>> CollectPlsrLabels(Database database, List<QuarterInfo> quarters, Logger logger)
+        {
+            var byQuarter = new Dictionary<string, List<PlsrLabelEntry>>(StringComparer.OrdinalIgnoreCase);
+            if (quarters == null || quarters.Count == 0)
+                return byQuarter;
+
+            var quarterMap = new Dictionary<string, QuarterInfo>(StringComparer.OrdinalIgnoreCase);
+            foreach (var q in quarters)
+            {
+                if (q.SectionKey == null || q.Quarter == QuarterSelection.None)
+                    continue;
+                var key = BuildQuarterKey(q.SectionKey.Value, q.Quarter);
+                if (!quarterMap.ContainsKey(key))
+                    quarterMap.Add(key, q);
+            }
+
+            int totalLabels = 0;
+            int leaderLabels = 0;
+            int leaderAnchored = 0;
+            int leaderFallback = 0;
+            int labelsUnassigned = 0;
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                foreach (ObjectId id in ms)
+                {
+                    PlsrLabelEntry? entry = null;
+
+                    if (tr.GetObject(id, OpenMode.ForRead) is MText mtext)
+                    {
+                        var contents = mtext.Contents ?? string.Empty;
+                        entry = BuildLabelEntry(id, false, contents, new Point2d(mtext.Location.X, mtext.Location.Y));
+                    }
+                    else if (tr.GetObject(id, OpenMode.ForRead) is MLeader mleader)
+                    {
+                        var leaderText = mleader.MText;
+                        if (leaderText != null)
+                        {
+                            var contents = leaderText.Contents ?? string.Empty;
+                            var anchor = GetLeaderAnchorPoint(mleader, leaderText, logger);
+                            if (anchor.X == leaderText.Location.X && anchor.Y == leaderText.Location.Y)
+                                leaderFallback++;
+                            else
+                                leaderAnchored++;
+                            entry = BuildLabelEntry(id, true, contents, anchor);
+                            leaderLabels++;
+                        }
+                    }
+
+                    if (entry == null)
+                        continue;
+
+                    if (string.IsNullOrWhiteSpace(entry.DispNum) || string.IsNullOrWhiteSpace(entry.Owner))
+                        continue;
+
+                    var prefix = GetDispositionPrefix(NormalizeDispNum(entry.DispNum));
+                    if (string.IsNullOrWhiteSpace(prefix) || !PlsrDispositionPrefixes.Contains(prefix))
+                        continue;
+
+                    totalLabels++;
+                    bool assigned = false;
+                    foreach (var pair in quarterMap)
+                    {
+                        if (GeometryUtils.IsPointInsidePolyline(pair.Value.Polyline, entry.Location))
+                        {
+                            if (!byQuarter.TryGetValue(pair.Key, out var list))
+                            {
+                                list = new List<PlsrLabelEntry>();
+                                byQuarter[pair.Key] = list;
+                            }
+
+                            list.Add(entry);
+                            assigned = true;
+                            break;
+                        }
+                    }
+
+                    if (!assigned)
+                    {
+                        labelsUnassigned++;
+                        logger.WriteLine($"PLSR DEBUG: label not assigned to quarter. Disp='{entry.DispNum}' Owner='{entry.Owner}' Pt=({entry.Location.X:0.###},{entry.Location.Y:0.###})");
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            logger.WriteLine($"PLSR DEBUG: labels scanned={totalLabels}, leaders={leaderLabels}, leaderAnchored={leaderAnchored}, leaderFallback={leaderFallback}, unassigned={labelsUnassigned}");
+            return byQuarter;
+        }
+
+        private static PlsrLabelEntry? BuildLabelEntry(ObjectId id, bool isLeader, string contents, Point2d location)
+        {
+            var lines = SplitMTextLines(contents);
+            if (lines.Count < 2)
+                return null;
+
+            var owner = lines.FirstOrDefault() ?? string.Empty;
+            var dispNum = lines.LastOrDefault() ?? string.Empty;
+
+            return new PlsrLabelEntry
+            {
+                Id = id,
+                IsLeader = isLeader,
+                Owner = owner,
+                DispNum = dispNum,
+                RawContents = contents,
+                Location = location
+            };
+        }
+
+        private static bool _plsrLeaderReflectionLogged = false;
+
+        private static Point2d GetLeaderAnchorPoint(MLeader leader, MText leaderText, Logger logger)
+        {
+            try
+            {
+                var type = leader.GetType();
+                var allVertices = new List<Point3d>();
+                string? source = null;
+
+                void AddVertices(Point3dCollection? pts, string src)
+                {
+                    if (pts == null || pts.Count == 0)
+                        return;
+                    if (source == null)
+                        source = src;
+                    foreach (Point3d p in pts)
+                        allVertices.Add(p);
+                }
+
+                int? TryGetInt(string name)
+                {
+                    var prop = type.GetProperty(name);
+                    if (prop != null && prop.PropertyType == typeof(int))
+                        return (int?)prop.GetValue(leader);
+                    var method = type.GetMethod(name, Type.EmptyTypes);
+                    if (method != null && method.ReturnType == typeof(int))
+                        return (int?)method.Invoke(leader, Array.Empty<object>());
+                    return null;
+                }
+
+                int? leaderCount = TryGetInt("NumLeaders") ?? TryGetInt("LeaderCount") ?? TryGetInt("NumberOfLeaders");
+                var maxLeaders = leaderCount.HasValue ? Math.Max(1, leaderCount.Value) : 4;
+
+                var method2 = type.GetMethod("GetLeaderLineVertices", new[] { typeof(int), typeof(int) });
+                var method1 = type.GetMethod("GetLeaderLineVertices", new[] { typeof(int) });
+                var method3 = type.GetMethod("GetLeaderLineVertices", new[] { typeof(int), typeof(int), typeof(bool) });
+
+                int? TryGetLineCount(int leaderIndex)
+                {
+                    var method = type.GetMethod("GetLeaderLineCount", new[] { typeof(int) });
+                    if (method != null && method.ReturnType == typeof(int))
+                        return (int?)method.Invoke(leader, new object[] { leaderIndex });
+                    var prop = type.GetProperty("LeaderLineCount");
+                    if (prop != null && prop.PropertyType == typeof(int))
+                        return (int?)prop.GetValue(leader);
+                    return null;
+                }
+
+                for (int leaderIndex = 0; leaderIndex < maxLeaders; leaderIndex++)
+                {
+                    int? lineCount = TryGetLineCount(leaderIndex);
+                    var maxLines = lineCount.HasValue ? Math.Max(1, lineCount.Value) : 4;
+
+                    for (int lineIndex = 0; lineIndex < maxLines; lineIndex++)
+                    {
+                        if (method2 != null)
+                        {
+                            var result = method2.Invoke(leader, new object[] { leaderIndex, lineIndex }) as Point3dCollection;
+                            AddVertices(result, "GetLeaderLineVertices(int,int)");
+                        }
+
+                        if (method3 != null)
+                        {
+                            var resultFalse = method3.Invoke(leader, new object[] { leaderIndex, lineIndex, false }) as Point3dCollection;
+                            AddVertices(resultFalse, "GetLeaderLineVertices(int,int,bool=false)");
+                            var resultTrue = method3.Invoke(leader, new object[] { leaderIndex, lineIndex, true }) as Point3dCollection;
+                            AddVertices(resultTrue, "GetLeaderLineVertices(int,int,bool=true)");
+                        }
+                    }
+
+                    if (method1 != null)
+                    {
+                        var result = method1.Invoke(leader, new object[] { leaderIndex }) as Point3dCollection;
+                        AddVertices(result, "GetLeaderLineVertices(int)");
+                    }
+                }
+
+                if (allVertices.Count == 0 && method1 != null)
+                {
+                    var result = method1.Invoke(leader, new object[] { 0 }) as Point3dCollection;
+                    AddVertices(result, "GetLeaderLineVertices(int)@0");
+                }
+
+                var prop = type.GetProperty("LeaderLineVertices");
+                if (prop != null)
+                {
+                    var val = prop.GetValue(leader);
+                    if (val is Point3dCollection pts)
+                        AddVertices(pts, "LeaderLineVertices");
+                    else if (val is IEnumerable<Point3d> enumerable)
+                    {
+                        var pts2 = new Point3dCollection();
+                        foreach (var p in enumerable)
+                            pts2.Add(p);
+                        AddVertices(pts2, "LeaderLineVertices(IEnumerable)");
+                    }
+                }
+
+                if (allVertices.Count > 0)
+                {
+                    if (!_plsrLeaderReflectionLogged && source != null)
+                    {
+                        _plsrLeaderReflectionLogged = true;
+                        logger.WriteLine($"PLSR DEBUG: MLeader vertices found via {source}, count={allVertices.Count}");
+                    }
+                    return SelectLeaderHeadPoint(allVertices, leaderText.Location);
+                }
+            }
+            catch
+            {
+                // fall back to text location
+            }
+
+            if (!_plsrLeaderReflectionLogged)
+            {
+                _plsrLeaderReflectionLogged = true;
+                try
+                {
+                    var type = leader.GetType();
+                    var methodNames = type.GetMethods()
+                        .Where(m => m.Name.IndexOf("Leader", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    m.Name.IndexOf("Vertex", StringComparison.OrdinalIgnoreCase) >= 0)
+                        .Select(m => m.Name)
+                        .Distinct()
+                        .OrderBy(n => n)
+                        .ToList();
+                    var propNames = type.GetProperties()
+                        .Where(p => p.Name.IndexOf("Leader", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    p.Name.IndexOf("Vertex", StringComparison.OrdinalIgnoreCase) >= 0)
+                        .Select(p => p.Name)
+                        .Distinct()
+                        .OrderBy(n => n)
+                        .ToList();
+                    logger.WriteLine("PLSR DEBUG: MLeader methods: " + string.Join(", ", methodNames));
+                    logger.WriteLine("PLSR DEBUG: MLeader properties: " + string.Join(", ", propNames));
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+
+            return new Point2d(leaderText.Location.X, leaderText.Location.Y);
+        }
+
+        private static Point2d SelectLeaderHeadPoint(Point3dCollection vertices, Point3d labelLocation)
+        {
+            double bestDistance = double.MinValue;
+            Point3d best = labelLocation;
+            foreach (Point3d p in vertices)
+            {
+                double d = p.DistanceTo(labelLocation);
+                if (d > bestDistance)
+                {
+                    bestDistance = d;
+                    best = p;
+                }
+            }
+
+            return new Point2d(best.X, best.Y);
+        }
+
+        private static Point2d SelectLeaderHeadPoint(IEnumerable<Point3d> vertices, Point3d labelLocation)
+        {
+            double bestDistance = double.MinValue;
+            Point3d best = labelLocation;
+            foreach (Point3d p in vertices)
+            {
+                double d = p.DistanceTo(labelLocation);
+                if (d > bestDistance)
+                {
+                    bestDistance = d;
+                    best = p;
+                }
+            }
+
+            return new Point2d(best.X, best.Y);
+        }
+
+        private static List<string> SplitMTextLines(string contents)
+        {
+            if (string.IsNullOrWhiteSpace(contents))
+                return new List<string>();
+
+            var normalized = contents.Replace("\\P", "\n").Replace("\r", "\n");
+            var raw = normalized.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var lines = new List<string>();
+            foreach (var line in raw)
+            {
+                var cleaned = line.Replace("{", string.Empty).Replace("}", string.Empty).Trim();
+                if (!string.IsNullOrWhiteSpace(cleaned))
+                    lines.Add(cleaned);
+            }
+
+            return lines;
+        }
+
+        private static string NormalizeDispNum(string dispNum)
+        {
+            if (string.IsNullOrWhiteSpace(dispNum))
+                return string.Empty;
+            return Regex.Replace(dispNum, "\\s+", string.Empty).ToUpperInvariant();
+        }
+
+        private static string GetDispositionPrefix(string dispNum)
+        {
+            if (string.IsNullOrWhiteSpace(dispNum))
+                return string.Empty;
+
+            var match = Regex.Match(dispNum, "^[A-Z]{3}");
+            return match.Success ? match.Value.ToUpperInvariant() : string.Empty;
+        }
+
+        private static string NormalizeOwner(string owner)
+        {
+            if (string.IsNullOrWhiteSpace(owner))
+                return string.Empty;
+
+            var upper = owner.ToUpperInvariant();
+            var normalized = Regex.Replace(upper, "[^A-Z0-9]+", string.Empty);
+            return normalized;
+        }
+
+        private static string MapClientNameForCompare(ExcelLookup lookup, string rawName)
+        {
+            if (string.IsNullOrWhiteSpace(rawName))
+                return string.Empty;
+
+            var entry = lookup.Lookup(rawName);
+            if (entry != null && !string.IsNullOrWhiteSpace(entry.Value))
+                return entry.Value;
+
+            if (lookup.Values.Count > 0)
+            {
+                var target = NormalizeOwner(rawName);
+                foreach (var value in lookup.Values)
+                {
+                    if (NormalizeOwner(value) == target)
+                        return value;
+                }
+            }
+
+            return rawName;
+        }
+
+        private static bool TryApplyExpiredMarker(Transaction tr, PlsrLabelEntry label, out bool alreadyTagged)
+        {
+            alreadyTagged = false;
+            if (label == null)
+                return false;
+
+            var contents = label.RawContents ?? string.Empty;
+            if (contents.IndexOf("(Expired)", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                alreadyTagged = true;
+                return true;
+            }
+
+            var updated = contents + "\\P(Expired)";
+
+            if (label.IsLeader)
+            {
+                if (tr.GetObject(label.Id, OpenMode.ForWrite) is MLeader mleader)
+                {
+                    var mt = mleader.MText;
+                    mt.Contents = updated;
+                    mleader.MText = mt;
+                    return true;
+                }
+            }
+            else
+            {
+                if (tr.GetObject(label.Id, OpenMode.ForWrite) is MText mtext)
+                {
+                    mtext.Contents = updated;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void WritePlsrLog(Database database, string text, Logger logger)
+        {
+            try
+            {
+                var doc = Application.DocumentManager.MdiActiveDocument;
+                var docPath = doc?.Name ?? string.Empty;
+                var folder = Path.GetDirectoryName(docPath);
+                if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+                {
+                    folder = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? Environment.CurrentDirectory;
+                }
+
+                var logPath = Path.Combine(folder, "PLSR_Check.txt");
+                File.WriteAllText(logPath, text);
+                logger.WriteLine("PLSR check log written: " + logPath);
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine("PLSR log write failed: " + ex.Message);
+            }
+        }
+
         private static string BuildSectionKeyId(SectionKey key, string secType)
         {
             var normalizedSecType = NormalizeSecType(secType);
@@ -3078,10 +4011,25 @@ namespace AtsBackgroundBuilder
         }
     }
 
+    public sealed class QuarterLabelInfo
+    {
+        public QuarterLabelInfo(ObjectId quarterId, SectionKey sectionKey, QuarterSelection quarter)
+        {
+            QuarterId = quarterId;
+            SectionKey = sectionKey;
+            Quarter = quarter;
+        }
+
+        public ObjectId QuarterId { get; }
+        public SectionKey SectionKey { get; }
+        public QuarterSelection Quarter { get; }
+    }
+
     public sealed class SectionDrawResult
     {
         public SectionDrawResult(
             List<ObjectId> labelQuarterPolylineIds,
+            List<QuarterLabelInfo> labelQuarterInfos,
             List<ObjectId> quarterPolylineIds,
             List<ObjectId> quarterHelperEntityIds,
             List<ObjectId> sectionPolylineIds,
@@ -3090,6 +4038,7 @@ namespace AtsBackgroundBuilder
             bool generatedFromIndex)
         {
             LabelQuarterPolylineIds = labelQuarterPolylineIds ?? new List<ObjectId>();
+            LabelQuarterInfos = labelQuarterInfos ?? new List<QuarterLabelInfo>();
             QuarterPolylineIds = quarterPolylineIds ?? new List<ObjectId>();
             QuarterHelperEntityIds = quarterHelperEntityIds ?? new List<ObjectId>();
             SectionPolylineIds = sectionPolylineIds ?? new List<ObjectId>();
@@ -3098,6 +4047,7 @@ namespace AtsBackgroundBuilder
             GeneratedFromIndex = generatedFromIndex;
         }
         public List<ObjectId> LabelQuarterPolylineIds { get; }
+        public List<QuarterLabelInfo> LabelQuarterInfos { get; }
         public List<ObjectId> QuarterPolylineIds { get; }
         public List<ObjectId> QuarterHelperEntityIds { get; }
         public List<ObjectId> SectionPolylineIds { get; }

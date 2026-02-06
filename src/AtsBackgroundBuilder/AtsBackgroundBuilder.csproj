@@ -8,6 +8,7 @@
     <Platforms>AnyCPU</Platforms>
     <DefineConstants>NET8_0_WINDOWS;$(DefineConstants)</DefineConstants>
     <UseWindowsForms>true</UseWindowsForms>
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
   </PropertyGroup>
 
   <Target Name="CopyBuildOutput" AfterTargets="Build">

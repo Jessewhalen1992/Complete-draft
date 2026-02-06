@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 
@@ -33,6 +34,13 @@ namespace AtsBackgroundBuilder
         public bool IncludeAtsFabric { get; set; } = false;
 
         public List<SectionRequest> SectionRequests { get; } = new List<SectionRequest>();
+
+        /// <summary>
+        /// Run PLSR XML check against disposition labels.
+        /// </summary>
+        public bool CheckPlsr { get; set; } = false;
+
+        public List<string> PlsrXmlPaths { get; } = new List<string>();
     }
 
     /// <summary>
@@ -50,6 +58,7 @@ namespace AtsBackgroundBuilder
         private readonly CheckBox _includeAtsFabric = new CheckBox();
         private readonly CheckBox _includeLsds = new CheckBox();
         private readonly CheckBox _includeP3Shapes = new CheckBox();
+        private readonly CheckBox _checkPlsr = new CheckBox();
         private readonly DataGridView _grid = new DataGridView();
         private readonly Button _build = new Button();
         private readonly Button _cancel = new Button();
@@ -88,7 +97,7 @@ namespace AtsBackgroundBuilder
             CancelButton = _cancel;
         }
 
-        public AtsBuildInput Result { get; private set; }
+        public AtsBuildInput? Result { get; private set; }
 
         private Control BuildTopPanel(IEnumerable<string> clientNames, Config config)
         {
@@ -224,6 +233,11 @@ namespace AtsBackgroundBuilder
             _includeP3Shapes.AutoSize = true;
             _includeP3Shapes.Margin = new Padding(0, 6, 10, 6);
 
+            _checkPlsr.Text = "Check PLSR";
+            _checkPlsr.Checked = false;
+            _checkPlsr.AutoSize = true;
+            _checkPlsr.Margin = new Padding(0, 6, 10, 6);
+
             var qHelp = new Label
             {
                 Text = "Quarter values: NW, NE, SW, SE, ALL. SEC TYPE values: L-USEC, L-SEC",
@@ -241,8 +255,9 @@ namespace AtsBackgroundBuilder
             panel.Controls.Add(_includeAtsFabric, 2, 1);
             panel.Controls.Add(_includeLsds, 3, 1);
             panel.Controls.Add(_includeP3Shapes, 4, 1);
-            panel.Controls.Add(qHelp, 5, 1);
-            panel.SetColumnSpan(qHelp, 3);
+            panel.Controls.Add(_checkPlsr, 5, 1);
+            panel.Controls.Add(qHelp, 6, 1);
+            panel.SetColumnSpan(qHelp, 2);
 
             return panel;
         }
@@ -344,8 +359,37 @@ namespace AtsBackgroundBuilder
                 IncludeAtsFabric = _includeAtsFabric.Checked,
                 DrawLsdSubdivisionLines = _includeLsds.Checked,
                 IncludeP3Shapefiles = _includeP3Shapes.Checked,
+                CheckPlsr = _checkPlsr.Checked,
             };
             Result.SectionRequests.AddRange(requests);
+
+            if (Result.CheckPlsr)
+            {
+                using (var dialog = new OpenFileDialog())
+                {
+                    dialog.Filter = "PLSR XML (*.xml)|*.xml|All files (*.*)|*.*";
+                    dialog.Multiselect = true;
+                    dialog.Title = "Select PLSR XML file(s)";
+                    dialog.InitialDirectory = Environment.CurrentDirectory;
+                    if (dialog.ShowDialog(this) != DialogResult.OK || dialog.FileNames.Length == 0)
+                    {
+                        MessageBox.Show(this, "PLSR check requires at least one XML file.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    foreach (var path in dialog.FileNames)
+                    {
+                        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                            Result.PlsrXmlPaths.Add(path);
+                    }
+                }
+
+                if (Result.PlsrXmlPaths.Count == 0)
+                {
+                    MessageBox.Show(this, "PLSR check requires at least one XML file.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+            }
 
             DialogResult = DialogResult.OK;
             Close();

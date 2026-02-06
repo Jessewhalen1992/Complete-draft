@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Diagnostics.CodeAnalysis;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 
@@ -897,7 +898,7 @@ namespace AtsBackgroundBuilder
         /// Returns a cloned closed boundary polyline for an imported disposition entity.
         /// Supports LWPOLYLINE and common Map 3D polygon entities (MPOLYGON / POLYLINE2D / POLYLINE3D) via explode.
         /// </summary>
-        public static bool TryGetClosedBoundaryClone(Entity ent, out Polyline boundaryClone)
+        public static bool TryGetClosedBoundaryClone(Entity ent, [NotNullWhen(true)] out Polyline? boundaryClone)
         {
             boundaryClone = null;
 
@@ -940,7 +941,7 @@ namespace AtsBackgroundBuilder
                 return null;
             }
 
-            Polyline best = null;
+            Polyline? best = null;
             double bestScore = -1.0;
 
             foreach (DBObject obj in col)

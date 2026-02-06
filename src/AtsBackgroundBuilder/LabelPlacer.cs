@@ -730,14 +730,18 @@ namespace AtsBackgroundBuilder
 
     public sealed class QuarterInfo
     {
-        public QuarterInfo(Polyline polyline)
+        public QuarterInfo(Polyline polyline, SectionKey? sectionKey = null, QuarterSelection quarter = QuarterSelection.None)
         {
             Polyline = polyline;
             Bounds = polyline.GeometricExtents;
+            SectionKey = sectionKey;
+            Quarter = quarter;
         }
 
         public Polyline Polyline { get; }
         public Extents3d Bounds { get; }
+        public SectionKey? SectionKey { get; }
+        public QuarterSelection Quarter { get; }
     }
 
     public sealed class DispositionInfo

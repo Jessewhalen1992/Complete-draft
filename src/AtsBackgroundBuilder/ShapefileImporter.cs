@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Diagnostics.CodeAnalysis;
 
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
@@ -69,10 +70,10 @@ namespace AtsBackgroundBuilder
 
             // Your suggestion: set MAPUSEMPOLYGON BEFORE import starts.
             // This is the safest way to avoid MPOLYGON + POLYDISPLAY altogether.
-            object prevMapUseMPolygon = null;
+            object? prevMapUseMPolygon = null;
             bool mapUseMPolygonChanged = TrySetSystemVariable("MAPUSEMPOLYGON", 0, logger, out prevMapUseMPolygon);
 
-            Autodesk.AutoCAD.Runtime.ProgressMeter overallMeter = null;
+            Autodesk.AutoCAD.Runtime.ProgressMeter? overallMeter = null;
             try
             {
                 overallMeter = new Autodesk.AutoCAD.Runtime.ProgressMeter();
@@ -175,7 +176,7 @@ namespace AtsBackgroundBuilder
             return summary;
         }
 
-        private static bool TryGetMap3dImporter(Logger logger, out Importer importer)
+        private static bool TryGetMap3dImporter(Logger logger, [NotNullWhen(true)] out Importer? importer)
         {
             importer = null;
 
@@ -198,7 +199,7 @@ namespace AtsBackgroundBuilder
             return true;
         }
 
-        private static bool TrySetSystemVariable(string name, object value, Logger logger, out object previous)
+        private static bool TrySetSystemVariable(string name, object value, Logger logger, out object? previous)
         {
             previous = null;
             try
@@ -462,7 +463,7 @@ namespace AtsBackgroundBuilder
             if (polygonEntityIds == null || polygonEntityIds.Count == 0)
                 return created;
 
-            Autodesk.AutoCAD.Runtime.ProgressMeter meter = null;
+            Autodesk.AutoCAD.Runtime.ProgressMeter? meter = null;
             try
             {
                 meter = new Autodesk.AutoCAD.Runtime.ProgressMeter();
@@ -499,7 +500,7 @@ namespace AtsBackgroundBuilder
                         }
 
                         var exploded = new DBObjectCollection();
-                        Polyline bestBoundary = null;
+                        Polyline? bestBoundary = null;
 
                         try
                         {
@@ -568,9 +569,9 @@ namespace AtsBackgroundBuilder
             return IsWithinSections(e2d, sectionExtents);
         }
 
-        private static Polyline SelectLargestClosedPolyline(DBObjectCollection exploded)
+        private static Polyline? SelectLargestClosedPolyline(DBObjectCollection exploded)
         {
-            Polyline best = null;
+            Polyline? best = null;
             double bestArea = -1;
 
             foreach (DBObject dbo in exploded)
@@ -635,7 +636,7 @@ namespace AtsBackgroundBuilder
                 var tables = project.ODTables;
                 var names = tables.GetTableNames();
 
-                // FIX: no .Any() on StringCollection — manual check
+                // FIX: no .Any() on StringCollection â€” manual check
                 bool exists = false;
                 if (names != null)
                 {
@@ -791,7 +792,7 @@ namespace AtsBackgroundBuilder
             var dedupedStart = summary.DedupedDispositions;
             var acceptedStart = dispositionPolylines.Count;
 
-            Autodesk.AutoCAD.Runtime.ProgressMeter meter = null;
+            Autodesk.AutoCAD.Runtime.ProgressMeter? meter = null;
             try
             {
                 meter = new Autodesk.AutoCAD.Runtime.ProgressMeter();
