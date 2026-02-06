@@ -143,6 +143,12 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
+            if (input.IncludeQuarterSectionLabels)
+            {
+                exitStage = "quarter_section_labels";
+                PlaceQuarterSectionLabels(database, sectionDrawResult.LabelQuarterInfos, logger);
+            }
+
             if (input.IncludeP3Shapefiles)
             {
                 exitStage = "p3_import";
@@ -1557,8 +1563,10 @@ namespace AtsBackgroundBuilder
                 {
                     if (buildResult.QuarterPolylineIds.TryGetValue(quarter, out var qid))
                     {
-                        labelQuarterIds.Add(qid);
-                        labelQuarterInfos.Add(new QuarterLabelInfo(qid, request.Key, quarter));
+                        if (labelQuarterIds.Add(qid))
+                        {
+                            labelQuarterInfos.Add(new QuarterLabelInfo(qid, request.Key, quarter, request.SecType));
+                        }
                     }
                 }
             }
@@ -4195,20 +4203,133 @@ namespace AtsBackgroundBuilder
             var normalizedSecType = NormalizeSecType(secType);
             return $"Z{key.Zone}_SEC{key.Section}_TWP{key.Township}_RGE{key.Range}_MER{key.Meridian}_TYPE{normalizedSecType}";
         }
+
+        private static void PlaceQuarterSectionLabels(
+            Database database,
+            IEnumerable<QuarterLabelInfo> quarterInfos,
+            Logger logger)
+        {
+            if (database == null || quarterInfos == null)
+                return;
+
+            var uniqueQuarterInfos = new Dictionary<ObjectId, QuarterLabelInfo>();
+            foreach (var info in quarterInfos)
+            {
+                if (info == null || info.QuarterId.IsNull || info.QuarterId.IsErased)
+                    continue;
+
+                if (!uniqueQuarterInfos.ContainsKey(info.QuarterId))
+                    uniqueQuarterInfos.Add(info.QuarterId, info);
+            }
+
+            if (uniqueQuarterInfos.Count == 0)
+                return;
+
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+                EnsureLayer(database, transaction, "C-SYMBOL");
+                EnsureLayer(database, transaction, "C-UNS-T");
+
+                var labelCount = 0;
+                foreach (var info in uniqueQuarterInfos.Values)
+                {
+                    var quarterPolyline = transaction.GetObject(info.QuarterId, OpenMode.ForRead) as Polyline;
+                    if (quarterPolyline == null)
+                        continue;
+
+                    var quarterToken = FormatQuarterForSectionLabel(info.Quarter);
+                    if (string.IsNullOrWhiteSpace(quarterToken))
+                        continue;
+
+                    var sectionDescriptor = BuildSectionDescriptor(info.SectionKey);
+                    var normalizedSecType = NormalizeSecType(info.SecType);
+                    var isLsec = string.Equals(normalizedSecType, "L-SEC", StringComparison.OrdinalIgnoreCase);
+
+                    var extents = quarterPolyline.GeometricExtents;
+                    var center = new Point3d(
+                        (extents.MinPoint.X + extents.MaxPoint.X) * 0.5,
+                        (extents.MinPoint.Y + extents.MaxPoint.Y) * 0.5,
+                        0.0);
+
+                    var primaryContents = isLsec
+                        ? $"{quarterToken} Sec. {sectionDescriptor}"
+                        : $"Theor. {quarterToken}\\PSec. {sectionDescriptor}";
+
+                    var primary = new MText
+                    {
+                        Layer = "C-SYMBOL",
+                        ColorIndex = 3,
+                        TextHeight = 20.0,
+                        Location = center,
+                        Attachment = AttachmentPoint.MiddleCenter,
+                        Contents = primaryContents
+                    };
+                    modelSpace.AppendEntity(primary);
+                    transaction.AddNewlyCreatedDBObject(primary, true);
+                    labelCount++;
+
+                    if (!isLsec)
+                    {
+                        var unsurveyed = new MText
+                        {
+                            Layer = "C-UNS-T",
+                            ColorIndex = 3,
+                            TextHeight = 16.0,
+                            Location = new Point3d(center.X, center.Y - 24.0, center.Z),
+                            Attachment = AttachmentPoint.TopCenter,
+                            Contents = "UNSURVEYED\\PTERRITORY"
+                        };
+                        modelSpace.AppendEntity(unsurveyed);
+                        transaction.AddNewlyCreatedDBObject(unsurveyed, true);
+                    }
+                }
+
+                transaction.Commit();
+                logger?.WriteLine($"Placed {labelCount} quarter section label(s).");
+            }
+        }
+
+        private static string FormatQuarterForSectionLabel(QuarterSelection quarter)
+        {
+            return quarter switch
+            {
+                QuarterSelection.NorthWest => "N.W.1/4",
+                QuarterSelection.NorthEast => "N.E.1/4",
+                QuarterSelection.SouthWest => "S.W.1/4",
+                QuarterSelection.SouthEast => "S.E.1/4",
+                _ => string.Empty
+            };
+        }
+
+        private static string BuildSectionDescriptor(SectionKey key)
+        {
+            var section = NormalizeNumberToken(key.Section);
+            var township = NormalizeNumberToken(key.Township);
+            var range = NormalizeNumberToken(key.Range);
+            var meridian = NormalizeNumberToken(key.Meridian);
+            return $"{section}-{township}-{range}-W.{meridian}M.";
+        }
     }
 
     public sealed class QuarterLabelInfo
     {
-        public QuarterLabelInfo(ObjectId quarterId, SectionKey sectionKey, QuarterSelection quarter)
+        public QuarterLabelInfo(ObjectId quarterId, SectionKey sectionKey, QuarterSelection quarter, string secType = "L-USEC")
         {
             QuarterId = quarterId;
             SectionKey = sectionKey;
             Quarter = quarter;
+            SecType = string.Equals(secType?.Trim(), "L-SEC", StringComparison.OrdinalIgnoreCase)
+                ? "L-SEC"
+                : "L-USEC";
         }
 
         public ObjectId QuarterId { get; }
         public SectionKey SectionKey { get; }
         public QuarterSelection Quarter { get; }
+        public string SecType { get; }
     }
 
     public sealed class SectionDrawResult

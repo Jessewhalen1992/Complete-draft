@@ -27,6 +27,7 @@ namespace AtsBackgroundBuilder
         /// </summary>
         public bool IncludeDispositionLinework { get; set; } = true;
         public bool IncludeDispositionLabels { get; set; } = true;
+        public bool IncludeQuarterSectionLabels { get; set; } = false;
 
         /// <summary>
         /// Placeholder for future feature layers.
@@ -59,6 +60,7 @@ namespace AtsBackgroundBuilder
         private readonly CheckBox _includeLsds = new CheckBox();
         private readonly CheckBox _includeP3Shapes = new CheckBox();
         private readonly CheckBox _checkPlsr = new CheckBox();
+        private readonly CheckBox _includeQuarterSectionLabels = new CheckBox();
         private readonly DataGridView _grid = new DataGridView();
         private readonly Button _build = new Button();
         private readonly Button _cancel = new Button();
@@ -170,7 +172,7 @@ namespace AtsBackgroundBuilder
             {
                 Dock = DockStyle.Top,
                 AutoSize = true,
-                ColumnCount = 8,
+                ColumnCount = 9,
                 RowCount = 2,
                 Margin = new Padding(0, 10, 0, 10)
             };
@@ -181,6 +183,7 @@ namespace AtsBackgroundBuilder
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
             var textHeightLabel = new Label
@@ -239,6 +242,11 @@ namespace AtsBackgroundBuilder
             _checkPlsr.AutoSize = true;
             _checkPlsr.Margin = new Padding(0, 6, 10, 6);
 
+            _includeQuarterSectionLabels.Text = "1/4 SEC. LABELS";
+            _includeQuarterSectionLabels.Checked = false;
+            _includeQuarterSectionLabels.AutoSize = true;
+            _includeQuarterSectionLabels.Margin = new Padding(0, 6, 10, 6);
+
             var qHelp = new Label
             {
                 Text = "Quarter values: NW, NE, SW, SE, N, S, E, W, ALL. SEC TYPE values: L-USEC, L-SEC",
@@ -257,7 +265,8 @@ namespace AtsBackgroundBuilder
             panel.Controls.Add(_includeLsds, 3, 1);
             panel.Controls.Add(_includeP3Shapes, 4, 1);
             panel.Controls.Add(_checkPlsr, 5, 1);
-            panel.Controls.Add(qHelp, 6, 1);
+            panel.Controls.Add(_includeQuarterSectionLabels, 6, 1);
+            panel.Controls.Add(qHelp, 7, 1);
             panel.SetColumnSpan(qHelp, 2);
 
             return panel;
@@ -362,6 +371,7 @@ namespace AtsBackgroundBuilder
                 DrawLsdSubdivisionLines = _includeLsds.Checked,
                 IncludeP3Shapefiles = _includeP3Shapes.Checked,
                 CheckPlsr = _checkPlsr.Checked,
+                IncludeQuarterSectionLabels = _includeQuarterSectionLabels.Checked,
             };
             Result.SectionRequests.AddRange(requests);
 
