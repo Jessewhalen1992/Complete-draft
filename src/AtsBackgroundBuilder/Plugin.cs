@@ -408,7 +408,7 @@ namespace AtsBackgroundBuilder
             if (input.IncludeDispositionLabels)
             {
                 exitStage = "placing_labels";
-                var placer = new LabelPlacer(database, editor, layerManager, config, logger);
+                var placer = new LabelPlacer(database, editor, layerManager, config, logger, input.UseAlignedDimensions);
                 var placement = placer.PlaceLabels(quarters, dispositions, currentClient);
 
                 result.LabelsPlaced = placement.LabelsPlaced;
@@ -477,46 +477,9 @@ namespace AtsBackgroundBuilder
             logger.WriteLine("Filtered out: " + result.FilteredDispositions);
             logger.WriteLine("Deduped: " + result.DedupedDispositions);
             logger.WriteLine("Import failures: " + result.ImportFailures);
-            DisposeWorkingGeometry(quarters, dispositions, logger);
             exitStage = "completed";
             EmitExit("ok");
             logger.Dispose();
-        }
-
-        private static void DisposeWorkingGeometry(
-            List<QuarterInfo> quarters,
-            List<DispositionInfo> dispositions,
-            Logger logger)
-        {
-            if (quarters != null)
-            {
-                foreach (var quarter in quarters)
-                {
-                    try
-                    {
-                        quarter?.Polyline?.Dispose();
-                    }
-                    catch (System.Exception ex)
-                    {
-                        logger?.WriteLine("Dispose quarter polyline failed: " + ex.Message);
-                    }
-                }
-            }
-
-            if (dispositions != null)
-            {
-                foreach (var disposition in dispositions)
-                {
-                    try
-                    {
-                        disposition?.Polyline?.Dispose();
-                    }
-                    catch (System.Exception ex)
-                    {
-                        logger?.WriteLine("Dispose disposition polyline failed: " + ex.Message);
-                    }
-                }
-            }
         }
 
         private static void CleanupAfterBuild(
@@ -3752,6 +3715,7 @@ namespace AtsBackgroundBuilder
         {
             public ObjectId Id { get; set; }
             public bool IsLeader { get; set; }
+            public bool IsDimension { get; set; }
             public string Owner { get; set; } = string.Empty;
             public string DispNum { get; set; } = string.Empty;
             public string RawContents { get; set; } = string.Empty;
@@ -4253,12 +4217,13 @@ namespace AtsBackgroundBuilder
                 {
                     PlsrLabelEntry? entry = null;
 
-                    if (tr.GetObject(id, OpenMode.ForRead) is MText mtext)
+                    var dbObject = tr.GetObject(id, OpenMode.ForRead);
+                    if (dbObject is MText mtext)
                     {
                         var contents = mtext.Contents ?? string.Empty;
                         entry = BuildLabelEntry(id, false, contents, new Point2d(mtext.Location.X, mtext.Location.Y));
                     }
-                    else if (tr.GetObject(id, OpenMode.ForRead) is MLeader mleader)
+                    else if (dbObject is MLeader mleader)
                     {
                         var leaderText = mleader.MText;
                         if (leaderText != null)
@@ -4266,6 +4231,15 @@ namespace AtsBackgroundBuilder
                             var contents = leaderText.Contents ?? string.Empty;
                             var anchor = GetLeaderAnchorPoint(mleader, leaderText, logger);
                             entry = BuildLabelEntry(id, true, contents, anchor);
+                        }
+                    }
+                    else if (dbObject is AlignedDimension aligned)
+                    {
+                        var contents = aligned.DimensionText ?? string.Empty;
+                        if (!string.IsNullOrWhiteSpace(contents) && !string.Equals(contents.Trim(), "<>", StringComparison.Ordinal))
+                        {
+                            var location = GetDimensionAnchorPoint(aligned);
+                            entry = BuildLabelEntry(id, false, contents, location, isDimension: true);
                         }
                     }
 
@@ -4304,7 +4278,7 @@ namespace AtsBackgroundBuilder
             return byQuarter;
         }
 
-        private static PlsrLabelEntry? BuildLabelEntry(ObjectId id, bool isLeader, string contents, Point2d location)
+        private static PlsrLabelEntry? BuildLabelEntry(ObjectId id, bool isLeader, string contents, Point2d location, bool isDimension = false)
         {
             var lines = SplitMTextLines(contents);
             if (lines.Count < 2)
@@ -4317,11 +4291,36 @@ namespace AtsBackgroundBuilder
             {
                 Id = id,
                 IsLeader = isLeader,
+                IsDimension = isDimension,
                 Owner = owner,
                 DispNum = dispNum,
                 RawContents = contents,
                 Location = location
             };
+        }
+
+        private static Point2d GetDimensionAnchorPoint(AlignedDimension dimension)
+        {
+            try
+            {
+                var textPos = dimension.TextPosition;
+                return new Point2d(textPos.X, textPos.Y);
+            }
+            catch
+            {
+                // fallback below
+            }
+
+            try
+            {
+                var a = dimension.XLine1Point;
+                var b = dimension.XLine2Point;
+                return new Point2d((a.X + b.X) * 0.5, (a.Y + b.Y) * 0.5);
+            }
+            catch
+            {
+                return new Point2d(0.0, 0.0);
+            }
         }
 
         private static Point2d GetLeaderAnchorPoint(MLeader leader, MText leaderText, Logger logger)
@@ -4547,7 +4546,10 @@ namespace AtsBackgroundBuilder
             if (string.IsNullOrWhiteSpace(contents))
                 return new List<string>();
 
-            var normalized = contents.Replace("\\P", "\n").Replace("\r", "\n");
+            var normalized = contents
+                .Replace("\\P", "\n")
+                .Replace("\\X", "\n")
+                .Replace("\r", "\n");
             var raw = normalized.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
             var lines = new List<string>();
             foreach (var line in raw)
@@ -4621,9 +4623,18 @@ namespace AtsBackgroundBuilder
                 return true;
             }
 
-            var updated = contents + "\\P(Expired)";
+            var delimiter = contents.IndexOf("\\X", StringComparison.OrdinalIgnoreCase) >= 0 ? "\\X" : "\\P";
+            var updated = contents + delimiter + "(Expired)";
 
-            if (label.IsLeader)
+            if (label.IsDimension)
+            {
+                if (tr.GetObject(label.Id, OpenMode.ForWrite) is Dimension dimension)
+                {
+                    dimension.DimensionText = updated;
+                    return true;
+                }
+            }
+            else if (label.IsLeader)
             {
                 if (tr.GetObject(label.Id, OpenMode.ForWrite) is MLeader mleader)
                 {

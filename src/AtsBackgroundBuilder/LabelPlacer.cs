@@ -18,14 +18,16 @@ namespace AtsBackgroundBuilder
         private readonly LayerManager _layerManager;
         private readonly Config _config;
         private readonly Logger _logger;
+        private readonly bool _useAlignedDimensions;
 
-        public LabelPlacer(Database database, Editor editor, LayerManager layerManager, Config config, Logger logger)
+        public LabelPlacer(Database database, Editor editor, LayerManager layerManager, Config config, Logger logger, bool useAlignedDimensions = false)
         {
             _database = database;
             _editor = editor;
             _layerManager = layerManager;
             _config = config;
             _logger = logger;
+            _useAlignedDimensions = useAlignedDimensions;
         }
 
         public PlacementResult PlaceLabels(List<QuarterInfo> quarters, List<DispositionInfo> dispositions, string currentClient)
@@ -229,12 +231,23 @@ namespace AtsBackgroundBuilder
                                     maxPoints = Math.Max(maxPoints, 80);
 
                                 double maxLeaderLength = disposition.AddLeader ? 200.0 : double.PositiveInfinity;
+                                if (_useAlignedDimensions && disposition.RequiresWidth)
+                                {
+                                    // Keep A-DIM local, but allow enough room to avoid forcing every label.
+                                    maxLeaderLength = Math.Max(45.0, _config.TextHeight * 10.0);
+                                }
+
+                                var allowOutsideDisposition = disposition.AllowLabelOutsideDisposition;
+                                if (_useAlignedDimensions && disposition.RequiresWidth)
+                                {
+                                    allowOutsideDisposition = false;
+                                }
 
                                 var candidates = GetCandidateLabelPoints(
                                         quarterClone,
                                         dispClone,
                                         searchTarget,
-                                        disposition.AllowLabelOutsideDisposition,
+                                        allowOutsideDisposition,
                                         _config.TextHeight,
                                         maxPoints,
                                         measuredWidth,
@@ -268,6 +281,15 @@ namespace AtsBackgroundBuilder
                                     int labelOverlapCount = placedLabelExtents.Count(b => GeometryUtils.ExtentsIntersect(b, predicted));
                                     int crowdednessCount = CountNearbyPlacedLabels(placedLabelExtents, predicted, _config.TextHeight * 3.0);
                                     int lineworkOverlapCount = CountIntersectingDispositionLinework(predicted, dispositions);
+                                    bool isAlignedWidthLabel = _useAlignedDimensions && disposition.RequiresWidth;
+                                    if (isAlignedWidthLabel)
+                                    {
+                                        // A-DIM labels are anchored to geometry and naturally cross linework.
+                                        // Regular text overlap heuristics over-reject them and force fallback placements.
+                                        labelOverlapCount = 0;
+                                        crowdednessCount = 0;
+                                        lineworkOverlapCount = 0;
+                                    }
                                     bool overlaps = labelOverlapCount > 0 || lineworkOverlapCount > 0;
 
                                     if (overlaps)
@@ -284,7 +306,7 @@ namespace AtsBackgroundBuilder
                                         continue;
                                     }
 
-                                    CreateLabelEntity(transaction, modelSpace, leaderTarget, pt, disposition, labelText, textColorIndex);
+                                    CreateLabelEntity(transaction, modelSpace, leaderTarget, pt, polyForWidth: intersectionPiece ?? dispClone, disposition, labelText, textColorIndex);
 
                                     // Success
                                     placedLabelExtents.Add(predicted);
@@ -297,7 +319,15 @@ namespace AtsBackgroundBuilder
                                 {
                                     // Forced placement at last candidate
                                     var predicted = InflateExtents(EstimateTextExtents(bestFallback, labelText, _config.TextHeight), labelGap);
-                                    CreateLabelEntity(transaction, modelSpace, leaderTarget, bestFallback, disposition, labelText, textColorIndex);
+                                    CreateLabelEntity(
+                                        transaction,
+                                        modelSpace,
+                                        leaderTarget,
+                                        bestFallback,
+                                        polyForWidth: intersectionPiece ?? dispClone,
+                                        disposition,
+                                        labelText,
+                                        textColorIndex);
 
                                     placedLabelExtents.Add(predicted);
                                     result.LabelsPlaced++;
@@ -336,10 +366,16 @@ namespace AtsBackgroundBuilder
             BlockTableRecord modelSpace,
             Point2d target,
             Point2d labelPoint,
+            Polyline polyForWidth,
             DispositionInfo disposition,
             string labelText,
             int textColorIndex)
         {
+            if (_useAlignedDimensions && disposition.RequiresWidth)
+            {
+                return CreateAlignedDimensionLabel(tr, modelSpace, target, labelPoint, polyForWidth, disposition, labelText, disposition.TextLayerName, textColorIndex);
+            }
+
             if (_config.EnableLeaders && disposition.AddLeader)
             {
                 return CreateLeader(tr, modelSpace, target, labelPoint, labelText, disposition.TextLayerName, textColorIndex);
@@ -349,6 +385,170 @@ namespace AtsBackgroundBuilder
             modelSpace.AppendEntity(mtext);
             tr.AddNewlyCreatedDBObject(mtext, true);
             return mtext;
+        }
+
+        private AlignedDimension CreateAlignedDimensionLabel(
+            Transaction tr,
+            BlockTableRecord modelSpace,
+            Point2d target,
+            Point2d labelPoint,
+            Polyline polyForWidth,
+            DispositionInfo disposition,
+            string labelText,
+            string layerName,
+            int colorIndex)
+        {
+            Point2d a2d;
+            Point2d b2d;
+            var widthSource = polyForWidth ?? disposition.Polyline;
+            var spanTarget = target;
+            if (GeometryUtils.TryGetCrossSectionMidpoint(widthSource, spanTarget, out var midTarget, out _))
+            {
+                spanTarget = midTarget;
+            }
+
+            if (!TryGetPerpendicularSpanAcrossDisposition(widthSource, spanTarget, out a2d, out b2d))
+            {
+                // Fallback to a short line near target if a robust cross-section can't be found.
+                var fallbackDir = new Vector2d(labelPoint.X - target.X, labelPoint.Y - target.Y);
+                if (fallbackDir.Length <= 1e-6) fallbackDir = new Vector2d(1.0, 0.0);
+                fallbackDir = fallbackDir / fallbackDir.Length;
+                var half = Math.Max(_config.TextHeight, 10.0);
+                a2d = new Point2d(target.X - fallbackDir.X * half, target.Y - fallbackDir.Y * half);
+                b2d = new Point2d(target.X + fallbackDir.X * half, target.Y + fallbackDir.Y * half);
+            }
+
+            var expectedWidth = TryExtractExpectedWidthFromLabelText(labelText);
+            if (expectedWidth > 0.0)
+            {
+                var measuredSpan = a2d.GetDistanceTo(b2d);
+                var snapTol = Math.Max(_config.WidthSnapTolerance * 2.0, 0.25);
+                if (Math.Abs(measuredSpan - expectedWidth) <= snapTol && measuredSpan > 1e-6)
+                {
+                    var half = expectedWidth * 0.5;
+                    var center = new Point2d((a2d.X + b2d.X) * 0.5, (a2d.Y + b2d.Y) * 0.5);
+                    var axis = (b2d - a2d) / measuredSpan;
+                    a2d = new Point2d(center.X - axis.X * half, center.Y - axis.Y * half);
+                    b2d = new Point2d(center.X + axis.X * half, center.Y + axis.Y * half);
+                }
+            }
+
+            var p1 = new Point3d(a2d.X, a2d.Y, 0.0);
+            var p2 = new Point3d(b2d.X, b2d.Y, 0.0);
+            // Keep the dimension line offset on the true normal of the measured span and clamp drift.
+            var span = b2d - a2d;
+            if (span.Length <= 1e-6) span = new Vector2d(1.0, 0.0);
+            var spanUnit = span / span.Length;
+            var normal = new Vector2d(-spanUnit.Y, spanUnit.X);
+            var mid = new Point2d((a2d.X + b2d.X) * 0.5, (a2d.Y + b2d.Y) * 0.5);
+            var requested = labelPoint - mid;
+            var signedOffset = requested.DotProduct(normal);
+            var maxOffset = Math.Max(_config.TextHeight * 6.0, 25.0);
+            if (signedOffset > maxOffset) signedOffset = maxOffset;
+            if (signedOffset < -maxOffset) signedOffset = -maxOffset;
+            if (Math.Abs(signedOffset) < (_config.TextHeight * 0.75))
+            {
+                signedOffset = (_config.TextHeight * 1.5) * (signedOffset < 0 ? -1.0 : 1.0);
+            }
+            var dimLinePoint = new Point3d(
+                mid.X + normal.X * signedOffset,
+                mid.Y + normal.Y * signedOffset,
+                0.0);
+            var dimText = ConvertLabelTextForDimension(labelText);
+            var dimension = new AlignedDimension(p1, p2, dimLinePoint, dimText, ObjectId.Null)
+            {
+                Layer = layerName,
+                ColorIndex = colorIndex
+            };
+
+            ApplyDimensionStyle(tr, dimension, out var dimStyleId);
+            if (!dimStyleId.IsNull)
+            {
+                dimension.DimensionStyle = dimStyleId;
+            }
+
+            if (_config.TextHeight > 0)
+            {
+                dimension.Dimtxt = _config.TextHeight;
+            }
+
+            // Explicitly force override text; some styles can otherwise revert to measured text.
+            dimension.DimensionText = dimText;
+
+            modelSpace.AppendEntity(dimension);
+            tr.AddNewlyCreatedDBObject(dimension, true);
+            dimension.DimensionText = dimText;
+            return dimension;
+        }
+
+        private static bool TryGetPerpendicularSpanAcrossDisposition(
+            Polyline disposition,
+            Point2d insidePoint,
+            out Point2d a,
+            out Point2d b)
+        {
+            a = default;
+            b = default;
+            if (disposition == null || disposition.NumberOfVertices < 3)
+                return false;
+
+            try
+            {
+                var closest = disposition.GetClosestPointTo(new Point3d(insidePoint.X, insidePoint.Y, disposition.Elevation), false);
+                var param = disposition.GetParameterAtPoint(closest);
+                var deriv = disposition.GetFirstDerivative(param);
+                var tangent = new Vector2d(deriv.X, deriv.Y);
+                if (tangent.Length <= 1e-6)
+                    return false;
+
+                var normal = new Vector2d(-tangent.Y, tangent.X).GetNormal();
+                var ext = disposition.GeometricExtents;
+                var halfLen = Math.Max(50.0, ext.MaxPoint.DistanceTo(ext.MinPoint) * 2.0);
+
+                using (var line = new Line(
+                    new Point3d(insidePoint.X - normal.X * halfLen, insidePoint.Y - normal.Y * halfLen, disposition.Elevation),
+                    new Point3d(insidePoint.X + normal.X * halfLen, insidePoint.Y + normal.Y * halfLen, disposition.Elevation)))
+                {
+                    var pts = new Point3dCollection();
+                    disposition.IntersectWith(line, Intersect.OnBothOperands, pts, IntPtr.Zero, IntPtr.Zero);
+                    if (pts.Count < 2)
+                        return false;
+
+                    var proj = new List<double>(pts.Count);
+                    for (int i = 0; i < pts.Count; i++)
+                    {
+                        var p = pts[i];
+                        var s = (p.X - insidePoint.X) * normal.X + (p.Y - insidePoint.Y) * normal.Y;
+                        if (!proj.Any(x => Math.Abs(x - s) < 1e-6))
+                            proj.Add(s);
+                    }
+
+                    if (proj.Count < 2)
+                        return false;
+
+                    proj.Sort();
+                    const double eps = 1e-6;
+                    bool haveNeg = false, havePos = false;
+                    double sNeg = double.NegativeInfinity, sPos = double.PositiveInfinity;
+
+                    foreach (var s in proj)
+                    {
+                        if (s < -eps && s > sNeg) { sNeg = s; haveNeg = true; }
+                        if (s > eps && s < sPos) { sPos = s; havePos = true; }
+                    }
+
+                    if (!haveNeg || !havePos)
+                        return false;
+
+                    a = new Point2d(insidePoint.X + normal.X * sNeg, insidePoint.Y + normal.Y * sNeg);
+                    b = new Point2d(insidePoint.X + normal.X * sPos, insidePoint.Y + normal.Y * sPos);
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private MLeader CreateLeader(
@@ -436,6 +636,49 @@ namespace AtsBackgroundBuilder
             var dimStyle = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
             if (!dimStyle.Dimtxsty.IsNull)
                 mtext.TextStyleId = dimStyle.Dimtxsty;
+        }
+
+        private void ApplyDimensionStyle(Transaction tr, Dimension dimension, out ObjectId dimStyleId)
+        {
+            dimStyleId = ObjectId.Null;
+            if (tr == null || dimension == null) return;
+
+            var dimStyleTable = (DimStyleTable)tr.GetObject(_database.DimStyleTableId, OpenMode.ForRead);
+            if (!dimStyleTable.Has(_config.DimensionStyleName))
+                return;
+
+            dimStyleId = dimStyleTable[_config.DimensionStyleName];
+        }
+
+        private static string ConvertLabelTextForDimension(string labelText)
+        {
+            if (string.IsNullOrWhiteSpace(labelText))
+            {
+                return string.Empty;
+            }
+
+            var cleaned = labelText.Replace("\\P", "\n");
+            cleaned = cleaned.Replace("{", string.Empty).Replace("}", string.Empty);
+            return cleaned.Trim();
+        }
+
+        private static double TryExtractExpectedWidthFromLabelText(string labelText)
+        {
+            if (string.IsNullOrWhiteSpace(labelText))
+                return 0.0;
+
+            var firstLine = labelText.Split(new[] { "\\P" }, StringSplitOptions.None).FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(firstLine))
+                return 0.0;
+
+            var match = Regex.Match(firstLine, @"(\d+(?:\.\d+)?)");
+            if (!match.Success)
+                return 0.0;
+
+            if (double.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed) && parsed > 0)
+                return parsed;
+
+            return 0.0;
         }
 
         private void ApplyLeaderStyle(Transaction tr, MLeader mleader)
