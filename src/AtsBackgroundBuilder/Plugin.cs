@@ -143,12 +143,6 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            if (input.IncludeQuarterSectionLabels)
-            {
-                exitStage = "quarter_section_labels";
-                PlaceQuarterSectionLabels(database, sectionDrawResult.LabelQuarterInfos, logger);
-            }
-
             if (input.IncludeP3Shapefiles)
             {
                 exitStage = "p3_import";
@@ -441,6 +435,12 @@ namespace AtsBackgroundBuilder
                 }
             }
 
+            if (input.IncludeQuarterSectionLabels)
+            {
+                exitStage = "quarter_section_labels_final";
+                PlaceQuarterSectionLabels(database, sectionDrawResult.LabelQuarterInfos ?? new List<QuarterLabelInfo>(), input.DrawLsdSubdivisionLines, logger);
+            }
+
             // ------------------------------------------------------------------
             // Cleanup / output control
             // ------------------------------------------------------------------
@@ -477,9 +477,46 @@ namespace AtsBackgroundBuilder
             logger.WriteLine("Filtered out: " + result.FilteredDispositions);
             logger.WriteLine("Deduped: " + result.DedupedDispositions);
             logger.WriteLine("Import failures: " + result.ImportFailures);
+            DisposeWorkingGeometry(quarters, dispositions, logger);
             exitStage = "completed";
             EmitExit("ok");
             logger.Dispose();
+        }
+
+        private static void DisposeWorkingGeometry(
+            List<QuarterInfo> quarters,
+            List<DispositionInfo> dispositions,
+            Logger logger)
+        {
+            if (quarters != null)
+            {
+                foreach (var quarter in quarters)
+                {
+                    try
+                    {
+                        quarter?.Polyline?.Dispose();
+                    }
+                    catch (System.Exception ex)
+                    {
+                        logger?.WriteLine("Dispose quarter polyline failed: " + ex.Message);
+                    }
+                }
+            }
+
+            if (dispositions != null)
+            {
+                foreach (var disposition in dispositions)
+                {
+                    try
+                    {
+                        disposition?.Polyline?.Dispose();
+                    }
+                    catch (System.Exception ex)
+                    {
+                        logger?.WriteLine("Dispose disposition polyline failed: " + ex.Message);
+                    }
+                }
+            }
         }
 
         private static void CleanupAfterBuild(
@@ -1565,7 +1602,7 @@ namespace AtsBackgroundBuilder
                     {
                         if (labelQuarterIds.Add(qid))
                         {
-                            labelQuarterInfos.Add(new QuarterLabelInfo(qid, request.Key, quarter, request.SecType));
+                            labelQuarterInfos.Add(new QuarterLabelInfo(qid, request.Key, quarter, request.SecType, buildResult.SectionPolylineId));
                         }
                     }
                 }
@@ -3228,6 +3265,438 @@ namespace AtsBackgroundBuilder
             }
         }
 
+        private static Point2d ResolveSectionLabelPosition(
+            Polyline sectionPolyline,
+            Dictionary<QuarterSelection, Polyline> quarterMap,
+            QuarterAnchors anchors,
+            List<LineSegment2d> lineworkBarriers,
+            BlockTable blockTable,
+            Transaction transaction,
+            bool drawLsds,
+            Point2d sectionCenter)
+        {
+            if (sectionPolyline == null)
+            {
+                return sectionCenter;
+            }
+
+            if (!TryGetSectionLabelBlockFootprint(blockTable, transaction, out var labelWidth, out var labelHeight))
+            {
+                labelWidth = 130.0;
+                labelHeight = 70.0;
+            }
+
+            var requiredClearance = Math.Sqrt((labelWidth * 0.5 * labelWidth * 0.5) + (labelHeight * 0.5 * labelHeight * 0.5)) + 2.0;
+
+            bool Fits(Point2d p)
+            {
+                if (!IsLabelBoxInsideSection(sectionPolyline, p, labelWidth, labelHeight))
+                    return false;
+
+                return GetLineworkClearance(p, lineworkBarriers) >= requiredClearance;
+            }
+
+            if (!drawLsds)
+            {
+                if (Fits(sectionCenter))
+                {
+                    return sectionCenter;
+                }
+
+                if (TryFindNonOverlapSectionPosition(sectionPolyline, sectionCenter, labelWidth, labelHeight, requiredClearance, lineworkBarriers, out var candidate))
+                {
+                    return candidate;
+                }
+
+                return GetLeastCongestedQuarterCenter(quarterMap, sectionPolyline, lineworkBarriers, sectionCenter);
+            }
+
+            if (TryFindNonOverlapSectionPosition(sectionPolyline, sectionCenter, labelWidth, labelHeight, requiredClearance, lineworkBarriers, out var openArea))
+            {
+                return openArea;
+            }
+
+            return GetLeastCongestedLsdCenter(sectionPolyline, anchors, lineworkBarriers, sectionCenter);
+        }
+
+        private static bool TryGetSectionLabelBlockFootprint(
+            BlockTable blockTable,
+            Transaction transaction,
+            out double width,
+            out double height)
+        {
+            width = 0;
+            height = 0;
+
+            const string blockName = "L-SECLBL";
+            if (blockTable == null || transaction == null || !blockTable.Has(blockName))
+            {
+                return false;
+            }
+
+            try
+            {
+                var blockId = blockTable[blockName];
+                var blockDef = (BlockTableRecord)transaction.GetObject(blockId, OpenMode.ForRead);
+
+                var found = false;
+                var minX = 0.0;
+                var minY = 0.0;
+                var maxX = 0.0;
+                var maxY = 0.0;
+
+                foreach (ObjectId id in blockDef)
+                {
+                    if (!(transaction.GetObject(id, OpenMode.ForRead) is Entity entity))
+                    {
+                        continue;
+                    }
+
+                    Extents3d extents;
+                    try
+                    {
+                        extents = entity.GeometricExtents;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (!found)
+                    {
+                        minX = extents.MinPoint.X;
+                        minY = extents.MinPoint.Y;
+                        maxX = extents.MaxPoint.X;
+                        maxY = extents.MaxPoint.Y;
+                        found = true;
+                    }
+                    else
+                    {
+                        minX = Math.Min(minX, extents.MinPoint.X);
+                        minY = Math.Min(minY, extents.MinPoint.Y);
+                        maxX = Math.Max(maxX, extents.MaxPoint.X);
+                        maxY = Math.Max(maxY, extents.MaxPoint.Y);
+                    }
+                }
+
+                if (!found)
+                {
+                    return false;
+                }
+
+                width = Math.Max(1.0, maxX - minX);
+                height = Math.Max(1.0, maxY - minY);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryFindNonOverlapSectionPosition(
+            Polyline sectionPolyline,
+            Point2d preferredCenter,
+            double labelWidth,
+            double labelHeight,
+            double requiredClearance,
+            List<LineSegment2d> lineworkBarriers,
+            out Point2d location)
+        {
+            location = preferredCenter;
+            var step = Math.Max(5.0, Math.Min(labelWidth, labelHeight) * 0.6);
+            foreach (var p in GeometryUtils.GetSpiralOffsets(preferredCenter, step, 400))
+            {
+                if (!IsLabelBoxInsideSection(sectionPolyline, p, labelWidth, labelHeight))
+                {
+                    continue;
+                }
+
+                if (GetLineworkClearance(p, lineworkBarriers) >= requiredClearance)
+                {
+                    location = p;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static Point2d GetLeastCongestedQuarterCenter(
+            Dictionary<QuarterSelection, Polyline> quarterMap,
+            Polyline sectionPolyline,
+            List<LineSegment2d> lineworkBarriers,
+            Point2d fallback)
+        {
+            if (quarterMap == null || quarterMap.Count == 0)
+            {
+                return fallback;
+            }
+
+            var bestPoint = fallback;
+            var bestScore = double.NegativeInfinity;
+
+            foreach (var quarter in quarterMap.Values)
+            {
+                if (quarter == null)
+                {
+                    continue;
+                }
+
+                var p = GeometryUtils.GetSafeInteriorPoint(quarter);
+                if (!GeometryUtils.IsPointInsidePolyline(sectionPolyline, p))
+                {
+                    continue;
+                }
+
+                var score = GetLineworkClearance(p, lineworkBarriers);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestPoint = p;
+                }
+            }
+
+            return bestPoint;
+        }
+
+        private static Point2d GetLeastCongestedLsdCenter(
+            Polyline sectionPolyline,
+            QuarterAnchors anchors,
+            List<LineSegment2d> lineworkBarriers,
+            Point2d fallback)
+        {
+            var eastUnit = GetUnitVector(anchors.Left, anchors.Right, new Vector2d(1, 0));
+            var northUnit = GetUnitVector(anchors.Bottom, anchors.Top, new Vector2d(0, 1));
+            var width = anchors.Left.GetDistanceTo(anchors.Right);
+            var height = anchors.Bottom.GetDistanceTo(anchors.Top);
+            if (width <= 1e-6 || height <= 1e-6)
+            {
+                return fallback;
+            }
+
+            var southWest = fallback - (eastUnit * (width * 0.5)) - (northUnit * (height * 0.5));
+            var bestPoint = fallback;
+            var bestScore = double.NegativeInfinity;
+
+            for (var row = 0; row < 4; row++)
+            {
+                for (var col = 0; col < 4; col++)
+                {
+                    var p = southWest +
+                            (eastUnit * (width * ((col + 0.5) / 4.0))) +
+                            (northUnit * (height * ((row + 0.5) / 4.0)));
+                    if (!GeometryUtils.IsPointInsidePolyline(sectionPolyline, p))
+                    {
+                        continue;
+                    }
+
+                    var score = GetLineworkClearance(p, lineworkBarriers);
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestPoint = p;
+                    }
+                }
+            }
+
+            return bestPoint;
+        }
+
+        private static Point2d GetLeastCongestedPointInBoundary(
+            Polyline boundary,
+            List<LineSegment2d> lineworkBarriers,
+            Point2d fallback)
+        {
+            if (boundary == null)
+            {
+                return fallback;
+            }
+
+            var seed = GeometryUtils.GetSafeInteriorPoint(boundary);
+            var bestPoint = GeometryUtils.IsPointInsidePolyline(boundary, seed) ? seed : fallback;
+            var bestScore = GetLineworkClearance(bestPoint, lineworkBarriers);
+
+            var extents = boundary.GeometricExtents;
+            var diag = extents.MaxPoint.DistanceTo(extents.MinPoint);
+            var step = Math.Max(5.0, diag / 16.0);
+
+            foreach (var p in GeometryUtils.GetSpiralOffsets(bestPoint, step, 220))
+            {
+                if (!GeometryUtils.IsPointInsidePolyline(boundary, p))
+                {
+                    continue;
+                }
+
+                var score = GetLineworkClearance(p, lineworkBarriers);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestPoint = p;
+                }
+            }
+
+            return bestPoint;
+        }
+
+        private static bool TryGetBestQuarterLsdCellCenter(
+            Polyline quarterPolyline,
+            Vector2d eastUnit,
+            Vector2d northUnit,
+            List<LineSegment2d> lineworkBarriers,
+            Func<Point2d, bool> fitsPredicate,
+            out Point2d bestCellCenter,
+            out Point2d? bestFitCellCenter)
+        {
+            bestCellCenter = default;
+            bestFitCellCenter = null;
+            if (quarterPolyline == null)
+            {
+                return false;
+            }
+
+            var anchors = GetLsdAnchorsForQuarter(quarterPolyline, eastUnit, northUnit);
+            var width = anchors.Left.GetDistanceTo(anchors.Right);
+            var height = anchors.Bottom.GetDistanceTo(anchors.Top);
+            if (width <= 1e-6 || height <= 1e-6)
+            {
+                return false;
+            }
+
+            var quarterCenter = new Point2d(
+                0.5 * (anchors.Top.X + anchors.Bottom.X),
+                0.5 * (anchors.Left.Y + anchors.Right.Y));
+            var southWest = quarterCenter - (eastUnit * (width * 0.5)) - (northUnit * (height * 0.5));
+
+            var haveAny = false;
+            var bestAnyScore = double.NegativeInfinity;
+            var bestFitScore = double.NegativeInfinity;
+
+            for (var row = 0; row < 2; row++)
+            {
+                for (var col = 0; col < 2; col++)
+                {
+                    var p = southWest +
+                            (eastUnit * (width * ((col + 0.5) / 2.0))) +
+                            (northUnit * (height * ((row + 0.5) / 2.0)));
+                    if (!GeometryUtils.IsPointInsidePolyline(quarterPolyline, p))
+                    {
+                        continue;
+                    }
+
+                    var score = GetLineworkClearance(p, lineworkBarriers);
+                    if (!haveAny || score > bestAnyScore)
+                    {
+                        bestAnyScore = score;
+                        bestCellCenter = p;
+                        haveAny = true;
+                    }
+
+                    if (fitsPredicate != null && fitsPredicate(p) && score > bestFitScore)
+                    {
+                        bestFitScore = score;
+                        bestFitCellCenter = p;
+                    }
+                }
+            }
+
+            return haveAny;
+        }
+
+        private static bool IsLabelBoxInsideSection(Polyline sectionPolyline, Point2d center, double width, double height)
+        {
+            var halfW = width * 0.5;
+            var halfH = height * 0.5;
+            var points = new[]
+            {
+                center,
+                new Point2d(center.X - halfW, center.Y - halfH),
+                new Point2d(center.X + halfW, center.Y - halfH),
+                new Point2d(center.X - halfW, center.Y + halfH),
+                new Point2d(center.X + halfW, center.Y + halfH),
+                new Point2d(center.X, center.Y - halfH),
+                new Point2d(center.X, center.Y + halfH),
+                new Point2d(center.X - halfW, center.Y),
+                new Point2d(center.X + halfW, center.Y)
+            };
+
+            foreach (var p in points)
+            {
+                if (!GeometryUtils.IsPointInsidePolyline(sectionPolyline, p))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static double GetLineworkClearance(Point2d point, List<LineSegment2d> lineworkBarriers)
+        {
+            if (lineworkBarriers == null || lineworkBarriers.Count == 0)
+            {
+                return double.MaxValue;
+            }
+
+            var min = double.MaxValue;
+            foreach (var segment in lineworkBarriers)
+            {
+                var d = DistancePointToSegment(point, segment.StartPoint, segment.EndPoint);
+                if (d < min)
+                {
+                    min = d;
+                }
+            }
+
+            return min;
+        }
+
+        private static double DistancePointToSegment(Point2d point, Point2d a, Point2d b)
+        {
+            var ab = b - a;
+            var len2 = ab.DotProduct(ab);
+            if (len2 <= 1e-12)
+            {
+                return point.GetDistanceTo(a);
+            }
+
+            var ap = point - a;
+            var t = ap.DotProduct(ab) / len2;
+            if (t < 0.0) t = 0.0;
+            if (t > 1.0) t = 1.0;
+            var nearest = new Point2d(a.X + ab.X * t, a.Y + ab.Y * t);
+            return point.GetDistanceTo(nearest);
+        }
+
+        private static void AddPolylineSegments(List<LineSegment2d> destination, Polyline polyline)
+        {
+            if (destination == null || polyline == null || polyline.NumberOfVertices < 2)
+            {
+                return;
+            }
+
+            for (var i = 0; i < polyline.NumberOfVertices; i++)
+            {
+                var j = i + 1;
+                if (j >= polyline.NumberOfVertices)
+                {
+                    if (!polyline.Closed)
+                    {
+                        break;
+                    }
+
+                    j = 0;
+                }
+
+                var a = polyline.GetPoint2dAt(i);
+                var b = polyline.GetPoint2dAt(j);
+                if (a.GetDistanceTo(b) > 1e-9)
+                {
+                    destination.Add(new LineSegment2d(a, b));
+                }
+            }
+        }
+
         private struct QuarterAnchors
         {
             public QuarterAnchors(Point2d top, Point2d bottom, Point2d left, Point2d right)
@@ -4207,6 +4676,7 @@ namespace AtsBackgroundBuilder
         private static void PlaceQuarterSectionLabels(
             Database database,
             IEnumerable<QuarterLabelInfo> quarterInfos,
+            bool includeLsds,
             Logger logger)
         {
             if (database == null || quarterInfos == null)
@@ -4234,62 +4704,256 @@ namespace AtsBackgroundBuilder
                 EnsureLayer(database, transaction, "C-UNS-T");
 
                 var labelCount = 0;
-                foreach (var info in uniqueQuarterInfos.Values)
+                var grouped = uniqueQuarterInfos.Values
+                    .GroupBy(info => BuildSectionKeyId(info.SectionKey, info.SecType))
+                    .ToList();
+
+                foreach (var group in grouped)
                 {
-                    var quarterPolyline = transaction.GetObject(info.QuarterId, OpenMode.ForRead) as Polyline;
-                    if (quarterPolyline == null)
-                        continue;
-
-                    var quarterToken = FormatQuarterForSectionLabel(info.Quarter);
-                    if (string.IsNullOrWhiteSpace(quarterToken))
-                        continue;
-
-                    var sectionDescriptor = BuildSectionDescriptor(info.SectionKey);
-                    var normalizedSecType = NormalizeSecType(info.SecType);
-                    var isLsec = string.Equals(normalizedSecType, "L-SEC", StringComparison.OrdinalIgnoreCase);
-
-                    var extents = quarterPolyline.GeometricExtents;
-                    var center = new Point3d(
-                        (extents.MinPoint.X + extents.MaxPoint.X) * 0.5,
-                        (extents.MinPoint.Y + extents.MaxPoint.Y) * 0.5,
-                        0.0);
-
-                    var primaryContents = isLsec
-                        ? $"{quarterToken} Sec. {sectionDescriptor}"
-                        : $"Theor. {quarterToken}\\PSec. {sectionDescriptor}";
-
-                    var primary = new MText
+                    var sectionInfo = group.FirstOrDefault(g => g != null && !g.SectionPolylineId.IsNull && !g.SectionPolylineId.IsErased);
+                    if (sectionInfo == null)
                     {
-                        Layer = "C-SYMBOL",
-                        ColorIndex = 3,
-                        TextHeight = 20.0,
-                        Location = center,
-                        Attachment = AttachmentPoint.MiddleCenter,
-                        Contents = primaryContents
-                    };
-                    modelSpace.AppendEntity(primary);
-                    transaction.AddNewlyCreatedDBObject(primary, true);
-                    labelCount++;
+                        continue;
+                    }
 
-                    if (!isLsec)
+                    var sectionPolyline = transaction.GetObject(sectionInfo.SectionPolylineId, OpenMode.ForRead) as Polyline;
+                    if (sectionPolyline == null)
                     {
-                        var unsurveyed = new MText
+                        continue;
+                    }
+
+                    if (!TryGetQuarterAnchors(sectionPolyline, out var sectionAnchors))
+                    {
+                        sectionAnchors = GetFallbackAnchors(sectionPolyline);
+                    }
+
+                    var sectionCenter = new Point2d(
+                        0.5 * (sectionAnchors.Top.X + sectionAnchors.Bottom.X),
+                        0.5 * (sectionAnchors.Left.Y + sectionAnchors.Right.Y));
+                    var eastUnit = GetUnitVector(sectionAnchors.Left, sectionAnchors.Right, new Vector2d(1, 0));
+                    var northUnit = GetUnitVector(sectionAnchors.Bottom, sectionAnchors.Top, new Vector2d(0, 1));
+
+                    var barriers = new List<LineSegment2d>();
+                    AddPolylineSegments(barriers, sectionPolyline);
+                    CollectSectionLineBarriers(transaction, modelSpace, sectionPolyline, includeLsds, barriers);
+
+                    foreach (var info in group)
+                    {
+                        var quarterPolyline = transaction.GetObject(info.QuarterId, OpenMode.ForRead) as Polyline;
+                        if (quarterPolyline == null)
+                            continue;
+
+                        var quarterToken = FormatQuarterForSectionLabel(info.Quarter);
+                        if (string.IsNullOrWhiteSpace(quarterToken))
+                            continue;
+
+                        var sectionDescriptor = BuildSectionDescriptor(info.SectionKey);
+                        var normalizedSecType = NormalizeSecType(info.SecType);
+                        var isLsec = string.Equals(normalizedSecType, "L-SEC", StringComparison.OrdinalIgnoreCase);
+
+                        var extents = quarterPolyline.GeometricExtents;
+                        var quarterCenter = new Point2d(
+                            (extents.MinPoint.X + extents.MaxPoint.X) * 0.5,
+                            (extents.MinPoint.Y + extents.MaxPoint.Y) * 0.5);
+
+                        var primaryContents = isLsec
+                            ? $"{quarterToken} Sec. {sectionDescriptor}"
+                            : $"Theor. {quarterToken}\\PSec. {sectionDescriptor}";
+
+                        EstimateMTextFootprint(primaryContents, 20.0, out var labelWidth, out var labelHeight);
+                        var requiredClearance = Math.Sqrt((labelWidth * 0.5 * labelWidth * 0.5) + (labelHeight * 0.5 * labelHeight * 0.5)) + 2.0;
+
+                        Point2d labelLocation;
+                        bool FitsInQuarter(Point2d p)
                         {
-                            Layer = "C-UNS-T",
+                            if (!IsLabelBoxInsideSection(quarterPolyline, p, labelWidth, labelHeight))
+                            {
+                                return false;
+                            }
+
+                            return GetLineworkClearance(p, barriers) >= requiredClearance;
+                        }
+
+                        if (!includeLsds)
+                        {
+                            if (FitsInQuarter(quarterCenter))
+                            {
+                                labelLocation = quarterCenter;
+                            }
+                            else if (TryFindNonOverlapSectionPosition(quarterPolyline, quarterCenter, labelWidth, labelHeight, requiredClearance, barriers, out var openSpot))
+                            {
+                                labelLocation = openSpot;
+                            }
+                            else
+                            {
+                                labelLocation = quarterCenter;
+                            }
+                        }
+                        else
+                        {
+                            if (TryGetBestQuarterLsdCellCenter(
+                                quarterPolyline,
+                                eastUnit,
+                                northUnit,
+                                barriers,
+                                FitsInQuarter,
+                                out var bestCellCenter,
+                                out var bestFitCellCenter))
+                            {
+                                labelLocation = bestFitCellCenter ?? bestCellCenter;
+                            }
+                            else if (TryFindNonOverlapSectionPosition(quarterPolyline, quarterCenter, labelWidth, labelHeight, requiredClearance, barriers, out var openSpot))
+                            {
+                                labelLocation = openSpot;
+                            }
+                            else
+                            {
+                                labelLocation = GetLeastCongestedPointInBoundary(quarterPolyline, barriers, quarterCenter);
+                            }
+                        }
+
+                        var center = new Point3d(labelLocation.X, labelLocation.Y, 0.0);
+                        var primary = new MText
+                        {
+                            Layer = "C-SYMBOL",
                             ColorIndex = 3,
-                            TextHeight = 16.0,
-                            Location = new Point3d(center.X, center.Y - 24.0, center.Z),
-                            Attachment = AttachmentPoint.TopCenter,
-                            Contents = "UNSURVEYED\\PTERRITORY"
+                            TextHeight = 20.0,
+                            Location = center,
+                            Attachment = AttachmentPoint.MiddleCenter,
+                            Contents = primaryContents
                         };
-                        modelSpace.AppendEntity(unsurveyed);
-                        transaction.AddNewlyCreatedDBObject(unsurveyed, true);
+                        modelSpace.AppendEntity(primary);
+                        transaction.AddNewlyCreatedDBObject(primary, true);
+                        labelCount++;
+
+                        if (!isLsec)
+                        {
+                            var unsurveyed = new MText
+                            {
+                                Layer = "C-UNS-T",
+                                ColorIndex = 3,
+                                TextHeight = 16.0,
+                                Location = new Point3d(center.X, center.Y - 34.0, center.Z),
+                                Attachment = AttachmentPoint.TopCenter,
+                                Contents = "UNSURVEYED\\PTERRITORY"
+                            };
+                            modelSpace.AppendEntity(unsurveyed);
+                            transaction.AddNewlyCreatedDBObject(unsurveyed, true);
+                        }
                     }
                 }
 
                 transaction.Commit();
                 logger?.WriteLine($"Placed {labelCount} quarter section label(s).");
             }
+        }
+
+        private static void CollectSectionLineBarriers(
+            Transaction transaction,
+            BlockTableRecord modelSpace,
+            Polyline sectionPolyline,
+            bool includeLsds,
+            List<LineSegment2d> barriers)
+        {
+            if (transaction == null || modelSpace == null || sectionPolyline == null || barriers == null)
+            {
+                return;
+            }
+
+            Extents3d sectionExtents;
+            try
+            {
+                sectionExtents = sectionPolyline.GeometricExtents;
+            }
+            catch
+            {
+                return;
+            }
+
+            foreach (ObjectId id in modelSpace)
+            {
+                if (!(transaction.GetObject(id, OpenMode.ForRead) is Entity entity) || entity.IsErased)
+                {
+                    continue;
+                }
+
+                var layer = entity.Layer ?? string.Empty;
+                if (string.Equals(layer, "C-SYMBOL", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(layer, "C-UNS-T", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // Restrict to simple geometry types to avoid unstable extents calls on proxy/custom entities.
+                if (!(entity is Line) && !(entity is Polyline))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (entity is Line line)
+                    {
+                        var lineExtents = line.GeometricExtents;
+                        if (!GeometryUtils.ExtentsIntersect(sectionExtents, lineExtents))
+                        {
+                            continue;
+                        }
+
+                        var mid = new Point2d(
+                            (line.StartPoint.X + line.EndPoint.X) * 0.5,
+                            (line.StartPoint.Y + line.EndPoint.Y) * 0.5);
+                        if (!GeometryUtils.IsPointInsidePolyline(sectionPolyline, mid))
+                        {
+                            continue;
+                        }
+
+                        barriers.Add(new LineSegment2d(
+                            new Point2d(line.StartPoint.X, line.StartPoint.Y),
+                            new Point2d(line.EndPoint.X, line.EndPoint.Y)));
+                        continue;
+                    }
+
+                    if (entity is Polyline polyline)
+                    {
+                        var polyExtents = polyline.GeometricExtents;
+                        if (!GeometryUtils.ExtentsIntersect(sectionExtents, polyExtents))
+                        {
+                            continue;
+                        }
+
+                        var polyCenter = new Point2d(
+                            (polyExtents.MinPoint.X + polyExtents.MaxPoint.X) * 0.5,
+                            (polyExtents.MinPoint.Y + polyExtents.MaxPoint.Y) * 0.5);
+                        if (!GeometryUtils.IsPointInsidePolyline(sectionPolyline, polyCenter))
+                        {
+                            continue;
+                        }
+
+                        AddPolylineSegments(barriers, polyline);
+                    }
+                }
+                catch
+                {
+                    // Ignore problematic entities during final label barrier collection.
+                }
+            }
+        }
+
+        private static void EstimateMTextFootprint(string contents, double textHeight, out double width, out double height)
+        {
+            if (textHeight <= 0)
+            {
+                textHeight = 1.0;
+            }
+
+            var normalized = string.IsNullOrWhiteSpace(contents) ? "X" : contents;
+            var lines = normalized.Split(new[] { "\\P" }, StringSplitOptions.None);
+            var maxChars = Math.Max(1, lines.Max(line => line?.Length ?? 0));
+            var lineCount = Math.Max(1, lines.Length);
+
+            width = Math.Max(10.0, maxChars * textHeight * 0.62);
+            height = Math.Max(10.0, lineCount * textHeight * 1.25);
         }
 
         private static string FormatQuarterForSectionLabel(QuarterSelection quarter)
@@ -4316,7 +4980,12 @@ namespace AtsBackgroundBuilder
 
     public sealed class QuarterLabelInfo
     {
-        public QuarterLabelInfo(ObjectId quarterId, SectionKey sectionKey, QuarterSelection quarter, string secType = "L-USEC")
+        public QuarterLabelInfo(
+            ObjectId quarterId,
+            SectionKey sectionKey,
+            QuarterSelection quarter,
+            string secType = "L-USEC",
+            ObjectId sectionPolylineId = default)
         {
             QuarterId = quarterId;
             SectionKey = sectionKey;
@@ -4324,12 +4993,14 @@ namespace AtsBackgroundBuilder
             SecType = string.Equals(secType?.Trim(), "L-SEC", StringComparison.OrdinalIgnoreCase)
                 ? "L-SEC"
                 : "L-USEC";
+            SectionPolylineId = sectionPolylineId;
         }
 
         public ObjectId QuarterId { get; }
         public SectionKey SectionKey { get; }
         public QuarterSelection Quarter { get; }
         public string SecType { get; }
+        public ObjectId SectionPolylineId { get; }
     }
 
     public sealed class SectionDrawResult
