@@ -22,6 +22,16 @@ namespace AtsBackgroundBuilder
 {
     public class Plugin : IExtensionApplication
     {
+        private const string RaDiagBuildTag = "RA-DIAG-BUILD 2026-02-08-alt6";
+        private const double RoadAllowanceUsecWidthMeters = 30.17;
+        private const double RoadAllowanceSecWidthMeters = 20.11;
+        private const double RoadAllowanceWidthToleranceMeters = 0.10;
+        private const double RoadAllowanceGapOffsetToleranceMeters = 0.35;
+        private const bool EnableRoadAllowanceDiagnostics = true;
+        private static readonly object SectionOutlineCacheLock = new object();
+        private static readonly Dictionary<string, SectionOutline?> SectionOutlineCache = new Dictionary<string, SectionOutline?>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, bool> FolderIndexCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
         public void Initialize()
         {
         }
@@ -494,16 +504,19 @@ namespace AtsBackgroundBuilder
 
             try
             {
-                // Always remove the quarter boxes (used only for determining 1/4s and label targeting)
-                EraseEntities(database, sectionDrawResult.QuarterPolylineIds, logger, "quarter boxes");
-
-                // If ATS fabric is NOT requested, remove the temporary section outline + label block we drew to compute quarters.
-                // This includes the quarter divider helper lines (single line/polyline 1/4 marks).
                 if (!input.IncludeAtsFabric)
                 {
+                    // If ATS fabric is not requested, remove all temporary section geometry.
+                    EraseEntities(database, sectionDrawResult.QuarterPolylineIds, logger, "quarter boxes");
                     EraseEntities(database, sectionDrawResult.QuarterHelperEntityIds, logger, "quarter helper lines");
                     EraseEntities(database, sectionDrawResult.SectionPolylineIds, logger, "section outlines");
+                    EraseEntities(database, sectionDrawResult.ContextSectionPolylineIds, logger, "context section pieces");
                     EraseEntities(database, sectionDrawResult.SectionLabelEntityIds, logger, "section labels");
+                }
+                else
+                {
+                    // Keep mapped section lines and generated linework; remove temp quarter polygons only.
+                    EraseEntities(database, sectionDrawResult.QuarterPolylineIds, logger, "quarter boxes");
                 }
 
                 // If disposition linework is NOT requested, erase imported disposition polylines after labels are placed.
@@ -589,6 +602,7 @@ namespace AtsBackgroundBuilder
             return new SectionDrawResult(
                 new List<ObjectId>(),
                 new List<QuarterLabelInfo>(),
+                new List<ObjectId>(),
                 new List<ObjectId>(),
                 new List<ObjectId>(),
                 new List<ObjectId>(),
@@ -1088,7 +1102,7 @@ namespace AtsBackgroundBuilder
                         key.Township,
                         key.Range,
                         key.Meridian);
-                    var keyId = BuildSectionKeyId(sectionKey, request.SecType);
+                    var keyId = BuildSectionKeyId(sectionKey);
                     if (!sectionKeys.Add(keyId))
                     {
                         continue;
@@ -1528,13 +1542,16 @@ namespace AtsBackgroundBuilder
             var quarterHelperIds = new HashSet<ObjectId>();
             var sectionLabelIds = new HashSet<ObjectId>();
             var sectionIds = new HashSet<ObjectId>();
+            var contextSectionIds = new HashSet<ObjectId>();
             var sectionNumberById = new Dictionary<ObjectId, int>();
             var createdSections = new Dictionary<string, SectionBuildResult>(StringComparer.OrdinalIgnoreCase);
             var searchFolders = BuildSectionIndexSearchFolders(config);
+            var inferredSecTypes = InferSectionTypes(requests, searchFolders, logger);
 
             foreach (var request in requests)
             {
-                var keyId = BuildSectionKeyId(request.Key, request.SecType);
+                var keyId = BuildSectionKeyId(request.Key);
+                var resolvedSecType = ResolveSectionType(request.Key, request.SecType, inferredSecTypes);
                 if (!createdSections.TryGetValue(keyId, out var buildResult))
                 {
                     if (!TryLoadSectionOutline(searchFolders, request.Key, logger, out var outline))
@@ -1542,7 +1559,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    buildResult = DrawSectionFromIndex(editor, database, outline, request.Key, drawLsds, request.SecType);
+                    buildResult = DrawSectionFromIndex(editor, database, outline, request.Key, drawLsds, resolvedSecType);
                     createdSections[keyId] = buildResult;
                     sectionIds.Add(buildResult.SectionPolylineId);
                     sectionNumberById[buildResult.SectionPolylineId] = ParseSectionNumber(request.Key.Section);
@@ -1565,11 +1582,39 @@ namespace AtsBackgroundBuilder
                     {
                         if (labelQuarterIds.Add(qid))
                         {
-                            labelQuarterInfos.Add(new QuarterLabelInfo(qid, request.Key, quarter, request.SecType, buildResult.SectionPolylineId));
+                            labelQuarterInfos.Add(new QuarterLabelInfo(qid, request.Key, quarter, resolvedSecType, buildResult.SectionPolylineId));
                         }
                     }
                 }
             }
+
+            foreach (var id in DrawAdjoiningSectionsForContext(
+                database,
+                searchFolders,
+                requests,
+                labelQuarterIds,
+                inferredSecTypes,
+                logger))
+            {
+                contextSectionIds.Add(id);
+            }
+
+            CleanupContextSectionOverlaps(database, contextSectionIds, logger);
+
+            var generatedRoadAllowanceIds = new HashSet<ObjectId>();
+            foreach (var id in DrawRoadAllowanceGapOffsetLines(
+                database,
+                searchFolders,
+                requests,
+                labelQuarterIds,
+                logger))
+            {
+                quarterHelperIds.Add(id);
+                generatedRoadAllowanceIds.Add(id);
+            }
+
+            CleanupGeneratedRoadAllowanceOverlaps(database, generatedRoadAllowanceIds, logger);
+            DrawBufferedQuarterWindowsOnDefpoints(database, labelQuarterIds, 100.0, logger);
 
             return new SectionDrawResult(
                 labelQuarterIds.ToList(),
@@ -1577,9 +1622,1181 @@ namespace AtsBackgroundBuilder
                 allQuarterIds.ToList(),
                 quarterHelperIds.ToList(),
                 sectionIds.ToList(),
+                contextSectionIds.ToList(),
                 sectionLabelIds.ToList(),
                 sectionNumberById,
                 true);
+        }
+
+        private static List<ObjectId> DrawAdjoiningSectionsForContext(
+            Database database,
+            IReadOnlyList<string> searchFolders,
+            IReadOnlyList<SectionRequest> requests,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            IReadOnlyDictionary<string, string> inferredSecTypes,
+            Logger logger)
+        {
+            var drawnIds = new List<ObjectId>();
+            if (database == null || searchFolders == null || requests == null || requestedQuarterIds == null)
+            {
+                return drawnIds;
+            }
+
+            var clipWindows = BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0);
+            if (clipWindows.Count == 0)
+            {
+                return drawnIds;
+            }
+            var window = UnionExtents3d(clipWindows);
+
+            var requestedSectionKeys = new HashSet<string>(
+                requests.Select(r => BuildSectionKeyId(r.Key)),
+                StringComparer.OrdinalIgnoreCase);
+
+            var townshipKeys = BuildContextTownshipKeys(requests).ToList();
+
+            var processedSections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                foreach (var townshipKey in townshipKeys)
+                {
+                    if (!TryParseTownshipKey(townshipKey, out var zone, out var meridian, out var range, out var township))
+                    {
+                        continue;
+                    }
+
+                    for (var section = 1; section <= 36; section++)
+                    {
+                        var key = new SectionKey(zone, section.ToString(CultureInfo.InvariantCulture), township, range, meridian);
+                        var keyId = BuildSectionKeyId(key);
+                        if (requestedSectionKeys.Contains(keyId) || !processedSections.Add(keyId))
+                        {
+                            continue;
+                        }
+
+                        if (!TryLoadSectionOutline(searchFolders, key, logger, out var outline))
+                        {
+                            continue;
+                        }
+
+                        using (var sectionPolyline = new Polyline(outline.Vertices.Count))
+                        {
+                            sectionPolyline.Closed = outline.Closed;
+                            for (var i = 0; i < outline.Vertices.Count; i++)
+                            {
+                                sectionPolyline.AddVertexAt(i, outline.Vertices[i], 0, 0, 0);
+                            }
+
+                            if (!GeometryUtils.ExtentsIntersect(sectionPolyline.GeometricExtents, window))
+                            {
+                                continue;
+                            }
+
+                            if (!TryGetQuarterAnchors(sectionPolyline, out var anchors))
+                            {
+                                anchors = GetFallbackAnchors(sectionPolyline);
+                            }
+
+                            var eastUnit = GetUnitVector(anchors.Left, anchors.Right, new Vector2d(1, 0));
+                            var northUnit = GetUnitVector(anchors.Bottom, anchors.Top, new Vector2d(0, 1));
+                            if (!TryGetQuarterCorner(sectionPolyline, eastUnit, northUnit, QuarterCorner.NorthWest, out var nw) ||
+                                !TryGetQuarterCorner(sectionPolyline, eastUnit, northUnit, QuarterCorner.NorthEast, out var ne) ||
+                                !TryGetQuarterCorner(sectionPolyline, eastUnit, northUnit, QuarterCorner.SouthWest, out var sw) ||
+                                !TryGetQuarterCorner(sectionPolyline, eastUnit, northUnit, QuarterCorner.SouthEast, out var se))
+                            {
+                                continue;
+                            }
+
+                            var secType = ResolveSectionType(key, "AUTO", inferredSecTypes);
+                            EnsureLayer(database, tr, secType);
+                            foreach (var id in DrawSectionBoundaryQuarterSegmentPolylines(
+                                modelSpace,
+                                tr,
+                                nw,
+                                ne,
+                                sw,
+                                se,
+                                secType,
+                                clipWindows,
+                                anchors.Top,
+                                anchors.Right,
+                                anchors.Bottom,
+                                anchors.Left))
+                            {
+                                drawnIds.Add(id);
+                            }
+                        }
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            if (drawnIds.Count > 0)
+            {
+                logger?.WriteLine($"Context sections drawn: {drawnIds.Count} clipped piece(s) within 100m of requested quarters.");
+            }
+
+            return drawnIds;
+        }
+
+        private static bool TryGetBufferedQuarterWindow(
+            Database database,
+            IEnumerable<ObjectId> quarterIds,
+            double buffer,
+            out Extents3d window)
+        {
+            window = default;
+            var windows = BuildBufferedQuarterWindows(database, quarterIds, buffer);
+            if (windows.Count == 0)
+            {
+                return false;
+            }
+
+            window = UnionExtents3d(windows);
+            return true;
+        }
+
+        private static List<Extents3d> BuildBufferedQuarterWindows(
+            Database database,
+            IEnumerable<ObjectId> quarterIds,
+            double buffer)
+        {
+            var windows = new List<Extents3d>();
+            if (database == null || quarterIds == null)
+            {
+                return windows;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                foreach (var id in quarterIds.Distinct())
+                {
+                    if (id.IsNull || id.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Polyline poly))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        var ext = poly.GeometricExtents;
+                        windows.Add(new Extents3d(
+                            new Point3d(ext.MinPoint.X - buffer, ext.MinPoint.Y - buffer, 0.0),
+                            new Point3d(ext.MaxPoint.X + buffer, ext.MaxPoint.Y + buffer, 0.0)));
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            return windows;
+        }
+
+        private static Extents3d UnionExtents3d(IReadOnlyList<Extents3d> windows)
+        {
+            var union = windows[0];
+            for (var i = 1; i < windows.Count; i++)
+            {
+                union.AddExtents(windows[i]);
+            }
+
+            return union;
+        }
+
+        private static List<ObjectId> DrawRoadAllowanceGapOffsetLines(
+            Database database,
+            IReadOnlyList<string> searchFolders,
+            IReadOnlyList<SectionRequest> requests,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger logger)
+        {
+            var ids = new List<ObjectId>();
+            if (database == null || searchFolders == null || requests == null || requestedQuarterIds == null)
+            {
+                return ids;
+            }
+
+            var clipWindows = BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0);
+            if (clipWindows.Count == 0)
+            {
+                return ids;
+            }
+            if (EnableRoadAllowanceDiagnostics)
+            {
+                logger?.WriteLine(RaDiagBuildTag);
+            }
+
+            var selectedSectionKeyIds = new HashSet<string>(
+                requests.Select(r => BuildSectionKeyId(r.Key)),
+                StringComparer.OrdinalIgnoreCase);
+
+            var contextTownshipKeys = BuildContextTownshipKeys(requests);
+
+            bool TryGetAtsSectionGridPosition(int section, out int row, out int col)
+            {
+                row = -1;
+                col = -1;
+                if (section < 1 || section > 36)
+                {
+                    return false;
+                }
+
+                // ATS/DLS section grid (6x6 snake pattern, north at top).
+                // Alberta numbering starts at the southeast corner:
+                // 6  5  4  3  2  1
+                // 7  8  9 10 11 12
+                // 18 17 16 15 14 13
+                // 19 20 21 22 23 24
+                // 30 29 28 27 26 25
+                // 31 32 33 34 35 36
+                var rows = new[]
+                {
+                    new[] { 31, 32, 33, 34, 35, 36 },
+                    new[] { 30, 29, 28, 27, 26, 25 },
+                    new[] { 19, 20, 21, 22, 23, 24 },
+                    new[] { 18, 17, 16, 15, 14, 13 },
+                    new[] { 7, 8, 9, 10, 11, 12 },
+                    new[] { 6, 5, 4, 3, 2, 1 }
+                };
+
+                for (var r = 0; r < rows.Length; r++)
+                {
+                    for (var c = 0; c < rows[r].Length; c++)
+                    {
+                        if (rows[r][c] == section)
+                        {
+                            row = r;
+                            col = c;
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            }
+
+            var offsetSpecs = new List<(Point2d A, Point2d B, string Tag)>();
+            var diagCandidates = 0;
+            var diagEligible = 0;
+            var diagMatched30 = 0;
+            var diagMatched20 = 0;
+            var geoms = new List<(
+                string KeyId,
+                string Label,
+                Point2d SW,
+                Point2d SE,
+                Point2d NW,
+                Point2d NE,
+                Point2d Center,
+                int Zone,
+                string Meridian,
+                int GlobalX,
+                int GlobalY)>();
+            foreach (var townshipKey in contextTownshipKeys)
+            {
+                if (!TryParseTownshipKey(townshipKey, out var zone, out var meridian, out var range, out var township))
+                {
+                    continue;
+                }
+
+                for (var section = 1; section <= 36; section++)
+                {
+                    var sectionKey = new SectionKey(zone, section.ToString(CultureInfo.InvariantCulture), township, range, meridian);
+                    if (!TryLoadSectionOutline(searchFolders, sectionKey, logger, out var outline))
+                    {
+                        continue;
+                    }
+
+                    using (var poly = new Polyline(outline.Vertices.Count))
+                    {
+                        poly.Closed = outline.Closed;
+                        for (var vi = 0; vi < outline.Vertices.Count; vi++)
+                        {
+                            poly.AddVertexAt(vi, outline.Vertices[vi], 0, 0, 0);
+                        }
+
+                        if (!TryGetQuarterAnchors(poly, out var anchors))
+                        {
+                            anchors = GetFallbackAnchors(poly);
+                        }
+
+                        var eastUnit = GetUnitVector(anchors.Left, anchors.Right, new Vector2d(1, 0));
+                        var northUnit = GetUnitVector(anchors.Bottom, anchors.Top, new Vector2d(0, 1));
+                        if (!TryGetQuarterCorner(poly, eastUnit, northUnit, QuarterCorner.SouthWest, out var sw) ||
+                            !TryGetQuarterCorner(poly, eastUnit, northUnit, QuarterCorner.SouthEast, out var se) ||
+                            !TryGetQuarterCorner(poly, eastUnit, northUnit, QuarterCorner.NorthWest, out var nw) ||
+                            !TryGetQuarterCorner(poly, eastUnit, northUnit, QuarterCorner.NorthEast, out var ne))
+                        {
+                            continue;
+                        }
+
+                        var center = new Point2d(
+                            0.25 * (sw.X + se.X + nw.X + ne.X),
+                            0.25 * (sw.Y + se.Y + nw.Y + ne.Y));
+                        var rangeNum = 0;
+                        var townshipNum = 0;
+                        var hasRange = TryParsePositiveToken(range, out rangeNum);
+                        var hasTownship = TryParsePositiveToken(township, out townshipNum);
+                        var hasGrid = TryGetAtsSectionGridPosition(section, out var row, out var col);
+                        // In ATS, range numbers increase westward, so invert range axis for adjacency math.
+                        var globalX = (hasRange && hasGrid) ? ((-rangeNum * 6) + col) : int.MinValue;
+                        // Township numbers increase northward; with row[0] at north, invert row to keep
+                        // immediate north/south neighbors one grid step apart across township boundaries.
+                        var globalY = (hasTownship && hasGrid) ? ((townshipNum * 6) + (5 - row)) : int.MinValue;
+
+                        geoms.Add((
+                            BuildSectionKeyId(sectionKey),
+                            BuildSectionDescriptor(sectionKey),
+                            sw, se, nw, ne, center,
+                            zone,
+                            NormalizeNumberToken(meridian),
+                            globalX,
+                            globalY));
+                    }
+                }
+            }
+
+            if (geoms.Count == 0)
+            {
+                return ids;
+            }
+
+            var euVec = geoms[0].SE - geoms[0].SW;
+            var nuVec = geoms[0].NW - geoms[0].SW;
+            var eu = euVec.Length > 1e-9 ? (euVec / euVec.Length) : new Vector2d(1, 0);
+            var nu = nuVec.Length > 1e-9 ? (nuVec / nuVec.Length) : new Vector2d(0, 1);
+            var localKeyIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var selectedGeoms = geoms
+                .Where(g => selectedSectionKeyIds.Contains(g.KeyId))
+                .ToList();
+            if (selectedGeoms.Count > 0)
+            {
+                foreach (var g in geoms)
+                {
+                    foreach (var s in selectedGeoms)
+                    {
+                        if (g.Zone != s.Zone ||
+                            !string.Equals(g.Meridian, s.Meridian, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        var dx = g.Center.X - s.Center.X;
+                        var dy = g.Center.Y - s.Center.Y;
+                        var centerDistance = Math.Sqrt((dx * dx) + (dy * dy));
+                        var spanG = Math.Max((g.SE - g.SW).Length, (g.NW - g.SW).Length);
+                        var spanS = Math.Max((s.SE - s.SW).Length, (s.NW - s.SW).Length);
+                        var neighborThreshold = Math.Max(spanG, spanS) * 1.8;
+                        if (centerDistance <= neighborThreshold)
+                        {
+                            localKeyIds.Add(g.KeyId);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            var selectedOrLocalKeyIds = localKeyIds.Count > 0
+                ? localKeyIds
+                : selectedSectionKeyIds;
+            if (EnableRoadAllowanceDiagnostics)
+            {
+                logger?.WriteLine($"RA-DIAG selection: requested={selectedSectionKeyIds.Count}, local={localKeyIds.Count}, active={selectedOrLocalKeyIds.Count}");
+            }
+
+            var seenSpecs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            void AddSpec(Point2d s, Point2d e, string tag, string keyA, string keyB, bool verticalMode)
+            {
+                diagEligible++;
+                var p0 = s;
+                var p1 = e;
+                if (p1.X < p0.X || (Math.Abs(p1.X - p0.X) < 1e-9 && p1.Y < p0.Y))
+                {
+                    var tmp = p0;
+                    p0 = p1;
+                    p1 = tmp;
+                }
+
+                var first = string.Compare(keyA, keyB, StringComparison.OrdinalIgnoreCase) <= 0 ? keyA : keyB;
+                var second = string.Equals(first, keyA, StringComparison.OrdinalIgnoreCase) ? keyB : keyA;
+                var dedupeKey = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}|{1}|{2}|{3:0.###}|{4:0.###}|{5:0.###}|{6:0.###}",
+                    first,
+                    second,
+                    verticalMode ? "V" : "H",
+                    p0.X, p0.Y, p1.X, p1.Y);
+                if (!seenSpecs.Add(dedupeKey))
+                    return;
+
+                offsetSpecs.Add((s, e, tag));
+                if (EnableRoadAllowanceDiagnostics)
+                    logger?.WriteLine($"RA-DIAG ADD {tag}: A=({s.X:0.###},{s.Y:0.###}) B=({e.X:0.###},{e.Y:0.###})");
+            }
+
+            void TryAddFromPair(
+                string keyA,
+                string labelA,
+                Point2d a0,
+                Point2d a1,
+                string keyB,
+                string labelB,
+                Point2d b0,
+                Point2d b1,
+                bool verticalMode)
+            {
+                var da = a1 - a0;
+                var db = b1 - b0;
+                var la = da.Length;
+                var lb = db.Length;
+                if (la <= 1e-6 || lb <= 1e-6)
+                    return;
+
+                var ua = da / la;
+                var ub = db / lb;
+                if (Math.Abs(ua.DotProduct(ub)) < 0.99)
+                    return;
+
+                var axis = ua;
+                if (axis.DotProduct(ub) < 0.0)
+                    ub = -ub;
+                if ((a1 - a0).DotProduct(axis) < 0.0)
+                {
+                    var tmp = a0;
+                    a0 = a1;
+                    a1 = tmp;
+                    da = a1 - a0;
+                    la = da.Length;
+                    ua = da / la;
+                }
+                if ((b1 - b0).DotProduct(axis) < 0.0)
+                {
+                    var tmp = b0;
+                    b0 = b1;
+                    b1 = tmp;
+                    db = b1 - b0;
+                    lb = db.Length;
+                    ub = db / lb;
+                }
+
+                var aMid = Midpoint(a0, a1);
+                var bMid = Midpoint(b0, b1);
+                var pa = verticalMode
+                    ? (aMid.X * eu.X + aMid.Y * eu.Y)
+                    : (aMid.X * nu.X + aMid.Y * nu.Y);
+                var pb = verticalMode
+                    ? (bMid.X * eu.X + bMid.Y * eu.Y)
+                    : (bMid.X * nu.X + bMid.Y * nu.Y);
+
+                var westOrSouth0 = pa <= pb ? a0 : b0;
+                var westOrSouth1 = pa <= pb ? a1 : b1;
+                var eastOrNorth0 = pa <= pb ? b0 : a0;
+                var eastOrNorth1 = pa <= pb ? b1 : a1;
+                var baseKey = pa <= pb ? keyA : keyB;
+                var otherKey = pa <= pb ? keyB : keyA;
+                var baseLabel = pa <= pb ? labelA : labelB;
+                var otherLabel = pa <= pb ? labelB : labelA;
+
+                var baseDir = westOrSouth1 - westOrSouth0;
+                var baseLen = baseDir.Length;
+                if (baseLen <= 1e-6)
+                    return;
+                var baseU = baseDir / baseLen;
+
+                var tBase0 = 0.0;
+                var tBase1 = baseLen;
+                var tOther0 = (eastOrNorth0 - westOrSouth0).DotProduct(baseU);
+                var tOther1 = (eastOrNorth1 - westOrSouth0).DotProduct(baseU);
+                var overlapMin = Math.Max(Math.Min(tBase0, tBase1), Math.Min(tOther0, tOther1));
+                var overlapMax = Math.Min(Math.Max(tBase0, tBase1), Math.Max(tOther0, tOther1));
+                // Small survey differences can trim endpoints by a few meters (e.g. ~5m).
+                // Snap near-end trims back to the full edge so RA endpoints land on expected quarter points.
+                const double endpointSnapToleranceMeters = 60.0;
+                if (overlapMin > 0.0 && overlapMin < endpointSnapToleranceMeters)
+                {
+                    overlapMin = 0.0;
+                }
+                if (overlapMax < baseLen && (baseLen - overlapMax) < endpointSnapToleranceMeters)
+                {
+                    overlapMax = baseLen;
+                }
+                var overlapLength = overlapMax - overlapMin;
+                var minEdgeLength = Math.Min(baseLen, lb);
+                // Reject short incidental overlaps from non-shared boundaries.
+                if (overlapLength < Math.Max(100.0, minEdgeLength * 0.75))
+                    return;
+                // Immediate ATS neighbors should share a full boundary edge.
+                // Force full-edge anchoring to prevent ~5m seam drift at quarter transitions.
+                overlapMin = 0.0;
+                overlapMax = baseLen;
+                overlapLength = overlapMax - overlapMin;
+
+                var baseStart = westOrSouth0 + (baseU * overlapMin);
+                var baseEnd = westOrSouth0 + (baseU * overlapMax);
+
+                var otherDir = eastOrNorth1 - eastOrNorth0;
+                var otherLen2 = otherDir.DotProduct(otherDir);
+                if (otherLen2 <= 1e-9)
+                    return;
+
+                double MeasureGap(Point2d baseSample, out Vector2d normalOut)
+                {
+                    var proj = (baseSample - eastOrNorth0).DotProduct(otherDir) / otherLen2;
+                    proj = Math.Max(0.0, Math.Min(1.0, proj));
+                    var otherSample = eastOrNorth0 + (otherDir * proj);
+
+                    var normal = new Vector2d(-baseU.Y, baseU.X);
+                    if ((otherSample - baseSample).DotProduct(normal) < 0.0)
+                    {
+                        normal = -normal;
+                    }
+
+                    normalOut = normal;
+                    return Math.Abs((otherSample - baseSample).DotProduct(normal));
+                }
+
+                var span = overlapMax - overlapMin;
+                var sampleQ1 = westOrSouth0 + (baseU * (overlapMin + (0.25 * span)));
+                var sampleQ3 = westOrSouth0 + (baseU * (overlapMin + (0.75 * span)));
+                var gapQ1 = MeasureGap(sampleQ1, out var normalQ1);
+                var gapQ3 = MeasureGap(sampleQ3, out var normalQ3);
+
+                // Anchor split using both facing-edge centers so the offset seam lands
+                // on the same perpendicular as the source pair, not only one side.
+                var aMidT = (aMid - westOrSouth0).DotProduct(baseU);
+                var bMidT = (bMid - westOrSouth0).DotProduct(baseU);
+                var splitT = 0.5 * (aMidT + bMidT);
+                splitT = Math.Max(overlapMin, Math.Min(overlapMax, splitT));
+                var baseMid = westOrSouth0 + (baseU * splitT);
+                MeasureGap(baseMid, out var pairNormal);
+
+                diagCandidates += 2;
+                if (Math.Abs(gapQ1 - RoadAllowanceUsecWidthMeters) <= 0.50) diagMatched30++;
+                if (Math.Abs(gapQ1 - RoadAllowanceSecWidthMeters) <= 0.50) diagMatched20++;
+                if (Math.Abs(gapQ3 - RoadAllowanceUsecWidthMeters) <= 0.50) diagMatched30++;
+                if (Math.Abs(gapQ3 - RoadAllowanceSecWidthMeters) <= 0.50) diagMatched20++;
+                if (EnableRoadAllowanceDiagnostics)
+                {
+                    logger?.WriteLine($"RA-DIAG {(verticalMode ? "V" : "H")} pair {labelA}/{labelB}: gapQ1={gapQ1:0.###} gapQ3={gapQ3:0.###} overlap={span:0.###}");
+                }
+
+                var segments = new[]
+                {
+                    (A: baseStart, B: baseMid, Gap: gapQ1, Part: "P1"),
+                    (A: baseMid, B: baseEnd, Gap: gapQ3, Part: "P2")
+                };
+                foreach (var seg in segments)
+                {
+                    if (Math.Abs(seg.Gap - RoadAllowanceSecWidthMeters) <= RoadAllowanceWidthToleranceMeters)
+                    {
+                        continue;
+                    }
+
+                    if (Math.Abs(seg.Gap - RoadAllowanceUsecWidthMeters) > RoadAllowanceGapOffsetToleranceMeters)
+                    {
+                        continue;
+                    }
+
+                    MeasureGap(seg.A, out var startNormal);
+                    MeasureGap(seg.B, out var endNormal);
+                    var offsetStart = seg.A + (startNormal * RoadAllowanceSecWidthMeters);
+                    var offsetEnd = seg.B + (endNormal * RoadAllowanceSecWidthMeters);
+                    var tag = $"{(verticalMode ? "V" : "H")} {baseLabel}/{otherLabel} {seg.Part} gap={seg.Gap:0.###}";
+                    AddSpec(offsetStart, offsetEnd, tag, baseKey, otherKey, verticalMode);
+                }
+            }
+
+            for (var i = 0; i < geoms.Count; i++)
+            {
+                var a = geoms[i];
+                for (var j = i + 1; j < geoms.Count; j++)
+                {
+                    var b = geoms[j];
+                    if (!selectedOrLocalKeyIds.Contains(a.KeyId) &&
+                        !selectedOrLocalKeyIds.Contains(b.KeyId))
+                    {
+                        continue;
+                    }
+
+                    if (a.GlobalX == int.MinValue ||
+                        a.GlobalY == int.MinValue ||
+                        b.GlobalX == int.MinValue ||
+                        b.GlobalY == int.MinValue)
+                    {
+                        continue;
+                    }
+
+                    if (a.Zone != b.Zone ||
+                        !string.Equals(a.Meridian, b.Meridian, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var centerDx = b.Center.X - a.Center.X;
+                    var centerDy = b.Center.Y - a.Center.Y;
+                    var centerDistance = Math.Sqrt((centerDx * centerDx) + (centerDy * centerDy));
+                    var spanA = Math.Max((a.SE - a.SW).Length, (a.NW - a.SW).Length);
+                    var spanB = Math.Max((b.SE - b.SW).Length, (b.NW - b.SW).Length);
+                    if (centerDistance > (Math.Max(spanA, spanB) * 1.8))
+                    {
+                        continue;
+                    }
+
+                    var gridDx = Math.Abs(a.GlobalX - b.GlobalX);
+                    var gridDy = Math.Abs(a.GlobalY - b.GlobalY);
+
+                    // Vertical road allowance checks only make sense for immediate east/west neighbors.
+                    if (gridDx == 1 && gridDy == 0)
+                    {
+                        // Use world X for side selection so orientation sign cannot flip west/east.
+                        var aIsWest = a.Center.X <= b.Center.X;
+                        var west = aIsWest ? a : b;
+                        var east = aIsWest ? b : a;
+                        // Facing edges only: east edge of west section, west edge of east section.
+                        TryAddFromPair(
+                            west.KeyId, west.Label, west.SE, west.NE,
+                            east.KeyId, east.Label, east.SW, east.NW,
+                            verticalMode: true);
+                    }
+
+                    // Horizontal road allowance checks only make sense for immediate north/south neighbors.
+                    if (gridDx == 0 && gridDy == 1)
+                    {
+                        // Use world Y for side selection so orientation sign cannot flip south/north.
+                        var aIsSouth = a.Center.Y <= b.Center.Y;
+                        var south = aIsSouth ? a : b;
+                        var north = aIsSouth ? b : a;
+                        // Facing edges only: north edge of south section, south edge of north section.
+                        TryAddFromPair(
+                            south.KeyId, south.Label, south.NW, south.NE,
+                            north.KeyId, north.Label, north.SW, north.SE,
+                            verticalMode: false);
+                    }
+                }
+            }
+
+            if (EnableRoadAllowanceDiagnostics)
+            {
+                logger?.WriteLine($"RA-DIAG summary: candidates={diagCandidates}, eligible={diagEligible}, near30.17={diagMatched30}, near20.11={diagMatched20}, addPreClip={offsetSpecs.Count}");
+            }
+
+            if (offsetSpecs.Count == 0)
+            {
+                return ids;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                EnsureLayer(database, tr, "L-USEC");
+                var drawnSegmentKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var clippedSegments = new List<(Point2d A, Point2d B, string Tag)>();
+
+                foreach (var seg in offsetSpecs)
+                {
+                    var drewAny = false;
+                    foreach (var clipWindow in clipWindows)
+                    {
+                        if (!TryClipSegmentToWindow(seg.A, seg.B, clipWindow, out var a, out var b))
+                        {
+                            continue;
+                        }
+
+                        var key = string.Format(
+                            CultureInfo.InvariantCulture,
+                            "{0:0.###},{1:0.###},{2:0.###},{3:0.###}",
+                            a.X, a.Y, b.X, b.Y);
+                        if (!drawnSegmentKeys.Add(key))
+                        {
+                            continue;
+                        }
+
+                        clippedSegments.Add((a, b, seg.Tag));
+                        drewAny = true;
+
+                        if (EnableRoadAllowanceDiagnostics)
+                            logger?.WriteLine($"RA-DIAG DRAW {seg.Tag}: A=({a.X:0.###},{a.Y:0.###}) B=({b.X:0.###},{b.Y:0.###})");
+                    }
+
+                    if (!drewAny && EnableRoadAllowanceDiagnostics)
+                    {
+                        logger?.WriteLine($"RA-DIAG CLIP-OUT {seg.Tag}");
+                    }
+                }
+
+                var mergedSegments = MergeCollinearRoadAllowanceSegments(clippedSegments);
+                if (EnableRoadAllowanceDiagnostics)
+                {
+                    logger?.WriteLine($"RA-DIAG merge: raw={clippedSegments.Count}, merged={mergedSegments.Count}");
+                }
+
+                foreach (var seg in mergedSegments)
+                {
+                    var poly = new Polyline(2)
+                    {
+                        Layer = "L-USEC",
+                        ColorIndex = 256
+                    };
+                    poly.AddVertexAt(0, seg.A, 0, 0, 0);
+                    poly.AddVertexAt(1, seg.B, 0, 0, 0);
+                    var id = modelSpace.AppendEntity(poly);
+                    tr.AddNewlyCreatedDBObject(poly, true);
+                    ids.Add(id);
+                }
+
+                tr.Commit();
+            }
+
+            logger?.WriteLine($"Road allowance offset lines drawn: {ids.Count}");
+            return ids;
+        }
+
+        private static List<(Point2d A, Point2d B, string Tag)> MergeCollinearRoadAllowanceSegments(List<(Point2d A, Point2d B, string Tag)> input)
+        {
+            var merged = input == null
+                ? new List<(Point2d A, Point2d B, string Tag)>()
+                : new List<(Point2d A, Point2d B, string Tag)>(input);
+            if (merged.Count <= 1)
+            {
+                return merged;
+            }
+
+            bool changed;
+            do
+            {
+                changed = false;
+                for (var i = 0; i < merged.Count; i++)
+                {
+                    for (var j = i + 1; j < merged.Count; j++)
+                    {
+                        if (!TryMergeCollinearSegments(merged[i].A, merged[i].B, merged[j].A, merged[j].B, out var outA, out var outB))
+                        {
+                            continue;
+                        }
+
+                        merged[i] = (outA, outB, merged[i].Tag);
+                        merged.RemoveAt(j);
+                        changed = true;
+                        break;
+                    }
+
+                    if (changed)
+                    {
+                        break;
+                    }
+                }
+            } while (changed);
+
+            return merged;
+        }
+
+        private static bool TryMergeCollinearSegments(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d mergedA, out Point2d mergedB)
+        {
+            mergedA = a0;
+            mergedB = a1;
+
+            const double angleTol = 0.0015;
+            const double distanceTol = 0.20;
+            const double gapTol = 0.75;
+
+            var ua = a1 - a0;
+            var ub = b1 - b0;
+            var la = ua.Length;
+            var lb = ub.Length;
+            if (la <= 1e-6 || lb <= 1e-6)
+            {
+                return false;
+            }
+
+            var cross = Math.Abs((ua.X * ub.Y) - (ua.Y * ub.X)) / (la * lb);
+            if (cross > angleTol)
+            {
+                return false;
+            }
+
+            if (DistancePointToInfiniteLine(b0, a0, a1) > distanceTol ||
+                DistancePointToInfiniteLine(b1, a0, a1) > distanceTol)
+            {
+                return false;
+            }
+
+            var axis = ua / la;
+            var tA0 = 0.0;
+            var tA1 = la;
+            var tB0 = (b0 - a0).DotProduct(axis);
+            var tB1 = (b1 - a0).DotProduct(axis);
+
+            var aMin = Math.Min(tA0, tA1);
+            var aMax = Math.Max(tA0, tA1);
+            var bMin = Math.Min(tB0, tB1);
+            var bMax = Math.Max(tB0, tB1);
+
+            if (Math.Min(aMax, bMax) < (Math.Max(aMin, bMin) - gapTol))
+            {
+                return false;
+            }
+
+            var tMin = Math.Min(aMin, bMin);
+            var tMax = Math.Max(aMax, bMax);
+            mergedA = a0 + (axis * tMin);
+            mergedB = a0 + (axis * tMax);
+            return mergedA.GetDistanceTo(mergedB) > 1e-4;
+        }
+
+        private static void CleanupContextSectionOverlaps(Database database, IReadOnlyCollection<ObjectId> contextSectionIds, Logger? logger)
+        {
+            if (database == null || contextSectionIds == null || contextSectionIds.Count == 0)
+            {
+                return;
+            }
+
+            var contextSet = new HashSet<ObjectId>(contextSectionIds);
+            var contextSegments = new List<(ObjectId Id, Point2d A, Point2d B, double Length)>();
+            var otherSegments = new List<(ObjectId Id, Point2d A, Point2d B, double Length)>();
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Polyline pl))
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(pl.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(pl.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (pl.Closed || pl.NumberOfVertices != 2)
+                    {
+                        continue;
+                    }
+
+                    var a = pl.GetPoint2dAt(0);
+                    var b = pl.GetPoint2dAt(1);
+                    var len = a.GetDistanceTo(b);
+                    if (len <= 1e-4)
+                    {
+                        continue;
+                    }
+
+                    if (contextSet.Contains(id))
+                    {
+                        contextSegments.Add((id, a, b, len));
+                    }
+                    else
+                    {
+                        otherSegments.Add((id, a, b, len));
+                    }
+                }
+
+                var toErase = new HashSet<ObjectId>();
+                // Remove context segments that duplicate/overlap any existing section linework.
+                foreach (var c in contextSegments)
+                {
+                    foreach (var o in otherSegments)
+                    {
+                        if (!AreSegmentsDuplicateOrCollinearOverlap(c.A, c.B, o.A, o.B))
+                        {
+                            continue;
+                        }
+
+                        toErase.Add(c.Id);
+                        break;
+                    }
+                }
+
+                // De-dupe within context fragments themselves: keep longer one.
+                for (var i = 0; i < contextSegments.Count; i++)
+                {
+                    var s1 = contextSegments[i];
+                    if (toErase.Contains(s1.Id))
+                    {
+                        continue;
+                    }
+
+                    for (var j = i + 1; j < contextSegments.Count; j++)
+                    {
+                        var s2 = contextSegments[j];
+                        if (toErase.Contains(s2.Id))
+                        {
+                            continue;
+                        }
+
+                        if (!AreSegmentsDuplicateOrCollinearOverlap(s1.A, s1.B, s2.A, s2.B))
+                        {
+                            continue;
+                        }
+
+                        var eraseId = s1.Length < s2.Length ? s1.Id : s2.Id;
+                        if (Math.Abs(s1.Length - s2.Length) <= 0.01)
+                        {
+                            eraseId = s1.Id.Handle.Value > s2.Id.Handle.Value ? s1.Id : s2.Id;
+                        }
+
+                        toErase.Add(eraseId);
+                    }
+                }
+
+                var erased = 0;
+                foreach (var id in toErase)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity ent) || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    ent.Erase();
+                    erased++;
+                }
+
+                tr.Commit();
+                if (erased > 0)
+                {
+                    logger?.WriteLine($"Cleanup: erased {erased} overlapping context L-SEC/L-USEC segment(s).");
+                }
+            }
+        }
+
+        private static void CleanupGeneratedRoadAllowanceOverlaps(Database database, IReadOnlyCollection<ObjectId> generatedRoadAllowanceIds, Logger? logger)
+        {
+            if (database == null || generatedRoadAllowanceIds == null || generatedRoadAllowanceIds.Count == 0)
+            {
+                return;
+            }
+
+            var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds);
+            var generatedSegments = new List<(ObjectId Id, Point2d A, Point2d B)>();
+            var existingSegments = new List<(ObjectId Id, Point2d A, Point2d B)>();
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
+                {
+                    a = default;
+                    b = default;
+                    if (ent == null)
+                    {
+                        return false;
+                    }
+
+                    if (ent is Polyline pl)
+                    {
+                        if (pl.Closed || pl.NumberOfVertices != 2)
+                        {
+                            return false;
+                        }
+
+                        a = pl.GetPoint2dAt(0);
+                        b = pl.GetPoint2dAt(1);
+                        return a.GetDistanceTo(b) > 1e-4;
+                    }
+
+                    if (ent is Line ln)
+                    {
+                        a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                        b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                        return a.GetDistanceTo(b) > 1e-4;
+                    }
+
+                    return false;
+                }
+
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent))
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(ent.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(ent.Layer, "L-SECTION-LSD", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(ent, out var a, out var b))
+                    {
+                        continue;
+                    }
+
+                    if (generatedSet.Contains(id))
+                    {
+                        generatedSegments.Add((id, a, b));
+                    }
+                    else
+                    {
+                        existingSegments.Add((id, a, b));
+                    }
+                }
+
+                var toErase = new HashSet<ObjectId>();
+                foreach (var g in generatedSegments)
+                {
+                    foreach (var e in existingSegments)
+                    {
+                        if (!AreSegmentsDuplicateOrCollinearOverlap(g.A, g.B, e.A, e.B))
+                        {
+                            continue;
+                        }
+
+                        toErase.Add(g.Id);
+                        break;
+                    }
+                }
+
+                var erased = 0;
+                foreach (var id in toErase)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity ent) || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    ent.Erase();
+                    erased++;
+                }
+
+                tr.Commit();
+                if (erased > 0)
+                {
+                    logger?.WriteLine($"Cleanup: erased {erased} generated RA segment(s) overlapping existing section linework.");
+                }
+            }
+        }
+
+        private static bool AreSegmentsDuplicateOrCollinearOverlap(Point2d a0, Point2d a1, Point2d b0, Point2d b1)
+        {
+            const double endpointTol = 0.05;
+            const double angleTol = 0.001;
+            const double distanceTol = 0.10;
+            const double overlapTol = 0.05;
+
+            bool Near(Point2d p, Point2d q) => p.GetDistanceTo(q) <= endpointTol;
+            if ((Near(a0, b0) && Near(a1, b1)) || (Near(a0, b1) && Near(a1, b0)))
+            {
+                return true;
+            }
+
+            var ua = a1 - a0;
+            var ub = b1 - b0;
+            var la = ua.Length;
+            var lb = ub.Length;
+            if (la <= 1e-6 || lb <= 1e-6)
+            {
+                return false;
+            }
+
+            var cross = Math.Abs((ua.X * ub.Y) - (ua.Y * ub.X)) / (la * lb);
+            if (cross > angleTol)
+            {
+                return false;
+            }
+
+            if (DistancePointToInfiniteLine(b0, a0, a1) > distanceTol ||
+                DistancePointToInfiniteLine(b1, a0, a1) > distanceTol)
+            {
+                return false;
+            }
+
+            var axis = ua / la;
+            var aMin = 0.0;
+            var aMax = la;
+            var tB0 = (b0 - a0).DotProduct(axis);
+            var tB1 = (b1 - a0).DotProduct(axis);
+            var bMin = Math.Min(tB0, tB1);
+            var bMax = Math.Max(tB0, tB1);
+            var overlap = Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
+            return overlap > overlapTol;
+        }
+
+        private static double DistancePointToInfiniteLine(Point2d p, Point2d a, Point2d b)
+        {
+            var ab = b - a;
+            var len = ab.Length;
+            if (len <= 1e-9)
+            {
+                return p.GetDistanceTo(a);
+            }
+
+            return Math.Abs((ab.X * (p.Y - a.Y)) - (ab.Y * (p.X - a.X))) / len;
+        }
+
+        private static bool TryClipSegmentToWindow(Point2d start, Point2d end, Extents3d? window, out Point2d clippedStart, out Point2d clippedEnd)
+        {
+            clippedStart = start;
+            clippedEnd = end;
+            if (!window.HasValue)
+            {
+                return start.GetDistanceTo(end) > 1e-6;
+            }
+
+            var w = window.Value;
+            var xmin = w.MinPoint.X;
+            var xmax = w.MaxPoint.X;
+            var ymin = w.MinPoint.Y;
+            var ymax = w.MaxPoint.Y;
+
+            double x0 = start.X;
+            double y0 = start.Y;
+            double x1 = end.X;
+            double y1 = end.Y;
+            double dx = x1 - x0;
+            double dy = y1 - y0;
+            double t0 = 0.0;
+            double t1 = 1.0;
+
+            bool Clip(double p, double q)
+            {
+                if (Math.Abs(p) <= 1e-12)
+                {
+                    return q >= 0.0;
+                }
+
+                var r = q / p;
+                if (p < 0.0)
+                {
+                    if (r > t1) return false;
+                    if (r > t0) t0 = r;
+                }
+                else
+                {
+                    if (r < t0) return false;
+                    if (r < t1) t1 = r;
+                }
+
+                return true;
+            }
+
+            if (!Clip(-dx, x0 - xmin) ||
+                !Clip(dx, xmax - x0) ||
+                !Clip(-dy, y0 - ymin) ||
+                !Clip(dy, ymax - y0) ||
+                t1 < t0)
+            {
+                return false;
+            }
+
+            clippedStart = new Point2d(x0 + t0 * dx, y0 + t0 * dy);
+            clippedEnd = new Point2d(x0 + t1 * dx, y0 + t1 * dy);
+            return clippedStart.GetDistanceTo(clippedEnd) > 1e-6;
         }
 
         private static SectionBuildResult DrawSectionFromIndex(
@@ -1607,7 +2824,7 @@ namespace AtsBackgroundBuilder
                 var sectionPolyline = new Polyline(outline.Vertices.Count)
                 {
                     Closed = outline.Closed,
-                    Layer = normalizedSecType,
+                    Layer = "L-QSEC-BOX",
                     ColorIndex = 256
                 };
 
@@ -1622,6 +2839,31 @@ namespace AtsBackgroundBuilder
 
                 if (TryBuildQuarterMap(sectionPolyline, out var quarterMap, out var anchors))
                 {
+                    var eastUnit = GetUnitVector(anchors.Left, anchors.Right, new Vector2d(1, 0));
+                    var northUnit = GetUnitVector(anchors.Bottom, anchors.Top, new Vector2d(0, 1));
+                    if (TryGetQuarterCorner(sectionPolyline, eastUnit, northUnit, QuarterCorner.NorthWest, out var nw) &&
+                        TryGetQuarterCorner(sectionPolyline, eastUnit, northUnit, QuarterCorner.NorthEast, out var ne) &&
+                        TryGetQuarterCorner(sectionPolyline, eastUnit, northUnit, QuarterCorner.SouthWest, out var sw) &&
+                        TryGetQuarterCorner(sectionPolyline, eastUnit, northUnit, QuarterCorner.SouthEast, out var se))
+                    {
+                        foreach (var id in DrawSectionBoundaryQuarterSegmentPolylines(
+                            modelSpace,
+                            transaction,
+                            nw,
+                            ne,
+                            sw,
+                            se,
+                            normalizedSecType,
+                            clipToWindow: null,
+                            anchors.Top,
+                            anchors.Right,
+                            anchors.Bottom,
+                            anchors.Left))
+                        {
+                            quarterHelperEntityIds.Add(id);
+                        }
+                    }
+
                     foreach (var quarter in quarterMap)
                     {
                         quarter.Value.Layer = "L-QSEC-BOX";
@@ -1690,16 +2932,11 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            var isLsec = string.Equals(secType, "L-SEC", StringComparison.OrdinalIgnoreCase);
             var lsdLayer = "L-SECTION-LSD";
             EnsureLayer(database, transaction, lsdLayer);
 
             var eastUnit = GetUnitVector(sectionAnchors.Left, sectionAnchors.Right, new Vector2d(1, 0));
             var northUnit = GetUnitVector(sectionAnchors.Bottom, sectionAnchors.Top, new Vector2d(0, 1));
-            var westUnit = -eastUnit;
-            var southUnit = -northUnit;
-
-            var usecSouthExtension = !isLsec && IsUsecSouthExtensionSection(key.Section);
 
             foreach (var pair in quarterMap)
             {
@@ -1709,32 +2946,6 @@ namespace AtsBackgroundBuilder
                 var verticalEnd = quarterAnchors.Bottom;
                 var horizontalStart = quarterAnchors.Left;
                 var horizontalEnd = quarterAnchors.Right;
-
-                if (!isLsec)
-                {
-                    if (pair.Key == QuarterSelection.NorthWest)
-                    {
-                        verticalStart = GetTrimmedNorthMidpoint(pair.Value, eastUnit, northUnit, 10.06, quarterAnchors.Top);
-                    }
-
-                    if (pair.Key == QuarterSelection.NorthWest || pair.Key == QuarterSelection.SouthWest)
-                    {
-                        horizontalStart = OffsetPoint(horizontalStart, westUnit, 10.06);
-                    }
-
-                    if (usecSouthExtension &&
-                        (pair.Key == QuarterSelection.SouthWest || pair.Key == QuarterSelection.SouthEast))
-                    {
-                        verticalEnd = OffsetPoint(verticalEnd, southUnit, 10.06);
-                    }
-
-                    // L-USEC special: move the NW/SW N-S LSD split line 10.06 west.
-                    if (pair.Key == QuarterSelection.NorthWest || pair.Key == QuarterSelection.SouthWest)
-                    {
-                        verticalStart = OffsetPoint(verticalStart, westUnit, 10.06);
-                        verticalEnd = OffsetPoint(verticalEnd, westUnit, 10.06);
-                    }
-                }
 
                 var vertical = new Line(
                     new Point3d(verticalStart.X, verticalStart.Y, 0),
@@ -1762,6 +2973,138 @@ namespace AtsBackgroundBuilder
                     0.0);
                 InsertAndExplodeLsdLabelBlock(database, transaction, modelSpace, editor, pair.Key, labelCenter, lsdLayer);
             }
+        }
+
+        private static List<ObjectId> DrawSectionBoundaryQuarterSegmentPolylines(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            Point2d nw,
+            Point2d ne,
+            Point2d sw,
+            Point2d se,
+            string secType,
+            Extents3d? clipToWindow,
+            Point2d? northQuarter = null,
+            Point2d? eastQuarter = null,
+            Point2d? southQuarter = null,
+            Point2d? westQuarter = null)
+        {
+            var ids = new List<ObjectId>();
+            if (modelSpace == null || transaction == null)
+            {
+                return ids;
+            }
+
+            var wMid = westQuarter ?? Midpoint(nw, sw);
+            var eMid = eastQuarter ?? Midpoint(ne, se);
+            var nMid = northQuarter ?? Midpoint(nw, ne);
+            var sMid = southQuarter ?? Midpoint(sw, se);
+
+            var segments = new[]
+            {
+                (A: sw, B: sMid),
+                (A: sMid, B: se),
+                (A: se, B: eMid),
+                (A: eMid, B: ne),
+                (A: ne, B: nMid),
+                (A: nMid, B: nw),
+                (A: nw, B: wMid),
+                (A: wMid, B: sw),
+            };
+
+            foreach (var seg in segments)
+            {
+                if (!TryClipSegmentToWindow(seg.A, seg.B, clipToWindow, out var a, out var b))
+                {
+                    continue;
+                }
+
+                var poly = new Polyline(2)
+                {
+                    Layer = secType,
+                    ColorIndex = 256
+                };
+                poly.AddVertexAt(0, a, 0, 0, 0);
+                poly.AddVertexAt(1, b, 0, 0, 0);
+                var id = modelSpace.AppendEntity(poly);
+                transaction.AddNewlyCreatedDBObject(poly, true);
+                ids.Add(id);
+            }
+
+            return ids;
+        }
+
+        private static List<ObjectId> DrawSectionBoundaryQuarterSegmentPolylines(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            Point2d nw,
+            Point2d ne,
+            Point2d sw,
+            Point2d se,
+            string secType,
+            IReadOnlyList<Extents3d> clipWindows,
+            Point2d? northQuarter = null,
+            Point2d? eastQuarter = null,
+            Point2d? southQuarter = null,
+            Point2d? westQuarter = null)
+        {
+            if (clipWindows == null || clipWindows.Count == 0)
+            {
+                return DrawSectionBoundaryQuarterSegmentPolylines(
+                    modelSpace, transaction, nw, ne, sw, se, secType, (Extents3d?)null,
+                    northQuarter, eastQuarter, southQuarter, westQuarter);
+            }
+
+            var ids = new List<ObjectId>();
+            var wMid = westQuarter ?? Midpoint(nw, sw);
+            var eMid = eastQuarter ?? Midpoint(ne, se);
+            var nMid = northQuarter ?? Midpoint(nw, ne);
+            var sMid = southQuarter ?? Midpoint(sw, se);
+            var segments = new[]
+            {
+                (A: sw, B: sMid),
+                (A: sMid, B: se),
+                (A: se, B: eMid),
+                (A: eMid, B: ne),
+                (A: ne, B: nMid),
+                (A: nMid, B: nw),
+                (A: nw, B: wMid),
+                (A: wMid, B: sw),
+            };
+
+            var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var seg in segments)
+            {
+                foreach (var win in clipWindows)
+                {
+                    if (!TryClipSegmentToWindow(seg.A, seg.B, win, out var a, out var b))
+                    {
+                        continue;
+                    }
+
+                    var key = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0:0.###},{1:0.###},{2:0.###},{3:0.###}",
+                        a.X, a.Y, b.X, b.Y);
+                    if (!dedupe.Add(key))
+                    {
+                        continue;
+                    }
+
+                    var poly = new Polyline(2)
+                    {
+                        Layer = secType,
+                        ColorIndex = 256
+                    };
+                    poly.AddVertexAt(0, a, 0, 0, 0);
+                    poly.AddVertexAt(1, b, 0, 0, 0);
+                    var id = modelSpace.AppendEntity(poly);
+                    transaction.AddNewlyCreatedDBObject(poly, true);
+                    ids.Add(id);
+                }
+            }
+
+            return ids;
         }
 
         private static void InsertAndExplodeLsdLabelBlock(
@@ -1974,6 +3317,963 @@ namespace AtsBackgroundBuilder
             return string.Equals(secType?.Trim(), "L-SEC", StringComparison.OrdinalIgnoreCase)
                 ? "L-SEC"
                 : "L-USEC";
+        }
+
+        private static string ResolveSectionType(
+            SectionKey key,
+            string requestedSecType,
+            IReadOnlyDictionary<string, string> inferredSecTypes)
+        {
+            var keyId = BuildSectionKeyId(key);
+            if (inferredSecTypes != null &&
+                inferredSecTypes.TryGetValue(keyId, out var inferred) &&
+                !string.IsNullOrWhiteSpace(inferred))
+            {
+                return NormalizeSecType(inferred);
+            }
+
+            // "AUTO" or unknown values normalize to L-USEC.
+            return NormalizeSecType(requestedSecType);
+        }
+
+        private static Dictionary<string, string> InferSectionTypes(
+            IReadOnlyList<SectionRequest> requests,
+            IReadOnlyList<string> searchFolders,
+            Logger logger)
+        {
+            var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (requests == null || requests.Count == 0)
+            {
+                return resolved;
+            }
+
+            var uniqueTownships = BuildContextTownshipKeys(requests).ToList();
+            var entries = new List<(SectionKey Key, SectionSpatialInfo Info)>();
+            try
+            {
+                foreach (var townshipKey in uniqueTownships)
+                {
+                    if (!TryParseTownshipKey(townshipKey, out var zone, out var meridian, out var range, out var township))
+                    {
+                        continue;
+                    }
+
+                    for (var section = 1; section <= 36; section++)
+                    {
+                        var key = new SectionKey(zone, section.ToString(CultureInfo.InvariantCulture), township, range, meridian);
+                        if (!TryLoadSectionOutline(searchFolders, key, logger, out var outline))
+                        {
+                            continue;
+                        }
+
+                        if (TryCreateSectionSpatialInfo(outline, section, out var info))
+                        {
+                            entries.Add((key, info));
+                        }
+                    }
+                }
+
+                if (entries.Count == 0)
+                {
+                    return resolved;
+                }
+
+                foreach (var entry in entries)
+                {
+                    var peerInfos = entries
+                        .Where(e => e.Info != null &&
+                                    e.Key.Zone == entry.Key.Zone &&
+                                    string.Equals(NormalizeNumberToken(e.Key.Meridian), NormalizeNumberToken(entry.Key.Meridian), StringComparison.OrdinalIgnoreCase))
+                        .Select(e => e.Info)
+                        .ToList();
+
+                    var haveEastGap = TryMeasureRoadAllowanceGap(entry.Info, peerInfos, eastDirection: true, out var eastGap);
+                    var haveSouthGap = TryMeasureRoadAllowanceGap(entry.Info, peerInfos, eastDirection: false, out var southGap);
+
+                    var inferred = InferSecTypeFromRoadAllowance(haveEastGap ? eastGap : (double?)null, haveSouthGap ? southGap : (double?)null);
+                    var keyId = BuildSectionKeyId(entry.Key);
+                    resolved[keyId] = inferred;
+
+                    logger?.WriteLine(
+                        $"SEC TYPE inferred: {keyId} -> {inferred} (eastGap={(haveEastGap ? eastGap.ToString("0.###", CultureInfo.InvariantCulture) : "n/a")}, southGap={(haveSouthGap ? southGap.ToString("0.###", CultureInfo.InvariantCulture) : "n/a")})");
+                }
+            }
+            finally
+            {
+                DisposeSectionInfos(entries.Select(e => e.Info).ToList());
+            }
+
+            return resolved;
+        }
+
+        private static string InferSecTypeFromRoadAllowance(double? eastGap, double? southGap)
+        {
+            var gaps = new List<double>();
+            if (eastGap.HasValue) gaps.Add(eastGap.Value);
+            if (southGap.HasValue) gaps.Add(southGap.Value);
+
+            // Blind/correction lines can produce near-zero or overlap gaps; treat as unknown.
+            var measurableGaps = gaps.Where(g => g >= 1.0).ToList();
+            if (measurableGaps.Count == 0)
+            {
+                return "L-USEC";
+            }
+
+            var hasUsec = measurableGaps.Any(g => Math.Abs(g - RoadAllowanceUsecWidthMeters) <= RoadAllowanceWidthToleranceMeters);
+            var hasSec = measurableGaps.Any(g => Math.Abs(g - RoadAllowanceSecWidthMeters) <= RoadAllowanceWidthToleranceMeters);
+
+            if (hasUsec && !hasSec)
+            {
+                return "L-USEC";
+            }
+
+            if (hasSec && !hasUsec)
+            {
+                return "L-SEC";
+            }
+
+            if (hasSec && hasUsec)
+            {
+                // Prefer surveyed when evidence is mixed so shared 20.11 boundaries
+                // on adjacent sections resolve to the same section layer.
+                return "L-SEC";
+            }
+
+            var nearestUsec = measurableGaps.Min(g => Math.Abs(g - RoadAllowanceUsecWidthMeters));
+            var nearestSec = measurableGaps.Min(g => Math.Abs(g - RoadAllowanceSecWidthMeters));
+            return nearestSec < nearestUsec ? "L-SEC" : "L-USEC";
+        }
+
+        private static bool TryMeasureRoadAllowanceGap(
+            SectionSpatialInfo source,
+            IReadOnlyList<SectionSpatialInfo> townshipInfos,
+            bool eastDirection,
+            out double gapMeters)
+        {
+            gapMeters = 0.0;
+            if (source == null || townshipInfos == null || townshipInfos.Count == 0)
+            {
+                return false;
+            }
+
+            var sourceCenter = GetSectionCenter(source);
+            var bestGap = double.MaxValue;
+            var found = false;
+
+            foreach (var candidate in townshipInfos)
+            {
+                if (candidate == null || ReferenceEquals(candidate, source))
+                {
+                    continue;
+                }
+
+                var candidateCenter = GetSectionCenter(candidate);
+                var delta = candidateCenter - sourceCenter;
+                var eastDelta = delta.DotProduct(source.EastUnit);
+                var northDelta = delta.DotProduct(source.NorthUnit);
+
+                if (eastDirection)
+                {
+                    if (Math.Abs(northDelta) > Math.Max(source.Height, candidate.Height) * 0.60)
+                        continue;
+
+                    var projectedGap = Math.Abs(eastDelta) - (source.Width * 0.5) - (candidate.Width * 0.5);
+                    if (projectedGap < -RoadAllowanceWidthToleranceMeters)
+                        continue;
+                    // Ignore near-zero/overlap artifacts from correction-line geometry.
+                    if (projectedGap < 1.0)
+                        continue;
+
+                    if (!found || projectedGap < bestGap)
+                    {
+                        bestGap = projectedGap;
+                        found = true;
+                    }
+                }
+                else
+                {
+                    if (Math.Abs(eastDelta) > Math.Max(source.Width, candidate.Width) * 0.60)
+                        continue;
+
+                    var projectedGap = Math.Abs(northDelta) - (source.Height * 0.5) - (candidate.Height * 0.5);
+                    if (projectedGap < -RoadAllowanceWidthToleranceMeters)
+                        continue;
+                    // Ignore near-zero/overlap artifacts from correction-line geometry.
+                    if (projectedGap < 1.0)
+                        continue;
+
+                    if (!found || projectedGap < bestGap)
+                    {
+                        bestGap = projectedGap;
+                        found = true;
+                    }
+                }
+            }
+
+            if (!found)
+            {
+                return false;
+            }
+
+            gapMeters = Math.Max(0.0, bestGap);
+            return true;
+        }
+
+        private static Point2d GetSectionCenter(SectionSpatialInfo section)
+        {
+            return section.SouthWest +
+                   (section.EastUnit * (section.Width * 0.5)) +
+                   (section.NorthUnit * (section.Height * 0.5));
+        }
+
+        private static void DrawBufferedQuarterWindowsOnDefpoints(
+            Database database,
+            IEnumerable<ObjectId> quarterIds,
+            double buffer,
+            Logger? logger)
+        {
+            if (database == null || quarterIds == null)
+            {
+                return;
+            }
+
+            var quarterIdList = quarterIds.Distinct().ToList();
+            logger?.WriteLine($"DEFPOINTS BUFFER: requested quarter ids = {quarterIdList.Count}, buffer={buffer:0.###}m");
+            var offsetPolylines = BuildBufferedQuarterOffsetPolylines(database, quarterIdList, buffer, logger);
+            if (offsetPolylines.Count == 0)
+            {
+                logger?.WriteLine("DEFPOINTS BUFFER: no offset polylines created.");
+                return;
+            }
+
+            List<Polyline> unionBoundaries;
+            try
+            {
+                unionBoundaries = BuildUnionBoundaries(offsetPolylines, logger);
+            }
+            finally
+            {
+                foreach (var poly in offsetPolylines)
+                {
+                    poly.Dispose();
+                }
+            }
+
+            if (unionBoundaries.Count == 0)
+            {
+                logger?.WriteLine("DEFPOINTS BUFFER: union produced 0 boundaries.");
+                return;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                EnsureDefpointsLayer(database, tr);
+                ClearPreviousBufferedDefpointsWindows(tr, ms);
+
+                var count = 0;
+                foreach (var boundary in unionBoundaries)
+                {
+                    try
+                    {
+                        logger?.WriteLine($"DEFPOINTS BUFFER: draw boundary area={Math.Abs(boundary.Area):0.###} verts={boundary.NumberOfVertices}");
+                    }
+                    catch
+                    {
+                    }
+
+                    boundary.Layer = "DEFPOINTS";
+                    boundary.ColorIndex = 8;
+                    ms.AppendEntity(boundary);
+                    tr.AddNewlyCreatedDBObject(boundary, true);
+                    count++;
+                }
+
+                tr.Commit();
+                logger?.WriteLine($"Buffered DEFPOINTS windows drawn: {count} outline(s).");
+            }
+
+            foreach (var boundary in unionBoundaries)
+            {
+                if (!boundary.IsDisposed && boundary.Database == null)
+                {
+                    boundary.Dispose();
+                }
+            }
+        }
+
+        private static void ClearPreviousBufferedDefpointsWindows(Transaction tr, BlockTableRecord modelSpace)
+        {
+            if (tr == null || modelSpace == null)
+            {
+                return;
+            }
+
+            foreach (ObjectId id in modelSpace)
+            {
+                if (!(tr.GetObject(id, OpenMode.ForRead, false) is Polyline pl))
+                {
+                    continue;
+                }
+
+                if (!pl.Closed)
+                {
+                    continue;
+                }
+
+                if (!string.Equals(pl.Layer, "DEFPOINTS", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (pl.ColorIndex != 8)
+                {
+                    continue;
+                }
+
+                pl.UpgradeOpen();
+                pl.Erase();
+            }
+        }
+
+        private static List<Polyline> BuildBufferedQuarterOffsetPolylines(
+            Database database,
+            IEnumerable<ObjectId> quarterIds,
+            double buffer,
+            Logger? logger)
+        {
+            var result = new List<Polyline>();
+            if (database == null || quarterIds == null || buffer <= 0.0)
+            {
+                return result;
+            }
+
+            var attempted = 0;
+            var skippedInvalid = 0;
+            var offsetFailed = 0;
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                foreach (var id in quarterIds.Distinct())
+                {
+                    if (id.IsNull || id.IsErased)
+                    {
+                        skippedInvalid++;
+                        continue;
+                    }
+
+                    var quarter = tr.GetObject(id, OpenMode.ForRead, false) as Polyline;
+                    if (quarter == null || !quarter.Closed || quarter.NumberOfVertices < 3)
+                    {
+                        skippedInvalid++;
+                        continue;
+                    }
+
+                    attempted++;
+                    if (TryCreateOutsideOffsetPolyline(quarter, buffer, out var outside, logger))
+                    {
+                        result.Add(outside);
+                    }
+                    else
+                    {
+                        offsetFailed++;
+                        logger?.WriteLine($"DEFPOINTS BUFFER: offset failed for quarter id {id}.");
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            logger?.WriteLine($"DEFPOINTS BUFFER: attempted={attempted}, created={result.Count}, skippedInvalid={skippedInvalid}, failed={offsetFailed}");
+            return result;
+        }
+
+        private static bool TryCreateOutsideOffsetPolyline(Polyline source, double distance, [NotNullWhen(true)] out Polyline? outside, Logger? logger)
+        {
+            outside = null;
+            var candidates = new List<Polyline>();
+            try
+            {
+                CollectOffsetCandidates(source, distance, candidates);
+                CollectOffsetCandidates(source, -distance, candidates);
+                if (candidates.Count == 0)
+                {
+                    logger?.WriteLine("DEFPOINTS BUFFER: no offset candidates produced by GetOffsetCurves.");
+                    return false;
+                }
+
+                Polyline? best = null;
+                var bestArea = double.MinValue;
+                foreach (var c in candidates)
+                {
+                    double area;
+                    try { area = Math.Abs(c.Area); }
+                    catch { area = 0.0; }
+                    if (area > bestArea)
+                    {
+                        bestArea = area;
+                        best = c;
+                    }
+                }
+
+                if (best == null)
+                {
+                    logger?.WriteLine("DEFPOINTS BUFFER: candidates existed but no best offset selected.");
+                    return false;
+                }
+
+                outside = (Polyline)best.Clone();
+                logger?.WriteLine($"DEFPOINTS BUFFER: selected offset area={bestArea:0.###}, candidates={candidates.Count}");
+                return true;
+            }
+            finally
+            {
+                foreach (var c in candidates)
+                {
+                    c.Dispose();
+                }
+            }
+        }
+
+        private static void CollectOffsetCandidates(Polyline source, double distance, List<Polyline> destination)
+        {
+            DBObjectCollection? offsets = null;
+            try
+            {
+                offsets = source.GetOffsetCurves(distance);
+                if (offsets == null)
+                {
+                    return;
+                }
+
+                foreach (DBObject obj in offsets)
+                {
+                    if (obj is Polyline pl && pl.Closed && pl.NumberOfVertices >= 3)
+                    {
+                        destination.Add((Polyline)pl.Clone());
+                    }
+                }
+            }
+            catch
+            {
+            }
+            finally
+            {
+                if (offsets != null)
+                {
+                    foreach (DBObject obj in offsets)
+                    {
+                        obj.Dispose();
+                    }
+                }
+            }
+        }
+
+        private static List<Polyline> BuildUnionBoundaries(List<Polyline> polylines, Logger? logger)
+        {
+            var output = new List<Polyline>();
+            if (polylines == null || polylines.Count == 0)
+            {
+                return output;
+            }
+
+            Region? union = null;
+            try
+            {
+                logger?.WriteLine($"DEFPOINTS BUFFER: union input count={polylines.Count}");
+                foreach (var poly in polylines)
+                {
+                    var region = CreateRegionFromPolyline(poly);
+                    if (region == null)
+                    {
+                        logger?.WriteLine("DEFPOINTS BUFFER: CreateRegionFromPolyline returned null for one offset.");
+                        continue;
+                    }
+
+                    if (union == null)
+                    {
+                        union = region;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            union.BooleanOperation(BooleanOperationType.BoolUnite, region);
+                        }
+                        finally
+                        {
+                            region.Dispose();
+                        }
+                    }
+                }
+
+                if (union == null)
+                {
+                    return output;
+                }
+
+                var exploded = new DBObjectCollection();
+                union.Explode(exploded);
+                var explodedCurves = new List<Curve>();
+                foreach (DBObject obj in exploded)
+                {
+                    if (obj is Polyline pl && pl.Closed && pl.NumberOfVertices >= 3)
+                    {
+                        output.Add((Polyline)pl.Clone());
+                    }
+                    else if (obj is Curve curve)
+                    {
+                        explodedCurves.Add((Curve)curve.Clone());
+                    }
+                    obj.Dispose();
+                }
+
+                if (output.Count == 0)
+                {
+                    if (TryBuildClosedPolylinesFromCurves(explodedCurves, output))
+                    {
+                        logger?.WriteLine("DEFPOINTS BUFFER: union explode yielded curves; rebuilt closed boundary loop(s).");
+                    }
+                }
+
+                foreach (var curve in explodedCurves)
+                {
+                    curve.Dispose();
+                }
+
+                if (output.Count == 0)
+                {
+                    // Fallback: keep the per-quarter offsets instead of collapsing into one large
+                    // rectangle. This avoids pulling in unrelated neighboring sections.
+                    foreach (var poly in polylines)
+                    {
+                        if (poly == null || !poly.Closed || poly.NumberOfVertices < 3)
+                        {
+                            continue;
+                        }
+
+                        output.Add((Polyline)poly.Clone());
+                    }
+
+                    if (output.Count > 0)
+                    {
+                        logger?.WriteLine("DEFPOINTS BUFFER: union explode empty, used per-offset fallback (no convex hull).");
+                    }
+                }
+                logger?.WriteLine($"DEFPOINTS BUFFER: union output boundaries={output.Count}");
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("DEFPOINTS offset-union failed: " + ex.Message);
+            }
+            finally
+            {
+                union?.Dispose();
+            }
+
+            return output;
+        }
+
+        private static bool TryBuildClosedPolylinesFromCurves(List<Curve> curves, List<Polyline> output)
+        {
+            if (curves == null || curves.Count == 0 || output == null)
+            {
+                return false;
+            }
+
+            const double tol = 0.01;
+            var segments = new List<(Point2d A, Point2d B)>();
+            foreach (var curve in curves)
+            {
+                if (!(curve is Line line))
+                {
+                    continue;
+                }
+
+                var a = new Point2d(line.StartPoint.X, line.StartPoint.Y);
+                var b = new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                if (a.GetDistanceTo(b) <= tol)
+                {
+                    continue;
+                }
+
+                segments.Add((a, b));
+            }
+
+            if (segments.Count < 3)
+            {
+                return false;
+            }
+
+            var builtAny = false;
+            while (segments.Count > 0)
+            {
+                var loop = new List<Point2d>();
+                var first = segments[0];
+                segments.RemoveAt(0);
+                loop.Add(first.A);
+                loop.Add(first.B);
+
+                var closed = false;
+                while (true)
+                {
+                    var current = loop[loop.Count - 1];
+                    if (current.GetDistanceTo(loop[0]) <= tol)
+                    {
+                        closed = true;
+                        break;
+                    }
+
+                    var foundIndex = -1;
+                    var next = default(Point2d);
+                    for (var i = 0; i < segments.Count; i++)
+                    {
+                        var seg = segments[i];
+                        if (current.GetDistanceTo(seg.A) <= tol)
+                        {
+                            foundIndex = i;
+                            next = seg.B;
+                            break;
+                        }
+
+                        if (current.GetDistanceTo(seg.B) <= tol)
+                        {
+                            foundIndex = i;
+                            next = seg.A;
+                            break;
+                        }
+                    }
+
+                    if (foundIndex < 0)
+                    {
+                        break;
+                    }
+
+                    segments.RemoveAt(foundIndex);
+                    loop.Add(next);
+                }
+
+                if (!closed || loop.Count < 4)
+                {
+                    continue;
+                }
+
+                var poly = new Polyline(loop.Count - 1) { Closed = true };
+                for (var i = 0; i < loop.Count - 1; i++)
+                {
+                    poly.AddVertexAt(i, loop[i], 0, 0, 0);
+                }
+
+                if (poly.NumberOfVertices >= 3)
+                {
+                    output.Add(poly);
+                    builtAny = true;
+                }
+                else
+                {
+                    poly.Dispose();
+                }
+            }
+
+            return builtAny;
+        }
+
+        private static Polyline? BuildConvexHullPolyline(List<Polyline> polylines)
+        {
+            if (polylines == null || polylines.Count == 0)
+            {
+                return null;
+            }
+
+            var points = new List<Point2d>();
+            foreach (var poly in polylines)
+            {
+                if (poly == null || poly.NumberOfVertices < 3)
+                {
+                    continue;
+                }
+
+                for (var i = 0; i < poly.NumberOfVertices; i++)
+                {
+                    points.Add(poly.GetPoint2dAt(i));
+                }
+            }
+
+            var hull = ComputeConvexHull(points);
+            if (hull.Count < 3)
+            {
+                return null;
+            }
+
+            var result = new Polyline(hull.Count) { Closed = true };
+            for (var i = 0; i < hull.Count; i++)
+            {
+                result.AddVertexAt(i, hull[i], 0, 0, 0);
+            }
+
+            return result;
+        }
+
+        private static List<Point2d> ComputeConvexHull(List<Point2d> input)
+        {
+            var points = input
+                .Where(p => !double.IsNaN(p.X) && !double.IsNaN(p.Y) && !double.IsInfinity(p.X) && !double.IsInfinity(p.Y))
+                .Distinct(new Point2dApproxComparer(1e-6))
+                .OrderBy(p => p.X)
+                .ThenBy(p => p.Y)
+                .ToList();
+
+            if (points.Count <= 1)
+            {
+                return points;
+            }
+
+            var lower = new List<Point2d>();
+            foreach (var p in points)
+            {
+                while (lower.Count >= 2 && Cross(lower[lower.Count - 2], lower[lower.Count - 1], p) <= 0.0)
+                {
+                    lower.RemoveAt(lower.Count - 1);
+                }
+                lower.Add(p);
+            }
+
+            var upper = new List<Point2d>();
+            for (var i = points.Count - 1; i >= 0; i--)
+            {
+                var p = points[i];
+                while (upper.Count >= 2 && Cross(upper[upper.Count - 2], upper[upper.Count - 1], p) <= 0.0)
+                {
+                    upper.RemoveAt(upper.Count - 1);
+                }
+                upper.Add(p);
+            }
+
+            lower.RemoveAt(lower.Count - 1);
+            upper.RemoveAt(upper.Count - 1);
+            lower.AddRange(upper);
+            return lower;
+        }
+
+        private static double Cross(Point2d a, Point2d b, Point2d c)
+        {
+            var ab = b - a;
+            var ac = c - a;
+            return (ab.X * ac.Y) - (ab.Y * ac.X);
+        }
+
+        private sealed class Point2dApproxComparer : IEqualityComparer<Point2d>
+        {
+            private readonly double _eps;
+
+            public Point2dApproxComparer(double eps)
+            {
+                _eps = Math.Max(1e-9, eps);
+            }
+
+            public bool Equals(Point2d x, Point2d y)
+            {
+                return Math.Abs(x.X - y.X) <= _eps && Math.Abs(x.Y - y.Y) <= _eps;
+            }
+
+            public int GetHashCode(Point2d obj)
+            {
+                var qx = Math.Round(obj.X / _eps);
+                var qy = Math.Round(obj.Y / _eps);
+                return HashCode.Combine(qx, qy);
+            }
+        }
+
+        private static Region? CreateRegionFromPolyline(Polyline polyline)
+        {
+            DBObjectCollection? curves = null;
+            DBObjectCollection? regions = null;
+            try
+            {
+                curves = new DBObjectCollection();
+                curves.Add((Curve)polyline.Clone());
+                regions = Region.CreateFromCurves(curves);
+                if (regions == null || regions.Count == 0)
+                {
+                    return null;
+                }
+
+                var region = (Region)regions[0];
+                for (var i = 1; i < regions.Count; i++)
+                {
+                    regions[i]?.Dispose();
+                }
+                return region;
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                if (curves != null)
+                {
+                    foreach (DBObject c in curves)
+                    {
+                        c.Dispose();
+                    }
+                }
+            }
+        }
+
+        private static List<Extents2d> MergeIntersectingExtents(List<Extents2d> input)
+        {
+            var remaining = new List<Extents2d>(input);
+            var merged = new List<Extents2d>();
+            while (remaining.Count > 0)
+            {
+                var current = remaining[0];
+                remaining.RemoveAt(0);
+                var expanded = true;
+                while (expanded)
+                {
+                    expanded = false;
+                    for (var i = remaining.Count - 1; i >= 0; i--)
+                    {
+                        var other = remaining[i];
+                        if (!Extents2dIntersects(current, other))
+                        {
+                            continue;
+                        }
+
+                        current = UnionExtents2d(current, other);
+                        remaining.RemoveAt(i);
+                        expanded = true;
+                    }
+                }
+
+                merged.Add(current);
+            }
+
+            return merged;
+        }
+
+        private static bool Extents2dIntersects(Extents2d a, Extents2d b)
+        {
+            return !(a.MaxPoint.X < b.MinPoint.X ||
+                     a.MinPoint.X > b.MaxPoint.X ||
+                     a.MaxPoint.Y < b.MinPoint.Y ||
+                     a.MinPoint.Y > b.MaxPoint.Y);
+        }
+
+        private static Extents2d UnionExtents2d(Extents2d a, Extents2d b)
+        {
+            return new Extents2d(
+                new Point2d(Math.Min(a.MinPoint.X, b.MinPoint.X), Math.Min(a.MinPoint.Y, b.MinPoint.Y)),
+                new Point2d(Math.Max(a.MaxPoint.X, b.MaxPoint.X), Math.Max(a.MaxPoint.Y, b.MaxPoint.Y)));
+        }
+
+        private static void EnsureDefpointsLayer(Database database, Transaction transaction)
+        {
+            var lt = (LayerTable)transaction.GetObject(database.LayerTableId, OpenMode.ForRead);
+            if (lt.Has("DEFPOINTS"))
+            {
+                return;
+            }
+
+            lt.UpgradeOpen();
+            var rec = new LayerTableRecord
+            {
+                Name = "DEFPOINTS",
+                IsPlottable = false
+            };
+            lt.Add(rec);
+            transaction.AddNewlyCreatedDBObject(rec, true);
+        }
+
+        private static string BuildTownshipKey(SectionKey key)
+        {
+            return $"{key.Zone}|{NormalizeNumberToken(key.Meridian)}|{NormalizeNumberToken(key.Range)}|{NormalizeNumberToken(key.Township)}";
+        }
+
+        private static bool TryParsePositiveToken(string token, out int value)
+        {
+            value = 0;
+            var normalized = NormalizeNumberToken(token);
+            return int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out value) && value > 0;
+        }
+
+        private static HashSet<string> BuildContextTownshipKeys(IReadOnlyList<SectionRequest> requests)
+        {
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (requests == null || requests.Count == 0)
+            {
+                return keys;
+            }
+
+            foreach (var request in requests)
+            {
+                if (!TryParsePositiveToken(request.Key.Range, out var rangeNum) ||
+                    !TryParsePositiveToken(request.Key.Township, out var townshipNum))
+                {
+                    keys.Add(BuildTownshipKey(request.Key));
+                    continue;
+                }
+
+                for (var dRange = -1; dRange <= 1; dRange++)
+                {
+                    for (var dTownship = -1; dTownship <= 1; dTownship++)
+                    {
+                        var candidateRange = rangeNum + dRange;
+                        var candidateTownship = townshipNum + dTownship;
+                        if (candidateRange <= 0 || candidateTownship <= 0)
+                        {
+                            continue;
+                        }
+
+                        var key = new SectionKey(
+                            request.Key.Zone,
+                            "1",
+                            candidateTownship.ToString(CultureInfo.InvariantCulture),
+                            candidateRange.ToString(CultureInfo.InvariantCulture),
+                            request.Key.Meridian);
+                        keys.Add(BuildTownshipKey(key));
+                    }
+                }
+            }
+
+            return keys;
+        }
+
+        private static bool TryParseTownshipKey(
+            string townshipKey,
+            out int zone,
+            out string meridian,
+            out string range,
+            out string township)
+        {
+            zone = 0;
+            meridian = string.Empty;
+            range = string.Empty;
+            township = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(townshipKey))
+            {
+                return false;
+            }
+
+            var parts = townshipKey.Split('|');
+            if (parts.Length != 4)
+            {
+                return false;
+            }
+
+            if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out zone))
+            {
+                return false;
+            }
+
+            meridian = parts[1];
+            range = parts[2];
+            township = parts[3];
+            return !string.IsNullOrWhiteSpace(meridian) &&
+                   !string.IsNullOrWhiteSpace(range) &&
+                   !string.IsNullOrWhiteSpace(township);
         }
 
         private static bool IsUsecSouthExtensionSection(string section)
@@ -2798,6 +5098,18 @@ namespace AtsBackgroundBuilder
             [NotNullWhen(true)] out SectionOutline? outline)
         {
             outline = null;
+            var cacheKey = BuildSectionOutlineCacheKey(searchFolders, key);
+            lock (SectionOutlineCacheLock)
+            {
+                if (SectionOutlineCache.TryGetValue(cacheKey, out var cached))
+                {
+                    outline = cached == null
+                        ? null
+                        : new SectionOutline(new List<Point2d>(cached.Vertices), cached.Closed, cached.SourcePath);
+                    return outline != null;
+                }
+            }
+
             var checkedAny = false;
             foreach (var folder in searchFolders)
             {
@@ -2809,6 +5121,10 @@ namespace AtsBackgroundBuilder
                 checkedAny = true;
                 if (SectionIndexReader.TryLoadSectionOutline(folder, key, logger, out outline))
                 {
+                    lock (SectionOutlineCacheLock)
+                    {
+                        SectionOutlineCache[cacheKey] = new SectionOutline(new List<Point2d>(outline.Vertices), outline.Closed, outline.SourcePath);
+                    }
                     return true;
                 }
             }
@@ -2818,6 +5134,10 @@ namespace AtsBackgroundBuilder
                 logger.WriteLine($"No section index file found for zone {key.Zone}. Searched: {string.Join("; ", searchFolders)}");
             }
 
+            lock (SectionOutlineCacheLock)
+            {
+                SectionOutlineCache[cacheKey] = null;
+            }
             return false;
         }
 
@@ -2828,11 +5148,43 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
+            var cacheKey = string.Format(CultureInfo.InvariantCulture, "{0}|{1}", folder, zone);
+            lock (SectionOutlineCacheLock)
+            {
+                if (FolderIndexCache.TryGetValue(cacheKey, out var existsCached))
+                {
+                    return existsCached;
+                }
+            }
+
             var jsonl = Path.Combine(folder, $"Master_Sections.index_Z{zone}.jsonl");
             var csv = Path.Combine(folder, $"Master_Sections.index_Z{zone}.csv");
             var jsonlFallback = Path.Combine(folder, "Master_Sections.index.jsonl");
             var csvFallback = Path.Combine(folder, "Master_Sections.index.csv");
-            return File.Exists(jsonl) || File.Exists(csv) || File.Exists(jsonlFallback) || File.Exists(csvFallback);
+            var exists = File.Exists(jsonl) || File.Exists(csv) || File.Exists(jsonlFallback) || File.Exists(csvFallback);
+            lock (SectionOutlineCacheLock)
+            {
+                FolderIndexCache[cacheKey] = exists;
+            }
+
+            return exists;
+        }
+
+        private static string BuildSectionOutlineCacheKey(IReadOnlyList<string> searchFolders, SectionKey key)
+        {
+            var foldersKey = searchFolders == null
+                ? string.Empty
+                : string.Join(";", searchFolders.Select(f => (f ?? string.Empty).Trim()).Where(f => f.Length > 0));
+
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}|{1}|{2}|{3}|{4}|{5}",
+                key.Zone,
+                NormalizeNumberToken(key.Meridian),
+                NormalizeNumberToken(key.Range),
+                NormalizeNumberToken(key.Township),
+                NormalizeNumberToken(key.Section),
+                foldersKey);
         }
 
         private struct P3ImportSummary
@@ -4678,10 +7030,9 @@ namespace AtsBackgroundBuilder
             }
         }
 
-        private static string BuildSectionKeyId(SectionKey key, string secType)
+        private static string BuildSectionKeyId(SectionKey key)
         {
-            var normalizedSecType = NormalizeSecType(secType);
-            return $"Z{key.Zone}_SEC{key.Section}_TWP{key.Township}_RGE{key.Range}_MER{key.Meridian}_TYPE{normalizedSecType}";
+            return $"Z{key.Zone}_SEC{NormalizeNumberToken(key.Section)}_TWP{NormalizeNumberToken(key.Township)}_RGE{NormalizeNumberToken(key.Range)}_MER{NormalizeNumberToken(key.Meridian)}";
         }
 
         private static void PlaceQuarterSectionLabels(
@@ -4716,7 +7067,7 @@ namespace AtsBackgroundBuilder
 
                 var labelCount = 0;
                 var grouped = uniqueQuarterInfos.Values
-                    .GroupBy(info => BuildSectionKeyId(info.SectionKey, info.SecType))
+                    .GroupBy(info => BuildSectionKeyId(info.SectionKey))
                     .ToList();
 
                 foreach (var group in grouped)
@@ -5022,6 +7373,7 @@ namespace AtsBackgroundBuilder
             List<ObjectId> quarterPolylineIds,
             List<ObjectId> quarterHelperEntityIds,
             List<ObjectId> sectionPolylineIds,
+            List<ObjectId> contextSectionPolylineIds,
             List<ObjectId> sectionLabelEntityIds,
             Dictionary<ObjectId, int> sectionNumberByPolylineId,
             bool generatedFromIndex)
@@ -5031,6 +7383,7 @@ namespace AtsBackgroundBuilder
             QuarterPolylineIds = quarterPolylineIds ?? new List<ObjectId>();
             QuarterHelperEntityIds = quarterHelperEntityIds ?? new List<ObjectId>();
             SectionPolylineIds = sectionPolylineIds ?? new List<ObjectId>();
+            ContextSectionPolylineIds = contextSectionPolylineIds ?? new List<ObjectId>();
             SectionLabelEntityIds = sectionLabelEntityIds ?? new List<ObjectId>();
             SectionNumberByPolylineId = sectionNumberByPolylineId ?? new Dictionary<ObjectId, int>();
             GeneratedFromIndex = generatedFromIndex;
@@ -5040,6 +7393,7 @@ namespace AtsBackgroundBuilder
         public List<ObjectId> QuarterPolylineIds { get; }
         public List<ObjectId> QuarterHelperEntityIds { get; }
         public List<ObjectId> SectionPolylineIds { get; }
+        public List<ObjectId> ContextSectionPolylineIds { get; }
         public List<ObjectId> SectionLabelEntityIds { get; }
         public Dictionary<ObjectId, int> SectionNumberByPolylineId { get; }
         public bool GeneratedFromIndex { get; }
@@ -5110,11 +7464,11 @@ namespace AtsBackgroundBuilder
 
     public sealed class SectionRequest
     {
-        public SectionRequest(QuarterSelection quarter, SectionKey key, string secType = "L-USEC")
+        public SectionRequest(QuarterSelection quarter, SectionKey key, string secType = "AUTO")
         {
             Quarter = quarter;
             Key = key;
-            SecType = string.IsNullOrWhiteSpace(secType) ? "L-USEC" : secType.Trim().ToUpperInvariant();
+            SecType = string.IsNullOrWhiteSpace(secType) ? "AUTO" : secType.Trim().ToUpperInvariant();
         }
 
         public QuarterSelection Quarter { get; }
@@ -5202,3 +7556,5 @@ namespace AtsBackgroundBuilder
 }
 
 /////////////////////////////////////////////////////////////////////
+
+
