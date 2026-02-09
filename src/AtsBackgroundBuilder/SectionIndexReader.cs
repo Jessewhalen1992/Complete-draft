@@ -45,6 +45,24 @@ namespace AtsBackgroundBuilder
 
     public static class SectionIndexReader
     {
+        private sealed class FileIndexCacheEntry
+        {
+            public FileIndexCacheEntry(DateTime lastWriteUtc, Dictionary<string, SectionOutline> index)
+            {
+                LastWriteUtc = lastWriteUtc;
+                Index = index;
+            }
+
+            public DateTime LastWriteUtc { get; }
+            public Dictionary<string, SectionOutline> Index { get; }
+        }
+
+        private static readonly object FileIndexCacheLock = new object();
+        private static readonly Dictionary<string, FileIndexCacheEntry> JsonlFileIndexCache =
+            new Dictionary<string, FileIndexCacheEntry>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, FileIndexCacheEntry> CsvFileIndexCache =
+            new Dictionary<string, FileIndexCacheEntry>(StringComparer.OrdinalIgnoreCase);
+
         public static bool TryLoadSectionOutline(
             string baseFolder,
             SectionKey key,
@@ -99,115 +117,234 @@ namespace AtsBackgroundBuilder
         private static bool TryReadFromJsonl(string path, SectionKey key, [NotNullWhen(true)] out SectionOutline? outline)
         {
             outline = null;
-            var keySection = NormalizeKey(key.Section);
-            var keyTownship = NormalizeKey(key.Township);
-            var keyRange = NormalizeKey(key.Range);
-            var keyMeridian = NormalizeKey(key.Meridian);
-
-            foreach (var line in File.ReadLines(path))
+            var index = GetOrBuildJsonlFileIndex(path);
+            if (index == null)
             {
-                if (string.IsNullOrWhiteSpace(line))
-                {
-                    continue;
-                }
-
-                if (!TryParseJsonLine(line, out var record))
-                {
-                    continue;
-                }
-
-                if (record.Zone != key.Zone)
-                {
-                    continue;
-                }
-
-                if (!KeyEquals(record.Section, keySection) ||
-                    !KeyEquals(record.Township, keyTownship) ||
-                    !KeyEquals(record.Range, keyRange) ||
-                    !KeyEquals(record.Meridian, keyMeridian))
-                {
-                    continue;
-                }
-
-                outline = new SectionOutline(record.Vertices, record.Closed, path);
-                return true;
+                return false;
             }
 
-            return false;
+            var lookupKey = BuildLookupKey(key.Zone, key.Section, key.Township, key.Range, key.Meridian);
+            if (!index.TryGetValue(lookupKey, out var cached))
+            {
+                return false;
+            }
+
+            outline = CloneOutline(cached, path);
+            return true;
         }
 
         private static bool TryReadFromCsv(string path, SectionKey key, [NotNullWhen(true)] out SectionOutline? outline)
         {
             outline = null;
-            var keySection = NormalizeKey(key.Section);
-            var keyTownship = NormalizeKey(key.Township);
-            var keyRange = NormalizeKey(key.Range);
-            var keyMeridian = NormalizeKey(key.Meridian);
-
-            using (var reader = new StreamReader(path))
+            var index = GetOrBuildCsvFileIndex(path);
+            if (index == null)
             {
-                var headerLine = reader.ReadLine();
-                if (headerLine == null)
-                {
-                    return false;
-                }
+                return false;
+            }
 
-                var headers = ParseCsvLine(headerLine);
-                var indices = BuildHeaderIndex(headers);
-                while (!reader.EndOfStream)
+            var lookupKey = BuildLookupKey(key.Zone, key.Section, key.Township, key.Range, key.Meridian);
+            if (!index.TryGetValue(lookupKey, out var cached))
+            {
+                return false;
+            }
+
+            outline = CloneOutline(cached, path);
+            return true;
+        }
+
+        private static Dictionary<string, SectionOutline>? GetOrBuildJsonlFileIndex(string path)
+        {
+            if (!TryGetFileLastWriteUtc(path, out var lastWriteUtc))
+            {
+                return null;
+            }
+
+            lock (FileIndexCacheLock)
+            {
+                if (JsonlFileIndexCache.TryGetValue(path, out var cached) &&
+                    cached.LastWriteUtc == lastWriteUtc)
                 {
-                    var line = reader.ReadLine();
+                    return cached.Index;
+                }
+            }
+
+            var built = BuildJsonlFileIndex(path);
+            lock (FileIndexCacheLock)
+            {
+                JsonlFileIndexCache[path] = new FileIndexCacheEntry(lastWriteUtc, built);
+            }
+
+            return built;
+        }
+
+        private static Dictionary<string, SectionOutline>? GetOrBuildCsvFileIndex(string path)
+        {
+            if (!TryGetFileLastWriteUtc(path, out var lastWriteUtc))
+            {
+                return null;
+            }
+
+            lock (FileIndexCacheLock)
+            {
+                if (CsvFileIndexCache.TryGetValue(path, out var cached) &&
+                    cached.LastWriteUtc == lastWriteUtc)
+                {
+                    return cached.Index;
+                }
+            }
+
+            var built = BuildCsvFileIndex(path);
+            lock (FileIndexCacheLock)
+            {
+                CsvFileIndexCache[path] = new FileIndexCacheEntry(lastWriteUtc, built);
+            }
+
+            return built;
+        }
+
+        private static bool TryGetFileLastWriteUtc(string path, out DateTime lastWriteUtc)
+        {
+            lastWriteUtc = default;
+            try
+            {
+                lastWriteUtc = File.GetLastWriteTimeUtc(path);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static Dictionary<string, SectionOutline> BuildJsonlFileIndex(string path)
+        {
+            var index = new Dictionary<string, SectionOutline>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                foreach (var line in File.ReadLines(path))
+                {
                     if (string.IsNullOrWhiteSpace(line))
                     {
                         continue;
                     }
 
-                    var columns = ParseCsvLine(line);
-                    if (!TryGetColumn(columns, indices, "ZONE", out var zoneValue) ||
-                        !int.TryParse(NormalizeKey(zoneValue), NumberStyles.Integer, CultureInfo.InvariantCulture, out var zone) ||
-                        zone != key.Zone)
+                    if (!TryParseJsonLine(line, out var record))
                     {
                         continue;
                     }
 
-                    if (!TryGetColumn(columns, indices, "SEC", out var secValue) ||
-                        !TryGetColumn(columns, indices, "TWP", out var twpValue) ||
-                        !TryGetColumn(columns, indices, "RGE", out var rgeValue) ||
-                        !TryGetColumn(columns, indices, "MER", out var merValue))
+                    if (record.Vertices == null || record.Vertices.Count < 3)
                     {
                         continue;
                     }
 
-                    if (!KeyEquals(NormalizeKey(secValue), keySection) ||
-                        !KeyEquals(NormalizeKey(twpValue), keyTownship) ||
-                        !KeyEquals(NormalizeKey(rgeValue), keyRange) ||
-                        !KeyEquals(NormalizeKey(merValue), keyMeridian))
+                    var lookupKey = BuildLookupKey(record.Zone, record.Section, record.Township, record.Range, record.Meridian);
+                    if (string.IsNullOrWhiteSpace(lookupKey) || index.ContainsKey(lookupKey))
                     {
                         continue;
                     }
 
-                    if (!TryGetDouble(columns, indices, "MINX", out var minX) ||
-                        !TryGetDouble(columns, indices, "MINY", out var minY) ||
-                        !TryGetDouble(columns, indices, "MAXX", out var maxX) ||
-                        !TryGetDouble(columns, indices, "MAXY", out var maxY))
-                    {
-                        continue;
-                    }
-
-                    var vertices = new List<Point2d>
-                    {
-                        new Point2d(minX, minY),
-                        new Point2d(maxX, minY),
-                        new Point2d(maxX, maxY),
-                        new Point2d(minX, maxY)
-                    };
-
-                    outline = new SectionOutline(vertices, true, path);
-                    return true;
+                    index[lookupKey] = new SectionOutline(new List<Point2d>(record.Vertices), record.Closed, path);
                 }
             }
+            catch
+            {
+                return new Dictionary<string, SectionOutline>(StringComparer.OrdinalIgnoreCase);
+            }
 
-            return false;
+            return index;
+        }
+
+        private static Dictionary<string, SectionOutline> BuildCsvFileIndex(string path)
+        {
+            var index = new Dictionary<string, SectionOutline>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using (var reader = new StreamReader(path))
+                {
+                    var headerLine = reader.ReadLine();
+                    if (headerLine == null)
+                    {
+                        return index;
+                    }
+
+                    var headers = ParseCsvLine(headerLine);
+                    var indices = BuildHeaderIndex(headers);
+                    while (!reader.EndOfStream)
+                    {
+                        var line = reader.ReadLine();
+                        if (string.IsNullOrWhiteSpace(line))
+                        {
+                            continue;
+                        }
+
+                        var columns = ParseCsvLine(line);
+                        if (!TryGetColumn(columns, indices, "ZONE", out var zoneValue) ||
+                            !int.TryParse(NormalizeKey(zoneValue), NumberStyles.Integer, CultureInfo.InvariantCulture, out var zone))
+                        {
+                            continue;
+                        }
+
+                        if (!TryGetColumn(columns, indices, "SEC", out var secValue) ||
+                            !TryGetColumn(columns, indices, "TWP", out var twpValue) ||
+                            !TryGetColumn(columns, indices, "RGE", out var rgeValue) ||
+                            !TryGetColumn(columns, indices, "MER", out var merValue))
+                        {
+                            continue;
+                        }
+
+                        if (!TryGetDouble(columns, indices, "MINX", out var minX) ||
+                            !TryGetDouble(columns, indices, "MINY", out var minY) ||
+                            !TryGetDouble(columns, indices, "MAXX", out var maxX) ||
+                            !TryGetDouble(columns, indices, "MAXY", out var maxY))
+                        {
+                            continue;
+                        }
+
+                        var lookupKey = BuildLookupKey(zone, secValue, twpValue, rgeValue, merValue);
+                        if (string.IsNullOrWhiteSpace(lookupKey) || index.ContainsKey(lookupKey))
+                        {
+                            continue;
+                        }
+
+                        var vertices = new List<Point2d>
+                        {
+                            new Point2d(minX, minY),
+                            new Point2d(maxX, minY),
+                            new Point2d(maxX, maxY),
+                            new Point2d(minX, maxY)
+                        };
+
+                        index[lookupKey] = new SectionOutline(vertices, true, path);
+                    }
+                }
+            }
+            catch
+            {
+                return new Dictionary<string, SectionOutline>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            return index;
+        }
+
+        private static string BuildLookupKey(int zone, string? section, string? township, string? range, string? meridian)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}|{1}|{2}|{3}|{4}",
+                zone,
+                NormalizeKey(section),
+                NormalizeKey(township),
+                NormalizeKey(range),
+                NormalizeKey(meridian));
+        }
+
+        private static SectionOutline CloneOutline(SectionOutline source, string sourcePath)
+        {
+            return new SectionOutline(
+                new List<Point2d>(source.Vertices),
+                source.Closed,
+                sourcePath);
         }
 
         private static bool TryParseJsonLine(string line, out SectionRecord record)
