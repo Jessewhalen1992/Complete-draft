@@ -152,7 +152,7 @@ namespace AtsBackgroundBuilder
 
             var help = new Label
             {
-                Text = "Enter sections / quarters below. M, RGE, TWP, SEC, SEC TYPE carry down when left blank.",
+                Text = "Enter sections / quarters below. M/RGE/TWP carry down when blank; leave SEC blank on a row with M/RGE/TWP to build sections 1-36.",
                 AutoSize = true,
                 ForeColor = SystemColors.GrayText,
                 Margin = new Padding(0, 8, 0, 0)
@@ -257,7 +257,7 @@ namespace AtsBackgroundBuilder
 
             var qHelp = new Label
             {
-                Text = "Quarter values: NW, NE, SW, SE, N, S, E, W, ALL. SEC TYPE values: L-USEC, L-SEC",
+                Text = "Quarter values: NW, NE, SW, SE, N, S, E, W, ALL.",
                 AutoSize = true,
                 ForeColor = SystemColors.GrayText,
                 Margin = new Padding(0, 0, 0, 0)
@@ -297,17 +297,6 @@ namespace AtsBackgroundBuilder
             _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "TWP", HeaderText = "TWP" });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "SEC", HeaderText = "SEC" });
             _grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "HQ", HeaderText = "H/QS" });
-            var secTypeColumn = new DataGridViewComboBoxColumn
-            {
-                Name = "SECTYPE",
-                HeaderText = "SEC TYPE",
-                DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton,
-                FlatStyle = FlatStyle.Standard
-            };
-            secTypeColumn.Items.Add(string.Empty);
-            secTypeColumn.Items.Add("L-USEC");
-            secTypeColumn.Items.Add("L-SEC");
-            _grid.Columns.Add(secTypeColumn);
 
             // Seed a few empty rows.
             for (int i = 0; i < 50; i++)
@@ -425,7 +414,6 @@ namespace AtsBackgroundBuilder
             string lastRange = string.Empty;
             string lastTownship = string.Empty;
             string lastSection = string.Empty;
-            string lastSecType = "L-USEC";
 
             foreach (DataGridViewRow row in _grid.Rows)
             {
@@ -437,37 +425,56 @@ namespace AtsBackgroundBuilder
                 string twp = GetCell(row, "TWP");
                 string sec = GetCell(row, "SEC");
                 string q = GetCell(row, "HQ");
-                string secType = GetCell(row, "SECTYPE");
 
                 bool anyFilled =
                     !string.IsNullOrWhiteSpace(m) ||
                     !string.IsNullOrWhiteSpace(rge) ||
                     !string.IsNullOrWhiteSpace(twp) ||
                     !string.IsNullOrWhiteSpace(sec) ||
-                    !string.IsNullOrWhiteSpace(q) ||
-                    !string.IsNullOrWhiteSpace(secType);
+                    !string.IsNullOrWhiteSpace(q);
 
                 if (!anyFilled)
                     continue;
+
+                var hasExplicitMeridian = !string.IsNullOrWhiteSpace(m);
+                var hasExplicitRange = !string.IsNullOrWhiteSpace(rge);
+                var hasExplicitTownship = !string.IsNullOrWhiteSpace(twp);
+                var hasExplicitSection = !string.IsNullOrWhiteSpace(sec);
 
                 // Carry-down behavior (only when row is active).
                 if (string.IsNullOrWhiteSpace(m)) m = lastMeridian;
                 if (string.IsNullOrWhiteSpace(rge)) rge = lastRange;
                 if (string.IsNullOrWhiteSpace(twp)) twp = lastTownship;
-                if (string.IsNullOrWhiteSpace(sec)) sec = lastSection;
-                if (string.IsNullOrWhiteSpace(secType)) secType = lastSecType;
+                var expandAllSections =
+                    !hasExplicitSection &&
+                    (hasExplicitMeridian || hasExplicitRange || hasExplicitTownship);
+                if (!expandAllSections && string.IsNullOrWhiteSpace(sec))
+                {
+                    sec = lastSection;
+                }
 
                 // Quarter defaults to ALL if blank.
                 if (string.IsNullOrWhiteSpace(q)) q = "ALL";
 
                 // Validate carry-down didn't leave required values missing.
-                if (string.IsNullOrWhiteSpace(m) || string.IsNullOrWhiteSpace(rge) ||
-                    string.IsNullOrWhiteSpace(twp) || string.IsNullOrWhiteSpace(sec))
+                if (string.IsNullOrWhiteSpace(m) || string.IsNullOrWhiteSpace(rge) || string.IsNullOrWhiteSpace(twp))
                 {
                     MessageBox.Show(
                         this,
-                        "Row is missing M/RGE/TWP/SEC and no value above to carry down.\n\n" +
+                        "Row is missing M/RGE/TWP and no value above to carry down.\n\n" +
                         "Tip: Fill the first row completely, then you can leave repeated values blank on lower rows.",
+                        "ATSBUILD",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return new List<SectionRequest>();
+                }
+
+                if (!expandAllSections && string.IsNullOrWhiteSpace(sec))
+                {
+                    MessageBox.Show(
+                        this,
+                        "SEC is blank and there is no section above to carry down.\n\n" +
+                        "Tip: Enter SEC, or provide M/RGE/TWP on that row with SEC blank to build sections 1-36.",
                         "ATSBUILD",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Warning);
@@ -477,13 +484,6 @@ namespace AtsBackgroundBuilder
                 lastMeridian = m;
                 lastRange = rge;
                 lastTownship = twp;
-                lastSection = sec;
-                if (!TryNormalizeSecType(secType, out var normalizedSecType))
-                {
-                    MessageBox.Show(this, $"Invalid SEC TYPE value: '{secType}'. Use L-USEC or L-SEC.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return new List<SectionRequest>();
-                }
-                lastSecType = normalizedSecType;
 
                 if (!TryParseQuarter(q, out var quarter))
                 {
@@ -491,8 +491,23 @@ namespace AtsBackgroundBuilder
                     return new List<SectionRequest>();
                 }
 
-                var key = new SectionKey(zone, sec, twp, rge, m);
-                requests.Add(new SectionRequest(quarter, key, normalizedSecType));
+                if (expandAllSections)
+                {
+                    for (var sectionNumber = 1; sectionNumber <= 36; sectionNumber++)
+                    {
+                        var key = new SectionKey(zone, sectionNumber.ToString(CultureInfo.InvariantCulture), twp, rge, m);
+                        requests.Add(new SectionRequest(quarter, key, "AUTO"));
+                    }
+
+                    // Keep section carry-down explicit after an all-sections expansion row.
+                    lastSection = string.Empty;
+                }
+                else
+                {
+                    lastSection = sec;
+                    var key = new SectionKey(zone, sec, twp, rge, m);
+                    requests.Add(new SectionRequest(quarter, key, "AUTO"));
+                }
             }
 
             return requests;
@@ -553,29 +568,6 @@ namespace AtsBackgroundBuilder
             }
         }
 
-        private static bool TryNormalizeSecType(string raw, out string secType)
-        {
-            secType = "L-USEC";
-            if (string.IsNullOrWhiteSpace(raw))
-            {
-                return true;
-            }
-
-            var s = raw.Trim().ToUpperInvariant();
-            if (s == "L-USEC" || s == "USEC")
-            {
-                secType = "L-USEC";
-                return true;
-            }
-
-            if (s == "L-SEC" || s == "SEC")
-            {
-                secType = "L-SEC";
-                return true;
-            }
-
-            return false;
-        }
     }
 }
 
