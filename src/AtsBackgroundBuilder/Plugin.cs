@@ -1737,7 +1737,8 @@ namespace AtsBackgroundBuilder
             var quarterInfosForRoadAllowanceRules = new List<QuarterLabelInfo>(labelQuarterInfos.Count + contextRuleSectionInfos.Count);
             quarterInfosForRoadAllowanceRules.AddRange(labelQuarterInfos);
             quarterInfosForRoadAllowanceRules.AddRange(contextRuleSectionInfos);
-            SnapQuarterLsdLinesToSectionBoundaries(database, labelQuarterIds, logger);
+            // Strict rule: do not run generic LSD-to-boundary snapping.
+            // LSD movement is handled only by midpoint-targeted road-allowance passes below.
             CleanupGeneratedRoadAllowanceOverlaps(database, generatedRoadAllowanceIds, logger);
             ExtendSouthBoundarySwQuarterWestToNextUsec(database, labelQuarterIds, generatedRoadAllowanceIds, logger);
             ExtendQuarterLinesFromUsecWestSouthToNextUsec(database, labelQuarterIds, generatedRoadAllowanceIds, logger);
@@ -1762,6 +1763,9 @@ namespace AtsBackgroundBuilder
             ConnectUsecBlindSouthwestTwentyTwelveLines(database, quarterInfosForRoadAllowanceRules, generatedRoadAllowanceIds, logger);
             CloseTinyRoadAllowanceCornerGaps(database, labelQuarterIds, generatedRoadAllowanceIds, logger);
             ApplySimpleWestEndUsecExtensionRule(database, labelQuarterIds, logger);
+            NormalizeBlindLineLayersBySecConnections(database, labelQuarterIds, logger);
+            // Golden rules reference: docs/ROAD_ALLOWANCE_GOLDEN_RULES.md
+            EnforceTwentyTwelveStopRules(database, labelQuarterIds, logger);
             RebuildLsdLabelsAtFinalIntersections(database, lsdQuarterInfos, logger);
             logger.WriteLine($"TIMING DrawSectionsFromRequests: road allowances processed in {timer.ElapsedMilliseconds} ms");
 
@@ -4157,7 +4161,7 @@ namespace AtsBackgroundBuilder
                 }
 
                 var contextSet = new HashSet<ObjectId>(contextSectionIds.Where(id => !id.IsNull));
-                var endpointAnchors = new List<(ObjectId Id, bool IsContext, Point2d P)>();
+                var endpointAnchors = new List<(ObjectId Id, string Layer, bool IsContext, Point2d P)>();
                 var nonContextSegments = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, bool Horizontal, bool Vertical)>();
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
@@ -4195,8 +4199,9 @@ namespace AtsBackgroundBuilder
                     }
 
                     var isContext = contextSet.Contains(id);
-                    endpointAnchors.Add((id, isContext, a));
-                    endpointAnchors.Add((id, isContext, b));
+                    var layerName = ent.Layer ?? string.Empty;
+                    endpointAnchors.Add((id, layerName, isContext, a));
+                    endpointAnchors.Add((id, layerName, isContext, b));
                     if (!isContext)
                     {
                         nonContextSegments.Add((id, ent.Layer ?? string.Empty, a, b, IsHorizontalLike(a, b), IsVerticalLike(a, b)));
@@ -4258,6 +4263,11 @@ namespace AtsBackgroundBuilder
                         {
                             var anchor = endpointAnchors[i];
                             if (anchor.Id == id)
+                            {
+                                continue;
+                            }
+
+                            if (!string.Equals(anchor.Layer, currentLayer, StringComparison.OrdinalIgnoreCase))
                             {
                                 continue;
                             }
@@ -4391,6 +4401,11 @@ namespace AtsBackgroundBuilder
                         {
                             var anchor = endpointAnchors[i];
                             if (anchor.Id == id)
+                            {
+                                continue;
+                            }
+
+                            if (!string.Equals(anchor.Layer, currentLayer, StringComparison.OrdinalIgnoreCase))
                             {
                                 continue;
                             }
@@ -4762,6 +4777,10 @@ namespace AtsBackgroundBuilder
                             }
 
                             var sameLayer = string.Equals(seg.Layer, other.Layer, StringComparison.OrdinalIgnoreCase);
+                            if (!sameLayer)
+                            {
+                                continue;
+                            }
                             if (isHorizontal)
                             {
                                 var otherY = 0.5 * (other.A.Y + other.B.Y);
@@ -4832,6 +4851,10 @@ namespace AtsBackgroundBuilder
 
                             var other = segments[oi];
                             var sameLayer = string.Equals(seg.Layer, other.Layer, StringComparison.OrdinalIgnoreCase);
+                            if (!sameLayer)
+                            {
+                                continue;
+                            }
                             if (isHorizontal)
                             {
                                 if (!other.Vertical)
@@ -4913,6 +4936,10 @@ namespace AtsBackgroundBuilder
 
                             var other = segments[oi];
                             var sameLayer = string.Equals(seg.Layer, other.Layer, StringComparison.OrdinalIgnoreCase);
+                            if (!sameLayer)
+                            {
+                                continue;
+                            }
                             var otherVec = other.B - other.A;
                             var otherLen = otherVec.Length;
                             if (otherLen <= 1e-6)
@@ -5124,6 +5151,23 @@ namespace AtsBackgroundBuilder
                 {
                     var d = b - a;
                     return Math.Abs(d.Y) > Math.Abs(d.X);
+                }
+
+                bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
+                {
+                    intersection = default;
+                    var da = a1 - a0;
+                    var db = b1 - b0;
+                    var denom = Cross2d(da, db);
+                    if (Math.Abs(denom) <= 1e-9)
+                    {
+                        return false;
+                    }
+
+                    var diff = b0 - a0;
+                    var t = Cross2d(diff, db) / denom;
+                    intersection = a0 + (da * t);
+                    return true;
                 }
 
                 bool TryMoveEndpointByIndex(Entity writable, int endpointIndex, Point2d target, double moveTol)
@@ -5414,7 +5458,10 @@ namespace AtsBackgroundBuilder
                                     continue;
                                 }
 
-                                var target = new Point2d(vPoint.X, hPoint.Y);
+                                if (!TryIntersectInfiniteLines(hSeg.A, hSeg.B, vSeg.A, vSeg.B, out var target))
+                                {
+                                    continue;
+                                }
                                 var dH = hPoint.GetDistanceTo(target);
                                 var dV = vPoint.GetDistanceTo(target);
                                 var allowExtendedUsecJoin = hInnerTwentyTwelve && vInnerTwentyTwelve;
@@ -6764,6 +6811,652 @@ namespace AtsBackgroundBuilder
                 tr.Commit();
                 logger?.WriteLine(
                     $"Cleanup: simple west-end L-SEC->next L-USEC rule scanned={scanned}, touchingUsec={touching}, candidateHits={candidateHits}, promotedPastThirty={promotedPastThirty}, secAdjusted={secAdjusted}, lsdAdjusted={lsdAdjusted}.");
+            }
+        }
+
+        private static void EnforceTwentyTwelveStopRules(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null)
+            {
+                return;
+            }
+
+            var clipWindows = BuildBufferedQuarterWindows(database, requestedQuarterIds, 102.0);
+            if (clipWindows.Count == 0)
+            {
+                return;
+            }
+
+            bool IsPointInAnyWindow(Point2d p)
+            {
+                for (var i = 0; i < clipWindows.Count; i++)
+                {
+                    var w = clipWindows[i];
+                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
+                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
+            {
+                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
+                {
+                    return true;
+                }
+
+                for (var i = 0; i < clipWindows.Count; i++)
+                {
+                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
+                {
+                    a = default;
+                    b = default;
+                    if (ent == null)
+                    {
+                        return false;
+                    }
+
+                    if (ent is Line ln)
+                    {
+                        a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                        b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                        return a.GetDistanceTo(b) > 1e-4;
+                    }
+
+                    if (ent is Polyline pl)
+                    {
+                        if (pl.Closed || pl.NumberOfVertices < 2)
+                        {
+                            return false;
+                        }
+
+                        a = pl.GetPoint2dAt(0);
+                        b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
+                        if (a.GetDistanceTo(b) <= 1e-4)
+                        {
+                            return false;
+                        }
+
+                        if (pl.NumberOfVertices > 2)
+                        {
+                            const double collinearTol = 0.35;
+                            for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
+                            {
+                                var p = pl.GetPoint2dAt(vi);
+                                if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
+                                {
+                                    return false;
+                                }
+                            }
+                        }
+
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                bool IsHorizontalLike(Point2d a, Point2d b)
+                {
+                    var d = b - a;
+                    return Math.Abs(d.X) >= Math.Abs(d.Y);
+                }
+
+                bool IsVerticalLike(Point2d a, Point2d b)
+                {
+                    var d = b - a;
+                    return Math.Abs(d.Y) > Math.Abs(d.X);
+                }
+
+                bool TryMoveEndpointByIndex(Entity writable, int endpointIndex, Point2d target, double moveTol)
+                {
+                    if (endpointIndex != 0 && endpointIndex != 1)
+                    {
+                        return false;
+                    }
+
+                    if (writable is Line ln)
+                    {
+                        var old = endpointIndex == 0
+                            ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
+                            : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                        if (old.GetDistanceTo(target) <= moveTol)
+                        {
+                            return false;
+                        }
+
+                        if (endpointIndex == 0)
+                        {
+                            ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
+                        }
+                        else
+                        {
+                            ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
+                        }
+
+                        return true;
+                    }
+
+                    if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
+                    {
+                        var idx = endpointIndex == 0 ? 0 : pl.NumberOfVertices - 1;
+                        var old = pl.GetPoint2dAt(idx);
+                        if (old.GetDistanceTo(target) <= moveTol)
+                        {
+                            return false;
+                        }
+
+                        pl.SetPointAt(idx, target);
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                var roadSegments = new List<(ObjectId Id, Point2d A, Point2d B, bool Horizontal, bool Vertical, double Axis, double MajorMin, double MajorMax)>();
+                var targetSegments = new List<(ObjectId Id, bool IsLsd, bool IsQsec)>();
+
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    var isRoadLayer =
+                        string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(ent.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase);
+                    var isLsdLayer = string.Equals(ent.Layer, "L-SECTION-LSD", StringComparison.OrdinalIgnoreCase);
+                    var isQsecLayer = string.Equals(ent.Layer, "L-QSEC", StringComparison.OrdinalIgnoreCase);
+                    if (!isRoadLayer && !isLsdLayer && !isQsecLayer)
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(ent, out var a, out var b))
+                    {
+                        continue;
+                    }
+
+                    if (!DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    var horizontal = IsHorizontalLike(a, b);
+                    var vertical = IsVerticalLike(a, b);
+                    if (!horizontal && !vertical)
+                    {
+                        continue;
+                    }
+
+                    if (isRoadLayer)
+                    {
+                        var axis = horizontal
+                            ? 0.5 * (a.Y + b.Y)
+                            : 0.5 * (a.X + b.X);
+                        var majorMin = horizontal
+                            ? Math.Min(a.X, b.X)
+                            : Math.Min(a.Y, b.Y);
+                        var majorMax = horizontal
+                            ? Math.Max(a.X, b.X)
+                            : Math.Max(a.Y, b.Y);
+                        roadSegments.Add((id, a, b, horizontal, vertical, axis, majorMin, majorMax));
+                        continue;
+                    }
+
+                    if (isLsdLayer && !IsAdjustableLsdLineSegment(a, b))
+                    {
+                        continue;
+                    }
+
+                    if (isQsecLayer)
+                    {
+                        var len = a.GetDistanceTo(b);
+                        if (len < 8.0 || len > 2000.0)
+                        {
+                            continue;
+                        }
+                    }
+
+                    targetSegments.Add((id, isLsdLayer, isQsecLayer));
+                }
+
+                if (roadSegments.Count == 0 || targetSegments.Count == 0)
+                {
+                    tr.Commit();
+                    logger?.WriteLine(
+                        $"Cleanup: 20.12 stop rules skipped (roads={roadSegments.Count}, targets={targetSegments.Count}).");
+                    return;
+                }
+
+                const double twentyTwelveGap = 20.12;
+                const double thirtyEighteenGap = 30.18;
+                const double tenOhSixGap = 10.06;
+                const double twentyGapTol = 1.10;
+                const double thirtyGapTol = 1.60;
+                const double tenOhSixTol = 2.40;
+                const double companionMinOverlap = 4.0;
+                const double fallbackMinOverlap = 2.0;
+                var hasTwentyCompanion = new bool[roadSegments.Count];
+                var hasThirtyCompanion = new bool[roadSegments.Count];
+                for (var i = 0; i < roadSegments.Count; i++)
+                {
+                    var a = roadSegments[i];
+                    for (var j = i + 1; j < roadSegments.Count; j++)
+                    {
+                        var b = roadSegments[j];
+                        if ((a.Horizontal != b.Horizontal) || (a.Vertical != b.Vertical))
+                        {
+                            continue;
+                        }
+
+                        var overlap = Math.Min(a.MajorMax, b.MajorMax) - Math.Max(a.MajorMin, b.MajorMin);
+                        if (overlap < companionMinOverlap)
+                        {
+                            continue;
+                        }
+
+                        var gap = Math.Abs(a.Axis - b.Axis);
+                        if (Math.Abs(gap - twentyTwelveGap) <= twentyGapTol)
+                        {
+                            hasTwentyCompanion[i] = true;
+                            hasTwentyCompanion[j] = true;
+                        }
+
+                        if (Math.Abs(gap - thirtyEighteenGap) <= thirtyGapTol)
+                        {
+                            hasThirtyCompanion[i] = true;
+                            hasThirtyCompanion[j] = true;
+                        }
+                    }
+                }
+
+                var twentyRoadIndices = new List<int>();
+                for (var i = 0; i < roadSegments.Count; i++)
+                {
+                    if (hasTwentyCompanion[i])
+                    {
+                        twentyRoadIndices.Add(i);
+                    }
+                }
+
+                const double endpointTouchTol = 0.35;
+                const double endpointMoveTol = 0.05;
+                const double minInwardStep = 0.05;
+                const double maxInwardSearch = 28.0;
+                const double inwardLengthSlack = 0.90;
+                const double axisFallbackMajorTol = 22.0;
+                const double lsdMidpointAxisTol = 2.0;
+                const double lsdMaxMove = 24.0;
+                const double qsecMaxMove = 24.0;
+
+                bool TryFindNearestInwardTarget(
+                    Point2d endpoint,
+                    Vector2d inwardDir,
+                    bool lineIsVertical,
+                    double maxT,
+                    IEnumerable<int> candidateIndices,
+                    out Point2d target,
+                    out int targetRoadIndex,
+                    out double bestT)
+                {
+                    target = endpoint;
+                    targetRoadIndex = -1;
+                    bestT = double.MaxValue;
+                    var found = false;
+                    foreach (var ri in candidateIndices)
+                    {
+                        if (ri < 0 || ri >= roadSegments.Count)
+                        {
+                            continue;
+                        }
+
+                        var road = roadSegments[ri];
+                        if (lineIsVertical && !road.Horizontal)
+                        {
+                            continue;
+                        }
+
+                        if (!lineIsVertical && !road.Vertical)
+                        {
+                            continue;
+                        }
+
+                        if (!TryIntersectInfiniteLineWithSegment(endpoint, inwardDir, road.A, road.B, out var t))
+                        {
+                            if (lineIsVertical)
+                            {
+                                if (Math.Abs(inwardDir.Y) <= 1e-9)
+                                {
+                                    continue;
+                                }
+
+                                t = (road.Axis - endpoint.Y) / inwardDir.Y;
+                                if (t < minInwardStep || t > maxT)
+                                {
+                                    continue;
+                                }
+
+                                var xAtT = endpoint.X + (inwardDir.X * t);
+                                var majorGap = 0.0;
+                                if (xAtT < road.MajorMin)
+                                {
+                                    majorGap = road.MajorMin - xAtT;
+                                }
+                                else if (xAtT > road.MajorMax)
+                                {
+                                    majorGap = xAtT - road.MajorMax;
+                                }
+
+                                if (majorGap > axisFallbackMajorTol)
+                                {
+                                    continue;
+                                }
+                            }
+                            else
+                            {
+                                if (Math.Abs(inwardDir.X) <= 1e-9)
+                                {
+                                    continue;
+                                }
+
+                                t = (road.Axis - endpoint.X) / inwardDir.X;
+                                if (t < minInwardStep || t > maxT)
+                                {
+                                    continue;
+                                }
+
+                                var yAtT = endpoint.Y + (inwardDir.Y * t);
+                                var majorGap = 0.0;
+                                if (yAtT < road.MajorMin)
+                                {
+                                    majorGap = road.MajorMin - yAtT;
+                                }
+                                else if (yAtT > road.MajorMax)
+                                {
+                                    majorGap = yAtT - road.MajorMax;
+                                }
+
+                                if (majorGap > axisFallbackMajorTol)
+                                {
+                                    continue;
+                                }
+                            }
+                        }
+
+                        if (t < minInwardStep || t > maxT)
+                        {
+                            continue;
+                        }
+
+                        if (!found || t < (bestT - 1e-9))
+                        {
+                            found = true;
+                            bestT = t;
+                            targetRoadIndex = ri;
+                            target = endpoint + (inwardDir * t);
+                        }
+                    }
+
+                    return found;
+                }
+
+                var scannedEndpoints = 0;
+                var touchedRoadEndpoints = 0;
+                var touchedThirtyOnlyEndpoints = 0;
+                var noTwentyTarget = 0;
+                var adjustedLsd = 0;
+                var adjustedQsec = 0;
+                var midpointMoves = 0;
+                var fallbackMoves = 0;
+                var unresolvedSamples = new List<string>();
+                for (var ti = 0; ti < targetSegments.Count; ti++)
+                {
+                    var targetMeta = targetSegments[ti];
+                    if (!(tr.GetObject(targetMeta.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(writable, out var p0, out var p1))
+                    {
+                        continue;
+                    }
+
+                    var targetLayer = writable.Layer ?? string.Empty;
+                    var lineIsHorizontal = IsHorizontalLike(p0, p1);
+                    var lineIsVertical = IsVerticalLike(p0, p1);
+                    if (!lineIsHorizontal && !lineIsVertical)
+                    {
+                        continue;
+                    }
+
+                    for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                    {
+                        scannedEndpoints++;
+                        var endpoint = endpointIndex == 0 ? p0 : p1;
+                        var other = endpointIndex == 0 ? p1 : p0;
+                        var inward = other - endpoint;
+                        var inwardLen = inward.Length;
+                        if (inwardLen <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        var inwardDir = inward / inwardLen;
+                        var touchedIndices = new List<int>();
+                        for (var ri = 0; ri < roadSegments.Count; ri++)
+                        {
+                            var road = roadSegments[ri];
+                            if (DistancePointToSegment(endpoint, road.A, road.B) <= endpointTouchTol)
+                            {
+                                touchedIndices.Add(ri);
+                            }
+                        }
+
+                        if (touchedIndices.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        touchedRoadEndpoints++;
+                        var onTwenty = touchedIndices.Any(ri => hasTwentyCompanion[ri]);
+                        if (onTwenty)
+                        {
+                            continue;
+                        }
+
+                        var touchedThirtyOnly = touchedIndices
+                            .Where(ri => hasThirtyCompanion[ri] && !hasTwentyCompanion[ri])
+                            .ToList();
+                        if (touchedThirtyOnly.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        touchedThirtyOnlyEndpoints++;
+                        var maxT = Math.Min(maxInwardSearch, inwardLen + inwardLengthSlack);
+                        var hasTarget = TryFindNearestInwardTarget(
+                            endpoint,
+                            inwardDir,
+                            lineIsVertical,
+                            maxT,
+                            twentyRoadIndices,
+                            out var bestTarget,
+                            out var bestRoadIndex,
+                            out _);
+                        var usedFallback = false;
+                        if (!hasTarget)
+                        {
+                            var fallbackCandidates = new HashSet<int>();
+                            for (var oi = 0; oi < touchedThirtyOnly.Count; oi++)
+                            {
+                                var outerIndex = touchedThirtyOnly[oi];
+                                var outer = roadSegments[outerIndex];
+                                for (var ri = 0; ri < roadSegments.Count; ri++)
+                                {
+                                    if (ri == outerIndex)
+                                    {
+                                        continue;
+                                    }
+
+                                    var road = roadSegments[ri];
+                                    if ((road.Horizontal != outer.Horizontal) || (road.Vertical != outer.Vertical))
+                                    {
+                                        continue;
+                                    }
+
+                                    var overlap = Math.Min(outer.MajorMax, road.MajorMax) - Math.Max(outer.MajorMin, road.MajorMin);
+                                    if (overlap < fallbackMinOverlap)
+                                    {
+                                        continue;
+                                    }
+
+                                    var gap = Math.Abs(road.Axis - outer.Axis);
+                                    if (Math.Abs(gap - tenOhSixGap) > tenOhSixTol &&
+                                        Math.Abs(gap - twentyTwelveGap) > twentyGapTol)
+                                    {
+                                        continue;
+                                    }
+
+                                    fallbackCandidates.Add(ri);
+                                }
+                            }
+
+                            if (fallbackCandidates.Count > 0)
+                            {
+                                hasTarget = TryFindNearestInwardTarget(
+                                    endpoint,
+                                    inwardDir,
+                                    lineIsVertical,
+                                    maxT,
+                                    fallbackCandidates,
+                                    out bestTarget,
+                                    out bestRoadIndex,
+                                    out _);
+                                usedFallback = hasTarget;
+                            }
+                        }
+
+                        if (!hasTarget || bestRoadIndex < 0)
+                        {
+                            noTwentyTarget++;
+                            if (unresolvedSamples.Count < 12)
+                            {
+                                unresolvedSamples.Add(
+                                    string.Format(
+                                        CultureInfo.InvariantCulture,
+                                        "id={0} layer={1} p=({2:F2},{3:F2}) orient={4} inward=({5:F4},{6:F4})",
+                                        targetMeta.Id,
+                                        targetLayer,
+                                        endpoint.X,
+                                        endpoint.Y,
+                                        lineIsVertical ? "V" : "H",
+                                        inwardDir.X,
+                                        inwardDir.Y));
+                            }
+                            continue;
+                        }
+
+                        var moveTarget = bestTarget;
+                        var usedMidpoint = false;
+                        if (targetMeta.IsLsd)
+                        {
+                            var road = roadSegments[bestRoadIndex];
+                            var mid = Midpoint(road.A, road.B);
+                            if (lineIsVertical)
+                            {
+                                if (Math.Abs(mid.X - endpoint.X) <= lsdMidpointAxisTol)
+                                {
+                                    moveTarget = mid;
+                                    usedMidpoint = true;
+                                }
+                            }
+                            else if (lineIsHorizontal)
+                            {
+                                if (Math.Abs(mid.Y - endpoint.Y) <= lsdMidpointAxisTol)
+                                {
+                                    moveTarget = mid;
+                                    usedMidpoint = true;
+                                }
+                            }
+                        }
+
+                        var moveLen = endpoint.GetDistanceTo(moveTarget);
+                        var moveCap = targetMeta.IsLsd ? lsdMaxMove : qsecMaxMove;
+                        if (moveLen <= endpointMoveTol || moveLen > moveCap)
+                        {
+                            continue;
+                        }
+
+                        if (!TryMoveEndpointByIndex(writable, endpointIndex, moveTarget, endpointMoveTol))
+                        {
+                            continue;
+                        }
+
+                        if (targetMeta.IsLsd)
+                        {
+                            adjustedLsd++;
+                        }
+                        else if (targetMeta.IsQsec)
+                        {
+                            adjustedQsec++;
+                        }
+
+                        if (usedMidpoint)
+                        {
+                            midpointMoves++;
+                        }
+
+                        if (usedFallback)
+                        {
+                            fallbackMoves++;
+                        }
+
+                        if (endpointIndex == 0)
+                        {
+                            p0 = moveTarget;
+                        }
+                        else
+                        {
+                            p1 = moveTarget;
+                        }
+                    }
+                }
+
+                tr.Commit();
+                logger?.WriteLine(
+                    $"Cleanup: enforced 20.12 stop rules scanned={scannedEndpoints}, touchedRoad={touchedRoadEndpoints}, touched30Only={touchedThirtyOnlyEndpoints}, adjustedLsd={adjustedLsd}, adjustedQsec={adjustedQsec}, midpointMoves={midpointMoves}, fallbackMoves={fallbackMoves}, unresolved={noTwentyTarget}.");
+                if (noTwentyTarget > 0)
+                {
+                    logger?.WriteLine(
+                        $"RULE-WARN: {noTwentyTarget} endpoint(s) touched 30.18 boundary but no valid inward 20.12 target was found.");
+                    if (unresolvedSamples.Count > 0)
+                    {
+                        logger?.WriteLine("RULE-WARN samples: " + string.Join(" | ", unresolvedSamples));
+                    }
+                }
             }
         }
 
@@ -9468,6 +10161,255 @@ namespace AtsBackgroundBuilder
             }
         }
 
+        private static void NormalizeBlindLineLayersBySecConnections(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null)
+            {
+                return;
+            }
+
+            var clipWindows = BuildBufferedQuarterWindows(database, requestedQuarterIds, 102.0);
+            if (clipWindows.Count == 0)
+            {
+                return;
+            }
+
+            bool IsPointInAnyWindow(Point2d p)
+            {
+                for (var i = 0; i < clipWindows.Count; i++)
+                {
+                    var w = clipWindows[i];
+                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
+                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
+            {
+                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
+                {
+                    return true;
+                }
+
+                for (var i = 0; i < clipWindows.Count; i++)
+                {
+                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
+                {
+                    a = default;
+                    b = default;
+                    if (ent == null)
+                    {
+                        return false;
+                    }
+
+                    if (ent is Line ln)
+                    {
+                        a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                        b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                        return a.GetDistanceTo(b) > 1e-4;
+                    }
+
+                    if (ent is Polyline pl)
+                    {
+                        if (pl.Closed || pl.NumberOfVertices != 2)
+                        {
+                            return false;
+                        }
+
+                        a = pl.GetPoint2dAt(0);
+                        b = pl.GetPoint2dAt(1);
+                        return a.GetDistanceTo(b) > 1e-4;
+                    }
+
+                    return false;
+                }
+
+                bool IsHorizontalLike(Point2d a, Point2d b)
+                {
+                    var d = b - a;
+                    return Math.Abs(d.X) >= Math.Abs(d.Y);
+                }
+
+                bool IsVerticalLike(Point2d a, Point2d b)
+                {
+                    var d = b - a;
+                    return Math.Abs(d.Y) > Math.Abs(d.X);
+                }
+
+                var segments = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, bool Horizontal, bool Vertical, double Length)>();
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    Entity? ent = null;
+                    try
+                    {
+                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (ent == null || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    var isUsec = string.Equals(ent.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase);
+                    var isSec = string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase);
+                    if (!isUsec && !isSec)
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(ent, out var a, out var b) ||
+                        !DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    var horizontal = IsHorizontalLike(a, b);
+                    var vertical = IsVerticalLike(a, b);
+                    if (!horizontal && !vertical)
+                    {
+                        continue;
+                    }
+
+                    segments.Add((id, ent.Layer ?? string.Empty, a, b, horizontal, vertical, a.GetDistanceTo(b)));
+                }
+
+                if (segments.Count == 0)
+                {
+                    tr.Commit();
+                    return;
+                }
+
+                const double endpointTol = 0.40;
+                const double minBlindLength = 8.0;
+                const double maxBlindLength = 320.0;
+                var blindCandidates = 0;
+                var secAnchoredBlind = 0;
+                var normalized = 0;
+
+                bool TouchesEndpoint(Point2d endpoint, (ObjectId Id, string Layer, Point2d A, Point2d B, bool Horizontal, bool Vertical, double Length) seg)
+                {
+                    return DistancePointToSegment(endpoint, seg.A, seg.B) <= endpointTol;
+                }
+
+                for (var i = 0; i < segments.Count; i++)
+                {
+                    var s = segments[i];
+                    if (s.Length < minBlindLength || s.Length > maxBlindLength)
+                    {
+                        continue;
+                    }
+
+                    if (string.Equals(s.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var touchCountA = 0;
+                    var touchCountB = 0;
+                    var anchorSecAtA = false;
+                    var anchorSecAtB = false;
+                    for (var j = 0; j < segments.Count; j++)
+                    {
+                        if (i == j)
+                        {
+                            continue;
+                        }
+
+                        var o = segments[j];
+                        if ((s.Horizontal && !o.Vertical) || (s.Vertical && !o.Horizontal))
+                        {
+                            continue;
+                        }
+
+                        if (TouchesEndpoint(s.A, o))
+                        {
+                            touchCountA++;
+                            if (string.Equals(o.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                            {
+                                anchorSecAtA = true;
+                            }
+                        }
+
+                        if (TouchesEndpoint(s.B, o))
+                        {
+                            touchCountB++;
+                            if (string.Equals(o.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                            {
+                                anchorSecAtB = true;
+                            }
+                        }
+                    }
+
+                    var aBlind = touchCountA > 0 && touchCountB == 0;
+                    var bBlind = touchCountB > 0 && touchCountA == 0;
+                    if (!aBlind && !bBlind)
+                    {
+                        continue;
+                    }
+
+                    blindCandidates++;
+                    var anchoredOnSec = aBlind ? anchorSecAtA : anchorSecAtB;
+                    if (!anchoredOnSec)
+                    {
+                        continue;
+                    }
+
+                    secAnchoredBlind++;
+                    Entity? writable = null;
+                    try
+                    {
+                        writable = tr.GetObject(s.Id, OpenMode.ForWrite, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (writable == null || writable.IsErased ||
+                        string.Equals(writable.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    writable.Layer = "L-SEC";
+                    writable.ColorIndex = 256;
+                    normalized++;
+                }
+
+                tr.Commit();
+                if (normalized > 0 || secAnchoredBlind > 0)
+                {
+                    logger?.WriteLine(
+                        $"Cleanup: blind-line layer normalization candidates={blindCandidates}, secAnchored={secAnchoredBlind}, normalizedToSec={normalized}.");
+                }
+            }
+        }
+
         private static void StitchTrimmedContextSectionEndpoints(
             Database database,
             IReadOnlyCollection<ObjectId> contextSectionIds,
@@ -9602,8 +10544,8 @@ namespace AtsBackgroundBuilder
                 }
 
                 var contextSet = new HashSet<ObjectId>(contextSectionIds.Where(id => !id.IsNull));
-                var allBoundarySegments = new List<(ObjectId Id, bool IsContext, Point2d A, Point2d B)>();
-                var endpointAnchors = new List<(ObjectId Id, bool IsContext, Point2d P)>();
+                var allBoundarySegments = new List<(ObjectId Id, string Layer, bool IsContext, Point2d A, Point2d B)>();
+                var endpointAnchors = new List<(ObjectId Id, string Layer, bool IsContext, Point2d P)>();
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
                 foreach (ObjectId id in ms)
@@ -9640,9 +10582,10 @@ namespace AtsBackgroundBuilder
                     }
 
                     var isContext = contextSet.Contains(id);
-                    allBoundarySegments.Add((id, isContext, a, b));
-                    endpointAnchors.Add((id, isContext, a));
-                    endpointAnchors.Add((id, isContext, b));
+                    var layerName = ent.Layer ?? string.Empty;
+                    allBoundarySegments.Add((id, layerName, isContext, a, b));
+                    endpointAnchors.Add((id, layerName, isContext, a));
+                    endpointAnchors.Add((id, layerName, isContext, b));
                 }
 
                 if (allBoundarySegments.Count == 0 || endpointAnchors.Count == 0)
@@ -9677,6 +10620,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
+                    var currentLayer = ent.Layer ?? string.Empty;
                     bool TryBestEndpointSnap(Point2d endpoint, out Point2d snapped)
                     {
                         snapped = endpoint;
@@ -9687,6 +10631,11 @@ namespace AtsBackgroundBuilder
                         {
                             var anchor = endpointAnchors[i];
                             if (anchor.Id == id)
+                            {
+                                continue;
+                            }
+
+                            if (!string.Equals(anchor.Layer, currentLayer, StringComparison.OrdinalIgnoreCase))
                             {
                                 continue;
                             }
@@ -9736,6 +10685,11 @@ namespace AtsBackgroundBuilder
                         {
                             var seg = allBoundarySegments[i];
                             if (seg.Id == id)
+                            {
+                                continue;
+                            }
+
+                            if (!string.Equals(seg.Layer, currentLayer, StringComparison.OrdinalIgnoreCase))
                             {
                                 continue;
                             }
@@ -12282,9 +13236,9 @@ namespace AtsBackgroundBuilder
                 return "L-SEC";
             }
 
-            var nearestUsec = measurableGaps.Min(g => Math.Abs(g - RoadAllowanceUsecWidthMeters));
-            var nearestSec = measurableGaps.Min(g => Math.Abs(g - RoadAllowanceSecWidthMeters));
-            return nearestSec < nearestUsec ? "L-SEC" : "L-USEC";
+            // Strict classification: if neither 20.11 nor 30.17 is observed inside tolerance,
+            // keep unsurveyed instead of nearest-gap fallback.
+            return "L-USEC";
         }
 
         private static string InferQuarterSecTypeFromRoadAllowance(IReadOnlyCollection<double> gaps)
@@ -12346,9 +13300,9 @@ namespace AtsBackgroundBuilder
                 return "L-USEC";
             }
 
-            var nearestUsec = measurableGaps.Min(g => Math.Abs(g - RoadAllowanceUsecWidthMeters));
-            var nearestSec = measurableGaps.Min(g => Math.Abs(g - RoadAllowanceSecWidthMeters));
-            return nearestSec < nearestUsec ? "L-SEC" : "L-USEC";
+            // Strict classification: require an explicit 20.11/30.17 match;
+            // do not use nearest-gap fallback.
+            return "L-USEC";
         }
 
         private static bool TryMeasureRoadAllowanceGap(
@@ -15063,7 +16017,6 @@ namespace AtsBackgroundBuilder
                     const double maxSouthwardDelta = 28.0;
                     const double eastwardTol = 1.0;
                     const double maxWestwardDelta = 70.0;
-                    const double maxCenterlineOffset = 22.0;
                     const double ownershipUTol = 40.0;
                     const double ownershipVTol = 55.0;
 
@@ -15218,47 +16171,9 @@ namespace AtsBackgroundBuilder
                             return true;
                         }
 
-                        // Township/range seam fallback: allow nearest adjusted midpoint from neighboring target section.
-                        var endpointU = (southEndpoint - sectionTarget.SwCorner).DotProduct(sectionTarget.EastUnit);
-                        for (var i = 0; i < lsdMidpointAdjustments.Count; i++)
-                        {
-                            var adj = lsdMidpointAdjustments[i];
-                            var targetU = (adj.NewMid - sectionTarget.SwCorner).DotProduct(sectionTarget.EastUnit);
-                            var centerlineOffset = Math.Abs(endpointU - targetU);
-                            if (centerlineOffset > maxCenterlineOffset)
-                            {
-                                continue;
-                            }
-
-                            var targetV = (adj.NewMid - sectionTarget.SwCorner).DotProduct(sectionTarget.NorthUnit);
-                            var southDelta = endpointV - targetV;
-                            if (southDelta < -southwardTol || southDelta > maxSouthwardDelta)
-                            {
-                                continue;
-                            }
-
-                            var move = southEndpoint.GetDistanceTo(adj.NewMid);
-                            if (move <= endpointMoveTol || move > lsdMaxMove)
-                            {
-                                continue;
-                            }
-
-                            var betterSouth = southDelta < (bestSouthDelta - 1e-6);
-                            var tiedSouth = Math.Abs(southDelta - bestSouthDelta) <= 1e-6;
-                            var betterMove = tiedSouth && move < bestMoveDistance;
-                            if (!betterSouth && !betterMove)
-                            {
-                                continue;
-                            }
-
-                            found = true;
-                            usedFallback = true;
-                            bestSouthDelta = southDelta;
-                            bestMoveDistance = move;
-                            targetMidpoint = adj.NewMid;
-                        }
-
-                        return found;
+                        // Strict: do not use neighboring-section nearest fallback.
+                        // Only allow same-section midpoint mappings.
+                        return false;
                     }
 
                     bool TrySelectWestTargetMidpoint(
@@ -15479,7 +16394,7 @@ namespace AtsBackgroundBuilder
                         logger?.WriteLine($"Cleanup: adjusted {lsdAdjusted} L-SECTION-LSD endpoint(s) to midpoint of SW L-USEC 20.12 blind-line connection(s).");
                         if (lsdFallbackEndpointAdjustments > 0)
                         {
-                            logger?.WriteLine($"Cleanup: {lsdFallbackEndpointAdjustments} SW L-SECTION-LSD endpoint(s) used nearest adjusted SW blind-line midpoint fallback.");
+                            logger?.WriteLine($"Cleanup: {lsdFallbackEndpointAdjustments} SW L-SECTION-LSD endpoint(s) used same-section relaxed SW blind-line midpoint fallback.");
                         }
                     }
                 }
@@ -15757,6 +16672,23 @@ namespace AtsBackgroundBuilder
                            TryClipSegmentToWindow(a, b, window, out _, out _);
                 }
 
+                bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
+                {
+                    intersection = default;
+                    var da = a1 - a0;
+                    var db = b1 - b0;
+                    var denom = Cross2d(da, db);
+                    if (Math.Abs(denom) <= 1e-9)
+                    {
+                        return false;
+                    }
+
+                    var diff = b0 - a0;
+                    var t = Cross2d(diff, db) / denom;
+                    intersection = a0 + (da * t);
+                    return true;
+                }
+
                 var usecHorizontals = new List<(ObjectId Id, Point2d A, Point2d B)>();
                 var originalVerticals = new List<(ObjectId Id, Point2d A, Point2d B)>();
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
@@ -15990,7 +16922,11 @@ namespace AtsBackgroundBuilder
                             }
                         }
 
-                        var targetPoint = swCorner + (eastUnit * boundaryU) + (northUnit * vLine);
+                        if (!TryIntersectInfiniteLines(seg.A, seg.B, targetBoundary.A, targetBoundary.B, out var targetPoint))
+                        {
+                            continue;
+                        }
+
                         if (!IsPointInWindow(targetPoint, sectionTarget.Window))
                         {
                             continue;
@@ -16178,49 +17114,8 @@ namespace AtsBackgroundBuilder
                             return true;
                         }
 
-                        // Fallback for section-association ambiguity near township seams:
-                        // allow nearest SE-adjusted midpoint from neighboring target section.
-                        for (var i = 0; i < lsdTargetMidpoints.Count; i++)
-                        {
-                            var adj = lsdTargetMidpoints[i];
-                            var targetU = (adj.Midpoint - sectionTarget.SwCorner).DotProduct(sectionTarget.EastUnit);
-                            var centerlineOffset = Math.Abs(endpointU - targetU);
-                            if (centerlineOffset > (maxCenterlineOffset * 1.6))
-                            {
-                                continue;
-                            }
-
-                            var targetV = (adj.Midpoint - sectionTarget.SwCorner).DotProduct(sectionTarget.NorthUnit);
-                            var southDelta = endpointV - targetV;
-                            if (southDelta < -southwardTol || southDelta > maxSouthwardDelta)
-                            {
-                                continue;
-                            }
-
-                            var move = southEndpoint.GetDistanceTo(adj.Midpoint);
-                            if (move <= endpointMoveTol || move > lsdMaxMove)
-                            {
-                                continue;
-                            }
-
-                            var betterCenterline = centerlineOffset < (bestCenterlineOffset - 1e-6);
-                            var tiedCenterline = Math.Abs(centerlineOffset - bestCenterlineOffset) <= 1e-6;
-                            var betterSouth = tiedCenterline && southDelta < (bestSouthDelta - 1e-6);
-                            var tiedSouth = tiedCenterline && Math.Abs(southDelta - bestSouthDelta) <= 1e-6;
-                            var betterMove = tiedSouth && move < bestMoveDistance;
-                            if (!betterCenterline && !betterSouth && !betterMove)
-                            {
-                                continue;
-                            }
-
-                            found = true;
-                            bestCenterlineOffset = centerlineOffset;
-                            bestSouthDelta = southDelta;
-                            bestMoveDistance = move;
-                            targetMidpoint = adj.Midpoint;
-                        }
-
-                        return found;
+                        // Strict: do not use neighboring-section nearest fallback.
+                        return false;
                     }
 
                     for (var i = 0; i < lsdSegments.Count; i++)
