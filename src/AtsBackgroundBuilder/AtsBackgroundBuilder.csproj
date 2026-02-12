@@ -13,7 +13,7 @@
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
   </PropertyGroup>
 
-  <Target Name="CopyBuildOutput" AfterTargets="Build">
+  <Target Name="CopyBuildOutput" AfterTargets="Build" Condition="'$(SkipCopyBuildOutput)' != 'true'">
     <ItemGroup>
       <BuildOutputFiles Include="$(TargetDir)*.*" />
     </ItemGroup>
