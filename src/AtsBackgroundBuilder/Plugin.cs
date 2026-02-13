@@ -19440,6 +19440,8 @@ namespace AtsBackgroundBuilder
                 var candidatesEvaluated = 0;
                 var blockedByInterveningHorizontalRoad = 0;
                 var skippedHorizontalNonSpanning = 0;
+                var movedVerticalBoundaryEndpoints = 0;
+                var rejectedNonVerticalBoundary = 0;
                 var lsdTargetMidpoints = new List<(ObjectId SectionId, Point2d Midpoint)>();
 
                 for (var si = 0; si < sectionTargets.Count; si++)
@@ -19817,26 +19819,31 @@ namespace AtsBackgroundBuilder
                             break;
                         }
 
-                        if (!(tr.GetObject(best.SegmentId, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                        // Directional fix for SE quarter bridge:
+                        // move the N-S boundary endpoint (south end) to the apparent intersection,
+                        // instead of extending the E-W horizontal segment.
+                        if (!(tr.GetObject(selectedBoundary.Id, OpenMode.ForWrite, false) is Entity writableBoundary) || writableBoundary.IsErased)
                         {
                             continue;
                         }
 
-                        if (!TryReadOpenSegment(writable, out var h0, out var h1))
+                        if (!TryReadOpenSegment(writableBoundary, out var b0, out var b1) || !IsVerticalLike(b0, b1))
                         {
+                            rejectedNonVerticalBoundary++;
                             continue;
                         }
 
-                        var d0 = h0.GetDistanceTo(best.TargetPoint);
-                        var d1 = h1.GetDistanceTo(best.TargetPoint);
-                        var moveStart = d0 <= d1;
-                        var endpointMove = Math.Min(d0, d1);
+                        var b0V = ToV(b0);
+                        var b1V = ToV(b1);
+                        var moveStart = b0V <= b1V; // move south endpoint only
+                        var southEndpoint = moveStart ? b0 : b1;
+                        var endpointMove = southEndpoint.GetDistanceTo(best.TargetPoint);
                         if (endpointMove <= endpointMoveTol || endpointMove > maxExtend)
                         {
                             continue;
                         }
 
-                        if (!TryMoveEndpoint(writable, moveStart, best.TargetPoint, endpointMoveTol))
+                        if (!TryMoveEndpoint(writableBoundary, moveStart, best.TargetPoint, endpointMoveTol))
                         {
                             continue;
                         }
@@ -19847,6 +19854,7 @@ namespace AtsBackgroundBuilder
 
                         connected++;
                         connectedThisSection++;
+                        movedVerticalBoundaryEndpoints++;
                     }
                 }
 
@@ -20051,6 +20059,7 @@ namespace AtsBackgroundBuilder
                 if (connected > 0)
                 {
                     logger?.WriteLine($"Cleanup: connected {connected} SE L-USEC south 20.11 line(s) to west-most east RA original boundary.");
+                    logger?.WriteLine($"Cleanup: SE directional bridge moves verticalEndpoints={movedVerticalBoundaryEndpoints}, rejectedNonVerticalBoundary={rejectedNonVerticalBoundary}.");
                     if (blockedByInterveningHorizontalRoad > 0)
                     {
                         logger?.WriteLine($"Cleanup: SE guard blocked {blockedByInterveningHorizontalRoad} candidate endpoint move(s) due to intervening horizontal road boundaries.");
@@ -20066,6 +20075,7 @@ namespace AtsBackgroundBuilder
                 }
                 else
                 {
+                    logger?.WriteLine($"Cleanup: SE directional bridge moves verticalEndpoints={movedVerticalBoundaryEndpoints}, rejectedNonVerticalBoundary={rejectedNonVerticalBoundary}.");
                     if (blockedByInterveningHorizontalRoad > 0)
                     {
                         logger?.WriteLine($"Cleanup: SE guard blocked {blockedByInterveningHorizontalRoad} candidate endpoint move(s) due to intervening horizontal road boundaries.");
