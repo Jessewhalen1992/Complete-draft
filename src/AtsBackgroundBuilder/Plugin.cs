@@ -2232,8 +2232,24 @@ namespace AtsBackgroundBuilder
             {
                 DrawDeferredLsdSubdivisionLines(database, lsdQuarterInfos, logger);
                 EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
+            }
+            logger.WriteLine("Cleanup: final endpoint convergence pass begins (all endpoint targets recalculated from final geometry).");
+            ConnectDanglingUsecZeroTwentyEndpoints(database, requestedScopeIds, logger);
+            CleanupOverlappingZeroTwentySectionLines(database, requestedScopeIds, logger);
+            EnforceSectionLineNoCrossingRules(database, requestedScopeIds, logger);
+            CleanupOverlappingZeroTwentySectionLines(database, requestedScopeIds, logger);
+            TrimZeroTwentyPassThroughExtensions(database, requestedScopeIds, logger);
+            ResolveZeroTwentyOverlapByEndpointIntersection(database, requestedScopeIds, logger);
+            CleanupOverlappingZeroTwentySectionLines(database, requestedScopeIds, logger);
+            EnforceSecLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
+            EnforceQuarterLineEndpointsOnSectionBoundaries(database, requestedScopeIds, logger);
+            EnforceBlindLineEndpointsOnSectionBoundaries(database, requestedScopeIds, logger);
+            if (drawLsds)
+            {
+                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
                 RebuildLsdLabelsAtFinalIntersections(database, lsdQuarterInfos, logger);
             }
+            logger.WriteLine("Cleanup: final endpoint convergence pass complete.");
             logger.WriteLine($"TIMING DrawSectionsFromRequests: road allowances processed in {timer.ElapsedMilliseconds} ms");
 
             if (EnableBufferedQuarterWindowDrawing)
@@ -7800,6 +7816,8 @@ namespace AtsBackgroundBuilder
                 var thirtyBoundarySegments = new List<(Point2d A, Point2d B)>();
                 var horizontalMidpointTargetSegments = new List<(Point2d A, Point2d B, Point2d Mid, int Priority)>();
                 var verticalMidpointTargetSegments = new List<(Point2d A, Point2d B, Point2d Mid, int Priority)>();
+                var qsecHorizontalComponentTargets = new List<(Point2d A, Point2d B, Point2d Mid)>();
+                var qsecVerticalComponentTargets = new List<(Point2d A, Point2d B, Point2d Mid)>();
                 var qsecHorizontalSegments = new List<(Point2d A, Point2d B)>();
                 var qsecVerticalSegments = new List<(Point2d A, Point2d B)>();
                 var lsdLineIds = new List<ObjectId>();
@@ -7906,12 +7924,29 @@ namespace AtsBackgroundBuilder
                     }
                 }
 
+                // Build midpoint targets for 1/4 lines strictly from final geometry.
+                // Midpoints must be computed after all section/endpoint adjustments, with no pre-extension bias.
+
+                for (var i = 0; i < qsecHorizontalSegments.Count; i++)
+                {
+                    var seg = qsecHorizontalSegments[i];
+                    horizontalMidpointTargetSegments.Add((seg.A, seg.B, Midpoint(seg.A, seg.B), Priority: 0));
+                }
+
+                for (var i = 0; i < qsecVerticalSegments.Count; i++)
+                {
+                    var seg = qsecVerticalSegments[i];
+                    verticalMidpointTargetSegments.Add((seg.A, seg.B, Midpoint(seg.A, seg.B), Priority: 0));
+                }
+
                 // Build shared component midpoint targets for 1/4 lines so sibling LSDs
                 // on the same quarter line resolve to an identical midpoint anchor.
                 if (qsecHorizontalSegments.Count > 0)
                 {
                     const double qsecAxisClusterTol = 2.50;
-                    const double qsecMergeGapTol = 2.00;
+                    // Bridge one-road-allowance breaks (~10.06m) so sibling LSD endpoints
+                    // on the same logical 1/4 line resolve to one shared midpoint.
+                    const double qsecMergeGapTol = 14.00;
                     var components = new List<(double MinX, double MaxX, double SumY, int Count)>();
                     for (var i = 0; i < qsecHorizontalSegments.Count; i++)
                     {
@@ -7955,14 +7990,19 @@ namespace AtsBackgroundBuilder
                         var y = c.SumY / Math.Max(1, c.Count);
                         var a = new Point2d(c.MinX, y);
                         var b = new Point2d(c.MaxX, y);
-                        horizontalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 0));
+                        var mid = Midpoint(a, b);
+                        // Component midpoint is fallback only; exact segment midpoint stays authoritative.
+                        horizontalMidpointTargetSegments.Add((a, b, mid, Priority: 3));
+                        qsecHorizontalComponentTargets.Add((a, b, mid));
                     }
                 }
 
                 if (qsecVerticalSegments.Count > 0)
                 {
                     const double qsecAxisClusterTol = 2.50;
-                    const double qsecMergeGapTol = 2.00;
+                    // Bridge one-road-allowance breaks (~10.06m) so sibling LSD endpoints
+                    // on the same logical 1/4 line resolve to one shared midpoint.
+                    const double qsecMergeGapTol = 14.00;
                     var components = new List<(double MinY, double MaxY, double SumX, int Count)>();
                     for (var i = 0; i < qsecVerticalSegments.Count; i++)
                     {
@@ -8006,7 +8046,58 @@ namespace AtsBackgroundBuilder
                         var x = c.SumX / Math.Max(1, c.Count);
                         var a = new Point2d(x, c.MinY);
                         var b = new Point2d(x, c.MaxY);
-                        verticalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 0));
+                        var mid = Midpoint(a, b);
+                        // Component midpoint is fallback only; exact segment midpoint stays authoritative.
+                        verticalMidpointTargetSegments.Add((a, b, mid, Priority: 3));
+                        qsecVerticalComponentTargets.Add((a, b, mid));
+                    }
+                }
+
+                // Derive section-center anchors from final QSEC components.
+                // Each center is an intersection of horizontal/vertical 1/4 components.
+                var qsecCenters = new List<Point2d>();
+                if (qsecHorizontalComponentTargets.Count > 0 && qsecVerticalComponentTargets.Count > 0)
+                {
+                    const double centerOnComponentTol = 2.50;
+                    const double centerMergeTol = 1.00;
+                    for (var hi = 0; hi < qsecHorizontalComponentTargets.Count; hi++)
+                    {
+                        var h = qsecHorizontalComponentTargets[hi];
+                        var hy = 0.5 * (h.A.Y + h.B.Y);
+                        var hMinX = Math.Min(h.A.X, h.B.X);
+                        var hMaxX = Math.Max(h.A.X, h.B.X);
+                        for (var vi = 0; vi < qsecVerticalComponentTargets.Count; vi++)
+                        {
+                            var v = qsecVerticalComponentTargets[vi];
+                            var vx = 0.5 * (v.A.X + v.B.X);
+                            var vMinY = Math.Min(v.A.Y, v.B.Y);
+                            var vMaxY = Math.Max(v.A.Y, v.B.Y);
+                            if (vx < (hMinX - centerOnComponentTol) || vx > (hMaxX + centerOnComponentTol))
+                            {
+                                continue;
+                            }
+
+                            if (hy < (vMinY - centerOnComponentTol) || hy > (vMaxY + centerOnComponentTol))
+                            {
+                                continue;
+                            }
+
+                            var c = new Point2d(vx, hy);
+                            var merged = false;
+                            for (var ci = 0; ci < qsecCenters.Count; ci++)
+                            {
+                                if (qsecCenters[ci].GetDistanceTo(c) <= centerMergeTol)
+                                {
+                                    merged = true;
+                                    break;
+                                }
+                            }
+
+                            if (!merged)
+                            {
+                                qsecCenters.Add(c);
+                            }
+                        }
                     }
                 }
 
@@ -8034,6 +8125,8 @@ namespace AtsBackgroundBuilder
                 var adjustedLines = 0;
                 var midpointAdjustedLines = 0;
                 var midpointAdjustedEndpoints = 0;
+                var qsecComponentClampLines = 0;
+                var qsecComponentClampEndpoints = 0;
 
                 bool IsHorizontalLike(Point2d a, Point2d b)
                 {
@@ -8113,9 +8206,10 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
-                bool TryFindEndpointHorizontalMidpointX(Point2d endpoint, out double targetX, out int targetPriority)
+                bool TryFindEndpointHorizontalMidpointX(Point2d endpoint, out double targetX, out double targetY, out int targetPriority)
                 {
                     targetX = endpoint.X;
+                    targetY = endpoint.Y;
                     targetPriority = int.MaxValue;
                     const double endpointYLineTol = 2.00;
                     const double xSpanTol = 2.00;
@@ -8176,7 +8270,112 @@ namespace AtsBackgroundBuilder
                         bestYGap = yGap;
                         bestMove = move;
                         targetX = seg.Mid.X;
+                        targetY = seg.Mid.Y;
                         targetPriority = seg.Priority;
+                    }
+
+                    return found;
+                }
+
+                bool TryResolveHorizontalQsecComponentMidpoint(Point2d endpoint, out double targetX, out double targetY)
+                {
+                    targetX = endpoint.X;
+                    targetY = endpoint.Y;
+                    if (qsecHorizontalComponentTargets.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    const double axisTol = 4.00;
+                    const double spanTol = 40.0;
+                    const double centerTol = 2.50;
+                    const double maxMove = 80.0;
+                    var found = false;
+                    var bestAxisGap = double.MaxValue;
+                    var bestMove = double.MaxValue;
+
+                    for (var i = 0; i < qsecHorizontalComponentTargets.Count; i++)
+                    {
+                        var c = qsecHorizontalComponentTargets[i];
+                        var yLine = 0.5 * (c.A.Y + c.B.Y);
+                        var axisGap = Math.Abs(endpoint.Y - yLine);
+                        if (axisGap > axisTol)
+                        {
+                            continue;
+                        }
+
+                        var minX = Math.Min(c.A.X, c.B.X);
+                        var maxX = Math.Max(c.A.X, c.B.X);
+                        if (endpoint.X < (minX - spanTol) || endpoint.X > (maxX + spanTol))
+                        {
+                            continue;
+                        }
+
+                        var resolvedOnComponent = false;
+                        // Primary: midpoint between section-center and corresponding component endpoint.
+                        // This guarantees all LSDs on the same 1/4 ray share one target.
+                        for (var ci = 0; ci < qsecCenters.Count; ci++)
+                        {
+                            var center = qsecCenters[ci];
+                            if (Math.Abs(center.Y - yLine) > centerTol ||
+                                center.X < (minX - centerTol) ||
+                                center.X > (maxX + centerTol))
+                            {
+                                continue;
+                            }
+
+                            var sideX = endpoint.X <= center.X
+                                ? 0.5 * (minX + center.X)
+                                : 0.5 * (maxX + center.X);
+                            var move = Math.Abs(sideX - endpoint.X);
+                            if (move <= midpointEndpointMoveTol || move > maxMove)
+                            {
+                                continue;
+                            }
+
+                            var betterFromCenter =
+                                !found ||
+                                axisGap < (bestAxisGap - 1e-6) ||
+                                (Math.Abs(axisGap - bestAxisGap) <= 1e-6 && move < bestMove);
+                            if (!betterFromCenter)
+                            {
+                                continue;
+                            }
+
+                            found = true;
+                            resolvedOnComponent = true;
+                            bestAxisGap = axisGap;
+                            bestMove = move;
+                            targetX = sideX;
+                            targetY = yLine;
+                        }
+
+                        if (resolvedOnComponent)
+                        {
+                            continue;
+                        }
+
+                        // Fallback when no center could be resolved for this component.
+                        var fallbackMove = endpoint.GetDistanceTo(c.Mid);
+                        if (fallbackMove <= midpointEndpointMoveTol || fallbackMove > maxMove)
+                        {
+                            continue;
+                        }
+
+                        var better =
+                            !found ||
+                            axisGap < (bestAxisGap - 1e-6) ||
+                            (Math.Abs(axisGap - bestAxisGap) <= 1e-6 && fallbackMove < bestMove);
+                        if (!better)
+                        {
+                            continue;
+                        }
+
+                        found = true;
+                        bestAxisGap = axisGap;
+                        bestMove = fallbackMove;
+                        targetX = c.Mid.X;
+                        targetY = c.Mid.Y;
                     }
 
                     return found;
@@ -8185,8 +8384,8 @@ namespace AtsBackgroundBuilder
                 bool TryFindPairedVerticalMidpointX(Point2d p0, Point2d p1, out double targetX)
                 {
                     targetX = 0.5 * (p0.X + p1.X);
-                    var found0 = TryFindEndpointHorizontalMidpointX(p0, out var x0, out var pri0);
-                    var found1 = TryFindEndpointHorizontalMidpointX(p1, out var x1, out var pri1);
+                    var found0 = TryFindEndpointHorizontalMidpointX(p0, out var x0, out _, out var pri0);
+                    var found1 = TryFindEndpointHorizontalMidpointX(p1, out var x1, out _, out var pri1);
                     if (!found0 && !found1)
                     {
                         return false;
@@ -8307,6 +8506,107 @@ namespace AtsBackgroundBuilder
                         bestMove = move;
                         targetY = seg.Mid.Y;
                         targetPriority = seg.Priority;
+                    }
+
+                    return found;
+                }
+
+                bool TryResolveVerticalQsecComponentMidpoint(Point2d endpoint, out double targetX, out double targetY)
+                {
+                    targetX = endpoint.X;
+                    targetY = endpoint.Y;
+                    if (qsecVerticalComponentTargets.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    const double axisTol = 4.00;
+                    const double spanTol = 40.0;
+                    const double centerTol = 2.50;
+                    const double maxMove = 80.0;
+                    var found = false;
+                    var bestAxisGap = double.MaxValue;
+                    var bestMove = double.MaxValue;
+
+                    for (var i = 0; i < qsecVerticalComponentTargets.Count; i++)
+                    {
+                        var c = qsecVerticalComponentTargets[i];
+                        var xLine = 0.5 * (c.A.X + c.B.X);
+                        var axisGap = Math.Abs(endpoint.X - xLine);
+                        if (axisGap > axisTol)
+                        {
+                            continue;
+                        }
+
+                        var minY = Math.Min(c.A.Y, c.B.Y);
+                        var maxY = Math.Max(c.A.Y, c.B.Y);
+                        if (endpoint.Y < (minY - spanTol) || endpoint.Y > (maxY + spanTol))
+                        {
+                            continue;
+                        }
+
+                        var resolvedOnComponent = false;
+                        for (var ci = 0; ci < qsecCenters.Count; ci++)
+                        {
+                            var center = qsecCenters[ci];
+                            if (Math.Abs(center.X - xLine) > centerTol ||
+                                center.Y < (minY - centerTol) ||
+                                center.Y > (maxY + centerTol))
+                            {
+                                continue;
+                            }
+
+                            var sideY = endpoint.Y <= center.Y
+                                ? 0.5 * (minY + center.Y)
+                                : 0.5 * (maxY + center.Y);
+                            var move = Math.Abs(sideY - endpoint.Y);
+                            if (move <= midpointEndpointMoveTol || move > maxMove)
+                            {
+                                continue;
+                            }
+
+                            var betterFromCenter =
+                                !found ||
+                                axisGap < (bestAxisGap - 1e-6) ||
+                                (Math.Abs(axisGap - bestAxisGap) <= 1e-6 && move < bestMove);
+                            if (!betterFromCenter)
+                            {
+                                continue;
+                            }
+
+                            found = true;
+                            resolvedOnComponent = true;
+                            bestAxisGap = axisGap;
+                            bestMove = move;
+                            targetX = xLine;
+                            targetY = sideY;
+                        }
+
+                        if (resolvedOnComponent)
+                        {
+                            continue;
+                        }
+
+                        var fallbackMove = endpoint.GetDistanceTo(c.Mid);
+                        if (fallbackMove <= midpointEndpointMoveTol || fallbackMove > maxMove)
+                        {
+                            continue;
+                        }
+
+                        var better =
+                            !found ||
+                            axisGap < (bestAxisGap - 1e-6) ||
+                            (Math.Abs(axisGap - bestAxisGap) <= 1e-6 && fallbackMove < bestMove);
+                        if (!better)
+                        {
+                            continue;
+                        }
+
+                        found = true;
+                        bestAxisGap = axisGap;
+                        bestMove = fallbackMove;
+                        targetX = c.Mid.X;
+                        targetY = c.Mid.Y;
                     }
 
                     return found;
@@ -8657,25 +8957,41 @@ namespace AtsBackgroundBuilder
                         var hasEndMid = false;
                         var midStartX = p0.X;
                         var midEndX = p1.X;
+                        var midStartY = p0.Y;
+                        var midEndY = p1.Y;
 
-                        if (TryFindPairedVerticalMidpointX(p0, p1, out var pairedX))
+                        // Deterministic rule: if endpoints terminate on the same 1/4 component,
+                        // they must resolve to the same component midpoint.
+                        hasStartMid = TryResolveHorizontalQsecComponentMidpoint(p0, out midStartX, out midStartY);
+                        hasEndMid = TryResolveHorizontalQsecComponentMidpoint(p1, out midEndX, out midEndY);
+                        if (!hasStartMid)
                         {
-                            hasStartMid = true;
-                            hasEndMid = true;
-                            midStartX = pairedX;
-                            midEndX = pairedX;
+                            hasStartMid = TryFindEndpointHorizontalMidpointX(p0, out midStartX, out midStartY, out _);
                         }
-                        else
+
+                        if (!hasEndMid)
                         {
-                            hasStartMid = TryFindEndpointHorizontalMidpointX(p0, out midStartX, out _);
-                            hasEndMid = TryFindEndpointHorizontalMidpointX(p1, out midEndX, out _);
+                            hasEndMid = TryFindEndpointHorizontalMidpointX(p1, out midEndX, out midEndY, out _);
+                        }
+
+                        if (hasStartMid && hasEndMid)
+                        {
+                            // Keep both vertical endpoints on their own target midpoints.
+                            // Only force a shared X when both midpoint targets are already effectively identical.
+                            const double pairedVerticalMidpointXTol = 0.25;
+                            if (Math.Abs(midStartX - midEndX) <= pairedVerticalMidpointXTol)
+                            {
+                                var sharedX = 0.5 * (midStartX + midEndX);
+                                midStartX = sharedX;
+                                midEndX = sharedX;
+                            }
                         }
 
                         if (hasStartMid || hasEndMid)
                         {
                             if (hasStartMid)
                             {
-                                var snappedStart = new Point2d(midStartX, p0.Y);
+                                var snappedStart = new Point2d(midStartX, midStartY);
                                 if (p0.GetDistanceTo(snappedStart) > midpointEndpointMoveTol)
                                 {
                                     moveStart = true;
@@ -8685,7 +9001,7 @@ namespace AtsBackgroundBuilder
 
                             if (hasEndMid)
                             {
-                                var snappedEnd = new Point2d(midEndX, p1.Y);
+                                var snappedEnd = new Point2d(midEndX, midEndY);
                                 if (p1.GetDistanceTo(snappedEnd) > midpointEndpointMoveTol)
                                 {
                                     moveEnd = true;
@@ -8737,7 +9053,16 @@ namespace AtsBackgroundBuilder
                         var midStartY = p0.Y;
                         var midEndY = p1.Y;
 
-                        if (TryFindPairedHorizontalMidpointY(p0, p1, out var pairedY))
+                        var hasStartQsecVertical = TryResolveVerticalQsecComponentMidpoint(p0, out _, out var qsecStartY);
+                        var hasEndQsecVertical = TryResolveVerticalQsecComponentMidpoint(p1, out _, out var qsecEndY);
+                        if (hasStartQsecVertical || hasEndQsecVertical)
+                        {
+                            hasStartMid = hasStartQsecVertical;
+                            hasEndMid = hasEndQsecVertical;
+                            midStartY = qsecStartY;
+                            midEndY = qsecEndY;
+                        }
+                        else if (TryFindPairedHorizontalMidpointY(p0, p1, out var pairedY))
                         {
                             hasStartMid = true;
                             hasEndMid = true;
@@ -8987,9 +9312,125 @@ namespace AtsBackgroundBuilder
                     }
                 }
 
+                // Final clamp:
+                // if an LSD endpoint already terminates on an L-QSEC component, force it to that
+                // full-component midpoint (not a split-fragment midpoint).
+                if (lsdLineIds.Count > 0 && (qsecHorizontalComponentTargets.Count > 0 || qsecVerticalComponentTargets.Count > 0))
+                {
+                    bool TryFindHorizontalQsecComponentMidpoint(Point2d endpoint, out Point2d target)
+                    {
+                        target = endpoint;
+                        if (!TryResolveHorizontalQsecComponentMidpoint(endpoint, out var tx, out var ty))
+                        {
+                            return false;
+                        }
+
+                        target = new Point2d(tx, ty);
+                        return true;
+                    }
+
+                    bool TryFindVerticalQsecComponentMidpoint(Point2d endpoint, out Point2d target)
+                    {
+                        target = endpoint;
+                        if (!TryResolveVerticalQsecComponentMidpoint(endpoint, out var tx, out var ty))
+                        {
+                            return false;
+                        }
+
+                        target = new Point2d(tx, ty);
+                        return true;
+                    }
+
+                    for (var i = 0; i < lsdLineIds.Count; i++)
+                    {
+                        var id = lsdLineIds[i];
+                        if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenSegment(writable, out var p0, out var p1))
+                        {
+                            continue;
+                        }
+
+                        var movedAny = false;
+                        if (IsVerticalLike(p0, p1))
+                        {
+                            var moveStart = false;
+                            var moveEnd = false;
+                            var targetStart = p0;
+                            var targetEnd = p1;
+                            if (TryFindHorizontalQsecComponentMidpoint(p0, out var t0))
+                            {
+                                moveStart = true;
+                                targetStart = t0;
+                            }
+
+                            if (TryFindHorizontalQsecComponentMidpoint(p1, out var t1))
+                            {
+                                moveEnd = true;
+                                targetEnd = t1;
+                            }
+
+                            if (moveStart && TryMoveEndpoint(writable, moveStart: true, targetStart, midpointEndpointMoveTol))
+                            {
+                                qsecComponentClampEndpoints++;
+                                adjustedEndpoints++;
+                                movedAny = true;
+                            }
+
+                            if (moveEnd && TryMoveEndpoint(writable, moveStart: false, targetEnd, midpointEndpointMoveTol))
+                            {
+                                qsecComponentClampEndpoints++;
+                                adjustedEndpoints++;
+                                movedAny = true;
+                            }
+                        }
+                        else if (IsHorizontalLike(p0, p1))
+                        {
+                            var moveStart = false;
+                            var moveEnd = false;
+                            var targetStart = p0;
+                            var targetEnd = p1;
+                            if (TryFindVerticalQsecComponentMidpoint(p0, out var t0))
+                            {
+                                moveStart = true;
+                                targetStart = t0;
+                            }
+
+                            if (TryFindVerticalQsecComponentMidpoint(p1, out var t1))
+                            {
+                                moveEnd = true;
+                                targetEnd = t1;
+                            }
+
+                            if (moveStart && TryMoveEndpoint(writable, moveStart: true, targetStart, midpointEndpointMoveTol))
+                            {
+                                qsecComponentClampEndpoints++;
+                                adjustedEndpoints++;
+                                movedAny = true;
+                            }
+
+                            if (moveEnd && TryMoveEndpoint(writable, moveStart: false, targetEnd, midpointEndpointMoveTol))
+                            {
+                                qsecComponentClampEndpoints++;
+                                adjustedEndpoints++;
+                                movedAny = true;
+                            }
+                        }
+
+                        if (movedAny)
+                        {
+                            qsecComponentClampLines++;
+                            adjustedLines++;
+                        }
+                    }
+                }
+
                 tr.Commit();
                 logger?.WriteLine(
-                    $"Cleanup: LSD hard-boundary rule scanned={scannedEndpoints}, alreadyOnHard={alreadyOnHardBoundary}, on30Only={onThirtyOnly}, midpointLines={midpointAdjustedLines}, midpointEndpoints={midpointAdjustedEndpoints}, windowBoundarySkipped={boundarySkipped}, noTarget={noTarget}, adjustedEndpoints={adjustedEndpoints}, adjustedLines={adjustedLines}.");
+                    $"Cleanup: LSD hard-boundary rule scanned={scannedEndpoints}, alreadyOnHard={alreadyOnHardBoundary}, on30Only={onThirtyOnly}, midpointLines={midpointAdjustedLines}, midpointEndpoints={midpointAdjustedEndpoints}, qsecComponentClampLines={qsecComponentClampLines}, qsecComponentClampEndpoints={qsecComponentClampEndpoints}, windowBoundarySkipped={boundarySkipped}, noTarget={noTarget}, adjustedEndpoints={adjustedEndpoints}, adjustedLines={adjustedLines}.");
             }
         }
 
