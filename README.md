@@ -33,6 +33,31 @@ Run the command:
 ATSBUILD
 ```
 
+## CAD line export for Python diagnosis
+
+To visualize the exact final AutoCAD linework in the Streamlit viewer (layer toggles by CAD layer):
+
+```powershell
+$env:ATSBUILD_EXPORT_GEOJSON = "1"
+$env:ATSBUILD_EXPORT_GEOJSON_PATH = "C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\out_debug_twp_3017\cad_lines.geojson"
+```
+
+Then run `ATSBUILD` in AutoCAD. The plugin writes `cad_lines.geojson` containing final model-space line segments on:
+
+- `L-SEC`
+- `L-USEC`
+- `L-QSEC`
+- `L-SECTION-LSD`
+- `L-QSEC-BOX`
+
+Open with:
+
+```powershell
+streamlit run ats_viewer/streamlit_app.py -- --data-dir ".\out_debug_twp_3017"
+```
+
+In the sidebar choose **View mode = AutoCAD parity**.
+
 You will be prompted to:
 
 1. Select quarter-section polylines. Press Enter to select section polylines and auto-generate quarters.
