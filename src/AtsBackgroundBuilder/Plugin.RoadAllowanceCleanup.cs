@@ -150,6 +150,8 @@ namespace AtsBackgroundBuilder
             {
                 return;
             }
+            var clipMinX = clipWindows.Min(w => w.MinPoint.X);
+            var clipMaxX = clipWindows.Max(w => w.MaxPoint.X);
 
             bool IsPointInAnyWindow(Point2d p)
             {
@@ -684,6 +686,8 @@ namespace AtsBackgroundBuilder
             {
                 return;
             }
+            var clipMinX = clipWindows.Min(w => w.MinPoint.X);
+            var clipMaxX = clipWindows.Max(w => w.MaxPoint.X);
 
             bool IsPointInAnyWindow(Point2d p)
             {
@@ -5553,6 +5557,8 @@ namespace AtsBackgroundBuilder
             {
                 return;
             }
+            var clipMinX = clipWindows.Min(w => w.MinPoint.X);
+            var clipMaxX = clipWindows.Max(w => w.MaxPoint.X);
 
             bool IsPointInAnyWindow(Point2d point)
             {
@@ -5816,6 +5822,10 @@ namespace AtsBackgroundBuilder
                 const double twoLineMiddleToOuterGapTolerance = 1.4;
                 const double lenTolerance = 0.35;
                 const double secThirtyRatio = RoadAllowanceSecWidthMeters / RoadAllowanceUsecWidthMeters;
+                const double rangeEdgeBand = 145.0;
+                const double localTriadSecGapTolerance = 2.4;
+                const double localTriadThirtyGapTolerance = 3.6;
+                const double localTriadMinOverlap = 40.0;
                 var middleToOuterGap = RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters;
 
                 static bool HasSpanContact(
@@ -5844,6 +5854,8 @@ namespace AtsBackgroundBuilder
                 var normalizedToTwenty = 0;
                 var normalizedToThirty = 0;
                 var unchanged = 0;
+                var rangeEdgeTwoLineZeroThirtyOverrides = 0;
+                var localTriadZeroOverrides = 0;
 
                 var toVisit = new List<int>(Math.Max(4, generatedUsecIndices.Count));
                 var processed = new bool[roadSegments.Count];
@@ -5950,6 +5962,10 @@ namespace AtsBackgroundBuilder
                         var zeroAxis = buckets[0].Axis;
                         var farAxis = buckets[1].Axis;
                         var gap = Math.Abs(farAxis - zeroAxis);
+                        var componentIsHorizontal = roadSegments[component[0]].IsHorizontal;
+                        var nearWestRangeEdge = !componentIsHorizontal && zeroAxis <= (clipMinX + rangeEdgeBand);
+                        var nearEastRangeEdge = !componentIsHorizontal && farAxis >= (clipMaxX - rangeEdgeBand);
+                        var forceRangeEdgeZeroThirty = nearWestRangeEdge ^ nearEastRangeEdge;
                         var lowSplitThreshold = (middleToOuterGap + RoadAllowanceSecWidthMeters) * 0.5;
                         var highSplitThreshold = (RoadAllowanceSecWidthMeters + RoadAllowanceUsecWidthMeters) * 0.5;
 
@@ -5960,8 +5976,26 @@ namespace AtsBackgroundBuilder
                         }
                         else if (Math.Abs(gap - middleToOuterGap) <= twoLineMiddleToOuterGapTolerance)
                         {
-                            bucketLayers[0] = LayerUsecTwenty;
-                            bucketLayers[1] = LayerUsecThirty;
+                            if (forceRangeEdgeZeroThirty)
+                            {
+                                if (nearWestRangeEdge)
+                                {
+                                    bucketLayers[0] = LayerUsecZero;
+                                    bucketLayers[1] = LayerUsecThirty;
+                                }
+                                else
+                                {
+                                    bucketLayers[0] = LayerUsecThirty;
+                                    bucketLayers[1] = LayerUsecZero;
+                                }
+
+                                rangeEdgeTwoLineZeroThirtyOverrides++;
+                            }
+                            else
+                            {
+                                bucketLayers[0] = LayerUsecTwenty;
+                                bucketLayers[1] = LayerUsecThirty;
+                            }
                         }
                         else if (Math.Abs(gap - RoadAllowanceUsecWidthMeters) <= twoLineThirtyGapTolerance)
                         {
@@ -5971,8 +6005,26 @@ namespace AtsBackgroundBuilder
                         else if (gap <= (lowSplitThreshold - lenTolerance))
                         {
                             // Small two-line spacing most closely matches 20.12<->30.18.
-                            bucketLayers[0] = LayerUsecTwenty;
-                            bucketLayers[1] = LayerUsecThirty;
+                            if (forceRangeEdgeZeroThirty)
+                            {
+                                if (nearWestRangeEdge)
+                                {
+                                    bucketLayers[0] = LayerUsecZero;
+                                    bucketLayers[1] = LayerUsecThirty;
+                                }
+                                else
+                                {
+                                    bucketLayers[0] = LayerUsecThirty;
+                                    bucketLayers[1] = LayerUsecZero;
+                                }
+
+                                rangeEdgeTwoLineZeroThirtyOverrides++;
+                            }
+                            else
+                            {
+                                bucketLayers[0] = LayerUsecTwenty;
+                                bucketLayers[1] = LayerUsecThirty;
+                            }
                         }
                         else if (gap < (highSplitThreshold - lenTolerance))
                         {
@@ -6043,6 +6095,147 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
+                    bool BucketsHaveSpanOverlap(int leftBucketIndex, int rightBucketIndex, double minOverlap)
+                    {
+                        var leftMembers = buckets[leftBucketIndex].Members;
+                        var rightMembers = buckets[rightBucketIndex].Members;
+                        for (var li = 0; li < leftMembers.Count; li++)
+                        {
+                            var leftSeg = roadSegments[leftMembers[li]];
+                            for (var ri = 0; ri < rightMembers.Count; ri++)
+                            {
+                                var rightSeg = roadSegments[rightMembers[ri]];
+                                var overlap = Math.Min(leftSeg.SpanMax, rightSeg.SpanMax) - Math.Max(leftSeg.SpanMin, rightSeg.SpanMin);
+                                if (overlap >= minOverlap)
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+
+                        return false;
+                    }
+
+                    int FindBucketCompanion(
+                        int sourceBucketIndex,
+                        int sideSign,
+                        double targetGap,
+                        double gapTolerance,
+                        double minOverlap)
+                    {
+                        var sourceAxis = buckets[sourceBucketIndex].Axis;
+                        for (var bi = 0; bi < bucketCount; bi++)
+                        {
+                            if (bi == sourceBucketIndex)
+                            {
+                                continue;
+                            }
+
+                            var delta = buckets[bi].Axis - sourceAxis;
+                            if (Math.Sign(delta) != sideSign)
+                            {
+                                continue;
+                            }
+
+                            var gap = Math.Abs(delta);
+                            if (Math.Abs(gap - targetGap) > gapTolerance)
+                            {
+                                continue;
+                            }
+
+                            if (!BucketsHaveSpanOverlap(sourceBucketIndex, bi, minOverlap))
+                            {
+                                continue;
+                            }
+
+                            return bi;
+                        }
+
+                        return -1;
+                    }
+
+                    if (bucketCount >= 3)
+                    {
+                        for (var b = 0; b < bucketCount; b++)
+                        {
+                            if (!string.Equals(bucketLayers[b], LayerUsecTwenty, StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+
+                            var bucketHasGeneratedMember = false;
+                            for (var mi = 0; mi < buckets[b].Members.Count; mi++)
+                            {
+                                if (roadSegments[buckets[b].Members[mi]].IsGenerated)
+                                {
+                                    bucketHasGeneratedMember = true;
+                                    break;
+                                }
+                            }
+
+                            if (bucketHasGeneratedMember)
+                            {
+                                continue;
+                            }
+
+                            var overrideToZero = false;
+                            for (var side = -1; side <= 1; side += 2)
+                            {
+                                var secCompanion = FindBucketCompanion(
+                                    b,
+                                    side,
+                                    RoadAllowanceSecWidthMeters,
+                                    localTriadSecGapTolerance,
+                                    localTriadMinOverlap);
+                                if (secCompanion < 0)
+                                {
+                                    continue;
+                                }
+
+                                var thirtyCompanion = FindBucketCompanion(
+                                    b,
+                                    side,
+                                    RoadAllowanceUsecWidthMeters,
+                                    localTriadThirtyGapTolerance,
+                                    localTriadMinOverlap);
+                                if (thirtyCompanion < 0)
+                                {
+                                    continue;
+                                }
+
+                                overrideToZero = true;
+                                break;
+                            }
+
+                            if (overrideToZero)
+                            {
+                                bucketLayers[b] = LayerUsecZero;
+                                localTriadZeroOverrides++;
+                            }
+                        }
+                    }
+
+                    var componentContainsTraceTarget = component.Exists(i => IsTargetLayerTraceSegment(roadSegments[i].A, roadSegments[i].B));
+                    if (componentContainsTraceTarget && logger != null)
+                    {
+                        logger.WriteLine(
+                            $"LAYER-TARGET three-bands component axisKind={(roadSegments[component[0]].IsHorizontal ? "H" : "V")} bucketCount={bucketCount} generatedInComponent={generatedInComponent}.");
+                        for (var b = 0; b < bucketCount; b++)
+                        {
+                            var axis = buckets[b].Axis;
+                            var target = bucketLayers[b] ?? string.Empty;
+                            logger.WriteLine(
+                                $"LAYER-TARGET three-bands bucket idx={b + 1} axis={axis:0.###} target={target} members={buckets[b].Members.Count}.");
+                            foreach (var member in buckets[b].Members)
+                            {
+                                var seg = roadSegments[member];
+                                var isTrace = IsTargetLayerTraceSegment(seg.A, seg.B);
+                                logger.WriteLine(
+                                    $"LAYER-TARGET three-bands member id={seg.Id.Handle} layer={(seg.IsUsecLayer ? "USEC" : "OTHER")} generated={seg.IsGenerated} axis={seg.Axis:0.###} span=({seg.SpanMin:0.###},{seg.SpanMax:0.###}) trace={isTrace} a=({seg.A.X:0.###},{seg.A.Y:0.###}) b=({seg.B.X:0.###},{seg.B.Y:0.###}).");
+                            }
+                        }
+                    }
+
                     for (var b = 0; b < bucketCount; b++)
                     {
                         var targetLayer = bucketLayers[b];
@@ -6091,7 +6284,7 @@ namespace AtsBackgroundBuilder
                 {
                     logger?.WriteLine(
                         $"Cleanup: normalized {total} usec segment(s) into three bands " +
-                        $"[0:{normalizedToZero}, 20.11:{normalizedToTwenty}, 30.16:{normalizedToThirty}], unchanged={unchanged}.");
+                        $"[0:{normalizedToZero}, 20.11:{normalizedToTwenty}, 30.16:{normalizedToThirty}], unchanged={unchanged}, rangeEdge2Line0_30Overrides={rangeEdgeTwoLineZeroThirtyOverrides}, localTriad0Overrides={localTriadZeroOverrides}.");
                 }
             }
         }
@@ -6706,6 +6899,8 @@ namespace AtsBackgroundBuilder
             {
                 return;
             }
+            var clipMinX = clipWindows.Min(w => w.MinPoint.X);
+            var clipMaxX = clipWindows.Max(w => w.MaxPoint.X);
 
             bool IsPointInAnyWindow(Point2d p)
             {
@@ -6953,7 +7148,7 @@ namespace AtsBackgroundBuilder
                     return;
                 }
 
-                var segments = new List<(ObjectId Id, Point2d A, Point2d B)>();
+                var segments = new List<(ObjectId Id, Point2d A, Point2d B, string Layer)>();
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
                 foreach (ObjectId id in ms)
@@ -6985,7 +7180,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    segments.Add((id, a, b));
+                    segments.Add((id, a, b, ent.Layer ?? string.Empty));
                 }
 
                 if (segments.Count == 0)
@@ -7002,26 +7197,474 @@ namespace AtsBackgroundBuilder
                 const double overlapPadding = 16.0;
                 const double minProjectedOverlap = 20.0;
                 const double blindSouthTolerance = 1.2;
+                const double zeroTwentyCompanionTol = 2.4;
+                const double zeroTwentyCompanionMinOverlap = 40.0;
+                const double rangeEdgeBand = 145.0;
+                const double twentyThirtyCompanionTol = 2.4;
+                const double twentyThirtyCompanionMinOverlap = 40.0;
+                var middleToOuterGap = RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters;
                 var adjusted = 0;
                 var unchanged = 0;
                 var unresolved = 0;
                 var skippedBlind = 0;
+                var ownerResolved = 0;
+                var fallbackResolved = 0;
+                var preservedTwentyByZeroCompanion = 0;
+                var forcedTwentyToZeroByRangeEdge = 0;
+                var forcedTwentyToZeroBySecCompanion = 0;
+                var forcedTwentyToZeroByGeomPattern = 0;
+
+                static string CanonicalUsecLayer(string layer)
+                {
+                    if (string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return LayerUsecZero;
+                    }
+
+                    if (string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return LayerUsecTwenty;
+                    }
+
+                    if (string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return LayerUsecThirty;
+                    }
+
+                    if (string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return LayerUsecBase;
+                    }
+
+                    return string.Empty;
+                }
+
+                static double ProjectedOverlap(
+                    double aMin,
+                    double aMax,
+                    double bMin,
+                    double bMax)
+                {
+                    return Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
+                }
+
+                bool HasParallelZeroCompanionAtTwentyOffset(int segmentIndex)
+                {
+                    var seg = segments[segmentIndex];
+                    var segHorizontal = IsHorizontalLike(seg.A, seg.B);
+                    var segVertical = IsVerticalLike(seg.A, seg.B);
+                    if (!segHorizontal && !segVertical)
+                    {
+                        return false;
+                    }
+
+                    var segAxis = segHorizontal
+                        ? (0.5 * (seg.A.Y + seg.B.Y))
+                        : (0.5 * (seg.A.X + seg.B.X));
+                    var segSpanMin = segHorizontal
+                        ? Math.Min(seg.A.X, seg.B.X)
+                        : Math.Min(seg.A.Y, seg.B.Y);
+                    var segSpanMax = segHorizontal
+                        ? Math.Max(seg.A.X, seg.B.X)
+                        : Math.Max(seg.A.Y, seg.B.Y);
+                    for (var oi = 0; oi < segments.Count; oi++)
+                    {
+                        if (oi == segmentIndex)
+                        {
+                            continue;
+                        }
+
+                        var other = segments[oi];
+                        if (!string.Equals(CanonicalUsecLayer(other.Layer), LayerUsecZero, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        var otherHorizontal = IsHorizontalLike(other.A, other.B);
+                        var otherVertical = IsVerticalLike(other.A, other.B);
+                        if (segHorizontal != otherHorizontal || segVertical != otherVertical)
+                        {
+                            continue;
+                        }
+
+                        var otherAxis = segHorizontal
+                            ? (0.5 * (other.A.Y + other.B.Y))
+                            : (0.5 * (other.A.X + other.B.X));
+                        var axisGap = Math.Abs(segAxis - otherAxis);
+                        if (Math.Abs(axisGap - RoadAllowanceSecWidthMeters) > zeroTwentyCompanionTol)
+                        {
+                            continue;
+                        }
+
+                        var otherSpanMin = segHorizontal
+                            ? Math.Min(other.A.X, other.B.X)
+                            : Math.Min(other.A.Y, other.B.Y);
+                        var otherSpanMax = segHorizontal
+                            ? Math.Max(other.A.X, other.B.X)
+                            : Math.Max(other.A.Y, other.B.Y);
+                        var overlap = ProjectedOverlap(segSpanMin, segSpanMax, otherSpanMin, otherSpanMax);
+                        if (overlap < zeroTwentyCompanionMinOverlap)
+                        {
+                            continue;
+                        }
+
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                bool TryFindParallelZeroCompanionAtTwentyOffset(int segmentIndex, out double companionAxis)
+                {
+                    companionAxis = double.NaN;
+                    var seg = segments[segmentIndex];
+                    var segHorizontal = IsHorizontalLike(seg.A, seg.B);
+                    var segVertical = IsVerticalLike(seg.A, seg.B);
+                    if (!segHorizontal && !segVertical)
+                    {
+                        return false;
+                    }
+
+                    var segAxis = segHorizontal
+                        ? (0.5 * (seg.A.Y + seg.B.Y))
+                        : (0.5 * (seg.A.X + seg.B.X));
+                    var segSpanMin = segHorizontal
+                        ? Math.Min(seg.A.X, seg.B.X)
+                        : Math.Min(seg.A.Y, seg.B.Y);
+                    var segSpanMax = segHorizontal
+                        ? Math.Max(seg.A.X, seg.B.X)
+                        : Math.Max(seg.A.Y, seg.B.Y);
+                    var bestOverlap = double.MinValue;
+                    for (var oi = 0; oi < segments.Count; oi++)
+                    {
+                        if (oi == segmentIndex)
+                        {
+                            continue;
+                        }
+
+                        var other = segments[oi];
+                        if (!string.Equals(CanonicalUsecLayer(other.Layer), LayerUsecZero, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        var otherHorizontal = IsHorizontalLike(other.A, other.B);
+                        var otherVertical = IsVerticalLike(other.A, other.B);
+                        if (segHorizontal != otherHorizontal || segVertical != otherVertical)
+                        {
+                            continue;
+                        }
+
+                        var otherAxis = segHorizontal
+                            ? (0.5 * (other.A.Y + other.B.Y))
+                            : (0.5 * (other.A.X + other.B.X));
+                        var axisGap = Math.Abs(segAxis - otherAxis);
+                        if (Math.Abs(axisGap - RoadAllowanceSecWidthMeters) > zeroTwentyCompanionTol)
+                        {
+                            continue;
+                        }
+
+                        var otherSpanMin = segHorizontal
+                            ? Math.Min(other.A.X, other.B.X)
+                            : Math.Min(other.A.Y, other.B.Y);
+                        var otherSpanMax = segHorizontal
+                            ? Math.Max(other.A.X, other.B.X)
+                            : Math.Max(other.A.Y, other.B.Y);
+                        var overlap = ProjectedOverlap(segSpanMin, segSpanMax, otherSpanMin, otherSpanMax);
+                        if (overlap < zeroTwentyCompanionMinOverlap)
+                        {
+                            continue;
+                        }
+
+                        if (overlap > bestOverlap)
+                        {
+                            bestOverlap = overlap;
+                            companionAxis = otherAxis;
+                        }
+                    }
+
+                    return !double.IsNaN(companionAxis);
+                }
+
+                bool HasParallelTwentyCompanionAtTwentyOffset(int segmentIndex)
+                {
+                    var seg = segments[segmentIndex];
+                    var segHorizontal = IsHorizontalLike(seg.A, seg.B);
+                    var segVertical = IsVerticalLike(seg.A, seg.B);
+                    if (!segHorizontal && !segVertical)
+                    {
+                        return false;
+                    }
+
+                    var segAxis = segHorizontal
+                        ? (0.5 * (seg.A.Y + seg.B.Y))
+                        : (0.5 * (seg.A.X + seg.B.X));
+                    var segSpanMin = segHorizontal
+                        ? Math.Min(seg.A.X, seg.B.X)
+                        : Math.Min(seg.A.Y, seg.B.Y);
+                    var segSpanMax = segHorizontal
+                        ? Math.Max(seg.A.X, seg.B.X)
+                        : Math.Max(seg.A.Y, seg.B.Y);
+                    for (var oi = 0; oi < segments.Count; oi++)
+                    {
+                        if (oi == segmentIndex)
+                        {
+                            continue;
+                        }
+
+                        var other = segments[oi];
+                        if (!string.Equals(CanonicalUsecLayer(other.Layer), LayerUsecTwenty, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        var otherHorizontal = IsHorizontalLike(other.A, other.B);
+                        var otherVertical = IsVerticalLike(other.A, other.B);
+                        if (segHorizontal != otherHorizontal || segVertical != otherVertical)
+                        {
+                            continue;
+                        }
+
+                        var otherAxis = segHorizontal
+                            ? (0.5 * (other.A.Y + other.B.Y))
+                            : (0.5 * (other.A.X + other.B.X));
+                        var axisGap = Math.Abs(segAxis - otherAxis);
+                        if (Math.Abs(axisGap - RoadAllowanceSecWidthMeters) > zeroTwentyCompanionTol)
+                        {
+                            continue;
+                        }
+
+                        var otherSpanMin = segHorizontal
+                            ? Math.Min(other.A.X, other.B.X)
+                            : Math.Min(other.A.Y, other.B.Y);
+                        var otherSpanMax = segHorizontal
+                            ? Math.Max(other.A.X, other.B.X)
+                            : Math.Max(other.A.Y, other.B.Y);
+                        var overlap = ProjectedOverlap(segSpanMin, segSpanMax, otherSpanMin, otherSpanMax);
+                        if (overlap < zeroTwentyCompanionMinOverlap)
+                        {
+                            continue;
+                        }
+
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                bool IsVerticalNearRangeEdge(int segmentIndex)
+                {
+                    var seg = segments[segmentIndex];
+                    if (!IsVerticalLike(seg.A, seg.B))
+                    {
+                        return false;
+                    }
+
+                    var segAxis = 0.5 * (seg.A.X + seg.B.X);
+                    return segAxis <= (clipMinX + rangeEdgeBand) ||
+                           segAxis >= (clipMaxX - rangeEdgeBand);
+                }
+
+                bool TryFindParallelSecCompanionAtSecOffset(int segmentIndex, out double companionAxis)
+                {
+                    companionAxis = double.NaN;
+                    var seg = segments[segmentIndex];
+                    if (!IsVerticalLike(seg.A, seg.B))
+                    {
+                        return false;
+                    }
+
+                    var segAxis = 0.5 * (seg.A.X + seg.B.X);
+                    var nearWest = segAxis <= (clipMinX + rangeEdgeBand);
+                    var nearEast = segAxis >= (clipMaxX - rangeEdgeBand);
+                    if (!nearWest && !nearEast)
+                    {
+                        return false;
+                    }
+
+                    var segSpanMin = Math.Min(seg.A.Y, seg.B.Y);
+                    var segSpanMax = Math.Max(seg.A.Y, seg.B.Y);
+                    var bestOverlap = double.MinValue;
+                    for (var oi = 0; oi < segments.Count; oi++)
+                    {
+                        if (oi == segmentIndex)
+                        {
+                            continue;
+                        }
+
+                        var other = segments[oi];
+                        if (!string.Equals(other.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                            !IsVerticalLike(other.A, other.B))
+                        {
+                            continue;
+                        }
+
+                        var otherAxis = 0.5 * (other.A.X + other.B.X);
+                        if (nearWest && otherAxis <= segAxis)
+                        {
+                            continue;
+                        }
+
+                        if (nearEast && otherAxis >= segAxis)
+                        {
+                            continue;
+                        }
+
+                        var axisGap = Math.Abs(segAxis - otherAxis);
+                        if (Math.Abs(axisGap - RoadAllowanceSecWidthMeters) > zeroTwentyCompanionTol)
+                        {
+                            continue;
+                        }
+
+                        var otherSpanMin = Math.Min(other.A.Y, other.B.Y);
+                        var otherSpanMax = Math.Max(other.A.Y, other.B.Y);
+                        var overlap = ProjectedOverlap(segSpanMin, segSpanMax, otherSpanMin, otherSpanMax);
+                        if (overlap < zeroTwentyCompanionMinOverlap)
+                        {
+                            continue;
+                        }
+
+                        if (overlap > bestOverlap)
+                        {
+                            bestOverlap = overlap;
+                            companionAxis = otherAxis;
+                        }
+                    }
+
+                    return !double.IsNaN(companionAxis);
+                }
+
+                bool TryFindParallelThirtyCompanionAtMiddleOffset(int segmentIndex, out double companionAxis)
+                {
+                    companionAxis = double.NaN;
+                    var seg = segments[segmentIndex];
+                    var segVertical = IsVerticalLike(seg.A, seg.B);
+                    if (!segVertical)
+                    {
+                        return false;
+                    }
+
+                    var segAxis = 0.5 * (seg.A.X + seg.B.X);
+                    var segSpanMin = Math.Min(seg.A.Y, seg.B.Y);
+                    var segSpanMax = Math.Max(seg.A.Y, seg.B.Y);
+                    for (var oi = 0; oi < segments.Count; oi++)
+                    {
+                        if (oi == segmentIndex)
+                        {
+                            continue;
+                        }
+
+                        var other = segments[oi];
+                        if (!string.Equals(CanonicalUsecLayer(other.Layer), LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                            !IsVerticalLike(other.A, other.B))
+                        {
+                            continue;
+                        }
+
+                        var otherAxis = 0.5 * (other.A.X + other.B.X);
+                        var axisGap = Math.Abs(segAxis - otherAxis);
+                        if (Math.Abs(axisGap - middleToOuterGap) > twentyThirtyCompanionTol)
+                        {
+                            continue;
+                        }
+
+                        var otherSpanMin = Math.Min(other.A.Y, other.B.Y);
+                        var otherSpanMax = Math.Max(other.A.Y, other.B.Y);
+                        var overlap = ProjectedOverlap(segSpanMin, segSpanMax, otherSpanMin, otherSpanMax);
+                        if (overlap < twentyThirtyCompanionMinOverlap)
+                        {
+                            continue;
+                        }
+
+                        companionAxis = otherAxis;
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                bool TryFindVerticalCompanionAtGap(
+                    int segmentIndex,
+                    double targetGap,
+                    double gapTolerance,
+                    double minOverlap,
+                    Func<string, bool> layerPredicate,
+                    out double companionAxis)
+                {
+                    companionAxis = double.NaN;
+                    var seg = segments[segmentIndex];
+                    if (!IsVerticalLike(seg.A, seg.B))
+                    {
+                        return false;
+                    }
+
+                    var segAxis = 0.5 * (seg.A.X + seg.B.X);
+                    var segSpanMin = Math.Min(seg.A.Y, seg.B.Y);
+                    var segSpanMax = Math.Max(seg.A.Y, seg.B.Y);
+                    var bestOverlap = double.MinValue;
+                    for (var oi = 0; oi < segments.Count; oi++)
+                    {
+                        if (oi == segmentIndex)
+                        {
+                            continue;
+                        }
+
+                        var other = segments[oi];
+                        if (!IsVerticalLike(other.A, other.B))
+                        {
+                            continue;
+                        }
+
+                        if (layerPredicate != null && !layerPredicate(other.Layer ?? string.Empty))
+                        {
+                            continue;
+                        }
+
+                        var otherAxis = 0.5 * (other.A.X + other.B.X);
+                        var axisGap = Math.Abs(segAxis - otherAxis);
+                        if (Math.Abs(axisGap - targetGap) > gapTolerance)
+                        {
+                            continue;
+                        }
+
+                        var otherSpanMin = Math.Min(other.A.Y, other.B.Y);
+                        var otherSpanMax = Math.Max(other.A.Y, other.B.Y);
+                        var overlap = ProjectedOverlap(segSpanMin, segSpanMax, otherSpanMin, otherSpanMax);
+                        if (overlap < minOverlap)
+                        {
+                            continue;
+                        }
+
+                        if (overlap > bestOverlap)
+                        {
+                            bestOverlap = overlap;
+                            companionAxis = otherAxis;
+                        }
+                    }
+
+                    return !double.IsNaN(companionAxis);
+                }
 
                 for (var si = 0; si < segments.Count; si++)
                 {
                     var seg = segments[si];
                     var delta = seg.B - seg.A;
-                    var votes = new Dictionary<string, (int Count, double Weight, double BestDistance)>(StringComparer.OrdinalIgnoreCase);
+                    var ownerVotes = new Dictionary<string, (int Count, double Weight, double BestDistance)>(StringComparer.OrdinalIgnoreCase);
+                    var fallbackVotes = new Dictionary<string, (int Count, double Weight, double BestDistance)>(StringComparer.OrdinalIgnoreCase);
                     var skipBlind = false;
 
-                    void AddVote(string layer, double distance)
+                    void AddVote(
+                        Dictionary<string, (int Count, double Weight, double BestDistance)> voteMap,
+                        string layer,
+                        double distance)
                     {
                         if (string.IsNullOrWhiteSpace(layer))
                         {
                             return;
                         }
 
-                        if (!votes.TryGetValue(layer, out var score))
+                        if (!voteMap.TryGetValue(layer, out var score))
                         {
                             score = (0, 0.0, double.MaxValue);
                         }
@@ -7033,7 +7676,7 @@ namespace AtsBackgroundBuilder
                             score.BestDistance = distance;
                         }
 
-                        votes[layer] = score;
+                        voteMap[layer] = score;
                     }
 
                     for (var fi = 0; fi < sectionFrames.Count; fi++)
@@ -7060,28 +7703,48 @@ namespace AtsBackgroundBuilder
                             }
 
                             var uLine = 0.5 * (uA + uB);
-                            var bestLayer = string.Empty;
-                            var bestDistance = double.MaxValue;
-                            void ConsiderVertical(string layer, double axis)
+                            var bestOwnerLayer = string.Empty;
+                            var bestOwnerDistance = double.MaxValue;
+                            void ConsiderVerticalOwner(string layer, double axis)
                             {
                                 var d = Math.Abs(uLine - axis);
-                                if (d < bestDistance)
+                                if (d < bestOwnerDistance)
                                 {
-                                    bestDistance = d;
-                                    bestLayer = layer;
+                                    bestOwnerDistance = d;
+                                    bestOwnerLayer = layer;
                                 }
                             }
 
-                            ConsiderVertical(LayerUsecZero, section.WestEdgeU - RoadAllowanceUsecWidthMeters);
-                            ConsiderVertical(LayerUsecTwenty, section.WestEdgeU - (RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters));
-                            ConsiderVertical(LayerUsecThirty, section.WestEdgeU);
-                            ConsiderVertical(LayerUsecZero, section.EastEdgeU);
-                            ConsiderVertical(LayerUsecTwenty, section.EastEdgeU + RoadAllowanceSecWidthMeters);
-                            ConsiderVertical(LayerUsecThirty, section.EastEdgeU + RoadAllowanceUsecWidthMeters);
+                            ConsiderVerticalOwner(LayerUsecZero, section.WestEdgeU - RoadAllowanceUsecWidthMeters);
+                            ConsiderVerticalOwner(LayerUsecTwenty, section.WestEdgeU - (RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters));
+                            ConsiderVerticalOwner(LayerUsecThirty, section.WestEdgeU);
 
-                            if (bestDistance <= axisTolerance)
+                            var bestFallbackLayer = string.Empty;
+                            var bestFallbackDistance = double.MaxValue;
+                            void ConsiderVerticalFallback(string layer, double axis)
                             {
-                                AddVote(bestLayer, bestDistance);
+                                var d = Math.Abs(uLine - axis);
+                                if (d < bestFallbackDistance)
+                                {
+                                    bestFallbackDistance = d;
+                                    bestFallbackLayer = layer;
+                                }
+                            }
+
+                            ConsiderVerticalFallback(LayerUsecZero, section.EastEdgeU);
+                            ConsiderVerticalFallback(LayerUsecTwenty, section.EastEdgeU + RoadAllowanceSecWidthMeters);
+                            ConsiderVerticalFallback(LayerUsecThirty, section.EastEdgeU + RoadAllowanceUsecWidthMeters);
+
+                            // Rule #14: vertical road allowances belong to the quarter/section on their right.
+                            // Use west-edge votes as the owner-side source; east-edge votes are fallback only.
+                            if (bestOwnerDistance <= axisTolerance)
+                            {
+                                AddVote(ownerVotes, bestOwnerLayer, bestOwnerDistance);
+                            }
+
+                            if (bestFallbackDistance <= axisTolerance)
+                            {
+                                AddVote(fallbackVotes, bestFallbackLayer, bestFallbackDistance);
                             }
                         }
                         else
@@ -7103,28 +7766,48 @@ namespace AtsBackgroundBuilder
                                 break;
                             }
 
-                            var bestLayer = string.Empty;
-                            var bestDistance = double.MaxValue;
-                            void ConsiderHorizontal(string layer, double axis)
+                            var bestOwnerLayer = string.Empty;
+                            var bestOwnerDistance = double.MaxValue;
+                            void ConsiderHorizontalOwner(string layer, double axis)
                             {
                                 var d = Math.Abs(vLine - axis);
-                                if (d < bestDistance)
+                                if (d < bestOwnerDistance)
                                 {
-                                    bestDistance = d;
-                                    bestLayer = layer;
+                                    bestOwnerDistance = d;
+                                    bestOwnerLayer = layer;
                                 }
                             }
 
-                            ConsiderHorizontal(LayerUsecZero, section.SouthEdgeV - RoadAllowanceUsecWidthMeters);
-                            ConsiderHorizontal(LayerUsecTwenty, section.SouthEdgeV - (RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters));
-                            ConsiderHorizontal(LayerUsecThirty, section.SouthEdgeV);
-                            ConsiderHorizontal(LayerUsecZero, section.NorthEdgeV);
-                            ConsiderHorizontal(LayerUsecTwenty, section.NorthEdgeV + RoadAllowanceSecWidthMeters);
-                            ConsiderHorizontal(LayerUsecThirty, section.NorthEdgeV + RoadAllowanceUsecWidthMeters);
+                            ConsiderHorizontalOwner(LayerUsecZero, section.SouthEdgeV - RoadAllowanceUsecWidthMeters);
+                            ConsiderHorizontalOwner(LayerUsecTwenty, section.SouthEdgeV - (RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters));
+                            ConsiderHorizontalOwner(LayerUsecThirty, section.SouthEdgeV);
 
-                            if (bestDistance <= axisTolerance)
+                            var bestFallbackLayer = string.Empty;
+                            var bestFallbackDistance = double.MaxValue;
+                            void ConsiderHorizontalFallback(string layer, double axis)
                             {
-                                AddVote(bestLayer, bestDistance);
+                                var d = Math.Abs(vLine - axis);
+                                if (d < bestFallbackDistance)
+                                {
+                                    bestFallbackDistance = d;
+                                    bestFallbackLayer = layer;
+                                }
+                            }
+
+                            ConsiderHorizontalFallback(LayerUsecZero, section.NorthEdgeV);
+                            ConsiderHorizontalFallback(LayerUsecTwenty, section.NorthEdgeV + RoadAllowanceSecWidthMeters);
+                            ConsiderHorizontalFallback(LayerUsecThirty, section.NorthEdgeV + RoadAllowanceUsecWidthMeters);
+
+                            // Rule #15: horizontal road allowances belong to the quarter/section above.
+                            // Use south-edge votes as the owner-side source; north-edge votes are fallback only.
+                            if (bestOwnerDistance <= axisTolerance)
+                            {
+                                AddVote(ownerVotes, bestOwnerLayer, bestOwnerDistance);
+                            }
+
+                            if (bestFallbackDistance <= axisTolerance)
+                            {
+                                AddVote(fallbackVotes, bestFallbackLayer, bestFallbackDistance);
                             }
                         }
                     }
@@ -7135,13 +7818,24 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (votes.Count == 0)
+                    var useOwnerVotes = ownerVotes.Count > 0;
+                    var selectedVotes = useOwnerVotes ? ownerVotes : fallbackVotes;
+                    if (selectedVotes.Count == 0)
                     {
                         unresolved++;
                         continue;
                     }
 
-                    var targetLayer = votes
+                    if (useOwnerVotes)
+                    {
+                        ownerResolved++;
+                    }
+                    else
+                    {
+                        fallbackResolved++;
+                    }
+
+                    var targetLayer = selectedVotes
                         .OrderByDescending(v => v.Value.Count)
                         .ThenByDescending(v => v.Value.Weight)
                         .ThenBy(v => v.Value.BestDistance)
@@ -7152,6 +7846,106 @@ namespace AtsBackgroundBuilder
                     {
                         unresolved++;
                         continue;
+                    }
+
+                    var existingCanonicalLayer = CanonicalUsecLayer(seg.Layer);
+                    if (string.Equals(existingCanonicalLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(targetLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) &&
+                        HasParallelZeroCompanionAtTwentyOffset(si))
+                    {
+                        targetLayer = LayerUsecTwenty;
+                        preservedTwentyByZeroCompanion++;
+                    }
+                    else if (string.Equals(existingCanonicalLayer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) &&
+                             string.Equals(targetLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) &&
+                             HasParallelTwentyCompanionAtTwentyOffset(si))
+                    {
+                        targetLayer = LayerUsecZero;
+                        preservedTwentyByZeroCompanion++;
+                    }
+
+                    if (string.Equals(existingCanonicalLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(targetLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) &&
+                        IsVerticalNearRangeEdge(si) &&
+                        TryFindParallelThirtyCompanionAtMiddleOffset(si, out var thirtyCompanionAxis))
+                    {
+                        var segAxis = 0.5 * (seg.A.X + seg.B.X);
+                        var nearWest = segAxis <= (clipMinX + rangeEdgeBand);
+                        var nearEast = segAxis >= (clipMaxX - rangeEdgeBand);
+                        var segOnOuterSide =
+                            (nearWest && segAxis < thirtyCompanionAxis) ||
+                            (nearEast && segAxis > thirtyCompanionAxis);
+                        if (segOnOuterSide)
+                        {
+                            var hasZeroCompanion = TryFindParallelZeroCompanionAtTwentyOffset(si, out var zeroCompanionAxis);
+                            var hasDirectionalOuterZero =
+                                hasZeroCompanion &&
+                                ((nearWest && zeroCompanionAxis < segAxis) ||
+                                 (nearEast && zeroCompanionAxis > segAxis));
+                            if (!hasDirectionalOuterZero)
+                            {
+                                targetLayer = LayerUsecZero;
+                                forcedTwentyToZeroByRangeEdge++;
+                            }
+                        }
+                    }
+                    else if (string.Equals(existingCanonicalLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) &&
+                             string.Equals(targetLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) &&
+                             IsVerticalNearRangeEdge(si) &&
+                             TryFindParallelSecCompanionAtSecOffset(si, out _))
+                    {
+                        var segAxis = 0.5 * (seg.A.X + seg.B.X);
+                        var nearWest = segAxis <= (clipMinX + rangeEdgeBand);
+                        var nearEast = segAxis >= (clipMaxX - rangeEdgeBand);
+                        var hasZeroCompanion = TryFindParallelZeroCompanionAtTwentyOffset(si, out var zeroCompanionAxis);
+                        var hasDirectionalOuterZero =
+                            hasZeroCompanion &&
+                            ((nearWest && zeroCompanionAxis < segAxis) ||
+                             (nearEast && zeroCompanionAxis > segAxis));
+                        if (!hasDirectionalOuterZero)
+                        {
+                            targetLayer = LayerUsecZero;
+                            forcedTwentyToZeroBySecCompanion++;
+                        }
+                    }
+                    else if (string.Equals(existingCanonicalLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) &&
+                             string.Equals(targetLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) &&
+                             TryFindVerticalCompanionAtGap(
+                                 si,
+                                 RoadAllowanceSecWidthMeters,
+                                 zeroTwentyCompanionTol,
+                                 zeroTwentyCompanionMinOverlap,
+                                 layer =>
+                                     string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(CanonicalUsecLayer(layer), LayerUsecTwenty, StringComparison.OrdinalIgnoreCase),
+                                 out var secLikeAxis) &&
+                             TryFindVerticalCompanionAtGap(
+                                 si,
+                                 RoadAllowanceUsecWidthMeters,
+                                 axisTolerance,
+                                 zeroTwentyCompanionMinOverlap,
+                                 layer =>
+                                 {
+                                     var canonical = CanonicalUsecLayer(layer);
+                                     return string.Equals(canonical, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                                            string.Equals(canonical, LayerUsecBase, StringComparison.OrdinalIgnoreCase);
+                                 },
+                                 out var thirtyLikeAxis))
+                    {
+                        var segAxis = 0.5 * (seg.A.X + seg.B.X);
+                        var secDir = Math.Sign(secLikeAxis - segAxis);
+                        var thirtyDir = Math.Sign(thirtyLikeAxis - segAxis);
+                        var sameSide = secDir != 0 && secDir == thirtyDir;
+                        if (sameSide)
+                        {
+                            var hasZeroCompanion = TryFindParallelZeroCompanionAtTwentyOffset(si, out var zeroCompanionAxis);
+                            var zeroSameSide = hasZeroCompanion && Math.Sign(zeroCompanionAxis - segAxis) == secDir;
+                            if (!zeroSameSide)
+                            {
+                                targetLayer = LayerUsecZero;
+                                forcedTwentyToZeroByGeomPattern++;
+                            }
+                        }
                     }
 
                     if (!(tr.GetObject(seg.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
@@ -7174,7 +7968,7 @@ namespace AtsBackgroundBuilder
                 if (adjusted > 0 || unresolved > 0 || skippedBlind > 0)
                 {
                     logger?.WriteLine(
-                        $"Cleanup: deterministic section-edge relayer adjusted={adjusted}, unchanged={unchanged}, unresolved={unresolved}, skippedBlind={skippedBlind}.");
+                        $"Cleanup: deterministic section-edge relayer adjusted={adjusted}, unchanged={unchanged}, unresolved={unresolved}, skippedBlind={skippedBlind}, ownerResolved={ownerResolved}, fallbackResolved={fallbackResolved}, preserved20ByZeroCompanion={preservedTwentyByZeroCompanion}, forced20To0RangeEdge={forcedTwentyToZeroByRangeEdge}, forced20To0SecCompanion={forcedTwentyToZeroBySecCompanion}, forced20To0GeomPattern={forcedTwentyToZeroByGeomPattern}.");
                 }
             }
         }

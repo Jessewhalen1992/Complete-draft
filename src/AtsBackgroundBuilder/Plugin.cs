@@ -536,9 +536,9 @@ namespace AtsBackgroundBuilder
         }
 
 
-        // Targeted debug trace for known range-edge layer drift.
-        private static readonly Point2d LayerTraceSegmentStart = new Point2d(530925.626, 5980315.643);
-        private static readonly Point2d LayerTraceSegmentEnd = new Point2d(530919.985, 5981120.856);
+        // Targeted debug trace for known layer drift.
+        private static readonly Point2d LayerTraceSegmentStart = new Point2d(539040.684, 5981204.441);
+        private static readonly Point2d LayerTraceSegmentEnd = new Point2d(539040.170, 5982002.615);
         private const double LayerTraceEndpointTol = 2.5;
         private const double LayerTraceMidpointTol = 2.5;
         private const double LayerTraceLengthTol = 30.0;
@@ -871,12 +871,6 @@ namespace AtsBackgroundBuilder
                 sectionNumberByPolylineIdForUsec,
                 logger);
             TraceTargetLayerSegmentState(database, ruleScopeIds, "after-section-edge-relayer-1", logger);
-            NormalizeWestRoadAllowanceBandsForKnownSections(
-                database,
-                ruleScopeIds,
-                sectionNumberByPolylineIdForUsec,
-                logger);
-            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-west-ra-bands-1b", logger);
             ReapplyOriginalRangeEdgeSecRoadAllowanceLayers(
                 database,
                 ruleScopeIds,
@@ -916,12 +910,6 @@ namespace AtsBackgroundBuilder
                 sectionNumberByPolylineIdForUsec,
                 logger);
             TraceTargetLayerSegmentState(database, ruleScopeIds, "after-section-edge-relayer-2", logger);
-            NormalizeWestRoadAllowanceBandsForKnownSections(
-                database,
-                ruleScopeIds,
-                sectionNumberByPolylineIdForUsec,
-                logger);
-            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-west-ra-bands-2b", logger);
             ReapplyOriginalRangeEdgeSecRoadAllowanceLayers(
                 database,
                 ruleScopeIds,

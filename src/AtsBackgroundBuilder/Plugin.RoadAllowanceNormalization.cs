@@ -959,6 +959,16 @@ namespace AtsBackgroundBuilder
                 return Math.Abs(d.X) >= Math.Abs(d.Y);
             }
 
+            bool HorizontalOverlaps((Point2d A, Point2d B) a, (Point2d A, Point2d B) b, double minOverlap)
+            {
+                var aMin = Math.Min(a.A.X, a.B.X);
+                var aMax = Math.Max(a.A.X, a.B.X);
+                var bMin = Math.Min(b.A.X, b.B.X);
+                var bMax = Math.Max(b.A.X, b.B.X);
+                var overlap = Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
+                return overlap >= minOverlap;
+            }
+
             bool IsSeamLayer(string layer)
             {
                 if (string.IsNullOrWhiteSpace(layer))
@@ -977,11 +987,8 @@ namespace AtsBackgroundBuilder
                        string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
             }
 
-            var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                var generatedBottomY = double.MaxValue;
-                var generatedHorizontals = new List<(Point2d A, Point2d B, double Y)>();
                 var candidates = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Y, double Length)>();
 
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
@@ -1023,15 +1030,6 @@ namespace AtsBackgroundBuilder
                     }
 
                     var y = 0.5 * (a.Y + b.Y);
-                    if (generatedSet.Contains(id))
-                    {
-                        generatedHorizontals.Add((a, b, y));
-                        if (y < generatedBottomY)
-                        {
-                            generatedBottomY = y;
-                        }
-                    }
-
                     candidates.Add((id, layerName, a, b, y, len));
                 }
 
@@ -1124,14 +1122,6 @@ namespace AtsBackgroundBuilder
                     return;
                 }
 
-                var candidateBottomY = candidates.Min(c => c.Y);
-                var seamBaseY = generatedBottomY == double.MaxValue
-                    ? candidateBottomY
-                    : Math.Min(candidateBottomY, generatedBottomY);
-
-                // Only fix around the bottom township seam where layering drifts.
-                const double seamBandBelow = 20.0;
-                const double seamBandAbove = 80.0;
                 const double baselineBandTol = 36.0;
                 const double baselineMinOverlap = 20.0;
                 const double baselineYForceTol = 1.60;
@@ -1222,19 +1212,18 @@ namespace AtsBackgroundBuilder
                 for (var i = 0; i < candidates.Count; i++)
                 {
                     var c = candidates[i];
-                    if (c.Y < (seamBaseY - seamBandBelow) ||
-                        c.Y > (seamBaseY + seamBandAbove))
-                    {
-                        continue;
-                    }
-
+                    // Rule #17 priority pass only:
+                    // this seam normalizer now enforces baseline boundaries as L-SEC and
+                    // intentionally does not relayer non-baseline seam rows.
                     if (!IsBaselineBoundaryCandidate(i))
                     {
                         continue;
                     }
 
+                    var targetLayer = "L-SEC";
                     baselineForcedToSec++;
-                    if (string.Equals(c.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+
+                    if (string.Equals(c.Layer, targetLayer, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
@@ -1250,20 +1239,24 @@ namespace AtsBackgroundBuilder
                     }
 
                     if (writable == null || writable.IsErased ||
-                        string.Equals(writable.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                        string.Equals(writable.Layer, targetLayer, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
-                    writable.Layer = "L-SEC";
+                    writable.Layer = targetLayer;
                     writable.ColorIndex = 256;
                     normalized++;
                 }
 
                 tr.Commit();
+                if (normalized > 0)
+                {
+                    logger?.WriteLine($"Cleanup: normalized {normalized} bottom-township seam segment(s) to expected L-SEC/L-USEC layer.");
+                }
                 if (baselineForcedToSec > 0)
                 {
-                    logger?.WriteLine($"Cleanup: baseline-township rule forced {baselineForcedToSec} bottom-township seam segment(s) to L-SEC (adjusted={normalized}).");
+                    logger?.WriteLine($"Cleanup: baseline-township rule forced {baselineForcedToSec} bottom-township seam segment(s) to L-SEC.");
                 }
             }
         }
@@ -1975,7 +1968,10 @@ namespace AtsBackgroundBuilder
                     var spanMax = horizontal
                         ? Math.Max(a.X, b.X)
                         : Math.Max(a.Y, b.Y);
+                    // Keep range-edge 20.12 -> L-SEC reapply scoped to vertical edge corridors only.
+                    // Horizontal road-allowance rows near range edges must not be promoted by this rule.
                     var promoteRangeEdgeTwentyToSec =
+                        vertical &&
                         IsRangeEdgeCandidate(a, b) &&
                         string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase);
                     if (isGenerated && !promoteRangeEdgeTwentyToSec)
