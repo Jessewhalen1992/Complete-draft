@@ -360,13 +360,15 @@ namespace AtsBackgroundBuilder
                     }
 
                     unsurveyedCount++;
+                    const double seamEdgeExtensionTolerance = 30.0;
                     var horizontalCandidates = segments
                         .Where(s => s.IsHorizontalLike &&
                                     s.MaxX >= seam.MinX - 25.0 &&
                                     s.MinX <= seam.MaxX + 25.0 &&
                                     s.MidY >= seam.GetSouthYAt(s.MidX) - 12.0 &&
                                     s.MidY <= seam.GetNorthYAt(s.MidX) + 12.0 &&
-                                    GetCorrectionHorizontalOverlap(s, seam.MinX, seam.MaxX) >= 2.0)
+                                    // Keep seam-edge stubs that are just outside [MinX, MaxX].
+                                    GetCorrectionHorizontalOverlap(s, seam.MinX, seam.MaxX) >= -seamEdgeExtensionTolerance)
                         .ToList();
                     if (horizontalCandidates.Count == 0)
                     {
@@ -410,20 +412,36 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
+                    var skippedInnerLayerOuter = 0;
                     var uniqueOuters = northOuter
                         .Concat(southOuter)
+                        .Where(s =>
+                        {
+                            var isInnerLayer = string.Equals(s.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
+                            if (isInnerLayer)
+                            {
+                                skippedInnerLayerOuter++;
+                            }
+
+                            return !isInnerLayer;
+                        })
                         .GroupBy(s => s.Id)
                         .Select(g => g.First())
                         .ToList();
-                    var sortedOuterLengths = uniqueOuters
-                        .Select(s => s.Length)
-                        .OrderBy(v => v)
-                        .ToList();
-                    var medianOuterLength = sortedOuterLengths.Count == 0
-                        ? 0.0
-                        : sortedOuterLengths[sortedOuterLengths.Count / 2];
-                    var minInnerCompanionOuterLength = Math.Max(120.0, medianOuterLength * 0.4);
-                    var skippedShortOuterCompanions = 0;
+                    if (uniqueOuters.Count == 0)
+                    {
+                        logger?.WriteLine(
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "CorrectionLine: seam Z{0} M{1} R{2} T{3}/{4} no outer candidates after filtering (skippedInnerLayerOuter={5}).",
+                                seam.Zone,
+                                seam.Meridian,
+                                seam.Range,
+                                seam.NorthTownship,
+                                seam.NorthTownship - 1,
+                                skippedInnerLayerOuter));
+                        continue;
+                    }
 
                     foreach (var outer in uniqueOuters)
                     {
@@ -447,14 +465,9 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
-                    foreach (var outer in northOuter)
+                    var companionNoOp = 0;
+                    foreach (var outer in uniqueOuters)
                     {
-                        if (outer.Length < minInnerCompanionOuterLength)
-                        {
-                            skippedShortOuterCompanions++;
-                            continue;
-                        }
-
                         if (TryFindCorrectionInnerCompanion(
                             outer,
                             horizontalCandidates,
@@ -488,6 +501,7 @@ namespace AtsBackgroundBuilder
                             outer,
                             x => seam.GetCenterYAt(x),
                             CorrectionLinePostInsetMeters,
+                            segments,
                             ms,
                             tr,
                             out var newId,
@@ -511,85 +525,24 @@ namespace AtsBackgroundBuilder
                                         LayerUsecCorrectionZero));
                             }
                         }
-                    }
-
-                    foreach (var outer in southOuter)
-                    {
-                        if (outer.Length < minInnerCompanionOuterLength)
+                        else
                         {
-                            skippedShortOuterCompanions++;
-                            continue;
-                        }
-
-                        if (TryFindCorrectionInnerCompanion(
-                            outer,
-                            horizontalCandidates,
-                            CorrectionLinePostInsetMeters,
-                            x => seam.GetCenterYAt(x),
-                            out var existingInner))
-                        {
-                            if (TryRelayerCorrectionSegment(tr, existingInner.Id, LayerUsecCorrectionZero))
-                            {
-                                relayeredInner++;
-                                correctionGeometryChanged = true;
-                                if (innerChangeSamples.Count < 16)
-                                {
-                                    innerChangeSamples.Add(
-                                        string.Format(
-                                            CultureInfo.InvariantCulture,
-                                            "id={0} A=({1:0.###},{2:0.###}) B=({3:0.###},{4:0.###}) -> {5}",
-                                            existingInner.Id.Handle.ToString(),
-                                            existingInner.A.X,
-                                            existingInner.A.Y,
-                                            existingInner.B.X,
-                                            existingInner.B.Y,
-                                            LayerUsecCorrectionZero));
-                                }
-                            }
-
-                            continue;
-                        }
-
-                        if (TryCreateCorrectionInnerCompanion(
-                            outer,
-                            x => seam.GetCenterYAt(x),
-                            CorrectionLinePostInsetMeters,
-                            ms,
-                            tr,
-                            out var newId,
-                            out var newA,
-                            out var newB))
-                        {
-                            createdInner++;
-                            correctionGeometryChanged = true;
-                            segments.Add(new CorrectionSegment(newId, LayerUsecCorrectionZero, newA, newB));
-                            if (createdSamples.Count < 16)
-                            {
-                                createdSamples.Add(
-                                    string.Format(
-                                        CultureInfo.InvariantCulture,
-                                        "id={0} A=({1:0.###},{2:0.###}) B=({3:0.###},{4:0.###}) layer={5}",
-                                        newId.Handle.ToString(),
-                                        newA.X,
-                                        newA.Y,
-                                        newB.X,
-                                        newB.Y,
-                                        LayerUsecCorrectionZero));
-                            }
+                            companionNoOp++;
                         }
                     }
 
                     logger?.WriteLine(
                         string.Format(
                             CultureInfo.InvariantCulture,
-                            "CorrectionLine: seam Z{0} M{1} R{2} T{3}/{4} companionMinOuterLen={5:0.###} skippedShortCompanions={6}.",
+                            "CorrectionLine: seam Z{0} M{1} R{2} T{3}/{4} outerCandidates={5} skippedInnerLayerOuter={6} companionNoOp={7}.",
                             seam.Zone,
                             seam.Meridian,
                             seam.Range,
                             seam.NorthTownship,
                             seam.NorthTownship - 1,
-                            minInnerCompanionOuterLength,
-                            skippedShortOuterCompanions));
+                            uniqueOuters.Count,
+                            skippedInnerLayerOuter,
+                            companionNoOp));
                 }
 
                 tr.Commit();
@@ -920,6 +873,7 @@ namespace AtsBackgroundBuilder
             CorrectionSegment outer,
             Func<double, double> centerYAtX,
             double inset,
+            IReadOnlyList<CorrectionSegment> existingSegments,
             BlockTableRecord modelSpace,
             Transaction tr,
             out ObjectId newId,
@@ -959,6 +913,11 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
+            if (HasMatchingCorrectionSegment(existingSegments, newA, newB))
+            {
+                return false;
+            }
+
             var line = new Line(
                 new Point3d(newA.X, newA.Y, 0.0),
                 new Point3d(newB.X, newB.Y, 0.0))
@@ -970,6 +929,45 @@ namespace AtsBackgroundBuilder
             newId = modelSpace.AppendEntity(line);
             tr.AddNewlyCreatedDBObject(line, true);
             return !newId.IsNull;
+        }
+
+        private static bool HasMatchingCorrectionSegment(
+            IReadOnlyList<CorrectionSegment> segments,
+            Point2d a,
+            Point2d b)
+        {
+            if (segments == null || segments.Count == 0)
+            {
+                return false;
+            }
+
+            const double endpointTolerance = 0.20;
+            for (var i = 0; i < segments.Count; i++)
+            {
+                var candidate = segments[i];
+                if (!candidate.IsHorizontalLike)
+                {
+                    continue;
+                }
+
+                var directMatch =
+                    candidate.A.GetDistanceTo(a) <= endpointTolerance &&
+                    candidate.B.GetDistanceTo(b) <= endpointTolerance;
+                if (directMatch)
+                {
+                    return true;
+                }
+
+                var reverseMatch =
+                    candidate.A.GetDistanceTo(b) <= endpointTolerance &&
+                    candidate.B.GetDistanceTo(a) <= endpointTolerance;
+                if (reverseMatch)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static bool TryRelayerCorrectionSegment(Transaction tr, ObjectId id, string targetLayer)
