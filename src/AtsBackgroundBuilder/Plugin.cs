@@ -1241,6 +1241,38 @@ namespace AtsBackgroundBuilder
                 : 0;
         }
 
+        // Targeted debug trace for known range-edge layer drift.
+        private static readonly Point2d LayerTraceSegmentStart = new Point2d(530925.626, 5980315.643);
+        private static readonly Point2d LayerTraceSegmentEnd = new Point2d(530919.985, 5981120.856);
+        private const double LayerTraceEndpointTol = 2.5;
+        private const double LayerTraceMidpointTol = 2.5;
+        private const double LayerTraceLengthTol = 30.0;
+
+        private static bool IsTargetLayerTraceSegment(Point2d a, Point2d b)
+        {
+            var directEndpointMatch =
+                (a.GetDistanceTo(LayerTraceSegmentStart) <= LayerTraceEndpointTol &&
+                 b.GetDistanceTo(LayerTraceSegmentEnd) <= LayerTraceEndpointTol) ||
+                (a.GetDistanceTo(LayerTraceSegmentEnd) <= LayerTraceEndpointTol &&
+                 b.GetDistanceTo(LayerTraceSegmentStart) <= LayerTraceEndpointTol);
+            if (directEndpointMatch)
+            {
+                return true;
+            }
+
+            var targetMid = Midpoint(LayerTraceSegmentStart, LayerTraceSegmentEnd);
+            var segMid = Midpoint(a, b);
+            if (DistancePointToSegment(targetMid, a, b) > LayerTraceMidpointTol ||
+                DistancePointToSegment(segMid, LayerTraceSegmentStart, LayerTraceSegmentEnd) > LayerTraceMidpointTol)
+            {
+                return false;
+            }
+
+            var targetLen = LayerTraceSegmentStart.GetDistanceTo(LayerTraceSegmentEnd);
+            var segLen = a.GetDistanceTo(b);
+            return Math.Abs(segLen - targetLen) <= LayerTraceLengthTol;
+        }
+
         private static bool TryGetAtsSectionGridPosition(int section, out int row, out int col)
         {
             row = -1;
@@ -2141,12 +2173,20 @@ namespace AtsBackgroundBuilder
                 sectionNumberByPolylineIdForUsec[sectionInfo.SectionPolylineId] = sectionNumber;
             }
 
+            var originalRangeEdgeSecAnchors = SnapshotOriginalRangeEdgeSecRoadAllowanceAnchors(
+                database,
+                ruleScopeIds,
+                generatedRoadAllowanceIds,
+                logger);
+            TraceTargetLayerSegmentState(database, ruleScopeIds, "snapshot-original-range-edge-sec", logger);
+
             NormalizeUsecLayersToThreeBands(
                 database,
                 ruleScopeIds,
                 sectionNumberByPolylineIdForUsec,
                 generatedRoadAllowanceIds,
                 logger);
+            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-usec-three-bands-1", logger);
             var quarterInfosForRoadAllowanceRules = labelQuarterInfos
                 .Concat(contextRuleSectionInfos)
                 .Where(info => info != null)
@@ -2180,16 +2220,32 @@ namespace AtsBackgroundBuilder
                 ruleScopeIds,
                 sectionNumberByPolylineIdForUsec,
                 logger);
+            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-usec-collinear-consistency", logger);
             NormalizeWestRoadAllowanceBandsForKnownSections(
                 database,
                 ruleScopeIds,
                 sectionNumberByPolylineIdForUsec,
                 logger);
+            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-west-ra-bands-1", logger);
             NormalizeUsecLayersBySectionEdgeOffsets(
                 database,
                 ruleScopeIds,
                 sectionNumberByPolylineIdForUsec,
                 logger);
+            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-section-edge-relayer-1", logger);
+            NormalizeWestRoadAllowanceBandsForKnownSections(
+                database,
+                ruleScopeIds,
+                sectionNumberByPolylineIdForUsec,
+                logger);
+            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-west-ra-bands-1b", logger);
+            ReapplyOriginalRangeEdgeSecRoadAllowanceLayers(
+                database,
+                ruleScopeIds,
+                generatedRoadAllowanceIds,
+                originalRangeEdgeSecAnchors,
+                logger);
+            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-range-edge-reapply-1", logger);
             logger.WriteLine("Cleanup: context endpoint snap/stitch disabled (context is build-adjoining + 100m trim only).");
             TrimContextSectionsToBufferedWindows(database, contextSectionIds, requestedScopeIds, logger);
             if (generatedRoadAllowanceIds.Count > 0)
@@ -2209,6 +2265,20 @@ namespace AtsBackgroundBuilder
                 ruleScopeIds,
                 sectionNumberByPolylineIdForUsec,
                 logger);
+            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-section-edge-relayer-2", logger);
+            NormalizeWestRoadAllowanceBandsForKnownSections(
+                database,
+                ruleScopeIds,
+                sectionNumberByPolylineIdForUsec,
+                logger);
+            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-west-ra-bands-2b", logger);
+            ReapplyOriginalRangeEdgeSecRoadAllowanceLayers(
+                database,
+                ruleScopeIds,
+                generatedRoadAllowanceIds,
+                originalRangeEdgeSecAnchors,
+                logger);
+            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-range-edge-reapply-2", logger);
             // Priority rule: baseline township seam allowances must remain L-SEC
             // even if earlier relayer passes classify them differently.
             NormalizeBottomTownshipBoundaryLayers(
@@ -17011,6 +17081,680 @@ namespace AtsBackgroundBuilder
                     logger?.WriteLine(
                         $"Cleanup: normalized {normalizedGenerated} range-edge generated 20.11 segment(s) to L-SEC and {normalizedBoundary} adjoining range-edge segment(s) to L-USEC (inspected generated={inspectedGenerated}).");
                 }
+            }
+        }
+
+        private static List<(bool Horizontal, double Axis, double SpanMin, double SpanMax)> SnapshotOriginalRangeEdgeSecRoadAllowanceAnchors(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            IReadOnlyCollection<ObjectId> generatedRoadAllowanceIds,
+            Logger? logger)
+        {
+            var anchors = new List<(bool Horizontal, double Axis, double SpanMin, double SpanMax)>();
+            if (database == null || requestedQuarterIds == null)
+            {
+                return anchors;
+            }
+
+            var clipWindows = BuildBufferedQuarterWindows(database, requestedQuarterIds, 102.0);
+            if (clipWindows.Count == 0)
+            {
+                return anchors;
+            }
+
+            var clipMinX = clipWindows.Min(w => w.MinPoint.X);
+            var clipMaxX = clipWindows.Max(w => w.MaxPoint.X);
+            const double edgeBand = 145.0;
+            const double minSegmentLength = 4.0;
+            var generatedSet = generatedRoadAllowanceIds == null
+                ? new HashSet<ObjectId>()
+                : new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
+
+            bool IsPointInAnyWindow(Point2d p)
+            {
+                for (var i = 0; i < clipWindows.Count; i++)
+                {
+                    var w = clipWindows[i];
+                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
+                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
+            {
+                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
+                {
+                    return true;
+                }
+
+                for (var i = 0; i < clipWindows.Count; i++)
+                {
+                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
+            {
+                a = default;
+                b = default;
+                if (ent == null)
+                {
+                    return false;
+                }
+
+                if (ent is Line ln)
+                {
+                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                    return a.GetDistanceTo(b) > 1e-4;
+                }
+
+                if (ent is Polyline pl)
+                {
+                    if (pl.Closed || pl.NumberOfVertices < 2)
+                    {
+                        return false;
+                    }
+
+                    a = pl.GetPoint2dAt(0);
+                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
+                    return a.GetDistanceTo(b) > 1e-4;
+                }
+
+                return false;
+            }
+
+            bool IsHorizontalLike(Point2d a, Point2d b)
+            {
+                var d = b - a;
+                return Math.Abs(d.X) >= Math.Abs(d.Y);
+            }
+
+            bool IsVerticalLike(Point2d a, Point2d b)
+            {
+                var d = b - a;
+                return Math.Abs(d.Y) > Math.Abs(d.X);
+            }
+
+            bool IsRangeEdgeCandidate(Point2d a, Point2d b)
+            {
+                var segMinX = Math.Min(a.X, b.X);
+                var segMaxX = Math.Max(a.X, b.X);
+                return segMinX <= (clipMinX + edgeBand) ||
+                       segMaxX >= (clipMaxX - edgeBand);
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    var isGenerated = generatedSet.Contains(id);
+
+                    Entity? ent = null;
+                    try
+                    {
+                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (ent == null || ent.IsErased ||
+                        !string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(ent, out var a, out var b) ||
+                        !DoesSegmentIntersectAnyWindow(a, b) ||
+                        !IsRangeEdgeCandidate(a, b))
+                    {
+                        continue;
+                    }
+
+                    if (a.GetDistanceTo(b) < minSegmentLength)
+                    {
+                        continue;
+                    }
+
+                    var horizontal = IsHorizontalLike(a, b);
+                    var vertical = IsVerticalLike(a, b);
+                    if (!horizontal && !vertical)
+                    {
+                        continue;
+                    }
+
+                    var axis = horizontal
+                        ? 0.5 * (a.Y + b.Y)
+                        : 0.5 * (a.X + b.X);
+                    var spanMin = horizontal
+                        ? Math.Min(a.X, b.X)
+                        : Math.Min(a.Y, b.Y);
+                    var spanMax = horizontal
+                        ? Math.Max(a.X, b.X)
+                        : Math.Max(a.Y, b.Y);
+                    anchors.Add((horizontal, axis, spanMin, spanMax));
+                }
+
+                tr.Commit();
+            }
+
+            logger?.WriteLine(
+                $"Cleanup: snapshot captured {anchors.Count} original range-edge L-SEC anchor(s) for final relayer protection.");
+            return anchors;
+        }
+
+        private static void ReapplyOriginalRangeEdgeSecRoadAllowanceLayers(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            IReadOnlyCollection<ObjectId> generatedRoadAllowanceIds,
+            IReadOnlyCollection<(bool Horizontal, double Axis, double SpanMin, double SpanMax)> originalRangeEdgeSecAnchors,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null)
+            {
+                return;
+            }
+
+            var clipWindows = BuildBufferedQuarterWindows(database, requestedQuarterIds, 102.0);
+            if (clipWindows.Count == 0)
+            {
+                return;
+            }
+
+            const double minSegmentLength = 4.0;
+            const double axisTolerance = 1.25;
+            const double minSpanOverlap = 0.20;
+            const double maxSpanGap = 0.80;
+            const double companionAxisTol = 1.20;
+            const double companionMinOverlap = 220.0;
+            const double edgeBand = 145.0;
+            var generatedSet = generatedRoadAllowanceIds == null
+                ? new HashSet<ObjectId>()
+                : new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
+            var secAnchorSet = originalRangeEdgeSecAnchors ?? Array.Empty<(bool Horizontal, double Axis, double SpanMin, double SpanMax)>();
+            var clipMinX = clipWindows.Min(w => w.MinPoint.X);
+            var clipMaxX = clipWindows.Max(w => w.MaxPoint.X);
+
+            bool IsPointInAnyWindow(Point2d p)
+            {
+                for (var i = 0; i < clipWindows.Count; i++)
+                {
+                    var w = clipWindows[i];
+                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
+                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
+            {
+                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
+                {
+                    return true;
+                }
+
+                for (var i = 0; i < clipWindows.Count; i++)
+                {
+                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            static bool HasSpanOverlap(double aMin, double aMax, double bMin, double bMax, double minOverlap)
+            {
+                var overlap = Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
+                return overlap >= minOverlap;
+            }
+
+            static double IntervalGap(double aMin, double aMax, double bMin, double bMax)
+            {
+                if (aMax < bMin)
+                {
+                    return bMin - aMax;
+                }
+
+                if (bMax < aMin)
+                {
+                    return aMin - bMax;
+                }
+
+                return 0.0;
+            }
+
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
+            {
+                a = default;
+                b = default;
+                if (ent == null)
+                {
+                    return false;
+                }
+
+                if (ent is Line ln)
+                {
+                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                    return a.GetDistanceTo(b) > 1e-4;
+                }
+
+                if (ent is Polyline pl)
+                {
+                    if (pl.Closed || pl.NumberOfVertices < 2)
+                    {
+                        return false;
+                    }
+
+                    a = pl.GetPoint2dAt(0);
+                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
+                    return a.GetDistanceTo(b) > 1e-4;
+                }
+
+                return false;
+            }
+
+            bool IsHorizontalLike(Point2d a, Point2d b)
+            {
+                var d = b - a;
+                return Math.Abs(d.X) >= Math.Abs(d.Y);
+            }
+
+            bool IsVerticalLike(Point2d a, Point2d b)
+            {
+                var d = b - a;
+                return Math.Abs(d.Y) > Math.Abs(d.X);
+            }
+
+            bool IsRangeEdgeCandidate(Point2d a, Point2d b)
+            {
+                var segMinX = Math.Min(a.X, b.X);
+                var segMaxX = Math.Max(a.X, b.X);
+                return segMinX <= (clipMinX + edgeBand) ||
+                       segMaxX >= (clipMaxX - edgeBand);
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var adjusted = 0;
+                var adjustedByAnchor = 0;
+                var adjustedByCompanion = 0;
+                var adjustedByRangeEdgeTwenty = 0;
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                var secCompanionAnchors = new List<(bool Horizontal, double Axis, double SpanMin, double SpanMax)>();
+                foreach (ObjectId id in ms)
+                {
+                    Entity? ent = null;
+                    try
+                    {
+                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (ent == null || ent.IsErased ||
+                        !string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(ent, out var a, out var b) ||
+                        !DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    if (a.GetDistanceTo(b) < minSegmentLength)
+                    {
+                        continue;
+                    }
+
+                    var horizontal = IsHorizontalLike(a, b);
+                    var vertical = IsVerticalLike(a, b);
+                    if (!horizontal && !vertical)
+                    {
+                        continue;
+                    }
+
+                    var axis = horizontal
+                        ? 0.5 * (a.Y + b.Y)
+                        : 0.5 * (a.X + b.X);
+                    var spanMin = horizontal
+                        ? Math.Min(a.X, b.X)
+                        : Math.Min(a.Y, b.Y);
+                    var spanMax = horizontal
+                        ? Math.Max(a.X, b.X)
+                        : Math.Max(a.Y, b.Y);
+                    secCompanionAnchors.Add((horizontal, axis, spanMin, spanMax));
+                }
+
+                foreach (ObjectId id in ms)
+                {
+                    var isGenerated = generatedSet.Contains(id);
+
+                    Entity? ent = null;
+                    try
+                    {
+                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (ent == null || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    var layer = ent.Layer ?? string.Empty;
+                    if (!IsUsecLayer(layer) &&
+                        !string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(ent, out var a, out var b) ||
+                        !DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    if (a.GetDistanceTo(b) < minSegmentLength)
+                    {
+                        continue;
+                    }
+
+                    var horizontal = IsHorizontalLike(a, b);
+                    var vertical = IsVerticalLike(a, b);
+                    if (!horizontal && !vertical)
+                    {
+                        continue;
+                    }
+
+                    var axis = horizontal
+                        ? 0.5 * (a.Y + b.Y)
+                        : 0.5 * (a.X + b.X);
+                    var spanMin = horizontal
+                        ? Math.Min(a.X, b.X)
+                        : Math.Min(a.Y, b.Y);
+                    var spanMax = horizontal
+                        ? Math.Max(a.X, b.X)
+                        : Math.Max(a.Y, b.Y);
+                    var promoteRangeEdgeTwentyToSec =
+                        IsRangeEdgeCandidate(a, b) &&
+                        string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase);
+                    if (isGenerated && !promoteRangeEdgeTwentyToSec)
+                    {
+                        continue;
+                    }
+
+                    var matchesAnchor = false;
+                    foreach (var anchor in secAnchorSet)
+                    {
+                        if (anchor.Horizontal != horizontal)
+                        {
+                            continue;
+                        }
+
+                        if (Math.Abs(anchor.Axis - axis) > axisTolerance)
+                        {
+                            continue;
+                        }
+
+                        if (!HasSpanOverlap(anchor.SpanMin, anchor.SpanMax, spanMin, spanMax, minSpanOverlap) &&
+                            IntervalGap(anchor.SpanMin, anchor.SpanMax, spanMin, spanMax) > maxSpanGap)
+                        {
+                            continue;
+                        }
+
+                        matchesAnchor = true;
+                        break;
+                    }
+
+                    var hasSecCompanion = false;
+                    if (!matchesAnchor)
+                    {
+                        for (var i = 0; i < secCompanionAnchors.Count; i++)
+                        {
+                            var companion = secCompanionAnchors[i];
+                            if (companion.Horizontal != horizontal)
+                            {
+                                continue;
+                            }
+
+                            var axisDelta = Math.Abs(companion.Axis - axis);
+                            if (Math.Abs(axisDelta - RoadAllowanceSecWidthMeters) > companionAxisTol)
+                            {
+                                continue;
+                            }
+
+                            if (!HasSpanOverlap(companion.SpanMin, companion.SpanMax, spanMin, spanMax, companionMinOverlap))
+                            {
+                                continue;
+                            }
+
+                            hasSecCompanion = true;
+                            break;
+                        }
+                    }
+
+                    if ((!matchesAnchor && !hasSecCompanion && !promoteRangeEdgeTwentyToSec) ||
+                        string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    Entity? writable = null;
+                    try
+                    {
+                        writable = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (writable == null || writable.IsErased ||
+                        string.Equals(writable.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    writable.Layer = "L-SEC";
+                    writable.ColorIndex = 256;
+                    adjusted++;
+                    if (matchesAnchor)
+                    {
+                        adjustedByAnchor++;
+                    }
+                    else if (promoteRangeEdgeTwentyToSec)
+                    {
+                        adjustedByRangeEdgeTwenty++;
+                    }
+                    else if (hasSecCompanion)
+                    {
+                        adjustedByCompanion++;
+                    }
+                }
+
+                tr.Commit();
+                if (adjusted > 0)
+                {
+                    logger?.WriteLine(
+                        $"Cleanup: reapplied original range-edge L-SEC classification to {adjusted} segment(s) after deterministic relayer (anchor={adjustedByAnchor}, rangeEdge2012={adjustedByRangeEdgeTwenty}, companion20.11={adjustedByCompanion}).");
+                }
+            }
+        }
+
+        private static void TraceTargetLayerSegmentState(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            string passTag,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null || logger == null)
+            {
+                return;
+            }
+
+            var clipWindows = BuildBufferedQuarterWindows(database, requestedQuarterIds, 102.0);
+            if (clipWindows.Count == 0)
+            {
+                return;
+            }
+
+            bool IsPointInAnyWindow(Point2d p)
+            {
+                for (var i = 0; i < clipWindows.Count; i++)
+                {
+                    var w = clipWindows[i];
+                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
+                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
+            {
+                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
+                {
+                    return true;
+                }
+
+                for (var i = 0; i < clipWindows.Count; i++)
+                {
+                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
+            {
+                a = default;
+                b = default;
+                if (ent == null)
+                {
+                    return false;
+                }
+
+                if (ent is Line ln)
+                {
+                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                    return a.GetDistanceTo(b) > 1e-4;
+                }
+
+                if (ent is Polyline pl)
+                {
+                    if (pl.Closed || pl.NumberOfVertices < 2)
+                    {
+                        return false;
+                    }
+
+                    a = pl.GetPoint2dAt(0);
+                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
+                    return a.GetDistanceTo(b) > 1e-4;
+                }
+
+                return false;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var matches = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double MidDist)>();
+                var targetMid = Midpoint(LayerTraceSegmentStart, LayerTraceSegmentEnd);
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    Entity? ent = null;
+                    try
+                    {
+                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (ent == null || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    var layer = ent.Layer ?? string.Empty;
+                    if (!string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) &&
+                        !IsUsecLayer(layer))
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(ent, out var a, out var b) ||
+                        !DoesSegmentIntersectAnyWindow(a, b) ||
+                        !IsTargetLayerTraceSegment(a, b))
+                    {
+                        continue;
+                    }
+
+                    var mid = Midpoint(a, b);
+                    matches.Add((id, layer, a, b, mid.GetDistanceTo(targetMid)));
+                }
+
+                matches = matches
+                    .OrderBy(m => m.MidDist)
+                    .ThenBy(m => m.Id.Handle.ToString())
+                    .ToList();
+
+                if (matches.Count == 0)
+                {
+                    logger.WriteLine($"LAYER-TARGET pass={passTag} matches=0");
+                    tr.Commit();
+                    return;
+                }
+
+                logger.WriteLine($"LAYER-TARGET pass={passTag} matches={matches.Count}");
+                for (var i = 0; i < matches.Count; i++)
+                {
+                    var m = matches[i];
+                    logger.WriteLine(
+                        $"LAYER-TARGET pass={passTag} idx={i + 1} id={m.Id.Handle} layer={m.Layer} " +
+                        $"a=({m.A.X:0.###},{m.A.Y:0.###}) b=({m.B.X:0.###},{m.B.Y:0.###}) len={m.A.GetDistanceTo(m.B):0.###}");
+                }
+
+                tr.Commit();
             }
         }
 
