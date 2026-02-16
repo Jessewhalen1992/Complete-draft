@@ -1,0 +1,430 @@
+/////////////////////////////////////////////////////////////////////
+
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Diagnostics.CodeAnalysis;
+using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
+using Autodesk.AutoCAD.Geometry;
+
+namespace AtsBackgroundBuilder
+{
+    public partial class Plugin
+    {
+        private static void CleanupAfterBuild(
+            Database database,
+            SectionDrawResult sectionDrawResult,
+            List<ObjectId> dispositionPolylineIds,
+            AtsBuildInput input,
+            Logger logger)
+        {
+            if (database == null || sectionDrawResult == null || input == null)
+                return;
+
+            try
+            {
+                if (!input.IncludeAtsFabric)
+                {
+                    // If ATS fabric is not requested, remove all temporary section geometry.
+                    EraseEntities(database, sectionDrawResult.QuarterPolylineIds, logger, "quarter boxes");
+                    EraseEntities(database, sectionDrawResult.QuarterHelperEntityIds, logger, "quarter helper lines");
+                    EraseEntities(database, sectionDrawResult.SectionPolylineIds, logger, "section outlines");
+                    EraseEntities(database, sectionDrawResult.ContextSectionPolylineIds, logger, "context section pieces");
+                    EraseEntities(database, sectionDrawResult.SectionLabelEntityIds, logger, "section labels");
+                }
+                else
+                {
+                    // Keep mapped section lines and generated linework; remove temp quarter polygons only.
+                    EraseEntities(database, sectionDrawResult.QuarterPolylineIds, logger, "quarter boxes");
+                }
+
+                // If disposition linework is NOT requested, erase imported disposition polylines after labels are placed.
+                if (!input.IncludeDispositionLinework)
+                {
+                    EraseEntities(database, dispositionPolylineIds, logger, "disposition linework");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("CleanupAfterBuild error: " + ex);
+            }
+        }
+
+        private static void EraseEntities(Database database, IEnumerable<ObjectId> ids, Logger logger, string label)
+        {
+            if (database == null || ids == null)
+                return;
+
+            var unique = ids.Where(id => !id.IsNull).Distinct().ToList();
+            if (unique.Count == 0)
+                return;
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                int erased = 0;
+                foreach (var id in unique)
+                {
+                    try
+                    {
+                        var obj = tr.GetObject(id, OpenMode.ForWrite, false);
+                        if (obj == null || obj.IsErased)
+                            continue;
+
+                        obj.Erase(true);
+                        erased++;
+                    }
+                    catch
+                    {
+                        // Ignore failures (object may already be erased, on locked layer, etc.)
+                    }
+                }
+
+                tr.Commit();
+
+                if (erased > 0)
+                {
+                    logger?.WriteLine($"Cleanup: erased {erased} {label} entities");
+                }
+            }
+        }
+
+        private static void TryExportCadDiagnosticGeoJson(
+            Database database,
+            IReadOnlyList<SectionRequest> requests,
+            string dllFolder,
+            Logger logger)
+        {
+            if (database == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var exportPath = ResolveCadGeoJsonPath(database, dllFolder);
+                var exportDirectory = Path.GetDirectoryName(exportPath);
+                if (!string.IsNullOrWhiteSpace(exportDirectory))
+                {
+                    Directory.CreateDirectory(exportDirectory);
+                }
+
+                var zone = ResolveSingleRequestedZone(requests);
+                var features = CollectCadDiagnosticLineFeatures(database, zone);
+
+                using (var stream = new FileStream(exportPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+                using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("type", "FeatureCollection");
+                    writer.WriteStartObject("properties");
+                    writer.WriteString("source", "AtsBackgroundBuilder");
+                    writer.WriteString("coordinate_space", "UTM83");
+                    if (zone.HasValue)
+                    {
+                        writer.WriteNumber("zone", zone.Value);
+                    }
+                    writer.WriteEndObject();
+                    writer.WriteStartArray("features");
+                    foreach (var feature in features)
+                    {
+                        WriteCadDiagnosticFeature(writer, feature);
+                    }
+                    writer.WriteEndArray();
+                    writer.WriteEndObject();
+                    writer.Flush();
+                }
+
+                logger?.WriteLine($"CAD-DIAG export: wrote {features.Count} segment(s) to {exportPath}.");
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("CAD-DIAG export failed: " + ex.Message);
+            }
+        }
+
+        private static string ResolveCadGeoJsonPath(Database database, string dllFolder)
+        {
+            if (!string.IsNullOrWhiteSpace(CadGeoJsonExportPath))
+            {
+                var expanded = Environment.ExpandEnvironmentVariables(CadGeoJsonExportPath.Trim().Trim('"'));
+                return Path.GetFullPath(expanded);
+            }
+
+            if (!string.IsNullOrWhiteSpace(database?.Filename))
+            {
+                var drawingDirectory = Path.GetDirectoryName(database.Filename);
+                if (!string.IsNullOrWhiteSpace(drawingDirectory))
+                {
+                    return Path.Combine(drawingDirectory, "cad_lines.geojson");
+                }
+            }
+
+            var baseDirectory = string.IsNullOrWhiteSpace(dllFolder) ? Environment.CurrentDirectory : dllFolder;
+            return Path.Combine(baseDirectory, "cad_lines.geojson");
+        }
+
+        private static int? ResolveSingleRequestedZone(IReadOnlyList<SectionRequest> requests)
+        {
+            if (requests == null || requests.Count == 0)
+            {
+                return null;
+            }
+
+            int? zone = null;
+            for (var i = 0; i < requests.Count; i++)
+            {
+                var request = requests[i];
+                var requestZone = request.Key.Zone;
+                if (!zone.HasValue)
+                {
+                    zone = requestZone;
+                    continue;
+                }
+
+                if (zone.Value != requestZone)
+                {
+                    return null;
+                }
+            }
+
+            return zone;
+        }
+
+        private static List<CadDiagnosticLineFeature> CollectCadDiagnosticLineFeatures(Database database, int? zone)
+        {
+            var features = new List<CadDiagnosticLineFeature>();
+            if (database == null)
+            {
+                return features;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                foreach (ObjectId id in modelSpace)
+                {
+                    var ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    if (ent == null || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!ShouldExportCadDiagnosticLayer(ent.Layer))
+                    {
+                        continue;
+                    }
+
+                    if (ent is Line line)
+                    {
+                        AddCadDiagnosticSegment(features, line.StartPoint, line.EndPoint, ent, zone);
+                        continue;
+                    }
+
+                    if (ent is Polyline polyline)
+                    {
+                        var vertexCount = polyline.NumberOfVertices;
+                        if (vertexCount < 2)
+                        {
+                            continue;
+                        }
+
+                        for (var i = 0; i < vertexCount; i++)
+                        {
+                            var next = i + 1;
+                            if (next >= vertexCount)
+                            {
+                                if (!polyline.Closed)
+                                {
+                                    break;
+                                }
+
+                                next = 0;
+                            }
+
+                            AddCadDiagnosticSegment(features, polyline.GetPoint3dAt(i), polyline.GetPoint3dAt(next), ent, zone);
+                        }
+
+                        continue;
+                    }
+
+                    if (ent is Polyline2d polyline2d)
+                    {
+                        var vertices = new List<Point3d>();
+                        foreach (ObjectId vertexId in polyline2d)
+                        {
+                            var vertex = tr.GetObject(vertexId, OpenMode.ForRead, false) as Vertex2d;
+                            if (vertex != null)
+                            {
+                                vertices.Add(vertex.Position);
+                            }
+                        }
+
+                        AddPolylineSegments(features, vertices, polyline2d.Closed, ent, zone);
+                        continue;
+                    }
+
+                    if (ent is Polyline3d polyline3d)
+                    {
+                        var vertices = new List<Point3d>();
+                        foreach (ObjectId vertexId in polyline3d)
+                        {
+                            var vertex = tr.GetObject(vertexId, OpenMode.ForRead, false) as PolylineVertex3d;
+                            if (vertex != null)
+                            {
+                                vertices.Add(vertex.Position);
+                            }
+                        }
+
+                        AddPolylineSegments(features, vertices, polyline3d.Closed, ent, zone);
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            return features;
+        }
+
+        private static void AddPolylineSegments(
+            List<CadDiagnosticLineFeature> features,
+            List<Point3d> vertices,
+            bool closed,
+            Entity ent,
+            int? zone)
+        {
+            if (features == null || vertices == null || ent == null || vertices.Count < 2)
+            {
+                return;
+            }
+
+            var segmentCount = closed ? vertices.Count : vertices.Count - 1;
+            for (var i = 0; i < segmentCount; i++)
+            {
+                var next = i + 1;
+                if (next >= vertices.Count)
+                {
+                    next = 0;
+                }
+
+                AddCadDiagnosticSegment(features, vertices[i], vertices[next], ent, zone);
+            }
+        }
+
+        private static void AddCadDiagnosticSegment(
+            List<CadDiagnosticLineFeature> features,
+            Point3d start,
+            Point3d end,
+            Entity ent,
+            int? zone)
+        {
+            if (features == null || ent == null)
+            {
+                return;
+            }
+
+            if (start.DistanceTo(end) <= 1e-9)
+            {
+                return;
+            }
+
+            var layer = NormalizeCadDiagnosticLayerName(ent.Layer);
+            features.Add(new CadDiagnosticLineFeature(
+                start,
+                end,
+                layer,
+                ent.GetType().Name,
+                ent.Handle.ToString(),
+                ent.ColorIndex,
+                zone));
+        }
+
+        private static bool ShouldExportCadDiagnosticLayer(string layer)
+        {
+            var normalized = NormalizeCadDiagnosticLayerName(layer);
+            return
+                string.Equals(normalized, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, "L-QSEC", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, "L-SECTION-LSD", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, "L-QSEC-BOX", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeCadDiagnosticLayerName(string layer)
+        {
+            return string.IsNullOrWhiteSpace(layer) ? string.Empty : layer.Trim().ToUpperInvariant();
+        }
+
+        private static void WriteCadDiagnosticFeature(Utf8JsonWriter writer, CadDiagnosticLineFeature feature)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("type", "Feature");
+
+            writer.WriteStartObject("properties");
+            writer.WriteString("layer", feature.Layer);
+            writer.WriteString("entity_type", feature.EntityType);
+            writer.WriteString("handle", feature.Handle);
+            writer.WriteNumber("color_index", feature.ColorIndex);
+            if (feature.Zone.HasValue)
+            {
+                writer.WriteNumber("zone", feature.Zone.Value);
+            }
+            writer.WriteEndObject();
+
+            writer.WriteStartObject("geometry");
+            writer.WriteString("type", "LineString");
+            writer.WriteStartArray("coordinates");
+            writer.WriteStartArray();
+            writer.WriteNumberValue(feature.Start.X);
+            writer.WriteNumberValue(feature.Start.Y);
+            writer.WriteEndArray();
+            writer.WriteStartArray();
+            writer.WriteNumberValue(feature.End.X);
+            writer.WriteNumberValue(feature.End.Y);
+            writer.WriteEndArray();
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+
+            writer.WriteEndObject();
+        }
+
+        private sealed class CadDiagnosticLineFeature
+        {
+            public CadDiagnosticLineFeature(
+                Point3d start,
+                Point3d end,
+                string layer,
+                string entityType,
+                string handle,
+                int colorIndex,
+                int? zone)
+            {
+                Start = start;
+                End = end;
+                Layer = layer ?? string.Empty;
+                EntityType = entityType ?? string.Empty;
+                Handle = handle ?? string.Empty;
+                ColorIndex = colorIndex;
+                Zone = zone;
+            }
+
+            public Point3d Start { get; }
+            public Point3d End { get; }
+            public string Layer { get; }
+            public string EntityType { get; }
+            public string Handle { get; }
+            public int ColorIndex { get; }
+            public int? Zone { get; }
+        }
+    }
+}
+
