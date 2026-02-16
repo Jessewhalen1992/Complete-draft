@@ -38,6 +38,10 @@ namespace AtsBackgroundBuilder
         private const double RoadAllowanceWidthToleranceMeters = SectionRules.RoadAllowanceWidthToleranceMeters;
         private const double RoadAllowanceGapOffsetToleranceMeters = SectionRules.RoadAllowanceGapOffsetToleranceMeters;
         private const double MinAdjustableLsdLineLengthMeters = SectionRules.MinAdjustableLsdLineLengthMeters;
+        // Build-isolation window for adjacent/follow-up builds:
+        // stash existing section linework in this envelope, build request in isolation,
+        // then restore and run shortest-wins overlap cleanup.
+        private const double BuildIsolationBufferMeters = 2200.0;
         // Heavy road-allowance tracing is off by default; enable with ATSBUILD_RA_DIAG=1 when needed.
         private static readonly bool EnableRoadAllowanceDiagnostics =
             string.Equals(Environment.GetEnvironmentVariable("ATSBUILD_RA_DIAG"), "1", StringComparison.OrdinalIgnoreCase);
@@ -624,8 +628,8 @@ namespace AtsBackgroundBuilder
                 requestedOutlinesByKeyId[keyId] = outline;
             }
 
-            var requestedBoundaryWindows150 = BuildBufferedWindowsFromSectionOutlines(requestedOutlinesByKeyId.Values, 150.0);
-            var stashedNearbySectionEntities = StashSectionBuildingGeometryNearWindows(database, requestedBoundaryWindows150, logger);
+            var requestedIsolationWindows = BuildBufferedWindowsFromSectionOutlines(requestedOutlinesByKeyId.Values, BuildIsolationBufferMeters);
+            var stashedNearbySectionEntities = StashSectionBuildingGeometryNearWindows(database, requestedIsolationWindows, logger);
             logger.WriteLine($"TIMING DrawSectionsFromRequests: inference completed in {timer.ElapsedMilliseconds} ms");
 
             foreach (var request in requests)
@@ -960,7 +964,7 @@ namespace AtsBackgroundBuilder
             var restoredNearbySectionIds = RestoreStashedSectionBuildingGeometry(database, stashedNearbySectionEntities, logger);
             CleanupOverlappingSectionLinesByShortest(
                 database,
-                requestedBoundaryWindows150,
+                requestedIsolationWindows,
                 restoredNearbySectionIds,
                 logger);
             logger.WriteLine("Cleanup: final endpoint convergence pass complete.");
@@ -2672,7 +2676,7 @@ namespace AtsBackgroundBuilder
                 if (erased > 0)
                 {
                     logger?.WriteLine(
-                        $"Cleanup: stashed {erased} nearby section segment(s) within {windows.Count} requested 150m window(s) (scanned={scanned}).");
+                        $"Cleanup: stashed {erased} nearby section segment(s) within {windows.Count} requested isolation window(s) (scanned={scanned}).");
                 }
             }
 
@@ -2841,7 +2845,7 @@ namespace AtsBackgroundBuilder
                 if (erased > 0)
                 {
                     logger?.WriteLine(
-                        $"Cleanup: overlap shortest-wins erased {erased} section segment(s) within requested 150m window(s).");
+                        $"Cleanup: overlap shortest-wins erased {erased} section segment(s) within requested isolation window(s).");
                 }
             }
         }
