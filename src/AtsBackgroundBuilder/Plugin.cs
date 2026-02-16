@@ -7100,6 +7100,33 @@ namespace AtsBackgroundBuilder
                     var found = false;
                     var usedFallback = false;
                     var bestT = double.MaxValue;
+                    void ConsiderCandidate(double t, bool isFallback)
+                    {
+                        if (t <= minExtend || t > maxExtend)
+                        {
+                            return;
+                        }
+
+                        var projectedFromOther = ((endpoint + (outwardDir * t)) - other).DotProduct(outwardDir);
+                        if (projectedFromOther < minRemainingLength)
+                        {
+                            return;
+                        }
+
+                        var better =
+                            !found ||
+                            t < (bestT - 1e-6) ||
+                            (Math.Abs(t - bestT) <= 1e-6 && usedFallback && !isFallback);
+                        if (!better)
+                        {
+                            return;
+                        }
+
+                        found = true;
+                        usedFallback = isFallback;
+                        bestT = t;
+                    }
+
                     for (var i = 0; i < hardBoundarySegments.Count; i++)
                     {
                         var seg = hardBoundarySegments[i];
@@ -7113,68 +7140,29 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (t <= minExtend || t > maxExtend)
-                        {
-                            continue;
-                        }
-
-                        var projectedFromOther = ((endpoint + (outwardDir * t)) - other).DotProduct(outwardDir);
-                        if (projectedFromOther < minRemainingLength)
-                        {
-                            continue;
-                        }
-
-                        if (t >= bestT)
-                        {
-                            continue;
-                        }
-
-                        found = true;
-                        usedFallback = false;
-                        bestT = t;
+                        ConsiderCandidate(t, isFallback: false);
                     }
 
-                    // Fallback for near-collinear micro gaps where apparent intersection resolves to
-                    // nearby hard-boundary endpoints, not a strict segment crossing.
-                    if (!found)
+                    // Include near-collinear endpoint candidates so "apparent intersection"
+                    // on a boundary endpoint can win over a farther strict crossing.
+                    for (var i = 0; i < hardBoundarySegments.Count; i++)
                     {
-                        for (var i = 0; i < hardBoundarySegments.Count; i++)
+                        var seg = hardBoundarySegments[i];
+                        if (seg.Id == sourceId)
                         {
-                            var seg = hardBoundarySegments[i];
-                            if (seg.Id == sourceId)
+                            continue;
+                        }
+
+                        for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                        {
+                            var candidate = endpointIndex == 0 ? seg.A : seg.B;
+                            if (DistancePointToInfiniteLine(candidate, endpoint, endpoint + outwardDir) > endpointAxisTol)
                             {
                                 continue;
                             }
 
-                            for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
-                            {
-                                var candidate = endpointIndex == 0 ? seg.A : seg.B;
-                                var t = (candidate - endpoint).DotProduct(outwardDir);
-                                if (t <= minExtend || t > maxExtend)
-                                {
-                                    continue;
-                                }
-
-                                if (DistancePointToInfiniteLine(candidate, endpoint, endpoint + outwardDir) > endpointAxisTol)
-                                {
-                                    continue;
-                                }
-
-                                var projectedFromOther = ((endpoint + (outwardDir * t)) - other).DotProduct(outwardDir);
-                                if (projectedFromOther < minRemainingLength)
-                                {
-                                    continue;
-                                }
-
-                                if (t >= bestT)
-                                {
-                                    continue;
-                                }
-
-                                found = true;
-                                usedFallback = true;
-                                bestT = t;
-                            }
+                            var t = (candidate - endpoint).DotProduct(outwardDir);
+                            ConsiderCandidate(t, isFallback: true);
                         }
                     }
 
@@ -7520,6 +7508,7 @@ namespace AtsBackgroundBuilder
                 const double minMove = 0.05;
                 const double maxMove = 40.0;
                 const double minRemainingLength = 2.0;
+                const double endpointAxisTol = 0.80;
                 const double outerBoundaryTol = 0.40;
                 var scannedEndpoints = 0;
                 var alreadyOnBoundary = 0;
@@ -7556,6 +7545,37 @@ namespace AtsBackgroundBuilder
                     var found = false;
                     var bestAbsT = double.MaxValue;
                     var bestT = 0.0;
+                    var bestIsFallback = true;
+                    void ConsiderCandidate(double t, bool isFallback)
+                    {
+                        var absT = Math.Abs(t);
+                        if (absT <= minMove || absT > maxMove)
+                        {
+                            return;
+                        }
+
+                        // Do not allow a target that would invert/collapse the line through its opposite endpoint.
+                        if (t < 0.0 && (outwardLen + t) < minRemainingLength)
+                        {
+                            return;
+                        }
+
+                        var isBetter =
+                            !found ||
+                            absT < (bestAbsT - 1e-6) ||
+                            (Math.Abs(absT - bestAbsT) <= 1e-6 &&
+                                (bestIsFallback && !isFallback || t < bestT));
+                        if (!isBetter)
+                        {
+                            return;
+                        }
+
+                        found = true;
+                        bestAbsT = absT;
+                        bestT = t;
+                        bestIsFallback = isFallback;
+                    }
+
                     for (var i = 0; i < boundarySegments.Count; i++)
                     {
                         var seg = boundarySegments[i];
@@ -7564,30 +7584,23 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var absT = Math.Abs(t);
-                        if (absT <= minMove || absT > maxMove)
-                        {
-                            continue;
-                        }
+                        ConsiderCandidate(t, isFallback: false);
+                    }
 
-                        // Do not allow a target that would invert/collapse the line through its opposite endpoint.
-                        if (t < 0.0 && (outwardLen + t) < minRemainingLength)
+                    for (var i = 0; i < boundarySegments.Count; i++)
+                    {
+                        var seg = boundarySegments[i];
+                        for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
                         {
-                            continue;
-                        }
+                            var candidate = endpointIndex == 0 ? seg.A : seg.B;
+                            if (DistancePointToInfiniteLine(candidate, endpoint, endpoint + outwardDir) > endpointAxisTol)
+                            {
+                                continue;
+                            }
 
-                        var isBetter =
-                            !found ||
-                            absT < (bestAbsT - 1e-6) ||
-                            (Math.Abs(absT - bestAbsT) <= 1e-6 && t < bestT);
-                        if (!isBetter)
-                        {
-                            continue;
+                            var t = (candidate - endpoint).DotProduct(outwardDir);
+                            ConsiderCandidate(t, isFallback: true);
                         }
-
-                        found = true;
-                        bestAbsT = absT;
-                        bestT = t;
                     }
 
                     if (!found)
