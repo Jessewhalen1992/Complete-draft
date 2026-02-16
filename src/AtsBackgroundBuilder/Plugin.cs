@@ -591,6 +591,7 @@ namespace AtsBackgroundBuilder
             var quarterHelperIds = new HashSet<ObjectId>();
             var sectionLabelIds = new HashSet<ObjectId>();
             var sectionIds = new HashSet<ObjectId>();
+            var requestedSectionBoundaryIds = new HashSet<ObjectId>();
             var contextSectionIds = new HashSet<ObjectId>();
             var contextRuleSectionInfos = new List<QuarterLabelInfo>();
             var contextSectionOutlineHelperIds = new List<ObjectId>();
@@ -600,6 +601,31 @@ namespace AtsBackgroundBuilder
             var searchFolders = BuildSectionIndexSearchFolders(config);
             var inferredSecTypes = InferSectionTypes(requests, searchFolders, logger);
             var inferredQuarterSecTypes = InferQuarterSectionTypes(requests, searchFolders, logger);
+            var requestedOutlinesByKeyId = new Dictionary<string, SectionOutline>(StringComparer.OrdinalIgnoreCase);
+            foreach (var request in requests)
+            {
+                if (request == null)
+                {
+                    continue;
+                }
+
+                var keyId = BuildSectionKeyId(request.Key);
+                if (requestedOutlinesByKeyId.ContainsKey(keyId))
+                {
+                    continue;
+                }
+
+                if (!TryLoadSectionOutline(searchFolders, request.Key, logger, out var outline) ||
+                    outline == null)
+                {
+                    continue;
+                }
+
+                requestedOutlinesByKeyId[keyId] = outline;
+            }
+
+            var requestedBoundaryWindows150 = BuildBufferedWindowsFromSectionOutlines(requestedOutlinesByKeyId.Values, 150.0);
+            var stashedNearbySectionEntities = StashSectionBuildingGeometryNearWindows(database, requestedBoundaryWindows150, logger);
             logger.WriteLine($"TIMING DrawSectionsFromRequests: inference completed in {timer.ElapsedMilliseconds} ms");
 
             foreach (var request in requests)
@@ -609,7 +635,18 @@ namespace AtsBackgroundBuilder
                 Dictionary<QuarterSelection, string>? resolvedQuarterSecTypes = null;
                 if (!createdSections.TryGetValue(keyId, out var buildResult))
                 {
-                    if (!TryLoadSectionOutline(searchFolders, request.Key, logger, out var outline))
+                    if (!requestedOutlinesByKeyId.TryGetValue(keyId, out var outline))
+                    {
+                        if (!TryLoadSectionOutline(searchFolders, request.Key, logger, out outline) ||
+                            outline == null)
+                        {
+                            continue;
+                        }
+
+                        requestedOutlinesByKeyId[keyId] = outline;
+                    }
+
+                    if (outline == null)
                     {
                         continue;
                     }
@@ -649,8 +686,11 @@ namespace AtsBackgroundBuilder
                     lsdQuarterInfos.Add(new QuarterLabelInfo(pair.Value, request.Key, pair.Key, quarterSecType, buildResult.SectionPolylineId));
                 }
 
-                foreach (var helperId in buildResult.QuarterHelperEntityIds)
-                    quarterHelperIds.Add(helperId);
+                    foreach (var helperId in buildResult.QuarterHelperEntityIds)
+                    {
+                        requestedSectionBoundaryIds.Add(helperId);
+                        quarterHelperIds.Add(helperId);
+                    }
 
                 if (!buildResult.SectionLabelEntityId.IsNull)
                     sectionLabelIds.Add(buildResult.SectionLabelEntityId);
@@ -751,7 +791,14 @@ namespace AtsBackgroundBuilder
             // - only add 20.11 connector extensions to satisfy orthogonal endpoint rules
             // - keep 30.16 as generated (no endpoint extension pass)
             logger.WriteLine("Cleanup: canonical RA mode enabled; legacy RA extension/move passes are skipped.");
-            CleanupGeneratedRoadAllowanceOverlaps(database, generatedRoadAllowanceIds, logger);
+            // Pre-trim overlap cleanup: remove only clearly redundant generated segments.
+            // Full "longest wins" cleanup is rerun after final 100m trim.
+            CleanupGeneratedRoadAllowanceOverlaps(
+                database,
+                generatedRoadAllowanceIds,
+                logger,
+                allowEraseExisting: false,
+                protectedExistingIds: requestedSectionBoundaryIds);
             var sectionNumberByPolylineIdForUsec = new Dictionary<ObjectId, int>(sectionNumberById);
             foreach (var sectionInfo in contextRuleSectionInfos)
             {
@@ -843,7 +890,19 @@ namespace AtsBackgroundBuilder
             {
                 // "Build first, trim last": generated RA lines are now trimmed in the final stage
                 // so surrounding-context behavior matches regular section construction.
-                TrimContextSectionsToBufferedWindows(database, generatedRoadAllowanceIds.ToHashSet(), requestedScopeIds, logger);
+                TrimContextSectionsToBufferedWindows(
+                    database,
+                    generatedRoadAllowanceIds.ToHashSet(),
+                    requestedScopeIds,
+                    logger,
+                    protectRequestedCore: true);
+                // Post-trim overlap cleanup: with final geometry in place, longest section line wins.
+                CleanupGeneratedRoadAllowanceOverlaps(
+                    database,
+                    generatedRoadAllowanceIds,
+                    logger,
+                    allowEraseExisting: true,
+                    protectedExistingIds: requestedSectionBoundaryIds);
             }
             // Keep final endpoint correction narrow and deterministic:
             // enforce only explicit 0/20 dangling-to-3018 cleanup after final trim.
@@ -910,6 +969,12 @@ namespace AtsBackgroundBuilder
                 EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
                 RebuildLsdLabelsAtFinalIntersections(database, lsdQuarterInfos, logger);
             }
+            var restoredNearbySectionIds = RestoreStashedSectionBuildingGeometry(database, stashedNearbySectionEntities, logger);
+            CleanupOverlappingSectionLinesByShortest(
+                database,
+                requestedBoundaryWindows150,
+                restoredNearbySectionIds,
+                logger);
             logger.WriteLine("Cleanup: final endpoint convergence pass complete.");
             logger.WriteLine($"TIMING DrawSectionsFromRequests: road allowances processed in {timer.ElapsedMilliseconds} ms");
 
@@ -2430,6 +2495,369 @@ namespace AtsBackgroundBuilder
             return mergedA.GetDistanceTo(mergedB) > 1e-4;
         }
 
+        private static List<Extents3d> BuildBufferedWindowsFromSectionOutlines(IEnumerable<SectionOutline> outlines, double buffer)
+        {
+            var windows = new List<Extents3d>();
+            if (outlines == null)
+            {
+                return windows;
+            }
+
+            var pad = Math.Max(0.0, buffer);
+            foreach (var outline in outlines)
+            {
+                if (outline == null || outline.Vertices == null || outline.Vertices.Count == 0)
+                {
+                    continue;
+                }
+
+                var minX = double.MaxValue;
+                var minY = double.MaxValue;
+                var maxX = double.MinValue;
+                var maxY = double.MinValue;
+                for (var i = 0; i < outline.Vertices.Count; i++)
+                {
+                    var p = outline.Vertices[i];
+                    if (p.X < minX) minX = p.X;
+                    if (p.Y < minY) minY = p.Y;
+                    if (p.X > maxX) maxX = p.X;
+                    if (p.Y > maxY) maxY = p.Y;
+                }
+
+                if (double.IsInfinity(minX) || double.IsInfinity(minY) ||
+                    double.IsInfinity(maxX) || double.IsInfinity(maxY))
+                {
+                    continue;
+                }
+
+                windows.Add(new Extents3d(
+                    new Point3d(minX - pad, minY - pad, 0.0),
+                    new Point3d(maxX + pad, maxY + pad, 0.0)));
+            }
+
+            return MergeOverlappingClipWindows(windows);
+        }
+
+        private static bool IsSectionBuildingLayer(string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+            {
+                return false;
+            }
+
+            if (string.Equals(layerName, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(layerName, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(layerName, "L-SEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(layerName, "L-QSEC", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (IsUsecLayer(layerName))
+            {
+                return true;
+            }
+
+            return string.Equals(layerName, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layerName, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryReadOpenLinearSegment(Entity ent, out Point2d a, out Point2d b)
+        {
+            a = default;
+            b = default;
+            if (ent == null)
+            {
+                return false;
+            }
+
+            if (ent is Line ln)
+            {
+                a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            if (ent is Polyline pl)
+            {
+                if (pl.Closed || pl.NumberOfVertices < 2)
+                {
+                    return false;
+                }
+
+                a = pl.GetPoint2dAt(0);
+                b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
+                if (a.GetDistanceTo(b) <= 1e-4)
+                {
+                    return false;
+                }
+
+                if (pl.NumberOfVertices > 2)
+                {
+                    const double collinearTol = 0.35;
+                    for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
+                    {
+                        var p = pl.GetPoint2dAt(vi);
+                        if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private static List<Entity> StashSectionBuildingGeometryNearWindows(
+            Database database,
+            IReadOnlyList<Extents3d> windows,
+            Logger? logger)
+        {
+            var stashed = new List<Entity>();
+            if (database == null || windows == null || windows.Count == 0)
+            {
+                return stashed;
+            }
+
+            bool IntersectsAnyWindow(Point2d a, Point2d b)
+            {
+                for (var wi = 0; wi < windows.Count; wi++)
+                {
+                    if (TryClipSegmentToWindow(a, b, windows[wi], out _, out _))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                var scanned = 0;
+                var erased = 0;
+
+                foreach (ObjectId id in ms)
+                {
+                    Entity? ent;
+                    try
+                    {
+                        ent = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (ent == null || ent.IsErased || !IsSectionBuildingLayer(ent.Layer))
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenLinearSegment(ent, out var a, out var b))
+                    {
+                        continue;
+                    }
+
+                    scanned++;
+                    if (!IntersectsAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    if (!(ent.Clone() is Entity clone))
+                    {
+                        continue;
+                    }
+
+                    stashed.Add(clone);
+                    ent.Erase();
+                    erased++;
+                }
+
+                tr.Commit();
+                if (erased > 0)
+                {
+                    logger?.WriteLine(
+                        $"Cleanup: stashed {erased} nearby section segment(s) within {windows.Count} requested 150m window(s) (scanned={scanned}).");
+                }
+            }
+
+            return stashed;
+        }
+
+        private static List<ObjectId> RestoreStashedSectionBuildingGeometry(
+            Database database,
+            IList<Entity> stashedEntities,
+            Logger? logger)
+        {
+            var restored = new List<ObjectId>();
+            if (database == null || stashedEntities == null || stashedEntities.Count == 0)
+            {
+                return restored;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                for (var i = 0; i < stashedEntities.Count; i++)
+                {
+                    var ent = stashedEntities[i];
+                    if (ent == null)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        var id = ms.AppendEntity(ent);
+                        tr.AddNewlyCreatedDBObject(ent, true);
+                        restored.Add(id);
+                    }
+                    catch
+                    {
+                        try { ent.Dispose(); } catch { }
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            stashedEntities.Clear();
+            if (restored.Count > 0)
+            {
+                logger?.WriteLine($"Cleanup: restored {restored.Count} stashed section segment(s) after requested build.");
+            }
+
+            return restored;
+        }
+
+        private static void CleanupOverlappingSectionLinesByShortest(
+            Database database,
+            IReadOnlyList<Extents3d> windows,
+            IReadOnlyCollection<ObjectId>? preferEraseOnTieIds,
+            Logger? logger)
+        {
+            if (database == null || windows == null || windows.Count == 0)
+            {
+                return;
+            }
+
+            bool IntersectsAnyWindow(Point2d a, Point2d b)
+            {
+                for (var wi = 0; wi < windows.Count; wi++)
+                {
+                    if (TryClipSegmentToWindow(a, b, windows[wi], out _, out _))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            var preferEraseSet = preferEraseOnTieIds == null
+                ? new HashSet<ObjectId>()
+                : new HashSet<ObjectId>(preferEraseOnTieIds.Where(id => !id.IsNull));
+            var segments = new List<(ObjectId Id, Point2d A, Point2d B, double Length, bool PreferErase)>();
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) ||
+                        ent.IsErased ||
+                        !IsSectionBuildingLayer(ent.Layer))
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenLinearSegment(ent, out var a, out var b))
+                    {
+                        continue;
+                    }
+
+                    if (!IntersectsAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    segments.Add((id, a, b, a.GetDistanceTo(b), preferEraseSet.Contains(id)));
+                }
+
+                const double equalLengthTol = 0.05;
+                var toErase = new HashSet<ObjectId>();
+                for (var i = 0; i < segments.Count; i++)
+                {
+                    var a = segments[i];
+                    if (toErase.Contains(a.Id))
+                    {
+                        continue;
+                    }
+
+                    for (var j = i + 1; j < segments.Count; j++)
+                    {
+                        var b = segments[j];
+                        if (toErase.Contains(b.Id))
+                        {
+                            continue;
+                        }
+
+                        if (!AreSegmentsDuplicateOrCollinearOverlap(a.A, a.B, b.A, b.B))
+                        {
+                            continue;
+                        }
+
+                        ObjectId eraseId;
+                        var lengthDiff = a.Length - b.Length;
+                        if (Math.Abs(lengthDiff) <= equalLengthTol)
+                        {
+                            if (a.PreferErase != b.PreferErase)
+                            {
+                                eraseId = a.PreferErase ? a.Id : b.Id;
+                            }
+                            else
+                            {
+                                eraseId = a.Id.Handle.Value > b.Id.Handle.Value ? a.Id : b.Id;
+                            }
+                        }
+                        else
+                        {
+                            eraseId = lengthDiff < 0.0 ? a.Id : b.Id;
+                        }
+
+                        toErase.Add(eraseId);
+                    }
+                }
+
+                var erased = 0;
+                foreach (var id in toErase)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity ent) || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    ent.Erase();
+                    erased++;
+                }
+
+                tr.Commit();
+                if (erased > 0)
+                {
+                    logger?.WriteLine(
+                        $"Cleanup: overlap shortest-wins erased {erased} section segment(s) within requested 150m window(s).");
+                }
+            }
+        }
+
         private static void CleanupContextSectionOverlaps(Database database, IReadOnlyCollection<ObjectId> contextSectionIds, Logger? logger)
         {
             if (database == null || contextSectionIds == null || contextSectionIds.Count == 0)
@@ -2548,7 +2976,12 @@ namespace AtsBackgroundBuilder
             }
         }
 
-        private static void CleanupGeneratedRoadAllowanceOverlaps(Database database, IReadOnlyCollection<ObjectId> generatedRoadAllowanceIds, Logger? logger)
+        private static void CleanupGeneratedRoadAllowanceOverlaps(
+            Database database,
+            IReadOnlyCollection<ObjectId> generatedRoadAllowanceIds,
+            Logger? logger,
+            bool allowEraseExisting = false,
+            IReadOnlyCollection<ObjectId>? protectedExistingIds = null)
         {
             if (database == null || generatedRoadAllowanceIds == null || generatedRoadAllowanceIds.Count == 0)
             {
@@ -2556,6 +2989,9 @@ namespace AtsBackgroundBuilder
             }
 
             var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds);
+            var protectedExistingSet = protectedExistingIds == null
+                ? new HashSet<ObjectId>()
+                : new HashSet<ObjectId>(protectedExistingIds.Where(id => !id.IsNull));
             var generatedSegments = new List<(ObjectId Id, Point2d A, Point2d B, double Length)>();
             var existingSegments = new List<(ObjectId Id, Point2d A, Point2d B, string Layer, double Length)>();
 
@@ -2631,6 +3067,7 @@ namespace AtsBackgroundBuilder
                 }
 
                 var toEraseGenerated = new HashSet<ObjectId>();
+                var toEraseExisting = new HashSet<ObjectId>();
                 foreach (var g in generatedSegments)
                 {
                     if (toEraseGenerated.Contains(g.Id))
@@ -2645,26 +3082,41 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
+                        if (protectedExistingSet.Contains(e.Id))
+                        {
+                            // Requested hard section boundaries are authoritative.
+                            toEraseGenerated.Add(g.Id);
+                            break;
+                        }
+
                         var existingInsideGenerated = IsSegmentContained(e.A, e.B, g.A, g.B);
                         var generatedInsideExisting = IsSegmentContained(g.A, g.B, e.A, e.B);
-                        if (existingInsideGenerated && (g.Length - e.Length) > lengthDeltaTol)
+                        var lengthDiff = g.Length - e.Length;
+                        if (existingInsideGenerated && lengthDiff > lengthDeltaTol)
                         {
-                            // Preserve existing section/context fabric; trim/cleanup generated instead.
+                            // When enabled, longest line wins and shorter existing overlaps are removed.
+                            if (allowEraseExisting)
+                            {
+                                toEraseExisting.Add(e.Id);
+                            }
+                            continue;
+                        }
+
+                        if (generatedInsideExisting && lengthDiff < -lengthDeltaTol)
+                        {
+                            // Longest line wins.
                             toEraseGenerated.Add(g.Id);
                             break;
                         }
 
-                        if (generatedInsideExisting && (e.Length - g.Length) > lengthDeltaTol)
+                        // Near-equal duplicate overlap: keep existing to avoid churn.
+                        // Do not erase on partial overlaps where neither segment fully contains the other.
+                        if ((existingInsideGenerated && generatedInsideExisting) ||
+                            AreSegmentEndpointsNear(g.A, g.B, e.A, e.B, containTol))
                         {
-                            // Existing full-length boundary already present; drop redundant generated.
                             toEraseGenerated.Add(g.Id);
                             break;
                         }
-
-                        // Near-equal overlap:
-                        // keep existing fabric (L-SEC and L-USEC families) as authoritative.
-                        toEraseGenerated.Add(g.Id);
-                        break;
                     }
                 }
 
@@ -2680,11 +3132,31 @@ namespace AtsBackgroundBuilder
                     erasedGenerated++;
                 }
 
+                var erasedExisting = 0;
+                if (allowEraseExisting)
+                {
+                    foreach (var id in toEraseExisting)
+                    {
+                        if (toEraseGenerated.Contains(id))
+                        {
+                            continue;
+                        }
+
+                        if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity ent) || ent.IsErased)
+                        {
+                            continue;
+                        }
+
+                        ent.Erase();
+                        erasedExisting++;
+                    }
+                }
+
                 tr.Commit();
-                if (erasedGenerated > 0)
+                if (erasedGenerated > 0 || erasedExisting > 0)
                 {
                     logger?.WriteLine(
-                        $"Cleanup: overlap resolve erased {erasedGenerated} generated RA segment(s) (existing boundaries preserved).");
+                        $"Cleanup: overlap resolve erased {erasedGenerated} generated RA segment(s), {erasedExisting} existing overlap segment(s); allowEraseExisting={allowEraseExisting}, protectedExisting={protectedExistingSet.Count}.");
                 }
             }
         }
@@ -2693,7 +3165,8 @@ namespace AtsBackgroundBuilder
             Database database,
             ICollection<ObjectId> contextSectionIds,
             IEnumerable<ObjectId> requestedQuarterIds,
-            Logger? logger)
+            Logger? logger,
+            bool protectRequestedCore = false)
         {
             if (database == null || contextSectionIds == null || contextSectionIds.Count == 0 || requestedQuarterIds == null)
             {
@@ -2705,6 +3178,10 @@ namespace AtsBackgroundBuilder
             {
                 return;
             }
+
+            var protectedCoreWindows = protectRequestedCore
+                ? BuildBufferedQuarterWindows(database, requestedQuarterIds, 0.0)
+                : new List<Extents3d>();
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -2760,8 +3237,27 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
+                bool SegmentIntersectsAnyWindow(Point2d segA, Point2d segB, IReadOnlyList<Extents3d> windows)
+                {
+                    if (windows == null || windows.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    for (var wi = 0; wi < windows.Count; wi++)
+                    {
+                        if (TryClipSegmentToWindow(segA, segB, windows[wi], out _, out _))
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
                 var trimmed = 0;
                 var erased = 0;
+                var protectedSkipped = 0;
                 const double endpointMoveTol = 0.05;
                 foreach (var id in contextSectionIds.Where(x => !x.IsNull).Distinct().ToList())
                 {
@@ -2799,6 +3295,14 @@ namespace AtsBackgroundBuilder
 
                     if (!TryReadOpenSegment(ent, out var a, out var b))
                     {
+                        continue;
+                    }
+
+                    // Keep requested section geometry authoritative: do not trim generated/context
+                    // lines that still intersect the requested section core extents.
+                    if (protectRequestedCore && SegmentIntersectsAnyWindow(a, b, protectedCoreWindows))
+                    {
+                        protectedSkipped++;
                         continue;
                     }
 
@@ -2881,9 +3385,10 @@ namespace AtsBackgroundBuilder
                 }
 
                 tr.Commit();
-                if (trimmed > 0 || erased > 0)
+                if (trimmed > 0 || erased > 0 || protectedSkipped > 0)
                 {
-                    logger?.WriteLine($"Cleanup: final 100m trim adjusted {trimmed} context segment(s), erased {erased} outside segment(s).");
+                    logger?.WriteLine(
+                        $"Cleanup: final 100m trim adjusted {trimmed} context segment(s), erased {erased} outside segment(s), protectedSkip={protectedSkipped}, protectRequestedCore={protectRequestedCore}.");
                 }
             }
         }

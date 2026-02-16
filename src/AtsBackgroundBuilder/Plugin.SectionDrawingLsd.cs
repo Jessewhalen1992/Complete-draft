@@ -269,7 +269,9 @@ namespace AtsBackgroundBuilder
                 .Where(id => !id.IsNull && !id.IsErased)
                 .Distinct()
                 .ToList();
-            var clipWindows = BuildBufferedQuarterWindows(database, scopedQuarterIds, 100.0);
+            // Redraw only within the exact requested quarter extents so adjacent
+            // pre-existing LSD lines are never erased during adjoining builds.
+            var clipWindows = BuildBufferedQuarterWindows(database, scopedQuarterIds, 0.0);
 
             bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
             {
