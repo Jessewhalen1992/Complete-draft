@@ -30,6 +30,8 @@ namespace AtsBackgroundBuilder
         private const string LayerUsecZero = "L-USEC-0";
         private const string LayerUsecTwenty = "L-USEC2012";
         private const string LayerUsecThirty = "L-USEC3018";
+        private const string LayerUsecCorrection = "L-USEC-C";
+        private const string LayerUsecCorrectionZero = "L-USEC-C-0";
         private const double RoadAllowanceUsecWidthMeters = SectionRules.RoadAllowanceUsecWidthMeters;
         private const double RoadAllowanceSecWidthMeters = SectionRules.RoadAllowanceSecWidthMeters;
         private const double SurveyedUnsurveyedThresholdMeters = SectionRules.SurveyedUnsurveyedThresholdMeters;
@@ -586,6 +588,17 @@ namespace AtsBackgroundBuilder
             {
                 throw new ArgumentNullException(nameof(logger));
             }
+
+            // Keep correction layers consistently visible in diagnostics even when
+            // no correction seam is matched in the current request batch.
+            using (var colorTr = database.TransactionManager.StartTransaction())
+            {
+                const short correctionLayerColorIndex = 6; // magenta
+                EnsureLayerWithColor(database, colorTr, LayerUsecCorrection, correctionLayerColorIndex);
+                EnsureLayerWithColor(database, colorTr, LayerUsecCorrectionZero, correctionLayerColorIndex);
+                colorTr.Commit();
+            }
+
             // We always draw the full section outline (ATS fabric on) but may label only specific quarters.
             var labelQuarterIds = new HashSet<ObjectId>();
             var labelQuarterInfos = new List<QuarterLabelInfo>();
@@ -833,6 +846,10 @@ namespace AtsBackgroundBuilder
                 .Concat(contextRuleSectionInfos)
                 .Where(info => info != null)
                 .ToList();
+            var correctionLineSectionInfos = lsdQuarterInfos
+                .Concat(contextRuleSectionInfos)
+                .Where(info => info != null)
+                .ToList();
             ConnectUsecSeSouthTwentyTwelveLinesToEastOriginalBoundary(
                 database,
                 searchFolders,
@@ -967,6 +984,13 @@ namespace AtsBackgroundBuilder
                 requestedIsolationWindows,
                 restoredNearbySectionIds,
                 logger);
+            ApplyCorrectionLinePostBuildRules(
+                database,
+                correctionLineSectionInfos,
+                requestedScopeIds,
+                drawLsds,
+                logger);
+            NormalizeCorrectionLayerEntityColorByLayer(database, logger);
             logger.WriteLine("Cleanup: final endpoint convergence pass complete.");
             logger.WriteLine($"TIMING DrawSectionsFromRequests: road allowances processed in {timer.ElapsedMilliseconds} ms");
 
@@ -2551,7 +2575,9 @@ namespace AtsBackgroundBuilder
             }
 
             return string.Equals(layerName, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(layerName, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
+                   string.Equals(layerName, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layerName, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layerName, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool TryReadOpenLinearSegment(Entity ent, out Point2d a, out Point2d b)
