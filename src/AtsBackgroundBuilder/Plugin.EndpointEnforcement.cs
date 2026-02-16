@@ -187,7 +187,8 @@ namespace AtsBackgroundBuilder
                 return string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
             }
 
             using (var tr = database.TransactionManager.StartTransaction())
@@ -638,7 +639,8 @@ namespace AtsBackgroundBuilder
                 return string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
             }
 
             using (var tr = database.TransactionManager.StartTransaction())
@@ -1048,7 +1050,8 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
-                return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase);
+                return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
             }
 
             bool IsUsecTwentyBoundaryLayer(string layer)
@@ -2883,6 +2886,7 @@ namespace AtsBackgroundBuilder
                        string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
             }
