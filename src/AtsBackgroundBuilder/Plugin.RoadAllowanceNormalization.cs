@@ -959,16 +959,6 @@ namespace AtsBackgroundBuilder
                 return Math.Abs(d.X) >= Math.Abs(d.Y);
             }
 
-            bool HorizontalOverlaps((Point2d A, Point2d B) a, (Point2d A, Point2d B) b, double minOverlap)
-            {
-                var aMin = Math.Min(a.A.X, a.B.X);
-                var aMax = Math.Max(a.A.X, a.B.X);
-                var bMin = Math.Min(b.A.X, b.B.X);
-                var bMax = Math.Max(b.A.X, b.B.X);
-                var overlap = Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
-                return overlap >= minOverlap;
-            }
-
             bool IsSeamLayer(string layer)
             {
                 if (string.IsNullOrWhiteSpace(layer))
@@ -1142,15 +1132,6 @@ namespace AtsBackgroundBuilder
                 // Only fix around the bottom township seam where layering drifts.
                 const double seamBandBelow = 20.0;
                 const double seamBandAbove = 80.0;
-                const double secTargetMin = 15.5;
-                const double secTargetMax = 24.5;
-                const double usecTargetMin = 25.5;
-                const double usecTargetMax = 34.5;
-                const double dyOverlapMin = 5.0;
-                const double expectedSecDy = 20.11;
-                const double expectedUsecDy = RoadAllowanceUsecWidthMeters;
-                const double expectedDyTol = 6.0;
-                const double expectedDyDecisionMargin = 0.45;
                 const double baselineBandTol = 36.0;
                 const double baselineMinOverlap = 20.0;
                 const double baselineYForceTol = 1.60;
@@ -1188,45 +1169,6 @@ namespace AtsBackgroundBuilder
 
                         forcedBaselineYs.Add(NormalizeBaselineY(nearestY));
                     }
-                }
-
-                double ComputeBestExpectedScore(int index, double expectedDy)
-                {
-                    var s = candidates[index];
-                    var bestScore = double.MaxValue;
-                    for (var oi = 0; oi < candidates.Count; oi++)
-                    {
-                        if (oi == index)
-                        {
-                            continue;
-                        }
-
-                        var o = candidates[oi];
-                        if (o.Y < (seamBaseY - seamBandBelow) ||
-                            o.Y > (seamBaseY + seamBandAbove))
-                        {
-                            continue;
-                        }
-
-                        if (!HorizontalOverlaps((s.A, s.B), (o.A, o.B), minOverlap: dyOverlapMin))
-                        {
-                            continue;
-                        }
-
-                        var dy = Math.Abs(s.Y - o.Y);
-                        if (dy < 1.0)
-                        {
-                            continue;
-                        }
-
-                        var score = Math.Abs(dy - expectedDy);
-                        if (score < bestScore)
-                        {
-                            bestScore = score;
-                        }
-                    }
-
-                    return bestScore;
                 }
 
                 bool IsBaselineBoundaryCandidate(int index)
@@ -1286,105 +1228,13 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    var canonicalSecScore = ComputeBestExpectedScore(i, expectedSecDy);
-                    var canonicalUsecScore = ComputeBestExpectedScore(i, expectedUsecDy);
-                    var canonicalDecision = false;
-                    var bestDy = double.MaxValue;
-                    string? targetLayer = null;
-                    if (IsBaselineBoundaryCandidate(i))
-                    {
-                        targetLayer = "L-SEC";
-                        canonicalDecision = true;
-                        baselineForcedToSec++;
-                    }
-                    else if (canonicalSecScore <= expectedDyTol &&
-                             (canonicalSecScore + expectedDyDecisionMargin) < canonicalUsecScore)
-                    {
-                        targetLayer = "L-SEC";
-                        canonicalDecision = true;
-                    }
-                    else if (canonicalUsecScore <= expectedDyTol &&
-                             (canonicalUsecScore + expectedDyDecisionMargin) < canonicalSecScore)
-                    {
-                        targetLayer = "L-USEC";
-                        canonicalDecision = true;
-                    }
-
-                    if (!canonicalDecision)
-                    {
-                        for (var gi = 0; gi < generatedHorizontals.Count; gi++)
-                        {
-                            var g = generatedHorizontals[gi];
-                            if (!HorizontalOverlaps((c.A, c.B), (g.A, g.B), minOverlap: dyOverlapMin))
-                            {
-                                continue;
-                            }
-
-                            var dy = Math.Abs(c.Y - g.Y);
-                            if (dy < 1.0)
-                            {
-                                continue;
-                            }
-
-                            if (dy < bestDy)
-                            {
-                                bestDy = dy;
-                            }
-                        }
-
-                        if (bestDy == double.MaxValue)
-                        {
-                            for (var oi = 0; oi < candidates.Count; oi++)
-                            {
-                                if (oi == i)
-                                {
-                                    continue;
-                                }
-
-                                var o = candidates[oi];
-                                if (o.Y < (seamBaseY - seamBandBelow) ||
-                                    o.Y > (seamBaseY + seamBandAbove))
-                                {
-                                    continue;
-                                }
-
-                                if (!HorizontalOverlaps((c.A, c.B), (o.A, o.B), minOverlap: dyOverlapMin))
-                                {
-                                    continue;
-                                }
-
-                                var dy = Math.Abs(c.Y - o.Y);
-                                if (dy < 1.0)
-                                {
-                                    continue;
-                                }
-
-                                if (dy < bestDy)
-                                {
-                                    bestDy = dy;
-                                }
-                            }
-                        }
-
-                        if (bestDy < usecTargetMin || bestDy > usecTargetMax)
-                        {
-                            if (bestDy < secTargetMin || bestDy > secTargetMax)
-                            {
-                                continue;
-                            }
-                        }
-
-                        targetLayer = bestDy >= usecTargetMin && bestDy <= usecTargetMax
-                            ? "L-USEC"
-                            : "L-SEC";
-                    }
-
-                    if (targetLayer == null)
+                    if (!IsBaselineBoundaryCandidate(i))
                     {
                         continue;
                     }
 
-                    if (string.Equals(c.Layer, targetLayer, StringComparison.OrdinalIgnoreCase))
+                    baselineForcedToSec++;
+                    if (string.Equals(c.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
@@ -1400,24 +1250,20 @@ namespace AtsBackgroundBuilder
                     }
 
                     if (writable == null || writable.IsErased ||
-                        string.Equals(writable.Layer, targetLayer, StringComparison.OrdinalIgnoreCase))
+                        string.Equals(writable.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
-                    writable.Layer = targetLayer;
+                    writable.Layer = "L-SEC";
                     writable.ColorIndex = 256;
                     normalized++;
                 }
 
                 tr.Commit();
-                if (normalized > 0)
-                {
-                    logger?.WriteLine($"Cleanup: normalized {normalized} bottom-township seam segment(s) to expected L-SEC/L-USEC layer.");
-                }
                 if (baselineForcedToSec > 0)
                 {
-                    logger?.WriteLine($"Cleanup: baseline-township rule forced {baselineForcedToSec} bottom-township seam segment(s) to L-SEC.");
+                    logger?.WriteLine($"Cleanup: baseline-township rule forced {baselineForcedToSec} bottom-township seam segment(s) to L-SEC (adjusted={normalized}).");
                 }
             }
         }
