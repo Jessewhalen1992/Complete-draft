@@ -950,6 +950,9 @@ namespace AtsBackgroundBuilder
                 const double endpointMoveTol = 0.05;
                 const double minMove = 0.05;
                 const double maxMove = 1200.0;
+                const double maxVerticalTargetGap = 520.0;
+                const double maxVerticalTargetLength = 2200.0;
+                const double maxVerticalEndpointMove = 520.0;
                 const double minRemainingLength = 2.0;
                 const double directionAxisTol = 0.05;
                 const double inlineVerticalTol = 0.80;
@@ -1029,6 +1032,11 @@ namespace AtsBackgroundBuilder
                     for (var i = 0; i < verticalTargets.Count; i++)
                     {
                         var target = verticalTargets[i];
+                        if (target.A.GetDistanceTo(target.B) > maxVerticalTargetLength)
+                        {
+                            continue;
+                        }
+
                         if (preferredDirectionSign > 0 && target.MaxY < endpoint.Y + directionAxisTol)
                         {
                             continue;
@@ -1064,6 +1072,11 @@ namespace AtsBackgroundBuilder
 
                         var connectionPoint = inlineWithVertical ? endpoint : intersection;
                         var extensionGap = DistancePointToSegment(connectionPoint, target.A, target.B);
+                        if (extensionGap > maxVerticalTargetGap)
+                        {
+                            continue;
+                        }
+
                         if (!found ||
                             horizontalMoveDistance < bestHorizontalMoveDistance - 1e-6 ||
                             (Math.Abs(horizontalMoveDistance - bestHorizontalMoveDistance) <= 1e-6 &&
@@ -1130,6 +1143,11 @@ namespace AtsBackgroundBuilder
                         return false;
                     }
 
+                    if (currentA.GetDistanceTo(currentB) > maxVerticalTargetLength)
+                    {
+                        return false;
+                    }
+
                     var moveStart = false;
                     if (preferredDirectionSign > 0)
                     {
@@ -1151,6 +1169,18 @@ namespace AtsBackgroundBuilder
                     }
 
                     var moveEndpoint = moveStart ? currentA : currentB;
+                    if (moveEndpoint.GetDistanceTo(connectionPoint) > maxVerticalEndpointMove)
+                    {
+                        return false;
+                    }
+
+                    var candidateA = moveStart ? connectionPoint : currentA;
+                    var candidateB = moveStart ? currentB : connectionPoint;
+                    if (candidateA.GetDistanceTo(candidateB) > maxVerticalTargetLength)
+                    {
+                        return false;
+                    }
+
                     if (preferredDirectionSign > 0 && connectionPoint.Y > moveEndpoint.Y + directionAxisTol)
                     {
                         return false;

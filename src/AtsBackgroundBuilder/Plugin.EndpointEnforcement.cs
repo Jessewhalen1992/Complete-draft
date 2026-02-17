@@ -1500,7 +1500,17 @@ namespace AtsBackgroundBuilder
                         }
 
                         var yLine = 0.5 * (seg.A.Y + seg.B.Y);
-                        var yGap = Math.Abs(endpoint.Y - yLine);
+                        var yAtEndpointX = yLine;
+                        var dx = seg.B.X - seg.A.X;
+                        if (Math.Abs(dx) > 1e-6)
+                        {
+                            var t = (endpoint.X - seg.A.X) / dx;
+                            if (t < 0.0) t = 0.0;
+                            if (t > 1.0) t = 1.0;
+                            yAtEndpointX = seg.A.Y + ((seg.B.Y - seg.A.Y) * t);
+                        }
+
+                        var yGap = Math.Abs(endpoint.Y - yAtEndpointX);
                         if (yGap > yTol)
                         {
                             continue;
@@ -1735,7 +1745,17 @@ namespace AtsBackgroundBuilder
                         }
 
                         var xLine = 0.5 * (seg.A.X + seg.B.X);
-                        var xGap = Math.Abs(endpoint.X - xLine);
+                        var xAtEndpointY = xLine;
+                        var dy = seg.B.Y - seg.A.Y;
+                        if (Math.Abs(dy) > 1e-6)
+                        {
+                            var t = (endpoint.Y - seg.A.Y) / dy;
+                            if (t < 0.0) t = 0.0;
+                            if (t > 1.0) t = 1.0;
+                            xAtEndpointY = seg.A.X + ((seg.B.X - seg.A.X) * t);
+                        }
+
+                        var xGap = Math.Abs(endpoint.X - xAtEndpointY);
                         if (xGap > xTol)
                         {
                             continue;
@@ -1825,7 +1845,8 @@ namespace AtsBackgroundBuilder
                             var sideY = endpoint.Y <= center.Y
                                 ? 0.5 * (minY + center.Y)
                                 : 0.5 * (maxY + center.Y);
-                            var move = Math.Abs(sideY - endpoint.Y);
+                            var candidate = new Point2d(xLine, sideY);
+                            var move = endpoint.GetDistanceTo(candidate);
                             if (move <= midpointEndpointMoveTol || move > maxMove)
                             {
                                 continue;
@@ -1876,6 +1897,402 @@ namespace AtsBackgroundBuilder
                     }
 
                     return found;
+                }
+
+                bool TryResolveVerticalQsecAxisX(Point2d endpoint, out double targetX)
+                {
+                    targetX = endpoint.X;
+                    if (qsecVerticalSegments.Count == 0 && qsecVerticalComponentTargets.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    const double axisTol = 12.00;
+                    const double spanTol = 40.0;
+                    var found = false;
+                    var bestAxisGap = double.MaxValue;
+                    var bestSpanGap = double.MaxValue;
+                    var bestFromRawSegment = false;
+
+                    // Prefer raw L-QSEC segment intersection (x at target y) so skewed vertical
+                    // quarter-lines below correction lines do not drift to component-average x.
+                    for (var i = 0; i < qsecVerticalSegments.Count; i++)
+                    {
+                        var seg = qsecVerticalSegments[i];
+                        var minY = Math.Min(seg.A.Y, seg.B.Y);
+                        var maxY = Math.Max(seg.A.Y, seg.B.Y);
+                        if (endpoint.Y < (minY - spanTol) || endpoint.Y > (maxY + spanTol))
+                        {
+                            continue;
+                        }
+
+                        var spanGap = 0.0;
+                        if (endpoint.Y < minY)
+                        {
+                            spanGap = minY - endpoint.Y;
+                        }
+                        else if (endpoint.Y > maxY)
+                        {
+                            spanGap = endpoint.Y - maxY;
+                        }
+
+                        var dy = seg.B.Y - seg.A.Y;
+                        var t = 0.5;
+                        if (Math.Abs(dy) > 1e-6)
+                        {
+                            t = (endpoint.Y - seg.A.Y) / dy;
+                        }
+
+                        if (t < 0.0) t = 0.0;
+                        if (t > 1.0) t = 1.0;
+                        var candidateX = seg.A.X + ((seg.B.X - seg.A.X) * t);
+                        var axisGap = Math.Abs(endpoint.X - candidateX);
+                        if (axisGap > axisTol)
+                        {
+                            continue;
+                        }
+
+                        var better =
+                            !found ||
+                            !bestFromRawSegment ||
+                            axisGap < (bestAxisGap - 1e-6) ||
+                            (Math.Abs(axisGap - bestAxisGap) <= 1e-6 && spanGap < bestSpanGap);
+                        if (!better)
+                        {
+                            continue;
+                        }
+
+                        found = true;
+                        bestFromRawSegment = true;
+                        bestAxisGap = axisGap;
+                        bestSpanGap = spanGap;
+                        targetX = candidateX;
+                    }
+
+                    for (var i = 0; i < qsecVerticalComponentTargets.Count; i++)
+                    {
+                        var c = qsecVerticalComponentTargets[i];
+                        var xLine = 0.5 * (c.A.X + c.B.X);
+                        var axisGap = Math.Abs(endpoint.X - xLine);
+                        if (axisGap > axisTol)
+                        {
+                            continue;
+                        }
+
+                        var minY = Math.Min(c.A.Y, c.B.Y);
+                        var maxY = Math.Max(c.A.Y, c.B.Y);
+                        if (endpoint.Y < (minY - spanTol) || endpoint.Y > (maxY + spanTol))
+                        {
+                            continue;
+                        }
+
+                        var spanGap = 0.0;
+                        if (endpoint.Y < minY)
+                        {
+                            spanGap = minY - endpoint.Y;
+                        }
+                        else if (endpoint.Y > maxY)
+                        {
+                            spanGap = endpoint.Y - maxY;
+                        }
+
+                        var better =
+                            !found ||
+                            (!bestFromRawSegment &&
+                             (axisGap < (bestAxisGap - 1e-6) ||
+                              (Math.Abs(axisGap - bestAxisGap) <= 1e-6 && spanGap < bestSpanGap)));
+                        if (!better)
+                        {
+                            continue;
+                        }
+
+                        found = true;
+                        bestFromRawSegment = false;
+                        bestAxisGap = axisGap;
+                        bestSpanGap = spanGap;
+                        targetX = xLine;
+                    }
+
+                    return found;
+                }
+
+                bool TryResolveVerticalMidpointAxisX(Point2d endpoint, double targetY, out double targetX)
+                {
+                    targetX = endpoint.X;
+                    if (verticalMidpointTargetSegments.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    const double baseAxisTol = 8.00;
+                    const double qsecAxisTol = 12.00;
+                    const double baseSpanTol = 8.00;
+                    const double qsecSpanTol = 16.00;
+                    var found = false;
+                    var bestPriority = int.MaxValue;
+                    var bestAxisGap = double.MaxValue;
+                    var bestSpanGap = double.MaxValue;
+                    for (var i = 0; i < verticalMidpointTargetSegments.Count; i++)
+                    {
+                        var seg = verticalMidpointTargetSegments[i];
+                        var minY = Math.Min(seg.A.Y, seg.B.Y);
+                        var maxY = Math.Max(seg.A.Y, seg.B.Y);
+                        var spanTol = seg.Priority == 0 ? qsecSpanTol : baseSpanTol;
+                        if (targetY < (minY - spanTol) || targetY > (maxY + spanTol))
+                        {
+                            continue;
+                        }
+
+                        var spanGap = 0.0;
+                        if (targetY < minY)
+                        {
+                            spanGap = minY - targetY;
+                        }
+                        else if (targetY > maxY)
+                        {
+                            spanGap = targetY - maxY;
+                        }
+
+                        var dy = seg.B.Y - seg.A.Y;
+                        var t = 0.5;
+                        if (Math.Abs(dy) > 1e-6)
+                        {
+                            t = (targetY - seg.A.Y) / dy;
+                        }
+
+                        if (t < 0.0) t = 0.0;
+                        if (t > 1.0) t = 1.0;
+                        var candidateX = seg.A.X + ((seg.B.X - seg.A.X) * t);
+                        var axisGap = Math.Abs(endpoint.X - candidateX);
+                        var axisTol = seg.Priority == 0 ? qsecAxisTol : baseAxisTol;
+                        if (axisGap > axisTol)
+                        {
+                            continue;
+                        }
+
+                        var better =
+                            !found ||
+                            seg.Priority < bestPriority ||
+                            (seg.Priority == bestPriority && axisGap < (bestAxisGap - 1e-6)) ||
+                            (seg.Priority == bestPriority && Math.Abs(axisGap - bestAxisGap) <= 1e-6 && spanGap < bestSpanGap);
+                        if (!better)
+                        {
+                            continue;
+                        }
+
+                        found = true;
+                        bestPriority = seg.Priority;
+                        bestAxisGap = axisGap;
+                        bestSpanGap = spanGap;
+                        targetX = candidateX;
+                    }
+
+                    return found;
+                }
+
+                bool TryResolveVerticalQsecAxisXForHorizontalEndpoint(
+                    Point2d endpoint,
+                    Point2d other,
+                    double targetY,
+                    out double targetX)
+                {
+                    targetX = endpoint.X;
+                    if (qsecVerticalSegments.Count == 0 && qsecVerticalComponentTargets.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    const double axisTol = 16.00;
+                    const double spanTol = 40.0;
+                    const double sideWindow = 2.75;
+                    var preferLowerX = endpoint.X <= other.X;
+                    var candidates = new List<(double X, double AxisGap, double SpanGap, bool FromRaw)>();
+
+                    for (var i = 0; i < qsecVerticalSegments.Count; i++)
+                    {
+                        var seg = qsecVerticalSegments[i];
+                        var minY = Math.Min(seg.A.Y, seg.B.Y);
+                        var maxY = Math.Max(seg.A.Y, seg.B.Y);
+                        if (targetY < (minY - spanTol) || targetY > (maxY + spanTol))
+                        {
+                            continue;
+                        }
+
+                        var spanGap = 0.0;
+                        if (targetY < minY)
+                        {
+                            spanGap = minY - targetY;
+                        }
+                        else if (targetY > maxY)
+                        {
+                            spanGap = targetY - maxY;
+                        }
+
+                        var dy = seg.B.Y - seg.A.Y;
+                        var t = 0.5;
+                        if (Math.Abs(dy) > 1e-6)
+                        {
+                            t = (targetY - seg.A.Y) / dy;
+                        }
+
+                        if (t < 0.0) t = 0.0;
+                        if (t > 1.0) t = 1.0;
+                        var x = seg.A.X + ((seg.B.X - seg.A.X) * t);
+                        var axisGap = Math.Abs(endpoint.X - x);
+                        if (axisGap > axisTol)
+                        {
+                            continue;
+                        }
+
+                        candidates.Add((x, axisGap, spanGap, FromRaw: true));
+                    }
+
+                    for (var i = 0; i < qsecVerticalComponentTargets.Count; i++)
+                    {
+                        var c = qsecVerticalComponentTargets[i];
+                        var minY = Math.Min(c.A.Y, c.B.Y);
+                        var maxY = Math.Max(c.A.Y, c.B.Y);
+                        if (targetY < (minY - spanTol) || targetY > (maxY + spanTol))
+                        {
+                            continue;
+                        }
+
+                        var spanGap = 0.0;
+                        if (targetY < minY)
+                        {
+                            spanGap = minY - targetY;
+                        }
+                        else if (targetY > maxY)
+                        {
+                            spanGap = targetY - maxY;
+                        }
+
+                        var x = 0.5 * (c.A.X + c.B.X);
+                        var axisGap = Math.Abs(endpoint.X - x);
+                        if (axisGap > axisTol)
+                        {
+                            continue;
+                        }
+
+                        candidates.Add((x, axisGap, spanGap, FromRaw: false));
+                    }
+
+                    if (candidates.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    var minAxisGap = double.MaxValue;
+                    for (var i = 0; i < candidates.Count; i++)
+                    {
+                        var axisGap = candidates[i].AxisGap;
+                        if (axisGap < minAxisGap)
+                        {
+                            minAxisGap = axisGap;
+                        }
+                    }
+
+                    var axisCutoff = minAxisGap + sideWindow;
+                    bool IsSideCandidate((double X, double AxisGap, double SpanGap, bool FromRaw) c)
+                    {
+                        return preferLowerX
+                            ? c.X <= (other.X - minRemainingLength)
+                            : c.X >= (other.X + minRemainingLength);
+                    }
+
+                    var hasSideCandidate = false;
+                    for (var i = 0; i < candidates.Count; i++)
+                    {
+                        var c = candidates[i];
+                        if (c.AxisGap > axisCutoff)
+                        {
+                            continue;
+                        }
+
+                        if (!IsSideCandidate(c))
+                        {
+                            continue;
+                        }
+
+                        hasSideCandidate = true;
+                        break;
+                    }
+
+                    var found = false;
+                    var bestX = endpoint.X;
+                    var bestAxisGap = double.MaxValue;
+                    var bestSpanGap = double.MaxValue;
+                    var bestFromRaw = false;
+                    for (var i = 0; i < candidates.Count; i++)
+                    {
+                        var c = candidates[i];
+                        if (c.AxisGap > axisCutoff)
+                        {
+                            continue;
+                        }
+
+                        if (hasSideCandidate && !IsSideCandidate(c))
+                        {
+                            continue;
+                        }
+
+                        var better = !found;
+                        if (!better)
+                        {
+                            if (c.FromRaw && !bestFromRaw)
+                            {
+                                better = true;
+                            }
+                            else if (c.FromRaw == bestFromRaw)
+                            {
+                                if (preferLowerX)
+                                {
+                                    if (c.X < (bestX - 1e-6))
+                                    {
+                                        better = true;
+                                    }
+                                    else if (Math.Abs(c.X - bestX) <= 1e-6)
+                                    {
+                                        better =
+                                            c.AxisGap < (bestAxisGap - 1e-6) ||
+                                            (Math.Abs(c.AxisGap - bestAxisGap) <= 1e-6 && c.SpanGap < bestSpanGap);
+                                    }
+                                }
+                                else
+                                {
+                                    if (c.X > (bestX + 1e-6))
+                                    {
+                                        better = true;
+                                    }
+                                    else if (Math.Abs(c.X - bestX) <= 1e-6)
+                                    {
+                                        better =
+                                            c.AxisGap < (bestAxisGap - 1e-6) ||
+                                            (Math.Abs(c.AxisGap - bestAxisGap) <= 1e-6 && c.SpanGap < bestSpanGap);
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!better)
+                        {
+                            continue;
+                        }
+
+                        found = true;
+                        bestX = c.X;
+                        bestAxisGap = c.AxisGap;
+                        bestSpanGap = c.SpanGap;
+                        bestFromRaw = c.FromRaw;
+                    }
+
+                    if (!found)
+                    {
+                        return false;
+                    }
+
+                    targetX = bestX;
+                    return true;
                 }
 
                 bool TryFindPairedHorizontalMidpointY(Point2d p0, Point2d p1, out double targetY)
@@ -2226,18 +2643,18 @@ namespace AtsBackgroundBuilder
                         var midStartY = p0.Y;
                         var midEndY = p1.Y;
 
-                        // Deterministic rule: if endpoints terminate on the same 1/4 component,
-                        // they must resolve to the same component midpoint.
-                        hasStartMid = TryResolveHorizontalQsecComponentMidpoint(p0, out midStartX, out midStartY);
-                        hasEndMid = TryResolveHorizontalQsecComponentMidpoint(p1, out midEndX, out midEndY);
+                        // Prefer exact segment midpoint resolution first; only fall back to
+                        // component-level midpoint when an endpoint cannot resolve exactly.
+                        hasStartMid = TryFindEndpointHorizontalMidpointX(p0, out midStartX, out midStartY, out _);
+                        hasEndMid = TryFindEndpointHorizontalMidpointX(p1, out midEndX, out midEndY, out _);
                         if (!hasStartMid)
                         {
-                            hasStartMid = TryFindEndpointHorizontalMidpointX(p0, out midStartX, out midStartY, out _);
+                            hasStartMid = TryResolveHorizontalQsecComponentMidpoint(p0, out midStartX, out midStartY);
                         }
 
                         if (!hasEndMid)
                         {
-                            hasEndMid = TryFindEndpointHorizontalMidpointX(p1, out midEndX, out midEndY, out _);
+                            hasEndMid = TryResolveHorizontalQsecComponentMidpoint(p1, out midEndX, out midEndY);
                         }
 
                         if (hasStartMid && hasEndMid)
@@ -2316,19 +2733,14 @@ namespace AtsBackgroundBuilder
                     {
                         var hasStartMid = false;
                         var hasEndMid = false;
+                        var midStartX = p0.X;
+                        var midEndX = p1.X;
                         var midStartY = p0.Y;
                         var midEndY = p1.Y;
+                        var midStartHasExplicitX = false;
+                        var midEndHasExplicitX = false;
 
-                        var hasStartQsecVertical = TryResolveVerticalQsecComponentMidpoint(p0, out _, out var qsecStartY);
-                        var hasEndQsecVertical = TryResolveVerticalQsecComponentMidpoint(p1, out _, out var qsecEndY);
-                        if (hasStartQsecVertical || hasEndQsecVertical)
-                        {
-                            hasStartMid = hasStartQsecVertical;
-                            hasEndMid = hasEndQsecVertical;
-                            midStartY = qsecStartY;
-                            midEndY = qsecEndY;
-                        }
-                        else if (TryFindPairedHorizontalMidpointY(p0, p1, out var pairedY))
+                        if (TryFindPairedHorizontalMidpointY(p0, p1, out var pairedY))
                         {
                             hasStartMid = true;
                             hasEndMid = true;
@@ -2341,11 +2753,89 @@ namespace AtsBackgroundBuilder
                             hasEndMid = TryFindEndpointVerticalMidpointY(p1, out midEndY, out _);
                         }
 
+                        if (TryResolveVerticalQsecComponentMidpoint(p0, out var qsecStartX, out var qsecStartY))
+                        {
+                            midStartX = qsecStartX;
+                            if (!hasStartMid)
+                            {
+                                hasStartMid = true;
+                                midStartY = qsecStartY;
+                            }
+
+                            var qsecStartProbe = new Point2d(p0.X, midStartY);
+                            if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(qsecStartProbe, p1, midStartY, out var qsecAxisStartX) ||
+                                TryResolveVerticalMidpointAxisX(qsecStartProbe, midStartY, out qsecAxisStartX))
+                            {
+                                midStartX = qsecAxisStartX;
+                                midStartHasExplicitX = true;
+                            }
+                        }
+
+                        if (TryResolveVerticalQsecComponentMidpoint(p1, out var qsecEndX, out var qsecEndY))
+                        {
+                            midEndX = qsecEndX;
+                            if (!hasEndMid)
+                            {
+                                hasEndMid = true;
+                                midEndY = qsecEndY;
+                            }
+
+                            var qsecEndProbe = new Point2d(p1.X, midEndY);
+                            if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(qsecEndProbe, p0, midEndY, out var qsecAxisEndX) ||
+                                TryResolveVerticalMidpointAxisX(qsecEndProbe, midEndY, out qsecAxisEndX))
+                            {
+                                midEndX = qsecAxisEndX;
+                                midEndHasExplicitX = true;
+                            }
+                        }
+
+                        // If only one side resolved a midpoint Y, mirror that Y to its sibling endpoint
+                        // so both ends can still resolve an explicit quarter-line X intersection.
+                        if (hasStartMid != hasEndMid)
+                        {
+                            if (hasStartMid)
+                            {
+                                hasEndMid = true;
+                                midEndY = midStartY;
+                            }
+                            else
+                            {
+                                hasStartMid = true;
+                                midStartY = midEndY;
+                            }
+                        }
+
+                        if (hasStartMid && !midStartHasExplicitX)
+                        {
+                            var startProbe = new Point2d(p0.X, midStartY);
+                            if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(startProbe, p1, midStartY, out var axisStartX) ||
+                                TryResolveVerticalQsecAxisX(startProbe, out axisStartX) ||
+                                TryResolveVerticalMidpointAxisX(startProbe, midStartY, out axisStartX))
+                            {
+                                midStartX = axisStartX;
+                                midStartHasExplicitX = true;
+                            }
+                        }
+
+                        if (hasEndMid && !midEndHasExplicitX)
+                        {
+                            var endProbe = new Point2d(p1.X, midEndY);
+                            if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(endProbe, p0, midEndY, out var axisEndX) ||
+                                TryResolveVerticalQsecAxisX(endProbe, out axisEndX) ||
+                                TryResolveVerticalMidpointAxisX(endProbe, midEndY, out axisEndX))
+                            {
+                                midEndX = axisEndX;
+                                midEndHasExplicitX = true;
+                            }
+                        }
+
                         if (hasStartMid || hasEndMid)
                         {
                             if (hasStartMid)
                             {
-                                var snappedStart = new Point2d(p0.X, midStartY);
+                                var snappedStart = new Point2d(
+                                    midStartHasExplicitX ? midStartX : p0.X,
+                                    midStartY);
                                 if (p0.GetDistanceTo(snappedStart) > midpointEndpointMoveTol)
                                 {
                                     moveStart = true;
@@ -2355,7 +2845,9 @@ namespace AtsBackgroundBuilder
 
                             if (hasEndMid)
                             {
-                                var snappedEnd = new Point2d(p1.X, midEndY);
+                                var snappedEnd = new Point2d(
+                                    midEndHasExplicitX ? midEndX : p1.X,
+                                    midEndY);
                                 if (p1.GetDistanceTo(snappedEnd) > midpointEndpointMoveTol)
                                 {
                                     moveEnd = true;
@@ -2392,8 +2884,11 @@ namespace AtsBackgroundBuilder
                                 }
                             }
 
-                            midpointLockedStart = hasStartMid;
-                            midpointLockedEnd = hasEndMid;
+                            // Only lock horizontal endpoints when X is explicitly resolved to the
+                            // quarter-line component (or already on a hard boundary). Otherwise let
+                            // the generic hard-boundary snap finish the X intersection.
+                            midpointLockedStart = hasStartMid && (midStartHasExplicitX || IsEndpointOnHardBoundary(p0));
+                            midpointLockedEnd = hasEndMid && (midEndHasExplicitX || IsEndpointOnHardBoundary(p1));
                             moveStart = false;
                             moveEnd = false;
                             targetStart = p0;
@@ -2661,12 +3156,28 @@ namespace AtsBackgroundBuilder
                             var targetEnd = p1;
                             if (TryFindVerticalQsecComponentMidpoint(p0, out var t0))
                             {
+                                var clampStartProbe = new Point2d(p0.X, t0.Y);
+                                if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(clampStartProbe, p1, t0.Y, out var clampStartX) ||
+                                    TryResolveVerticalQsecAxisX(clampStartProbe, out clampStartX) ||
+                                    TryResolveVerticalMidpointAxisX(clampStartProbe, t0.Y, out clampStartX))
+                                {
+                                    t0 = new Point2d(clampStartX, t0.Y);
+                                }
+
                                 moveStart = true;
                                 targetStart = t0;
                             }
 
                             if (TryFindVerticalQsecComponentMidpoint(p1, out var t1))
                             {
+                                var clampEndProbe = new Point2d(p1.X, t1.Y);
+                                if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(clampEndProbe, p0, t1.Y, out var clampEndX) ||
+                                    TryResolveVerticalQsecAxisX(clampEndProbe, out clampEndX) ||
+                                    TryResolveVerticalMidpointAxisX(clampEndProbe, t1.Y, out clampEndX))
+                                {
+                                    t1 = new Point2d(clampEndX, t1.Y);
+                                }
+
                                 moveEnd = true;
                                 targetEnd = t1;
                             }
