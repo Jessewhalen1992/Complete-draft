@@ -7203,6 +7203,10 @@ namespace AtsBackgroundBuilder
                 const double twentyThirtyCompanionTol = 2.4;
                 const double twentyThirtyCompanionMinOverlap = 40.0;
                 var middleToOuterGap = RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters;
+                const double blindEndpointTol = 0.80;
+                const double minBlindLength = 8.0;
+                const double maxBlindLength = 320.0;
+                const double maxRangeEdgeBlindLength = 140.0;
                 var adjusted = 0;
                 var unchanged = 0;
                 var unresolved = 0;
@@ -7213,6 +7217,11 @@ namespace AtsBackgroundBuilder
                 var forcedTwentyToZeroByRangeEdge = 0;
                 var forcedTwentyToZeroBySecCompanion = 0;
                 var forcedTwentyToZeroByGeomPattern = 0;
+                var demotedBlindThirty = 0;
+                var demotedBlindThirtyByRangeEdge = 0;
+                var demotedBlindThirtyBySectionSide = 0;
+                var demotedBlindThirtyByZeroAnchor = 0;
+                var demotedBlindThirtyByTwentyAnchor = 0;
 
                 static string CanonicalUsecLayer(string layer)
                 {
@@ -7464,6 +7473,222 @@ namespace AtsBackgroundBuilder
                     var segAxis = 0.5 * (seg.A.X + seg.B.X);
                     return segAxis <= (clipMinX + rangeEdgeBand) ||
                            segAxis >= (clipMaxX - rangeEdgeBand);
+                }
+
+                bool IsHorizontalNearRangeEdge(int segmentIndex)
+                {
+                    var seg = segments[segmentIndex];
+                    if (!IsHorizontalLike(seg.A, seg.B))
+                    {
+                        return false;
+                    }
+
+                    var minX = Math.Min(seg.A.X, seg.B.X);
+                    var maxX = Math.Max(seg.A.X, seg.B.X);
+                    return minX <= (clipMinX + rangeEdgeBand) ||
+                           maxX >= (clipMaxX - rangeEdgeBand);
+                }
+
+                bool IsHorizontalNearClipWindowRangeEdge(int segmentIndex)
+                {
+                    var seg = segments[segmentIndex];
+                    if (!IsHorizontalLike(seg.A, seg.B))
+                    {
+                        return false;
+                    }
+
+                    var minX = Math.Min(seg.A.X, seg.B.X);
+                    var maxX = Math.Max(seg.A.X, seg.B.X);
+                    var minY = Math.Min(seg.A.Y, seg.B.Y);
+                    var maxY = Math.Max(seg.A.Y, seg.B.Y);
+                    const double minWindowOverlap = 8.0;
+                    for (var wi = 0; wi < clipWindows.Count; wi++)
+                    {
+                        var w = clipWindows[wi];
+                        var overlapY = Math.Min(maxY, w.MaxPoint.Y + overlapPadding) -
+                                       Math.Max(minY, w.MinPoint.Y - overlapPadding);
+                        if (overlapY < minWindowOverlap)
+                        {
+                            continue;
+                        }
+
+                        if (minX <= (w.MinPoint.X + rangeEdgeBand) ||
+                            maxX >= (w.MaxPoint.X - rangeEdgeBand))
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool EndpointTouchesOrthogonalUsec(int segmentIndex, Point2d endpoint)
+                {
+                    var seg = segments[segmentIndex];
+                    var segHorizontal = IsHorizontalLike(seg.A, seg.B);
+                    var segVertical = IsVerticalLike(seg.A, seg.B);
+                    if (!segHorizontal && !segVertical)
+                    {
+                        return false;
+                    }
+
+                    for (var oi = 0; oi < segments.Count; oi++)
+                    {
+                        if (oi == segmentIndex)
+                        {
+                            continue;
+                        }
+
+                        var other = segments[oi];
+                        var otherHorizontal = IsHorizontalLike(other.A, other.B);
+                        var otherVertical = IsVerticalLike(other.A, other.B);
+                        if ((segHorizontal && !otherVertical) || (segVertical && !otherHorizontal))
+                        {
+                            continue;
+                        }
+
+                        if (DistancePointToSegment(endpoint, other.A, other.B) <= blindEndpointTol)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool EndpointTouchesOrthogonalUsecLayer(int segmentIndex, Point2d endpoint, string canonicalLayer)
+                {
+                    var seg = segments[segmentIndex];
+                    var segHorizontal = IsHorizontalLike(seg.A, seg.B);
+                    var segVertical = IsVerticalLike(seg.A, seg.B);
+                    if (!segHorizontal && !segVertical)
+                    {
+                        return false;
+                    }
+
+                    for (var oi = 0; oi < segments.Count; oi++)
+                    {
+                        if (oi == segmentIndex)
+                        {
+                            continue;
+                        }
+
+                        var other = segments[oi];
+                        var otherHorizontal = IsHorizontalLike(other.A, other.B);
+                        var otherVertical = IsVerticalLike(other.A, other.B);
+                        if ((segHorizontal && !otherVertical) || (segVertical && !otherHorizontal))
+                        {
+                            continue;
+                        }
+
+                        if (DistancePointToSegment(endpoint, other.A, other.B) > blindEndpointTol)
+                        {
+                            continue;
+                        }
+
+                        if (string.Equals(CanonicalUsecLayer(other.Layer), canonicalLayer, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool IsOneSidedBlindUsec(int segmentIndex)
+                {
+                    var seg = segments[segmentIndex];
+                    var len = seg.A.GetDistanceTo(seg.B);
+                    if (len < minBlindLength || len > maxBlindLength)
+                    {
+                        return false;
+                    }
+
+                    var touchA = EndpointTouchesOrthogonalUsec(segmentIndex, seg.A);
+                    var touchB = EndpointTouchesOrthogonalUsec(segmentIndex, seg.B);
+                    return touchA != touchB;
+                }
+
+                bool IsShortHorizontalRangeEdgeStub(int segmentIndex)
+                {
+                    var seg = segments[segmentIndex];
+                    var nearRangeEdge =
+                        IsHorizontalNearRangeEdge(segmentIndex) ||
+                        IsHorizontalNearClipWindowRangeEdge(segmentIndex);
+                    if (!IsHorizontalLike(seg.A, seg.B) || !nearRangeEdge)
+                    {
+                        return false;
+                    }
+
+                    var len = seg.A.GetDistanceTo(seg.B);
+                    return len >= minBlindLength && len <= maxRangeEdgeBlindLength;
+                }
+
+                bool IsShortHorizontalBlindStub(int segmentIndex)
+                {
+                    var seg = segments[segmentIndex];
+                    if (!IsHorizontalLike(seg.A, seg.B))
+                    {
+                        return false;
+                    }
+
+                    var len = seg.A.GetDistanceTo(seg.B);
+                    return len >= minBlindLength && len <= maxRangeEdgeBlindLength;
+                }
+
+                bool IsShortHorizontalSectionSideStub(int segmentIndex)
+                {
+                    var seg = segments[segmentIndex];
+                    if (!IsHorizontalLike(seg.A, seg.B))
+                    {
+                        return false;
+                    }
+
+                    var len = seg.A.GetDistanceTo(seg.B);
+                    if (len < minBlindLength || len > maxRangeEdgeBlindLength)
+                    {
+                        return false;
+                    }
+
+                    for (var fi = 0; fi < sectionFrames.Count; fi++)
+                    {
+                        var section = sectionFrames[fi];
+                        var relA = seg.A - section.Origin;
+                        var relB = seg.B - section.Origin;
+                        var uA = relA.DotProduct(section.EastUnit);
+                        var uB = relB.DotProduct(section.EastUnit);
+                        var vA = relA.DotProduct(section.NorthUnit);
+                        var vB = relB.DotProduct(section.NorthUnit);
+
+                        var minV = Math.Min(vA, vB);
+                        var maxV = Math.Max(vA, vB);
+                        var overlap = Math.Min(maxV, section.NorthEdgeV + overlapPadding) -
+                                      Math.Max(minV, section.SouthEdgeV - overlapPadding);
+                        if (overlap < minProjectedOverlap)
+                        {
+                            continue;
+                        }
+
+                        var aOnSideEdge =
+                            Math.Abs(uA - section.WestEdgeU) <= axisTolerance ||
+                            Math.Abs(uA - section.EastEdgeU) <= axisTolerance;
+                        var bOnSideEdge =
+                            Math.Abs(uB - section.WestEdgeU) <= axisTolerance ||
+                            Math.Abs(uB - section.EastEdgeU) <= axisTolerance;
+                        if (!aOnSideEdge && !bOnSideEdge)
+                        {
+                            continue;
+                        }
+
+                        var touchA = EndpointTouchesOrthogonalUsec(segmentIndex, seg.A);
+                        var touchB = EndpointTouchesOrthogonalUsec(segmentIndex, seg.B);
+                        if ((aOnSideEdge && touchA) || (bOnSideEdge && touchB))
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
                 }
 
                 bool TryFindParallelSecCompanionAtSecOffset(int segmentIndex, out double companionAxis)
@@ -7849,6 +8074,9 @@ namespace AtsBackgroundBuilder
                     }
 
                     var existingCanonicalLayer = CanonicalUsecLayer(seg.Layer);
+                    var traceTargetSegment = IsTargetLayerTraceSegment(seg.A, seg.B);
+                    var existingIsThirty = string.Equals(existingCanonicalLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase);
+                    var existingIsBlindBase = string.Equals(existingCanonicalLayer, LayerUsecBase, StringComparison.OrdinalIgnoreCase);
                     if (string.Equals(existingCanonicalLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) &&
                         string.Equals(targetLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) &&
                         HasParallelZeroCompanionAtTwentyOffset(si))
@@ -7948,6 +8176,90 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
+                    // Adjacent/trimmed west/east blind stubs must not promote to 30.18.
+                    // Keep these short horizontal blind lines on 20.11 (or 0 when already 0).
+                    var shortHorizontalBlindStub = IsShortHorizontalBlindStub(si);
+                    var touchesZeroA = EndpointTouchesOrthogonalUsecLayer(si, seg.A, LayerUsecZero);
+                    var touchesZeroB = EndpointTouchesOrthogonalUsecLayer(si, seg.B, LayerUsecZero);
+                    var touchesTwentyA = EndpointTouchesOrthogonalUsecLayer(si, seg.A, LayerUsecTwenty);
+                    var touchesTwentyB = EndpointTouchesOrthogonalUsecLayer(si, seg.B, LayerUsecTwenty);
+                    var touchesThirtyA = EndpointTouchesOrthogonalUsecLayer(si, seg.A, LayerUsecThirty);
+                    var touchesThirtyB = EndpointTouchesOrthogonalUsecLayer(si, seg.B, LayerUsecThirty);
+                    var hasThirtyAnchor = touchesThirtyA || touchesThirtyB;
+                    var demoteThirtyByZeroAnchor =
+                        shortHorizontalBlindStub &&
+                        existingIsBlindBase &&
+                        !hasThirtyAnchor &&
+                        (touchesZeroA != touchesZeroB);
+                    var demoteThirtyByTwentyAnchor =
+                        shortHorizontalBlindStub &&
+                        existingIsBlindBase &&
+                        !hasThirtyAnchor &&
+                        !demoteThirtyByZeroAnchor &&
+                        (touchesTwentyA != touchesTwentyB);
+                    var nearRangeEdge =
+                        IsHorizontalNearRangeEdge(si) ||
+                        IsHorizontalNearClipWindowRangeEdge(si);
+                    var demoteThirtyByRangeEdge =
+                        !existingIsThirty &&
+                        nearRangeEdge &&
+                        (IsOneSidedBlindUsec(si) || IsShortHorizontalRangeEdgeStub(si));
+                    var demoteThirtyBySectionSide = !existingIsThirty && IsShortHorizontalSectionSideStub(si);
+                    if (string.Equals(targetLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) &&
+                        (demoteThirtyByZeroAnchor || demoteThirtyByTwentyAnchor || demoteThirtyByRangeEdge || demoteThirtyBySectionSide))
+                    {
+                        if (demoteThirtyByZeroAnchor)
+                        {
+                            targetLayer = LayerUsecBase;
+                        }
+                        else if (demoteThirtyByTwentyAnchor)
+                        {
+                            targetLayer = LayerUsecBase;
+                        }
+                        else
+                        {
+                            if (string.Equals(existingCanonicalLayer, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
+                            {
+                                targetLayer = LayerUsecZero;
+                            }
+                            else if (string.Equals(existingCanonicalLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase))
+                            {
+                                targetLayer = LayerUsecTwenty;
+                            }
+                            else
+                            {
+                                targetLayer = LayerUsecBase;
+                            }
+                        }
+
+                        demotedBlindThirty++;
+                        if (demoteThirtyByZeroAnchor)
+                        {
+                            demotedBlindThirtyByZeroAnchor++;
+                        }
+
+                        if (demoteThirtyByTwentyAnchor)
+                        {
+                            demotedBlindThirtyByTwentyAnchor++;
+                        }
+
+                        if (demoteThirtyByRangeEdge)
+                        {
+                            demotedBlindThirtyByRangeEdge++;
+                        }
+
+                        if (demoteThirtyBySectionSide)
+                        {
+                            demotedBlindThirtyBySectionSide++;
+                        }
+                    }
+
+                    if (traceTargetSegment && logger != null)
+                    {
+                        logger.WriteLine(
+                            $"TRACE-RELAYER id={seg.Id.Handle} existing={existingCanonicalLayer} selected={targetLayer} shortStub={shortHorizontalBlindStub} zA={touchesZeroA} zB={touchesZeroB} tA={touchesTwentyA} tB={touchesTwentyB} thA={touchesThirtyA} thB={touchesThirtyB} demoteZ={demoteThirtyByZeroAnchor} demote20={demoteThirtyByTwentyAnchor} demoteRange={demoteThirtyByRangeEdge} demoteSide={demoteThirtyBySectionSide}.");
+                    }
+
                     if (!(tr.GetObject(seg.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
                     {
                         continue;
@@ -7968,7 +8280,7 @@ namespace AtsBackgroundBuilder
                 if (adjusted > 0 || unresolved > 0 || skippedBlind > 0)
                 {
                     logger?.WriteLine(
-                        $"Cleanup: deterministic section-edge relayer adjusted={adjusted}, unchanged={unchanged}, unresolved={unresolved}, skippedBlind={skippedBlind}, ownerResolved={ownerResolved}, fallbackResolved={fallbackResolved}, preserved20ByZeroCompanion={preservedTwentyByZeroCompanion}, forced20To0RangeEdge={forcedTwentyToZeroByRangeEdge}, forced20To0SecCompanion={forcedTwentyToZeroBySecCompanion}, forced20To0GeomPattern={forcedTwentyToZeroByGeomPattern}.");
+                        $"Cleanup: deterministic section-edge relayer adjusted={adjusted}, unchanged={unchanged}, unresolved={unresolved}, skippedBlind={skippedBlind}, ownerResolved={ownerResolved}, fallbackResolved={fallbackResolved}, preserved20ByZeroCompanion={preservedTwentyByZeroCompanion}, forced20To0RangeEdge={forcedTwentyToZeroByRangeEdge}, forced20To0SecCompanion={forcedTwentyToZeroBySecCompanion}, forced20To0GeomPattern={forcedTwentyToZeroByGeomPattern}, demotedBlind30To20={demotedBlindThirty}, demotedBlind30To20ZeroAnchor={demotedBlindThirtyByZeroAnchor}, demotedBlind30To20TwentyAnchor={demotedBlindThirtyByTwentyAnchor}, demotedBlind30To20RangeEdge={demotedBlindThirtyByRangeEdge}, demotedBlind30To20SectionSide={demotedBlindThirtyBySectionSide}.");
                 }
             }
         }

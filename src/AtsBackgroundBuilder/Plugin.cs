@@ -543,8 +543,8 @@ namespace AtsBackgroundBuilder
 
 
         // Targeted debug trace for known layer drift.
-        private static readonly Point2d LayerTraceSegmentStart = new Point2d(539040.684, 5981204.441);
-        private static readonly Point2d LayerTraceSegmentEnd = new Point2d(539040.170, 5982002.615);
+        private static readonly Point2d LayerTraceSegmentStart = new Point2d(521145.737, 5989162.665);
+        private static readonly Point2d LayerTraceSegmentEnd = new Point2d(521068.455, 5989162.218);
         private const double LayerTraceEndpointTol = 2.5;
         private const double LayerTraceMidpointTol = 2.5;
         private const double LayerTraceLengthTol = 30.0;
