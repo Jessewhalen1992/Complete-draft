@@ -580,6 +580,18 @@ namespace AtsBackgroundBuilder
                 }
             }
 
+            if (seamCount > 0)
+            {
+                var correctionEndpointAdjusted = ConnectCorrectionInnerEndpointsToVerticalUsecBoundaries(
+                    database,
+                    requestedScopeIds,
+                    logger);
+                if (correctionEndpointAdjusted)
+                {
+                    correctionGeometryChanged = true;
+                }
+            }
+
             if (!correctionGeometryChanged)
             {
                 return;
@@ -653,6 +665,721 @@ namespace AtsBackgroundBuilder
             }
 
             logger?.WriteLine($"CorrectionLine: normalized correction-layer entity colors to ByLayer count={adjusted}.");
+        }
+
+        private static bool ConnectCorrectionInnerEndpointsToVerticalUsecBoundaries(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null)
+            {
+                return false;
+            }
+
+            var clipWindows = MergeOverlappingClipWindows(BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0));
+            if (clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            bool IsPointInAnyWindow(Point2d p)
+            {
+                for (var i = 0; i < clipWindows.Count; i++)
+                {
+                    var w = clipWindows[i];
+                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
+                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
+            {
+                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
+                {
+                    return true;
+                }
+
+                for (var i = 0; i < clipWindows.Count; i++)
+                {
+                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            bool IsHorizontalLike(Point2d a, Point2d b)
+            {
+                var dx = Math.Abs(b.X - a.X);
+                var dy = Math.Abs(b.Y - a.Y);
+                return dx >= (dy * 1.2);
+            }
+
+            bool IsVerticalLike(Point2d a, Point2d b)
+            {
+                var dx = Math.Abs(b.X - a.X);
+                var dy = Math.Abs(b.Y - a.Y);
+                return dy >= (dx * 1.2);
+            }
+
+            bool IsVerticalHardTargetLayer(string layer)
+            {
+                return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+            }
+
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
+            {
+                if (writable is Line ln)
+                {
+                    var old = moveStart
+                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
+                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                    if (old.GetDistanceTo(target) <= moveTol)
+                    {
+                        return false;
+                    }
+
+                    if (moveStart)
+                    {
+                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
+                    }
+                    else
+                    {
+                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
+                    }
+
+                    return true;
+                }
+
+                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
+                {
+                    var index = moveStart ? 0 : pl.NumberOfVertices - 1;
+                    var old = pl.GetPoint2dAt(index);
+                    if (old.GetDistanceTo(target) <= moveTol)
+                    {
+                        return false;
+                    }
+
+                    pl.SetPointAt(index, target);
+                    return true;
+                }
+
+                return false;
+            }
+
+            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
+            {
+                intersection = default;
+                var da = a1 - a0;
+                var db = b1 - b0;
+                var denom = Cross2d(da, db);
+                if (Math.Abs(denom) <= 1e-9)
+                {
+                    return false;
+                }
+
+                var diff = b0 - a0;
+                var t = Cross2d(diff, db) / denom;
+                intersection = a0 + (da * t);
+                return true;
+            }
+
+            bool TryResolveInnerDirectionSign(
+                Point2d a,
+                Point2d b,
+                IReadOnlyList<(Point2d A, Point2d B, Point2d Mid, double MinX, double MaxX)> outerCandidates,
+                out int sign)
+            {
+                sign = 0;
+                if (outerCandidates == null || outerCandidates.Count == 0)
+                {
+                    return false;
+                }
+
+                var sourceMinX = Math.Min(a.X, b.X);
+                var sourceMaxX = Math.Max(a.X, b.X);
+                var sourceMid = Midpoint(a, b);
+                var sourceLength = a.GetDistanceTo(b);
+                var minRequiredOverlap = Math.Max(16.0, Math.Min(sourceLength * 0.2, 55.0));
+
+                var found = false;
+                var bestOverlap = double.MinValue;
+                var bestOffsetDelta = double.MaxValue;
+                var bestSign = 0;
+                for (var i = 0; i < outerCandidates.Count; i++)
+                {
+                    var outer = outerCandidates[i];
+                    var overlapMin = Math.Max(sourceMinX, outer.MinX);
+                    var overlapMax = Math.Min(sourceMaxX, outer.MaxX);
+                    var overlap = overlapMax - overlapMin;
+                    if (overlap < minRequiredOverlap)
+                    {
+                        continue;
+                    }
+
+                    var offset = Math.Abs(outer.Mid.Y - sourceMid.Y);
+                    var offsetDelta = Math.Abs(offset - CorrectionLinePostInsetMeters);
+                    if (offsetDelta > 2.2)
+                    {
+                        continue;
+                    }
+
+                    var candidateSign = outer.Mid.Y >= sourceMid.Y ? 1 : -1;
+                    if (!found ||
+                        overlap > bestOverlap + 1e-6 ||
+                        (Math.Abs(overlap - bestOverlap) <= 1e-6 && offsetDelta < bestOffsetDelta))
+                    {
+                        found = true;
+                        bestOverlap = overlap;
+                        bestOffsetDelta = offsetDelta;
+                        bestSign = candidateSign;
+                    }
+                }
+
+                if (found)
+                {
+                    sign = bestSign;
+                    return true;
+                }
+
+                // Fallback: if companion pairing is imperfect, infer north/south from nearest
+                // correction outer by vertical proximity over any overlap with the source span.
+                var bestDistance = double.MaxValue;
+                var fallbackSign = 0;
+                for (var i = 0; i < outerCandidates.Count; i++)
+                {
+                    var outer = outerCandidates[i];
+                    var overlapMin = Math.Max(sourceMinX, outer.MinX);
+                    var overlapMax = Math.Min(sourceMaxX, outer.MaxX);
+                    if (overlapMax < overlapMin - 6.0)
+                    {
+                        continue;
+                    }
+
+                    var distance = Math.Abs(outer.Mid.Y - sourceMid.Y);
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        fallbackSign = outer.Mid.Y >= sourceMid.Y ? 1 : -1;
+                    }
+                }
+
+                if (fallbackSign == 0)
+                {
+                    return false;
+                }
+
+                sign = fallbackSign;
+                return true;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                var correctionInnerSources = new List<(ObjectId Id, Point2d A, Point2d B)>();
+                var correctionOuterSegments = new List<(Point2d A, Point2d B, Point2d Mid, double MinX, double MaxX)>();
+                var verticalTargets = new List<(ObjectId Id, Point2d A, Point2d B, double MinY, double MaxY, double AxisX)>();
+
+                foreach (ObjectId id in ms)
+                {
+                    Entity? ent = null;
+                    try
+                    {
+                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (ent == null || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenLinearSegment(ent, out var a, out var b))
+                    {
+                        continue;
+                    }
+
+                    if (!DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    var layer = ent.Layer ?? string.Empty;
+                    if (string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) &&
+                        IsHorizontalLike(a, b))
+                    {
+                        correctionInnerSources.Add((id, a, b));
+                        continue;
+                    }
+
+                    if (string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) &&
+                        IsHorizontalLike(a, b))
+                    {
+                        correctionOuterSegments.Add((a, b, Midpoint(a, b), Math.Min(a.X, b.X), Math.Max(a.X, b.X)));
+                        continue;
+                    }
+
+                    if (IsVerticalHardTargetLayer(layer) && IsVerticalLike(a, b))
+                    {
+                        verticalTargets.Add((id, a, b, Math.Min(a.Y, b.Y), Math.Max(a.Y, b.Y), 0.5 * (a.X + b.X)));
+                    }
+                }
+
+                if (correctionInnerSources.Count == 0 || verticalTargets.Count == 0)
+                {
+                    tr.Commit();
+                    return false;
+                }
+
+                const double endpointTouchTol = 0.35;
+                const double endpointMoveTol = 0.05;
+                const double minMove = 0.05;
+                const double maxMove = 1200.0;
+                const double minRemainingLength = 2.0;
+                const double directionAxisTol = 0.05;
+                const double inlineVerticalTol = 0.80;
+
+                var movedLines = 0;
+                var movedEndpoints = 0;
+                var movedHorizontalEndpoints = 0;
+                var movedVerticalEndpoints = 0;
+                var scannedEndpoints = 0;
+                var noDirectionResolved = 0;
+                var noTargetFound = 0;
+                var alreadyConnected = 0;
+                var sharedEndpointSkipped = 0;
+                var sampleMoves = new List<string>();
+
+                bool IsEndpointAlreadyConnected(Point2d endpoint, int preferredDirectionSign)
+                {
+                    for (var i = 0; i < verticalTargets.Count; i++)
+                    {
+                        var target = verticalTargets[i];
+                        if (DistancePointToSegment(endpoint, target.A, target.B) > endpointTouchTol)
+                        {
+                            continue;
+                        }
+
+                        if (preferredDirectionSign > 0)
+                        {
+                            if (target.MaxY >= endpoint.Y + directionAxisTol)
+                            {
+                                return true;
+                            }
+
+                            continue;
+                        }
+
+                        if (preferredDirectionSign < 0)
+                        {
+                            if (target.MinY <= endpoint.Y - directionAxisTol)
+                            {
+                                return true;
+                            }
+
+                            continue;
+                        }
+
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                bool TryResolveEndpointTarget(
+                    Point2d endpoint,
+                    Point2d other,
+                    int preferredDirectionSign,
+                    out Point2d targetPoint,
+                    out int targetIndex,
+                    out bool keepHorizontalEndpoint)
+                {
+                    targetPoint = endpoint;
+                    targetIndex = -1;
+                    keepHorizontalEndpoint = false;
+                    var outward = endpoint - other;
+                    var outwardLength = outward.Length;
+                    if (outwardLength <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var outwardUnit = outward / outwardLength;
+                    var found = false;
+                    var bestHorizontalMoveDistance = double.MaxValue;
+                    var bestExtensionGap = double.MaxValue;
+                    var bestPoint = endpoint;
+                    var bestIndex = -1;
+                    var bestKeepHorizontal = false;
+                    for (var i = 0; i < verticalTargets.Count; i++)
+                    {
+                        var target = verticalTargets[i];
+                        if (preferredDirectionSign > 0 && target.MaxY < endpoint.Y + directionAxisTol)
+                        {
+                            continue;
+                        }
+
+                        if (preferredDirectionSign < 0 && target.MinY > endpoint.Y - directionAxisTol)
+                        {
+                            continue;
+                        }
+
+                        if (!TryIntersectInfiniteLines(endpoint, other, target.A, target.B, out var intersection))
+                        {
+                            continue;
+                        }
+
+                        var inlineWithVertical = DistancePointToInfiniteLine(endpoint, target.A, target.B) <= inlineVerticalTol;
+                        var horizontalMoveDistance = 0.0;
+                        if (!inlineWithVertical)
+                        {
+                            var delta = intersection - endpoint;
+                            horizontalMoveDistance = delta.Length;
+                            if (horizontalMoveDistance < minMove || horizontalMoveDistance > maxMove)
+                            {
+                                continue;
+                            }
+
+                            var alongOutward = delta.DotProduct(outwardUnit);
+                            if (alongOutward <= directionAxisTol)
+                            {
+                                continue;
+                            }
+                        }
+
+                        var connectionPoint = inlineWithVertical ? endpoint : intersection;
+                        var extensionGap = DistancePointToSegment(connectionPoint, target.A, target.B);
+                        if (!found ||
+                            horizontalMoveDistance < bestHorizontalMoveDistance - 1e-6 ||
+                            (Math.Abs(horizontalMoveDistance - bestHorizontalMoveDistance) <= 1e-6 &&
+                             extensionGap < bestExtensionGap - 1e-6))
+                        {
+                            found = true;
+                            bestHorizontalMoveDistance = horizontalMoveDistance;
+                            bestExtensionGap = extensionGap;
+                            bestPoint = connectionPoint;
+                            bestIndex = i;
+                            bestKeepHorizontal = inlineWithVertical;
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        return false;
+                    }
+
+                    targetPoint = bestPoint;
+                    targetIndex = bestIndex;
+                    keepHorizontalEndpoint = bestKeepHorizontal;
+                    return true;
+                }
+
+                bool TryAdjustVerticalTargetEndpointToPoint(
+                    int targetIndex,
+                    Point2d connectionPoint,
+                    int preferredDirectionSign)
+                {
+                    if (targetIndex < 0 || targetIndex >= verticalTargets.Count)
+                    {
+                        return false;
+                    }
+
+                    var target = verticalTargets[targetIndex];
+                    if (DistancePointToSegment(connectionPoint, target.A, target.B) <= endpointTouchTol)
+                    {
+                        return false;
+                    }
+
+                    Entity? targetWritable = null;
+                    try
+                    {
+                        targetWritable = tr.GetObject(target.Id, OpenMode.ForWrite, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        return false;
+                    }
+
+                    if (targetWritable == null || targetWritable.IsErased)
+                    {
+                        return false;
+                    }
+
+                    if (!TryReadOpenLinearSegment(targetWritable, out var currentA, out var currentB))
+                    {
+                        return false;
+                    }
+
+                    if (DistancePointToSegment(connectionPoint, currentA, currentB) <= endpointTouchTol)
+                    {
+                        return false;
+                    }
+
+                    var moveStart = false;
+                    if (preferredDirectionSign > 0)
+                    {
+                        // North-side correction line: target segment is the north-going vertical;
+                        // extend its seam-facing (south/lower) endpoint to meet C-0.
+                        moveStart = currentA.Y <= currentB.Y;
+                    }
+                    else if (preferredDirectionSign < 0)
+                    {
+                        // South-side correction line: target segment is the south-going vertical;
+                        // extend its seam-facing (north/upper) endpoint to meet C-0.
+                        moveStart = currentA.Y >= currentB.Y;
+                    }
+                    else
+                    {
+                        var startDistance = currentA.GetDistanceTo(connectionPoint);
+                        var endDistance = currentB.GetDistanceTo(connectionPoint);
+                        moveStart = startDistance <= endDistance;
+                    }
+
+                    var moveEndpoint = moveStart ? currentA : currentB;
+                    if (preferredDirectionSign > 0 && connectionPoint.Y > moveEndpoint.Y + directionAxisTol)
+                    {
+                        return false;
+                    }
+
+                    if (preferredDirectionSign < 0 && connectionPoint.Y < moveEndpoint.Y - directionAxisTol)
+                    {
+                        return false;
+                    }
+
+                    var fixedEndpoint = moveStart ? currentB : currentA;
+                    if (fixedEndpoint.GetDistanceTo(connectionPoint) < minRemainingLength)
+                    {
+                        return false;
+                    }
+
+                    if (!TryMoveEndpoint(targetWritable, moveStart, connectionPoint, endpointMoveTol))
+                    {
+                        return false;
+                    }
+
+                    if (!TryReadOpenLinearSegment(targetWritable, out var newA, out var newB))
+                    {
+                        return true;
+                    }
+
+                    verticalTargets[targetIndex] = (
+                        target.Id,
+                        newA,
+                        newB,
+                        Math.Min(newA.Y, newB.Y),
+                        Math.Max(newA.Y, newB.Y),
+                        0.5 * (newA.X + newB.X));
+                    return true;
+                }
+
+                bool IsEndpointSharedWithOtherInnerSegments(ObjectId sourceId, Point2d endpoint)
+                {
+                    for (var i = 0; i < correctionInnerSources.Count; i++)
+                    {
+                        var other = correctionInnerSources[i];
+                        if (other.Id == sourceId)
+                        {
+                            continue;
+                        }
+
+                        if (endpoint.GetDistanceTo(other.A) <= endpointTouchTol ||
+                            endpoint.GetDistanceTo(other.B) <= endpointTouchTol)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool TryProcessInnerEndpoint(
+                    ObjectId sourceId,
+                    Entity sourceWritable,
+                    bool moveStart,
+                    Point2d endpoint,
+                    Point2d other,
+                    int directionSign,
+                    out Point2d updatedEndpoint)
+                {
+                    updatedEndpoint = endpoint;
+                    scannedEndpoints++;
+
+                    if (IsEndpointSharedWithOtherInnerSegments(sourceId, endpoint))
+                    {
+                        sharedEndpointSkipped++;
+                        return false;
+                    }
+
+                    if (IsEndpointAlreadyConnected(endpoint, directionSign))
+                    {
+                        alreadyConnected++;
+                        return false;
+                    }
+
+                    if (!TryResolveEndpointTarget(
+                            endpoint,
+                            other,
+                            directionSign,
+                            out var snappedTarget,
+                            out var targetIndex,
+                            out var keepHorizontalEndpoint))
+                    {
+                        noTargetFound++;
+                        return false;
+                    }
+
+                    var changed = false;
+                    var connectionPoint = endpoint;
+                    if (!keepHorizontalEndpoint)
+                    {
+                        if (snappedTarget.GetDistanceTo(other) < minRemainingLength)
+                        {
+                            noTargetFound++;
+                            return false;
+                        }
+
+                        var oldEndpoint = endpoint;
+                        if (TryMoveEndpoint(sourceWritable, moveStart, snappedTarget, endpointMoveTol))
+                        {
+                            changed = true;
+                            movedEndpoints++;
+                            movedHorizontalEndpoints++;
+                            updatedEndpoint = snappedTarget;
+                            connectionPoint = snappedTarget;
+                            if (sampleMoves.Count < 24)
+                            {
+                                sampleMoves.Add(
+                                    string.Format(
+                                        CultureInfo.InvariantCulture,
+                                        "id={0} {1} H ({2:0.###},{3:0.###})->({4:0.###},{5:0.###})",
+                                        sourceId.Handle.ToString(),
+                                        moveStart ? "start" : "end",
+                                        oldEndpoint.X,
+                                        oldEndpoint.Y,
+                                        snappedTarget.X,
+                                        snappedTarget.Y));
+                            }
+                        }
+                        else
+                        {
+                            noTargetFound++;
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        connectionPoint = endpoint;
+                    }
+
+                    if (TryAdjustVerticalTargetEndpointToPoint(targetIndex, connectionPoint, directionSign))
+                    {
+                        changed = true;
+                        movedEndpoints++;
+                        movedVerticalEndpoints++;
+                        if (sampleMoves.Count < 24)
+                        {
+                            sampleMoves.Add(
+                                string.Format(
+                                    CultureInfo.InvariantCulture,
+                                    "id={0} {1} V ->({2:0.###},{3:0.###})",
+                                    sourceId.Handle.ToString(),
+                                    moveStart ? "start" : "end",
+                                    connectionPoint.X,
+                                    connectionPoint.Y));
+                        }
+                    }
+
+                    if (!changed)
+                    {
+                        noTargetFound++;
+                    }
+
+                    return changed;
+                }
+
+                for (var i = 0; i < correctionInnerSources.Count; i++)
+                {
+                    var source = correctionInnerSources[i];
+                    var id = source.Id;
+                    Entity? writable = null;
+                    try
+                    {
+                        writable = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (writable == null || writable.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenLinearSegment(writable, out var a, out var b))
+                    {
+                        continue;
+                    }
+
+                    if (!IsHorizontalLike(a, b))
+                    {
+                        continue;
+                    }
+
+                    if (!TryResolveInnerDirectionSign(a, b, correctionOuterSegments, out var directionSign))
+                    {
+                        noDirectionResolved += 2;
+                        directionSign = 0;
+                    }
+
+                    var lineMoved = false;
+                    if (TryProcessInnerEndpoint(id, writable, moveStart: true, a, b, directionSign, out var updatedStart))
+                    {
+                        lineMoved = true;
+                        a = updatedStart;
+                    }
+
+                    if (TryProcessInnerEndpoint(id, writable, moveStart: false, b, a, directionSign, out var updatedEnd))
+                    {
+                        lineMoved = true;
+                        b = updatedEnd;
+                    }
+
+                    if (lineMoved)
+                    {
+                        movedLines++;
+                    }
+                }
+
+                tr.Commit();
+                logger?.WriteLine(
+                    $"CorrectionLine: C-0 endpoint snap scanned={scannedEndpoints}, movedEndpoints={movedEndpoints}, movedHorizontal={movedHorizontalEndpoints}, movedVertical={movedVerticalEndpoints}, movedLines={movedLines}, alreadyConnected={alreadyConnected}, sharedSkipped={sharedEndpointSkipped}, noDirectionResolved={noDirectionResolved}, noTargetFound={noTargetFound}, maxMove={maxMove:0.##}.");
+                if (sampleMoves.Count > 0)
+                {
+                    logger?.WriteLine($"CorrectionLine: C-0 endpoint snap samples ({sampleMoves.Count})");
+                    for (var i = 0; i < sampleMoves.Count; i++)
+                    {
+                        logger?.WriteLine("CorrectionLine:   " + sampleMoves[i]);
+                    }
+                }
+
+                return movedEndpoints > 0;
+            }
         }
 
         private static bool IntersectsAnyCorrectionSeamWindow(CorrectionSegment segment, IReadOnlyList<CorrectionSeam> seams)
