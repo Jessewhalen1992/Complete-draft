@@ -646,6 +646,7 @@ namespace AtsBackgroundBuilder
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var boundarySegments = new List<(Point2d A, Point2d B)>();
+                var correctionBoundarySegments = new List<(Point2d A, Point2d B)>();
                 var qsecLineIds = new List<ObjectId>();
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
@@ -670,6 +671,11 @@ namespace AtsBackgroundBuilder
                     if (IsSectionBoundaryLayer(layer))
                     {
                         boundarySegments.Add((a, b));
+                        if (string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+                        {
+                            correctionBoundarySegments.Add((a, b));
+                        }
+
                         continue;
                     }
 
@@ -692,6 +698,7 @@ namespace AtsBackgroundBuilder
                 const double minRemainingLength = 2.0;
                 const double endpointAxisTol = 0.80;
                 const double outerBoundaryTol = 0.40;
+                const double correctionAdjTol = 60.0;
                 var scannedEndpoints = 0;
                 var alreadyOnBoundary = 0;
                 var boundarySkipped = 0;
@@ -705,6 +712,20 @@ namespace AtsBackgroundBuilder
                     {
                         var seg = boundarySegments[i];
                         if (DistancePointToSegment(endpoint, seg.A, seg.B) <= endpointTouchTol)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool IsEndpointNearCorrectionBoundary(Point2d endpoint)
+                {
+                    for (var i = 0; i < correctionBoundarySegments.Count; i++)
+                    {
+                        var seg = correctionBoundarySegments[i];
+                        if (DistancePointToSegment(endpoint, seg.A, seg.B) <= correctionAdjTol)
                         {
                             return true;
                         }
@@ -794,6 +815,95 @@ namespace AtsBackgroundBuilder
                     return true;
                 }
 
+                bool TryFindCorrectionAdjacentSnapTarget(Point2d endpoint, Point2d other, out Point2d target)
+                {
+                    target = endpoint;
+                    var outward = endpoint - other;
+                    var outwardLen = outward.Length;
+                    if (outwardLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var outwardDir = outward / outwardLen;
+                    var found = false;
+                    var bestU = double.MaxValue;
+                    var bestIsFallback = true;
+                    void ConsiderCandidate(double u, bool isFallback)
+                    {
+                        if (u < minRemainingLength)
+                        {
+                            return;
+                        }
+
+                        var t = u - outwardLen;
+                        var absT = Math.Abs(t);
+                        if (absT <= minMove || absT > maxMove)
+                        {
+                            return;
+                        }
+
+                        var isBetter =
+                            !found ||
+                            u < (bestU - 1e-6) ||
+                            (Math.Abs(u - bestU) <= 1e-6 && bestIsFallback && !isFallback);
+                        if (!isBetter)
+                        {
+                            return;
+                        }
+
+                        found = true;
+                        bestU = u;
+                        bestIsFallback = isFallback;
+                    }
+
+                    void ScanSegments(List<(Point2d A, Point2d B)> segments)
+                    {
+                        for (var i = 0; i < segments.Count; i++)
+                        {
+                            var seg = segments[i];
+                            if (!TryIntersectInfiniteLineWithSegment(other, outwardDir, seg.A, seg.B, out var u))
+                            {
+                                continue;
+                            }
+
+                            ConsiderCandidate(u, isFallback: false);
+                        }
+
+                        for (var i = 0; i < segments.Count; i++)
+                        {
+                            var seg = segments[i];
+                            for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                            {
+                                var candidate = endpointIndex == 0 ? seg.A : seg.B;
+                                if (DistancePointToInfiniteLine(candidate, other, other + outwardDir) > endpointAxisTol)
+                                {
+                                    continue;
+                                }
+
+                                var u = (candidate - other).DotProduct(outwardDir);
+                                ConsiderCandidate(u, isFallback: true);
+                            }
+                        }
+                    }
+
+                    // Correction-adjacent rule: prefer correction boundaries first; fall back to
+                    // generic section boundaries only when no correction candidate resolves.
+                    ScanSegments(correctionBoundarySegments);
+                    if (!found)
+                    {
+                        ScanSegments(boundarySegments);
+                    }
+
+                    if (!found)
+                    {
+                        return false;
+                    }
+
+                    target = other + (outwardDir * bestU);
+                    return true;
+                }
+
                 for (var i = 0; i < qsecLineIds.Count; i++)
                 {
                     var id = qsecLineIds[i];
@@ -811,20 +921,45 @@ namespace AtsBackgroundBuilder
                     var moveEnd = false;
                     var targetStart = p0;
                     var targetEnd = p1;
+                    var p0CorrectionAdjacent = IsEndpointNearCorrectionBoundary(p0);
+                    var p1CorrectionAdjacent = IsEndpointNearCorrectionBoundary(p1);
 
                     scannedEndpoints++;
-                    if (IsEndpointOnValidBoundary(p0))
-                    {
-                        alreadyOnBoundary++;
-                    }
-                    else if (IsPointOnAnyWindowBoundary(p0, outerBoundaryTol))
+                    if (IsPointOnAnyWindowBoundary(p0, outerBoundaryTol))
                     {
                         boundarySkipped++;
                     }
-                    else if (TryFindSnapTarget(p0, p1, out var snappedStart))
+                    else if (p0CorrectionAdjacent && TryFindCorrectionAdjacentSnapTarget(p0, p1, out var snappedStart))
                     {
-                        moveStart = true;
-                        targetStart = snappedStart;
+                        if (p0.GetDistanceTo(snappedStart) <= endpointTouchTol)
+                        {
+                            alreadyOnBoundary++;
+                        }
+                        else
+                        {
+                            moveStart = true;
+                            targetStart = snappedStart;
+                        }
+                    }
+                    else if (!p0CorrectionAdjacent && IsEndpointOnValidBoundary(p0))
+                    {
+                        alreadyOnBoundary++;
+                    }
+                    else if (TryFindSnapTarget(p0, p1, out snappedStart))
+                    {
+                        if (p0.GetDistanceTo(snappedStart) <= endpointTouchTol)
+                        {
+                            alreadyOnBoundary++;
+                        }
+                        else
+                        {
+                            moveStart = true;
+                            targetStart = snappedStart;
+                        }
+                    }
+                    else if (IsEndpointOnValidBoundary(p0))
+                    {
+                        alreadyOnBoundary++;
                     }
                     else
                     {
@@ -832,18 +967,41 @@ namespace AtsBackgroundBuilder
                     }
 
                     scannedEndpoints++;
-                    if (IsEndpointOnValidBoundary(p1))
-                    {
-                        alreadyOnBoundary++;
-                    }
-                    else if (IsPointOnAnyWindowBoundary(p1, outerBoundaryTol))
+                    if (IsPointOnAnyWindowBoundary(p1, outerBoundaryTol))
                     {
                         boundarySkipped++;
                     }
-                    else if (TryFindSnapTarget(p1, p0, out var snappedEnd))
+                    else if (p1CorrectionAdjacent && TryFindCorrectionAdjacentSnapTarget(p1, p0, out var snappedEnd))
                     {
-                        moveEnd = true;
-                        targetEnd = snappedEnd;
+                        if (p1.GetDistanceTo(snappedEnd) <= endpointTouchTol)
+                        {
+                            alreadyOnBoundary++;
+                        }
+                        else
+                        {
+                            moveEnd = true;
+                            targetEnd = snappedEnd;
+                        }
+                    }
+                    else if (!p1CorrectionAdjacent && IsEndpointOnValidBoundary(p1))
+                    {
+                        alreadyOnBoundary++;
+                    }
+                    else if (TryFindSnapTarget(p1, p0, out snappedEnd))
+                    {
+                        if (p1.GetDistanceTo(snappedEnd) <= endpointTouchTol)
+                        {
+                            alreadyOnBoundary++;
+                        }
+                        else
+                        {
+                            moveEnd = true;
+                            targetEnd = snappedEnd;
+                        }
+                    }
+                    else if (IsEndpointOnValidBoundary(p1))
+                    {
+                        alreadyOnBoundary++;
                     }
                     else
                     {
@@ -1079,6 +1237,7 @@ namespace AtsBackgroundBuilder
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var hardBoundarySegments = new List<(Point2d A, Point2d B, bool IsZero)>();
+                var correctionBoundarySegments = new List<(Point2d A, Point2d B)>();
                 var thirtyBoundarySegments = new List<(Point2d A, Point2d B)>();
                 var horizontalMidpointTargetSegments = new List<(Point2d A, Point2d B, Point2d Mid, int Priority)>();
                 var verticalMidpointTargetSegments = new List<(Point2d A, Point2d B, Point2d Mid, int Priority)>();
@@ -1110,6 +1269,11 @@ namespace AtsBackgroundBuilder
                     if (IsUsecZeroBoundaryLayer(layer))
                     {
                         hardBoundarySegments.Add((a, b, IsZero: true));
+                        if (string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+                        {
+                            correctionBoundarySegments.Add((a, b));
+                        }
+
                         if (IsHorizontalLike(a, b))
                         {
                             horizontalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 2));
@@ -1381,6 +1545,7 @@ namespace AtsBackgroundBuilder
                 const double minRemainingLength = 2.0;
                 const double outerBoundaryTol = 0.40;
                 const double midpointAxisTol = 12.0;
+                const double correctionAdjTol = 60.0;
 
                 var scannedEndpoints = 0;
                 var alreadyOnHardBoundary = 0;
@@ -1404,6 +1569,20 @@ namespace AtsBackgroundBuilder
                 {
                     var d = b - a;
                     return Math.Abs(d.Y) > Math.Abs(d.X);
+                }
+
+                bool IsEndpointNearCorrectionBoundary(Point2d endpoint)
+                {
+                    for (var i = 0; i < correctionBoundarySegments.Count; i++)
+                    {
+                        var seg = correctionBoundarySegments[i];
+                        if (DistancePointToSegment(endpoint, seg.A, seg.B) <= correctionAdjTol)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
                 }
 
                 bool IsEndpointOnHardBoundary(Point2d endpoint)
@@ -2434,6 +2613,163 @@ namespace AtsBackgroundBuilder
                     return true;
                 }
 
+                bool TryFindCorrectionAdjacentSnapTarget(Point2d endpoint, Point2d other, out Point2d target)
+                {
+                    target = endpoint;
+                    var outward = endpoint - other;
+                    var outwardLen = outward.Length;
+                    if (outwardLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var sourceHorizontal = IsHorizontalLike(other, endpoint);
+                    var sourceVertical = IsVerticalLike(other, endpoint);
+                    if (!sourceHorizontal && !sourceVertical)
+                    {
+                        return false;
+                    }
+
+                    var traceTargetA = new Point2d(519937.409, 5990775.339);
+                    var traceTargetB = new Point2d(519955.423, 5990796.844);
+                    const double traceTol = 140.0;
+                    var traceThisEndpoint =
+                        endpoint.GetDistanceTo(traceTargetA) <= traceTol ||
+                        endpoint.GetDistanceTo(traceTargetB) <= traceTol ||
+                        other.GetDistanceTo(traceTargetA) <= traceTol ||
+                        other.GetDistanceTo(traceTargetB) <= traceTol;
+
+                    var outwardDir = outward / outwardLen;
+                    var found = false;
+                    var bestPrimaryScore = double.MaxValue;
+                    var bestAlongFromOther = double.MaxValue;
+                    var bestLateral = double.MaxValue;
+                    var bestMove = double.MaxValue;
+                    var bestTarget = endpoint;
+                    var perpDir = new Vector2d(-outwardDir.Y, outwardDir.X);
+                    // Correction-adjacent endpoints can be displaced farther before this pass runs
+                    // (especially near section 5/6 seams). Keep relaxed gates correction-only.
+                    const double correctionAxisTol = 40.0;
+                    const double correctionMaxMove = 120.0;
+                    const double correctionMaxProjectedShift = 120.0;
+
+                    if (traceThisEndpoint && logger != null)
+                    {
+                        logger.WriteLine(
+                            $"TRACE-LSD-CORR start endpoint=({endpoint.X:0.###},{endpoint.Y:0.###}) other=({other.X:0.###},{other.Y:0.###}) srcH={sourceHorizontal} srcV={sourceVertical} corrSegs={correctionBoundarySegments.Count} hardSegs={hardBoundarySegments.Count}.");
+                    }
+
+                    void ConsiderBoundarySegment(Point2d a, Point2d b, bool fromCorrection)
+                    {
+                        var segHorizontal = IsHorizontalLike(a, b);
+                        var segVertical = IsVerticalLike(a, b);
+                        if (sourceHorizontal && !segVertical)
+                        {
+                            return;
+                        }
+
+                        if (sourceVertical && !segHorizontal)
+                        {
+                            return;
+                        }
+
+                        var midpoint = Midpoint(a, b);
+                        var delta = midpoint - endpoint;
+                        var move = delta.Length;
+                        var maxCandidateMove = fromCorrection ? correctionMaxMove : maxMove;
+                        if (move <= minMove || move > maxCandidateMove)
+                        {
+                            return;
+                        }
+
+                        var lateral = Math.Abs(delta.DotProduct(perpDir));
+                        var lateralTol = fromCorrection ? correctionAxisTol : midpointAxisTol;
+                        if (lateral > lateralTol)
+                        {
+                            return;
+                        }
+
+                        var alongFromOther = (midpoint - other).DotProduct(outwardDir);
+                        if (alongFromOther < minRemainingLength)
+                        {
+                            return;
+                        }
+
+                        var t = alongFromOther - outwardLen;
+                        var absT = Math.Abs(t);
+                        var maxProjectedShift = fromCorrection ? correctionMaxProjectedShift : maxMove;
+                        if (absT <= minMove || absT > maxProjectedShift)
+                        {
+                            return;
+                        }
+
+                        // For correction boundaries, prefer the candidate closest to the opposite endpoint.
+                        // This is more stable than projection-only ordering near section 5/6 seams.
+                        var primaryScore = fromCorrection
+                            ? midpoint.GetDistanceTo(other)
+                            : alongFromOther;
+
+                        if (traceThisEndpoint && logger != null)
+                        {
+                            logger.WriteLine(
+                                $"TRACE-LSD-CORR cand fromCorr={fromCorrection} mid=({midpoint.X:0.###},{midpoint.Y:0.###}) move={move:0.###} lat={lateral:0.###} alongOther={alongFromOther:0.###} primary={primaryScore:0.###} t={t:0.###}.");
+                        }
+
+                        var better =
+                            !found ||
+                            primaryScore < (bestPrimaryScore - 1e-6) ||
+                            (Math.Abs(primaryScore - bestPrimaryScore) <= 1e-6 &&
+                                (lateral < (bestLateral - 1e-6) ||
+                                 (Math.Abs(lateral - bestLateral) <= 1e-6 && move < bestMove)));
+                        if (!better)
+                        {
+                            return;
+                        }
+
+                        found = true;
+                        bestPrimaryScore = primaryScore;
+                        bestAlongFromOther = alongFromOther;
+                        bestLateral = lateral;
+                        bestMove = move;
+                        bestTarget = midpoint;
+                    }
+
+                    // Correction-adjacent rule: evaluate correction boundaries first.
+                    for (var i = 0; i < correctionBoundarySegments.Count; i++)
+                    {
+                        var seg = correctionBoundarySegments[i];
+                        ConsiderBoundarySegment(seg.A, seg.B, fromCorrection: true);
+                    }
+
+                    if (!found)
+                    {
+                        for (var i = 0; i < hardBoundarySegments.Count; i++)
+                        {
+                            var seg = hardBoundarySegments[i];
+                            ConsiderBoundarySegment(seg.A, seg.B, fromCorrection: false);
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        if (traceThisEndpoint && logger != null)
+                        {
+                            logger.WriteLine("TRACE-LSD-CORR result=none");
+                        }
+
+                        return false;
+                    }
+
+                    target = bestTarget;
+                    if (traceThisEndpoint && logger != null)
+                    {
+                        logger.WriteLine(
+                            $"TRACE-LSD-CORR result=chosen target=({target.X:0.###},{target.Y:0.###}) primary={bestPrimaryScore:0.###} alongOther={bestAlongFromOther:0.###} lat={bestLateral:0.###} move={bestMove:0.###}.");
+                    }
+
+                    return true;
+                }
+
                 bool TryFindNearestUsecMidpoint(Point2d endpoint, bool? preferZero, out Point2d target)
                 {
                     target = endpoint;
@@ -2636,6 +2972,8 @@ namespace AtsBackgroundBuilder
                     // (1/4, blind, or section) before generic hard-boundary snapping.
                     if (IsVerticalLike(p0, p1))
                     {
+                        var p0CorrectionAdjacentForMidpoint = IsEndpointNearCorrectionBoundary(p0);
+                        var p1CorrectionAdjacentForMidpoint = IsEndpointNearCorrectionBoundary(p1);
                         var hasStartMid = false;
                         var hasEndMid = false;
                         var midStartX = p0.X;
@@ -2655,6 +2993,16 @@ namespace AtsBackgroundBuilder
                         if (!hasEndMid)
                         {
                             hasEndMid = TryResolveHorizontalQsecComponentMidpoint(p1, out midEndX, out midEndY);
+                        }
+
+                        if (p0CorrectionAdjacentForMidpoint)
+                        {
+                            hasStartMid = false;
+                        }
+
+                        if (p1CorrectionAdjacentForMidpoint)
+                        {
+                            hasEndMid = false;
                         }
 
                         if (hasStartMid && hasEndMid)
@@ -2721,8 +3069,8 @@ namespace AtsBackgroundBuilder
                                 }
                             }
 
-                            midpointLockedStart = hasStartMid;
-                            midpointLockedEnd = hasEndMid;
+                            midpointLockedStart = hasStartMid && !IsEndpointNearCorrectionBoundary(p0);
+                            midpointLockedEnd = hasEndMid && !IsEndpointNearCorrectionBoundary(p1);
                             moveStart = false;
                             moveEnd = false;
                             targetStart = p0;
@@ -2731,6 +3079,8 @@ namespace AtsBackgroundBuilder
                     }
                     else if (IsHorizontalLike(p0, p1))
                     {
+                        var p0CorrectionAdjacentForMidpoint = IsEndpointNearCorrectionBoundary(p0);
+                        var p1CorrectionAdjacentForMidpoint = IsEndpointNearCorrectionBoundary(p1);
                         var hasStartMid = false;
                         var hasEndMid = false;
                         var midStartX = p0.X;
@@ -2753,7 +3103,18 @@ namespace AtsBackgroundBuilder
                             hasEndMid = TryFindEndpointVerticalMidpointY(p1, out midEndY, out _);
                         }
 
-                        if (TryResolveVerticalQsecComponentMidpoint(p0, out var qsecStartX, out var qsecStartY))
+                        if (p0CorrectionAdjacentForMidpoint)
+                        {
+                            hasStartMid = false;
+                        }
+
+                        if (p1CorrectionAdjacentForMidpoint)
+                        {
+                            hasEndMid = false;
+                        }
+
+                        if (!p0CorrectionAdjacentForMidpoint &&
+                            TryResolveVerticalQsecComponentMidpoint(p0, out var qsecStartX, out var qsecStartY))
                         {
                             midStartX = qsecStartX;
                             if (!hasStartMid)
@@ -2771,7 +3132,8 @@ namespace AtsBackgroundBuilder
                             }
                         }
 
-                        if (TryResolveVerticalQsecComponentMidpoint(p1, out var qsecEndX, out var qsecEndY))
+                        if (!p1CorrectionAdjacentForMidpoint &&
+                            TryResolveVerticalQsecComponentMidpoint(p1, out var qsecEndX, out var qsecEndY))
                         {
                             midEndX = qsecEndX;
                             if (!hasEndMid)
@@ -2795,13 +3157,19 @@ namespace AtsBackgroundBuilder
                         {
                             if (hasStartMid)
                             {
-                                hasEndMid = true;
-                                midEndY = midStartY;
+                                if (!p1CorrectionAdjacentForMidpoint)
+                                {
+                                    hasEndMid = true;
+                                    midEndY = midStartY;
+                                }
                             }
                             else
                             {
-                                hasStartMid = true;
-                                midStartY = midEndY;
+                                if (!p0CorrectionAdjacentForMidpoint)
+                                {
+                                    hasStartMid = true;
+                                    midStartY = midEndY;
+                                }
                             }
                         }
 
@@ -2887,8 +3255,12 @@ namespace AtsBackgroundBuilder
                             // Only lock horizontal endpoints when X is explicitly resolved to the
                             // quarter-line component (or already on a hard boundary). Otherwise let
                             // the generic hard-boundary snap finish the X intersection.
-                            midpointLockedStart = hasStartMid && (midStartHasExplicitX || IsEndpointOnHardBoundary(p0));
-                            midpointLockedEnd = hasEndMid && (midEndHasExplicitX || IsEndpointOnHardBoundary(p1));
+                            midpointLockedStart = hasStartMid &&
+                                !IsEndpointNearCorrectionBoundary(p0) &&
+                                (midStartHasExplicitX || IsEndpointOnHardBoundary(p0));
+                            midpointLockedEnd = hasEndMid &&
+                                !IsEndpointNearCorrectionBoundary(p1) &&
+                                (midEndHasExplicitX || IsEndpointOnHardBoundary(p1));
                             moveStart = false;
                             moveEnd = false;
                             targetStart = p0;
@@ -2907,7 +3279,8 @@ namespace AtsBackgroundBuilder
                         var p0OnZero = IsEndpointOnUsecZeroBoundary(p0);
                         var p0OnTwenty = IsEndpointOnUsecTwentyBoundary(p0);
                         var p0OnThirty = IsEndpointOnThirtyBoundary(p0);
-                        if (p0OnZero)
+                        var p0CorrectionAdjacent = IsEndpointNearCorrectionBoundary(p0);
+                        if (!p0CorrectionAdjacent && p0OnZero)
                         {
                             alreadyOnHardBoundary++;
                         }
@@ -2939,7 +3312,9 @@ namespace AtsBackgroundBuilder
                             }
                             else
                             {
-                                foundStartTarget = TryFindSnapTarget(p0, p1, out snappedStart);
+                                foundStartTarget = p0CorrectionAdjacent
+                                    ? TryFindCorrectionAdjacentSnapTarget(p0, p1, out snappedStart)
+                                    : TryFindSnapTarget(p0, p1, out snappedStart);
                             }
                             if (foundStartTarget)
                             {
@@ -2953,7 +3328,7 @@ namespace AtsBackgroundBuilder
                                     targetStart = snappedStart;
                                 }
                             }
-                            else if (p0OnTwenty || IsEndpointOnUsecTwentyBoundary(p0))
+                            else if (p0OnZero || p0OnTwenty || IsEndpointOnUsecTwentyBoundary(p0))
                             {
                                 alreadyOnHardBoundary++;
                             }
@@ -2974,7 +3349,8 @@ namespace AtsBackgroundBuilder
                         var p1OnZero = IsEndpointOnUsecZeroBoundary(p1);
                         var p1OnTwenty = IsEndpointOnUsecTwentyBoundary(p1);
                         var p1OnThirty = IsEndpointOnThirtyBoundary(p1);
-                        if (p1OnZero)
+                        var p1CorrectionAdjacent = IsEndpointNearCorrectionBoundary(p1);
+                        if (!p1CorrectionAdjacent && p1OnZero)
                         {
                             alreadyOnHardBoundary++;
                         }
@@ -3006,7 +3382,9 @@ namespace AtsBackgroundBuilder
                             }
                             else
                             {
-                                foundEndTarget = TryFindSnapTarget(p1, p0, out snappedEnd);
+                                foundEndTarget = p1CorrectionAdjacent
+                                    ? TryFindCorrectionAdjacentSnapTarget(p1, p0, out snappedEnd)
+                                    : TryFindSnapTarget(p1, p0, out snappedEnd);
                             }
                             if (foundEndTarget)
                             {
@@ -3020,7 +3398,7 @@ namespace AtsBackgroundBuilder
                                     targetEnd = snappedEnd;
                                 }
                             }
-                            else if (p1OnTwenty || IsEndpointOnUsecTwentyBoundary(p1))
+                            else if (p1OnZero || p1OnTwenty || IsEndpointOnUsecTwentyBoundary(p1))
                             {
                                 alreadyOnHardBoundary++;
                             }
