@@ -1651,15 +1651,266 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
+                // Deterministic 1/4-line target:
+                // midpoint between the quarter-line center intersection and the directional end
+                // (W/E for horizontal QSEC, S/N for vertical QSEC).
+                bool TryResolveHorizontalQsecDirectionalHalfMidpoint(
+                    Point2d endpoint,
+                    out double targetX,
+                    out double targetY)
+                {
+                    targetX = endpoint.X;
+                    targetY = endpoint.Y;
+                    if (qsecHorizontalSegments.Count == 0 || qsecVerticalSegments.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    const double axisTol = 4.00;
+                    const double horizontalSpanTol = 80.0;
+                    const double verticalSpanTol = 2.50;
+                    const double maxMove = 80.0;
+                    var found = false;
+                    var bestX = endpoint.X;
+                    var bestY = endpoint.Y;
+                    var bestAxisGap = double.MaxValue;
+                    var bestMove = double.MaxValue;
+
+                    for (var hi = 0; hi < qsecHorizontalSegments.Count; hi++)
+                    {
+                        var h = qsecHorizontalSegments[hi];
+                        var minX = Math.Min(h.A.X, h.B.X);
+                        var maxX = Math.Max(h.A.X, h.B.X);
+                        if (endpoint.X < (minX - horizontalSpanTol) || endpoint.X > (maxX + horizontalSpanTol))
+                        {
+                            continue;
+                        }
+
+                        var dx = h.B.X - h.A.X;
+                        var tEndpoint = 0.5;
+                        if (Math.Abs(dx) > 1e-6)
+                        {
+                            tEndpoint = (endpoint.X - h.A.X) / dx;
+                        }
+
+                        if (tEndpoint < 0.0) tEndpoint = 0.0;
+                        if (tEndpoint > 1.0) tEndpoint = 1.0;
+                        var yAtEndpointX = h.A.Y + ((h.B.Y - h.A.Y) * tEndpoint);
+                        var axisGap = Math.Abs(endpoint.Y - yAtEndpointX);
+                        if (axisGap > axisTol)
+                        {
+                            continue;
+                        }
+
+                        var yLine = 0.5 * (h.A.Y + h.B.Y);
+                        for (var vi = 0; vi < qsecVerticalSegments.Count; vi++)
+                        {
+                            var v = qsecVerticalSegments[vi];
+                            var minY = Math.Min(v.A.Y, v.B.Y);
+                            var maxY = Math.Max(v.A.Y, v.B.Y);
+                            if (yLine < (minY - verticalSpanTol) || yLine > (maxY + verticalSpanTol))
+                            {
+                                continue;
+                            }
+
+                            var dy = v.B.Y - v.A.Y;
+                            var tCenter = 0.5;
+                            if (Math.Abs(dy) > 1e-6)
+                            {
+                                tCenter = (yLine - v.A.Y) / dy;
+                            }
+
+                            if (tCenter < 0.0) tCenter = 0.0;
+                            if (tCenter > 1.0) tCenter = 1.0;
+                            var xCenter = v.A.X + ((v.B.X - v.A.X) * tCenter);
+                            if (xCenter < (minX - verticalSpanTol) || xCenter > (maxX + verticalSpanTol))
+                            {
+                                continue;
+                            }
+
+                            var candidateX = endpoint.X <= xCenter
+                                ? 0.5 * (minX + xCenter)
+                                : 0.5 * (maxX + xCenter);
+
+                            var tCandidate = 0.5;
+                            if (Math.Abs(dx) > 1e-6)
+                            {
+                                tCandidate = (candidateX - h.A.X) / dx;
+                            }
+
+                            if (tCandidate < 0.0) tCandidate = 0.0;
+                            if (tCandidate > 1.0) tCandidate = 1.0;
+                            var candidateY = h.A.Y + ((h.B.Y - h.A.Y) * tCandidate);
+                            var move = Math.Abs(candidateX - endpoint.X);
+                            if (move > maxMove)
+                            {
+                                continue;
+                            }
+
+                            var better =
+                                !found ||
+                                axisGap < (bestAxisGap - 1e-6) ||
+                                (Math.Abs(axisGap - bestAxisGap) <= 1e-6 && move < bestMove);
+                            if (!better)
+                            {
+                                continue;
+                            }
+
+                            found = true;
+                            bestX = candidateX;
+                            bestY = candidateY;
+                            bestAxisGap = axisGap;
+                            bestMove = move;
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        return false;
+                    }
+
+                    targetX = bestX;
+                    targetY = bestY;
+                    return true;
+                }
+
+                bool TryResolveVerticalQsecDirectionalHalfMidpoint(
+                    Point2d endpoint,
+                    out double targetX,
+                    out double targetY)
+                {
+                    targetX = endpoint.X;
+                    targetY = endpoint.Y;
+                    if (qsecVerticalSegments.Count == 0 || qsecHorizontalSegments.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    const double axisTol = 4.00;
+                    const double verticalSpanTol = 80.0;
+                    const double horizontalSpanTol = 2.50;
+                    const double maxMove = 80.0;
+                    var found = false;
+                    var bestX = endpoint.X;
+                    var bestY = endpoint.Y;
+                    var bestAxisGap = double.MaxValue;
+                    var bestMove = double.MaxValue;
+
+                    for (var vi = 0; vi < qsecVerticalSegments.Count; vi++)
+                    {
+                        var v = qsecVerticalSegments[vi];
+                        var minY = Math.Min(v.A.Y, v.B.Y);
+                        var maxY = Math.Max(v.A.Y, v.B.Y);
+                        if (endpoint.Y < (minY - verticalSpanTol) || endpoint.Y > (maxY + verticalSpanTol))
+                        {
+                            continue;
+                        }
+
+                        var dy = v.B.Y - v.A.Y;
+                        var tEndpoint = 0.5;
+                        if (Math.Abs(dy) > 1e-6)
+                        {
+                            tEndpoint = (endpoint.Y - v.A.Y) / dy;
+                        }
+
+                        if (tEndpoint < 0.0) tEndpoint = 0.0;
+                        if (tEndpoint > 1.0) tEndpoint = 1.0;
+                        var xAtEndpointY = v.A.X + ((v.B.X - v.A.X) * tEndpoint);
+                        var axisGap = Math.Abs(endpoint.X - xAtEndpointY);
+                        if (axisGap > axisTol)
+                        {
+                            continue;
+                        }
+
+                        for (var hi = 0; hi < qsecHorizontalSegments.Count; hi++)
+                        {
+                            var h = qsecHorizontalSegments[hi];
+                            var yCenter = 0.5 * (h.A.Y + h.B.Y);
+                            if (yCenter < (minY - horizontalSpanTol) || yCenter > (maxY + horizontalSpanTol))
+                            {
+                                continue;
+                            }
+
+                            var tCenter = 0.5;
+                            if (Math.Abs(dy) > 1e-6)
+                            {
+                                tCenter = (yCenter - v.A.Y) / dy;
+                            }
+
+                            if (tCenter < 0.0) tCenter = 0.0;
+                            if (tCenter > 1.0) tCenter = 1.0;
+                            var xCenter = v.A.X + ((v.B.X - v.A.X) * tCenter);
+                            var hMinX = Math.Min(h.A.X, h.B.X);
+                            var hMaxX = Math.Max(h.A.X, h.B.X);
+                            if (xCenter < (hMinX - horizontalSpanTol) || xCenter > (hMaxX + horizontalSpanTol))
+                            {
+                                continue;
+                            }
+
+                            var candidateY = endpoint.Y <= yCenter
+                                ? 0.5 * (minY + yCenter)
+                                : 0.5 * (maxY + yCenter);
+                            var move = Math.Abs(candidateY - endpoint.Y);
+                            if (move > maxMove)
+                            {
+                                continue;
+                            }
+
+                            var tCandidate = 0.5;
+                            if (Math.Abs(dy) > 1e-6)
+                            {
+                                tCandidate = (candidateY - v.A.Y) / dy;
+                            }
+
+                            if (tCandidate < 0.0) tCandidate = 0.0;
+                            if (tCandidate > 1.0) tCandidate = 1.0;
+                            var candidateX = v.A.X + ((v.B.X - v.A.X) * tCandidate);
+                            var better =
+                                !found ||
+                                axisGap < (bestAxisGap - 1e-6) ||
+                                (Math.Abs(axisGap - bestAxisGap) <= 1e-6 && move < bestMove);
+                            if (!better)
+                            {
+                                continue;
+                            }
+
+                            found = true;
+                            bestX = candidateX;
+                            bestY = candidateY;
+                            bestAxisGap = axisGap;
+                            bestMove = move;
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        return false;
+                    }
+
+                    targetX = bestX;
+                    targetY = bestY;
+                    return true;
+                }
+
                 bool TryFindEndpointHorizontalMidpointX(Point2d endpoint, out double targetX, out double targetY, out int targetPriority)
                 {
                     targetX = endpoint.X;
                     targetY = endpoint.Y;
                     targetPriority = int.MaxValue;
+                    if (TryResolveHorizontalQsecDirectionalHalfMidpoint(endpoint, out var directionalX, out var directionalY))
+                    {
+                        targetX = directionalX;
+                        targetY = directionalY;
+                        targetPriority = 0;
+                        return true;
+                    }
+
                     const double endpointYLineTol = 2.00;
                     const double xSpanTol = 2.00;
                     const double endpointOnSegmentTol = 0.75;
-                    const double maxMidpointShift = 40.0;
+                    // Allow recovery from larger one-row offsets (~49m) before falling back
+                    // to component-side midpoint logic.
+                    const double maxMidpointShift = 80.0;
 
                     var found = false;
                     var bestPriority = int.MaxValue;
@@ -1669,9 +1920,15 @@ namespace AtsBackgroundBuilder
                     for (var i = 0; i < horizontalMidpointTargetSegments.Count; i++)
                     {
                         var seg = horizontalMidpointTargetSegments[i];
-                        var onSegmentTol = seg.Priority == 0 ? 2.00 : endpointOnSegmentTol;
-                        var yTol = seg.Priority == 0 ? 3.00 : endpointYLineTol;
-                        var spanTol = seg.Priority == 0 ? 8.00 : xSpanTol;
+                        var onSegmentTol = seg.Priority == 0
+                            ? 2.00
+                            : (seg.Priority == 3 ? 6.00 : endpointOnSegmentTol);
+                        var yTol = seg.Priority == 0
+                            ? 3.00
+                            : (seg.Priority == 3 ? 4.00 : endpointYLineTol);
+                        var spanTol = seg.Priority == 0
+                            ? 8.00
+                            : (seg.Priority == 3 ? 40.0 : xSpanTol);
                         var segDistance = DistancePointToSegment(endpoint, seg.A, seg.B);
                         if (segDistance > onSegmentTol)
                         {
@@ -1736,6 +1993,13 @@ namespace AtsBackgroundBuilder
                 {
                     targetX = endpoint.X;
                     targetY = endpoint.Y;
+                    if (TryResolveHorizontalQsecDirectionalHalfMidpoint(endpoint, out var directionalX, out var directionalY))
+                    {
+                        targetX = directionalX;
+                        targetY = directionalY;
+                        return true;
+                    }
+
                     if (qsecHorizontalComponentTargets.Count == 0)
                     {
                         return false;
@@ -1901,10 +2165,19 @@ namespace AtsBackgroundBuilder
                 {
                     targetY = endpoint.Y;
                     targetPriority = int.MaxValue;
+                    if (TryResolveVerticalQsecDirectionalHalfMidpoint(endpoint, out _, out var directionalY))
+                    {
+                        targetY = directionalY;
+                        targetPriority = 0;
+                        return true;
+                    }
+
                     const double endpointXLineTol = 2.00;
                     const double ySpanTol = 2.00;
                     const double endpointOnSegmentTol = 0.75;
-                    const double maxMidpointShift = 40.0;
+                    // Allow recovery from larger one-row offsets (~49m) before falling back
+                    // to component-side midpoint logic.
+                    const double maxMidpointShift = 80.0;
 
                     var found = false;
                     var bestPriority = int.MaxValue;
@@ -1914,9 +2187,15 @@ namespace AtsBackgroundBuilder
                     for (var i = 0; i < verticalMidpointTargetSegments.Count; i++)
                     {
                         var seg = verticalMidpointTargetSegments[i];
-                        var onSegmentTol = seg.Priority == 0 ? 2.00 : endpointOnSegmentTol;
-                        var xTol = seg.Priority == 0 ? 3.00 : endpointXLineTol;
-                        var spanTol = seg.Priority == 0 ? 8.00 : ySpanTol;
+                        var onSegmentTol = seg.Priority == 0
+                            ? 2.00
+                            : (seg.Priority == 3 ? 6.00 : endpointOnSegmentTol);
+                        var xTol = seg.Priority == 0
+                            ? 3.00
+                            : (seg.Priority == 3 ? 4.00 : endpointXLineTol);
+                        var spanTol = seg.Priority == 0
+                            ? 8.00
+                            : (seg.Priority == 3 ? 40.0 : ySpanTol);
                         var segDistance = DistancePointToSegment(endpoint, seg.A, seg.B);
                         if (segDistance > onSegmentTol)
                         {
@@ -1980,6 +2259,13 @@ namespace AtsBackgroundBuilder
                 {
                     targetX = endpoint.X;
                     targetY = endpoint.Y;
+                    if (TryResolveVerticalQsecDirectionalHalfMidpoint(endpoint, out var directionalX, out var directionalY))
+                    {
+                        targetX = directionalX;
+                        targetY = directionalY;
+                        return true;
+                    }
+
                     if (qsecVerticalComponentTargets.Count == 0)
                     {
                         return false;
@@ -2477,22 +2763,638 @@ namespace AtsBackgroundBuilder
                 bool TryFindPairedHorizontalMidpointY(Point2d p0, Point2d p1, out double targetY)
                 {
                     targetY = 0.5 * (p0.Y + p1.Y);
+                    bool TryResolvePairedQsecComponentMidpointY(Point2d a, Point2d b, double? anchorY, out double y)
+                    {
+                        y = 0.5 * (a.Y + b.Y);
+                        if (qsecVerticalComponentTargets.Count == 0 || qsecCenters.Count == 0)
+                        {
+                            return false;
+                        }
+
+                        const double lineXSpanTol = 4.00;
+                        const double componentYSpanTol = 80.0;
+                        const double componentAxisTol = 20.0;
+                        const double anchorTol = 35.0;
+                        const double centerTol = 2.50;
+                        const double maxMove = 80.0;
+                        var lineMinX = Math.Min(a.X, b.X) - lineXSpanTol;
+                        var lineMaxX = Math.Max(a.X, b.X) + lineXSpanTol;
+                        var lineY = 0.5 * (a.Y + b.Y);
+                        var found = false;
+                        var bestAnchorGap = double.MaxValue;
+                        var bestAxisGap = double.MaxValue;
+                        var bestSpanGap = double.MaxValue;
+                        var bestMove = double.MaxValue;
+                        var bestY = y;
+
+                        for (var ci = 0; ci < qsecVerticalComponentTargets.Count; ci++)
+                        {
+                            var c = qsecVerticalComponentTargets[ci];
+                            var xLine = 0.5 * (c.A.X + c.B.X);
+                            if (xLine < lineMinX || xLine > lineMaxX)
+                            {
+                                continue;
+                            }
+
+                            var minY = Math.Min(c.A.Y, c.B.Y);
+                            var maxY = Math.Max(c.A.Y, c.B.Y);
+                            if (lineY < (minY - componentYSpanTol) || lineY > (maxY + componentYSpanTol))
+                            {
+                                continue;
+                            }
+
+                            var axisGap = Math.Min(Math.Abs(a.X - xLine), Math.Abs(b.X - xLine));
+                            if (axisGap > componentAxisTol)
+                            {
+                                continue;
+                            }
+
+                            var spanGap = 0.0;
+                            if (lineY < minY)
+                            {
+                                spanGap = minY - lineY;
+                            }
+                            else if (lineY > maxY)
+                            {
+                                spanGap = lineY - maxY;
+                            }
+
+                            for (var si = 0; si < qsecCenters.Count; si++)
+                            {
+                                var center = qsecCenters[si];
+                                if (Math.Abs(center.X - xLine) > centerTol ||
+                                    center.Y < (minY - centerTol) ||
+                                    center.Y > (maxY + centerTol))
+                                {
+                                    continue;
+                                }
+
+                                var sideY = lineY <= center.Y
+                                    ? 0.5 * (minY + center.Y)
+                                    : 0.5 * (maxY + center.Y);
+                                var move = Math.Abs(sideY - lineY);
+                                if (move > maxMove)
+                                {
+                                    continue;
+                                }
+
+                                var anchorGap = anchorY.HasValue
+                                    ? Math.Abs(sideY - anchorY.Value)
+                                    : 0.0;
+                                if (anchorY.HasValue && anchorGap > anchorTol)
+                                {
+                                    continue;
+                                }
+
+                                var better =
+                                    !found ||
+                                    (anchorY.HasValue && anchorGap < (bestAnchorGap - 1e-6)) ||
+                                    (anchorY.HasValue && Math.Abs(anchorGap - bestAnchorGap) <= 1e-6 &&
+                                        (axisGap < (bestAxisGap - 1e-6) ||
+                                         (Math.Abs(axisGap - bestAxisGap) <= 1e-6 &&
+                                          (spanGap < (bestSpanGap - 1e-6) ||
+                                           (Math.Abs(spanGap - bestSpanGap) <= 1e-6 && move < bestMove))))) ||
+                                    (!anchorY.HasValue &&
+                                        (axisGap < (bestAxisGap - 1e-6) ||
+                                         (Math.Abs(axisGap - bestAxisGap) <= 1e-6 &&
+                                          (spanGap < (bestSpanGap - 1e-6) ||
+                                           (Math.Abs(spanGap - bestSpanGap) <= 1e-6 && move < bestMove)))));
+                                if (!better)
+                                {
+                                    continue;
+                                }
+
+                                found = true;
+                                bestAnchorGap = anchorGap;
+                                bestAxisGap = axisGap;
+                                bestSpanGap = spanGap;
+                                bestMove = move;
+                                bestY = sideY;
+                            }
+                        }
+
+                        if (!found)
+                        {
+                            return false;
+                        }
+
+                        y = bestY;
+                        return true;
+                    }
+
+                    bool TryResolveBracketedVerticalMidpointY(Point2d a, Point2d b, double? anchorY, out double y)
+                    {
+                        y = 0.5 * (a.Y + b.Y);
+                        if (verticalMidpointTargetSegments.Count == 0)
+                        {
+                            return false;
+                        }
+
+                        const double axisTol = 16.00;
+                        const double spanTol = 40.0;
+                        const double bracketSpanMax = 10.0;
+                        const double nearRefTol = 12.0;
+                        var lineY = 0.5 * (a.Y + b.Y);
+                        var referenceY = anchorY ?? lineY;
+                        var foundLower = false;
+                        var foundUpper = false;
+                        var lowerY = referenceY;
+                        var upperY = referenceY;
+                        var lowerGap = double.MaxValue;
+                        var upperGap = double.MaxValue;
+                        var lowerAxisGap = double.MaxValue;
+                        var upperAxisGap = double.MaxValue;
+                        for (var i = 0; i < verticalMidpointTargetSegments.Count; i++)
+                        {
+                            var seg = verticalMidpointTargetSegments[i];
+                            // Use deterministic section/usec vertical midpoint bands only.
+                            // Skip raw quarter/component bands to avoid 100m-extension bleed.
+                            if (seg.Priority <= 0 || seg.Priority >= 3)
+                            {
+                                continue;
+                            }
+
+                            var minY = Math.Min(seg.A.Y, seg.B.Y);
+                            var maxY = Math.Max(seg.A.Y, seg.B.Y);
+                            if (lineY < (minY - spanTol) || lineY > (maxY + spanTol))
+                            {
+                                continue;
+                            }
+
+                            var dy = seg.B.Y - seg.A.Y;
+                            var t = 0.5;
+                            if (Math.Abs(dy) > 1e-6)
+                            {
+                                t = (lineY - seg.A.Y) / dy;
+                            }
+
+                            if (t < 0.0) t = 0.0;
+                            if (t > 1.0) t = 1.0;
+                            var xAtLineY = seg.A.X + ((seg.B.X - seg.A.X) * t);
+                            var axisGap = Math.Min(Math.Abs(a.X - xAtLineY), Math.Abs(b.X - xAtLineY));
+                            if (axisGap > axisTol)
+                            {
+                                continue;
+                            }
+
+                            var candidateY = seg.Mid.Y;
+                            var refGap = Math.Abs(candidateY - referenceY);
+                            if (refGap > nearRefTol)
+                            {
+                                continue;
+                            }
+
+                            if (candidateY <= referenceY)
+                            {
+                                var betterLower =
+                                    !foundLower ||
+                                    refGap < (lowerGap - 1e-6) ||
+                                    (Math.Abs(refGap - lowerGap) <= 1e-6 && axisGap < lowerAxisGap);
+                                if (!betterLower)
+                                {
+                                    continue;
+                                }
+
+                                foundLower = true;
+                                lowerY = candidateY;
+                                lowerGap = refGap;
+                                lowerAxisGap = axisGap;
+                            }
+                            else
+                            {
+                                var betterUpper =
+                                    !foundUpper ||
+                                    refGap < (upperGap - 1e-6) ||
+                                    (Math.Abs(refGap - upperGap) <= 1e-6 && axisGap < upperAxisGap);
+                                if (!betterUpper)
+                                {
+                                    continue;
+                                }
+
+                                foundUpper = true;
+                                upperY = candidateY;
+                                upperGap = refGap;
+                                upperAxisGap = axisGap;
+                            }
+                        }
+
+                        if (!foundLower || !foundUpper)
+                        {
+                            return false;
+                        }
+
+                        if ((upperY - lowerY) > bracketSpanMax)
+                        {
+                            return false;
+                        }
+
+                        y = 0.5 * (lowerY + upperY);
+                        return true;
+                    }
+
+                    bool TryResolveAxisBracketedVerticalMidpointY(Point2d axisEndpoint, double anchorY, out double y)
+                    {
+                        y = anchorY;
+                        if (verticalMidpointTargetSegments.Count == 0)
+                        {
+                            return false;
+                        }
+
+                        const double axisTol = 4.00;
+                        const double spanTol = 40.0;
+                        const double nearAnchorTol = 12.0;
+                        const double bracketSpanMax = 10.0;
+                        var foundLower = false;
+                        var foundUpper = false;
+                        var lowerY = anchorY;
+                        var upperY = anchorY;
+                        var lowerGap = double.MaxValue;
+                        var upperGap = double.MaxValue;
+                        var lowerAxisGap = double.MaxValue;
+                        var upperAxisGap = double.MaxValue;
+
+                        for (var i = 0; i < verticalMidpointTargetSegments.Count; i++)
+                        {
+                            var seg = verticalMidpointTargetSegments[i];
+                            if (seg.Priority <= 0 || seg.Priority >= 3)
+                            {
+                                continue;
+                            }
+
+                            var minY = Math.Min(seg.A.Y, seg.B.Y);
+                            var maxY = Math.Max(seg.A.Y, seg.B.Y);
+                            if (anchorY < (minY - spanTol) || anchorY > (maxY + spanTol))
+                            {
+                                continue;
+                            }
+
+                            var dy = seg.B.Y - seg.A.Y;
+                            var t = 0.5;
+                            if (Math.Abs(dy) > 1e-6)
+                            {
+                                t = (anchorY - seg.A.Y) / dy;
+                            }
+
+                            if (t < 0.0) t = 0.0;
+                            if (t > 1.0) t = 1.0;
+                            var xAtAnchorY = seg.A.X + ((seg.B.X - seg.A.X) * t);
+                            var axisGap = Math.Abs(axisEndpoint.X - xAtAnchorY);
+                            if (axisGap > axisTol)
+                            {
+                                continue;
+                            }
+
+                            var candidateY = seg.Mid.Y;
+                            var anchorGap = Math.Abs(candidateY - anchorY);
+                            if (anchorGap > nearAnchorTol)
+                            {
+                                continue;
+                            }
+
+                            if (candidateY <= anchorY)
+                            {
+                                var betterLower =
+                                    !foundLower ||
+                                    anchorGap < (lowerGap - 1e-6) ||
+                                    (Math.Abs(anchorGap - lowerGap) <= 1e-6 && axisGap < lowerAxisGap);
+                                if (!betterLower)
+                                {
+                                    continue;
+                                }
+
+                                foundLower = true;
+                                lowerY = candidateY;
+                                lowerGap = anchorGap;
+                                lowerAxisGap = axisGap;
+                            }
+                            else
+                            {
+                                var betterUpper =
+                                    !foundUpper ||
+                                    anchorGap < (upperGap - 1e-6) ||
+                                    (Math.Abs(anchorGap - upperGap) <= 1e-6 && axisGap < upperAxisGap);
+                                if (!betterUpper)
+                                {
+                                    continue;
+                                }
+
+                                foundUpper = true;
+                                upperY = candidateY;
+                                upperGap = anchorGap;
+                                upperAxisGap = axisGap;
+                            }
+                        }
+
+                        if (!foundLower || !foundUpper)
+                        {
+                            return false;
+                        }
+
+                        if ((upperY - lowerY) > bracketSpanMax)
+                        {
+                            return false;
+                        }
+
+                        y = 0.5 * (lowerY + upperY);
+                        return true;
+                    }
+
+                    bool TryResolveAxisNeighborVerticalMidpointY(Point2d axisEndpoint, double anchorY, out double y)
+                    {
+                        y = anchorY;
+                        if (verticalMidpointTargetSegments.Count == 0)
+                        {
+                            return false;
+                        }
+
+                        const double axisTol = 4.00;
+                        const double spanTol = 40.0;
+                        const double nearAnchorTol = 12.0;
+                        const double sameRowTol = 0.05;
+                        var found = false;
+                        var bestY = anchorY;
+                        var bestGap = double.MaxValue;
+                        var bestPriority = int.MaxValue;
+                        var bestAxisGap = double.MaxValue;
+
+                        for (var i = 0; i < verticalMidpointTargetSegments.Count; i++)
+                        {
+                            var seg = verticalMidpointTargetSegments[i];
+                            if (seg.Priority <= 0 || seg.Priority >= 3)
+                            {
+                                continue;
+                            }
+
+                            var minY = Math.Min(seg.A.Y, seg.B.Y);
+                            var maxY = Math.Max(seg.A.Y, seg.B.Y);
+                            if (anchorY < (minY - spanTol) || anchorY > (maxY + spanTol))
+                            {
+                                continue;
+                            }
+
+                            var dy = seg.B.Y - seg.A.Y;
+                            var t = 0.5;
+                            if (Math.Abs(dy) > 1e-6)
+                            {
+                                t = (anchorY - seg.A.Y) / dy;
+                            }
+
+                            if (t < 0.0) t = 0.0;
+                            if (t > 1.0) t = 1.0;
+                            var xAtAnchorY = seg.A.X + ((seg.B.X - seg.A.X) * t);
+                            var axisGap = Math.Abs(axisEndpoint.X - xAtAnchorY);
+                            if (axisGap > axisTol)
+                            {
+                                continue;
+                            }
+
+                            var candidateY = seg.Mid.Y;
+                            var rowGap = Math.Abs(candidateY - anchorY);
+                            if (rowGap <= sameRowTol || rowGap > nearAnchorTol)
+                            {
+                                continue;
+                            }
+
+                            var better =
+                                !found ||
+                                rowGap < (bestGap - 1e-6) ||
+                                (Math.Abs(rowGap - bestGap) <= 1e-6 && seg.Priority < bestPriority) ||
+                                (Math.Abs(rowGap - bestGap) <= 1e-6 && seg.Priority == bestPriority && axisGap < bestAxisGap);
+                            if (!better)
+                            {
+                                continue;
+                            }
+
+                            found = true;
+                            bestY = candidateY;
+                            bestGap = rowGap;
+                            bestPriority = seg.Priority;
+                            bestAxisGap = axisGap;
+                        }
+
+                        if (!found)
+                        {
+                            return false;
+                        }
+
+                        y = bestY;
+                        return true;
+                    }
+
+                    bool TryResolveVerticalQsecSouthHalfRowY(Point2d endpoint, out double y)
+                    {
+                        y = endpoint.Y;
+                        if (!TryResolveVerticalQsecDirectionalHalfMidpoint(endpoint, out _, out var directionalY))
+                        {
+                            return false;
+                        }
+
+                        y = directionalY;
+                        return true;
+                    }
+
                     var found0 = TryFindEndpointVerticalMidpointY(p0, out var y0, out var pri0);
                     var found1 = TryFindEndpointVerticalMidpointY(p1, out var y1, out var pri1);
+                    var traceTarget = new Point2d(504123.929, 5986277.757);
+                    const double traceTol = 140.0;
+                    var traceThis =
+                        p0.GetDistanceTo(traceTarget) <= traceTol ||
+                        p1.GetDistanceTo(traceTarget) <= traceTol;
+                    if (traceThis && logger != null)
+                    {
+                        logger.WriteLine(
+                            $"TRACE-LSD-PAIRY start p0=({p0.X:0.###},{p0.Y:0.###}) p1=({p1.X:0.###},{p1.Y:0.###}) found0={found0} y0={y0:0.###} pri0={pri0} found1={found1} y1={y1:0.###} pri1={pri1}.");
+                    }
+
+                    double? componentAnchorY = null;
+                    if (found0 && found1)
+                    {
+                        if (pri0 < pri1)
+                        {
+                            componentAnchorY = y0;
+                        }
+                        else if (pri1 < pri0)
+                        {
+                            componentAnchorY = y1;
+                        }
+                        else
+                        {
+                            componentAnchorY = 0.5 * (y0 + y1);
+                        }
+                    }
+                    else if (found0)
+                    {
+                        componentAnchorY = y0;
+                    }
+                    else if (found1)
+                    {
+                        componentAnchorY = y1;
+                    }
+
+                    if (componentAnchorY.HasValue &&
+                        TryResolvePairedQsecComponentMidpointY(p0, p1, componentAnchorY, out var pairedComponentY))
+                    {
+                        targetY = pairedComponentY;
+                        if (traceThis && logger != null)
+                        {
+                            var anchorText = componentAnchorY.HasValue ? componentAnchorY.Value.ToString("0.###") : "null";
+                            logger.WriteLine($"TRACE-LSD-PAIRY result=component anchorY={anchorText} targetY={targetY:0.###}");
+                        }
+
+                        return true;
+                    }
+
+                    if (traceThis && logger != null && !componentAnchorY.HasValue)
+                    {
+                        logger.WriteLine("TRACE-LSD-PAIRY component-skip reason=no-anchor");
+                    }
+
+                    if (TryResolveBracketedVerticalMidpointY(p0, p1, componentAnchorY, out var bracketY))
+                    {
+                        targetY = bracketY;
+                        if (traceThis && logger != null)
+                        {
+                            logger.WriteLine($"TRACE-LSD-PAIRY result=bracketed targetY={targetY:0.###}");
+                        }
+
+                        return true;
+                    }
+
+                    if (found0 && !found1)
+                    {
+                        if (TryResolveVerticalQsecSouthHalfRowY(p1, out var southHalfY))
+                        {
+                            targetY = southHalfY;
+                            if (traceThis && logger != null)
+                            {
+                                logger.WriteLine($"TRACE-LSD-PAIRY result=qsec-directional-half targetY={targetY:0.###}");
+                            }
+
+                            return true;
+                        }
+
+                        if (IsEndpointOnHardBoundary(p0) &&
+                            TryResolveAxisNeighborVerticalMidpointY(p1, y0, out var axisNeighborY))
+                        {
+                            targetY = 0.5 * (y0 + axisNeighborY);
+                            if (traceThis && logger != null)
+                            {
+                                logger.WriteLine(
+                                    $"TRACE-LSD-PAIRY result=axis-neighbor-average anchorY={y0:0.###} neighborY={axisNeighborY:0.###} targetY={targetY:0.###}");
+                            }
+
+                            return true;
+                        }
+                        else if (traceThis && logger != null && IsEndpointOnHardBoundary(p0))
+                        {
+                            logger.WriteLine($"TRACE-LSD-PAIRY axis-neighbor-average skipped anchorY={y0:0.###} reason=no-neighbor");
+                        }
+
+                        if (TryResolveAxisBracketedVerticalMidpointY(p1, y0, out var axisBracketY))
+                        {
+                            targetY = axisBracketY;
+                            if (traceThis && logger != null)
+                            {
+                                logger.WriteLine($"TRACE-LSD-PAIRY result=axis-bracketed targetY={targetY:0.###}");
+                            }
+
+                            return true;
+                        }
+                        else if (traceThis && logger != null)
+                        {
+                            logger.WriteLine($"TRACE-LSD-PAIRY axis-bracketed skipped anchorY={y0:0.###} reason=no-bracket");
+                        }
+                    }
+
+                    if (found1 && !found0)
+                    {
+                        if (TryResolveVerticalQsecSouthHalfRowY(p0, out var southHalfY))
+                        {
+                            targetY = southHalfY;
+                            if (traceThis && logger != null)
+                            {
+                                logger.WriteLine($"TRACE-LSD-PAIRY result=qsec-directional-half targetY={targetY:0.###}");
+                            }
+
+                            return true;
+                        }
+
+                        if (IsEndpointOnHardBoundary(p1) &&
+                            TryResolveAxisNeighborVerticalMidpointY(p0, y1, out var axisNeighborY))
+                        {
+                            targetY = 0.5 * (y1 + axisNeighborY);
+                            if (traceThis && logger != null)
+                            {
+                                logger.WriteLine(
+                                    $"TRACE-LSD-PAIRY result=axis-neighbor-average anchorY={y1:0.###} neighborY={axisNeighborY:0.###} targetY={targetY:0.###}");
+                            }
+
+                            return true;
+                        }
+                        else if (traceThis && logger != null && IsEndpointOnHardBoundary(p1))
+                        {
+                            logger.WriteLine($"TRACE-LSD-PAIRY axis-neighbor-average skipped anchorY={y1:0.###} reason=no-neighbor");
+                        }
+
+                        if (TryResolveAxisBracketedVerticalMidpointY(p0, y1, out var axisBracketY))
+                        {
+                            targetY = axisBracketY;
+                            if (traceThis && logger != null)
+                            {
+                                logger.WriteLine($"TRACE-LSD-PAIRY result=axis-bracketed targetY={targetY:0.###}");
+                            }
+
+                            return true;
+                        }
+                        else if (traceThis && logger != null)
+                        {
+                            logger.WriteLine($"TRACE-LSD-PAIRY axis-bracketed skipped anchorY={y1:0.###} reason=no-bracket");
+                        }
+                    }
+
                     if (!found0 && !found1)
                     {
+                        if (traceThis && logger != null)
+                        {
+                            logger.WriteLine("TRACE-LSD-PAIRY result=none");
+                        }
+
                         return false;
                     }
 
                     if (found0 && !found1)
                     {
                         targetY = y0;
+                        if (traceThis && logger != null)
+                        {
+                            logger.WriteLine($"TRACE-LSD-PAIRY result=single0 targetY={targetY:0.###}");
+                        }
+
                         return true;
                     }
 
                     if (found1 && !found0)
                     {
                         targetY = y1;
+                        if (traceThis && logger != null)
+                        {
+                            logger.WriteLine($"TRACE-LSD-PAIRY result=single1 targetY={targetY:0.###}");
+                        }
+
+                        return true;
+                    }
+
+                    // When both sides resolve near the same row, force a shared midpoint Y.
+                    // This prevents side-priority from biasing one endpoint low/high.
+                    const double sharedRowAverageTol = 4.00;
+                    if (Math.Abs(y0 - y1) <= sharedRowAverageTol)
+                    {
+                        targetY = 0.5 * (y0 + y1);
+                        if (traceThis && logger != null)
+                        {
+                            logger.WriteLine($"TRACE-LSD-PAIRY result=shared-average targetY={targetY:0.###}");
+                        }
+
                         return true;
                     }
 
@@ -2527,6 +3429,11 @@ namespace AtsBackgroundBuilder
                     else
                     {
                         targetY = 0.5 * (y0 + y1);
+                    }
+
+                    if (traceThis && logger != null)
+                    {
+                        logger.WriteLine($"TRACE-LSD-PAIRY result=final targetY={targetY:0.###}");
                     }
 
                     return true;
@@ -3089,6 +3996,9 @@ namespace AtsBackgroundBuilder
                         var midEndY = p1.Y;
                         var midStartHasExplicitX = false;
                         var midEndHasExplicitX = false;
+                        var hasStartQsecMidY = false;
+                        var hasEndQsecMidY = false;
+                        const double qsecMidpointYOverrideTol = 20.0;
 
                         if (TryFindPairedHorizontalMidpointY(p0, p1, out var pairedY))
                         {
@@ -3116,38 +4026,64 @@ namespace AtsBackgroundBuilder
                         if (!p0CorrectionAdjacentForMidpoint &&
                             TryResolveVerticalQsecComponentMidpoint(p0, out var qsecStartX, out var qsecStartY))
                         {
-                            midStartX = qsecStartX;
-                            if (!hasStartMid)
+                            if (!hasStartMid || Math.Abs(qsecStartY - midStartY) <= qsecMidpointYOverrideTol)
                             {
                                 hasStartMid = true;
                                 midStartY = qsecStartY;
-                            }
+                                hasStartQsecMidY = true;
+                                midStartX = qsecStartX;
 
-                            var qsecStartProbe = new Point2d(p0.X, midStartY);
-                            if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(qsecStartProbe, p1, midStartY, out var qsecAxisStartX) ||
-                                TryResolveVerticalMidpointAxisX(qsecStartProbe, midStartY, out qsecAxisStartX))
-                            {
-                                midStartX = qsecAxisStartX;
-                                midStartHasExplicitX = true;
+                                var qsecStartProbe = new Point2d(p0.X, midStartY);
+                                if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(qsecStartProbe, p1, midStartY, out var qsecAxisStartX) ||
+                                    TryResolveVerticalMidpointAxisX(qsecStartProbe, midStartY, out qsecAxisStartX))
+                                {
+                                    midStartX = qsecAxisStartX;
+                                    midStartHasExplicitX = true;
+                                }
                             }
                         }
 
                         if (!p1CorrectionAdjacentForMidpoint &&
                             TryResolveVerticalQsecComponentMidpoint(p1, out var qsecEndX, out var qsecEndY))
                         {
-                            midEndX = qsecEndX;
-                            if (!hasEndMid)
+                            if (!hasEndMid || Math.Abs(qsecEndY - midEndY) <= qsecMidpointYOverrideTol)
                             {
                                 hasEndMid = true;
                                 midEndY = qsecEndY;
-                            }
+                                hasEndQsecMidY = true;
+                                midEndX = qsecEndX;
 
-                            var qsecEndProbe = new Point2d(p1.X, midEndY);
-                            if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(qsecEndProbe, p0, midEndY, out var qsecAxisEndX) ||
-                                TryResolveVerticalMidpointAxisX(qsecEndProbe, midEndY, out qsecAxisEndX))
+                                var qsecEndProbe = new Point2d(p1.X, midEndY);
+                                if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(qsecEndProbe, p0, midEndY, out var qsecAxisEndX) ||
+                                    TryResolveVerticalMidpointAxisX(qsecEndProbe, midEndY, out qsecAxisEndX))
+                                {
+                                    midEndX = qsecAxisEndX;
+                                    midEndHasExplicitX = true;
+                                }
+                            }
+                        }
+
+                        // If either side resolved an anchored quarter-line midpoint Y, use it for both
+                        // ends so sibling S1/2/N1/2 horizontals land at one shared quarter intersection row.
+                        if (hasStartMid && hasEndMid)
+                        {
+                            if (hasStartQsecMidY && !hasEndQsecMidY)
                             {
-                                midEndX = qsecAxisEndX;
-                                midEndHasExplicitX = true;
+                                midEndY = midStartY;
+                            }
+                            else if (hasEndQsecMidY && !hasStartQsecMidY)
+                            {
+                                midStartY = midEndY;
+                            }
+                            else if (hasStartQsecMidY && hasEndQsecMidY)
+                            {
+                                const double qsecSharedAverageTol = 4.00;
+                                if (Math.Abs(midStartY - midEndY) <= qsecSharedAverageTol)
+                                {
+                                    var sharedQsecY = 0.5 * (midStartY + midEndY);
+                                    midStartY = sharedQsecY;
+                                    midEndY = sharedQsecY;
+                                }
                             }
                         }
 
@@ -3532,32 +4468,97 @@ namespace AtsBackgroundBuilder
                             var moveEnd = false;
                             var targetStart = p0;
                             var targetEnd = p1;
-                            if (TryFindVerticalQsecComponentMidpoint(p0, out var t0))
+                            var traceClampTarget = new Point2d(504123.929, 5986277.757);
+                            const double traceClampTol = 140.0;
+                            var traceClampThis =
+                                p0.GetDistanceTo(traceClampTarget) <= traceClampTol ||
+                                p1.GetDistanceTo(traceClampTarget) <= traceClampTol;
+                            var p0OnHardForClamp = IsEndpointOnHardBoundary(p0);
+                            var p1OnHardForClamp = IsEndpointOnHardBoundary(p1);
+                            double? forcedClampY = null;
+                            if (traceClampThis && logger != null)
                             {
-                                var clampStartProbe = new Point2d(p0.X, t0.Y);
-                                if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(clampStartProbe, p1, t0.Y, out var clampStartX) ||
-                                    TryResolveVerticalQsecAxisX(clampStartProbe, out clampStartX) ||
-                                    TryResolveVerticalMidpointAxisX(clampStartProbe, t0.Y, out clampStartX))
-                                {
-                                    t0 = new Point2d(clampStartX, t0.Y);
-                                }
-
-                                moveStart = true;
-                                targetStart = t0;
+                                logger.WriteLine(
+                                    $"TRACE-LSD-CLAMP start p0=({p0.X:0.###},{p0.Y:0.###}) p1=({p1.X:0.###},{p1.Y:0.###}) p0Hard={p0OnHardForClamp} p1Hard={p1OnHardForClamp}.");
                             }
 
-                            if (TryFindVerticalQsecComponentMidpoint(p1, out var t1))
+                            if (TryFindPairedHorizontalMidpointY(p0, p1, out var pairedClampY))
                             {
-                                var clampEndProbe = new Point2d(p1.X, t1.Y);
-                                if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(clampEndProbe, p0, t1.Y, out var clampEndX) ||
-                                    TryResolveVerticalQsecAxisX(clampEndProbe, out clampEndX) ||
-                                    TryResolveVerticalMidpointAxisX(clampEndProbe, t1.Y, out clampEndX))
-                                {
-                                    t1 = new Point2d(clampEndX, t1.Y);
-                                }
+                                forcedClampY = pairedClampY;
+                            }
+                            else if (p0OnHardForClamp && !p1OnHardForClamp)
+                            {
+                                forcedClampY = p0.Y;
+                            }
+                            else if (p1OnHardForClamp && !p0OnHardForClamp)
+                            {
+                                forcedClampY = p1.Y;
+                            }
 
-                                moveEnd = true;
-                                targetEnd = t1;
+                            if (traceClampThis && logger != null)
+                            {
+                                var forcedText = forcedClampY.HasValue ? forcedClampY.Value.ToString("0.###") : "null";
+                                logger.WriteLine($"TRACE-LSD-CLAMP forcedY={forcedText}");
+                            }
+
+                            if (!p0OnHardForClamp)
+                            {
+                                var hasStartComponent = TryFindVerticalQsecComponentMidpoint(p0, out var t0);
+                                if (hasStartComponent || forcedClampY.HasValue)
+                                {
+                                    var clampStartY = forcedClampY ?? t0.Y;
+                                    var clampStartX = hasStartComponent ? t0.X : p0.X;
+                                    var clampStartProbe = new Point2d(p0.X, clampStartY);
+                                    if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(clampStartProbe, p1, clampStartY, out var resolvedStartX) ||
+                                        TryResolveVerticalQsecAxisX(clampStartProbe, out resolvedStartX) ||
+                                        TryResolveVerticalMidpointAxisX(clampStartProbe, clampStartY, out resolvedStartX))
+                                    {
+                                        clampStartX = resolvedStartX;
+                                    }
+
+                                    var clampedStart = new Point2d(clampStartX, clampStartY);
+                                    if (p0.GetDistanceTo(clampedStart) > midpointEndpointMoveTol)
+                                    {
+                                        moveStart = true;
+                                        targetStart = clampedStart;
+                                    }
+
+                                    if (traceClampThis && logger != null)
+                                    {
+                                        logger.WriteLine(
+                                            $"TRACE-LSD-CLAMP start-cand hasComp={hasStartComponent} comp=({t0.X:0.###},{t0.Y:0.###}) cand=({clampedStart.X:0.###},{clampedStart.Y:0.###}) moveStart={moveStart}.");
+                                    }
+                                }
+                            }
+
+                            if (!p1OnHardForClamp)
+                            {
+                                var hasEndComponent = TryFindVerticalQsecComponentMidpoint(p1, out var t1);
+                                if (hasEndComponent || forcedClampY.HasValue)
+                                {
+                                    var clampEndY = forcedClampY ?? t1.Y;
+                                    var clampEndX = hasEndComponent ? t1.X : p1.X;
+                                    var clampEndProbe = new Point2d(p1.X, clampEndY);
+                                    if (TryResolveVerticalQsecAxisXForHorizontalEndpoint(clampEndProbe, p0, clampEndY, out var resolvedEndX) ||
+                                        TryResolveVerticalQsecAxisX(clampEndProbe, out resolvedEndX) ||
+                                        TryResolveVerticalMidpointAxisX(clampEndProbe, clampEndY, out resolvedEndX))
+                                    {
+                                        clampEndX = resolvedEndX;
+                                    }
+
+                                    var clampedEnd = new Point2d(clampEndX, clampEndY);
+                                    if (p1.GetDistanceTo(clampedEnd) > midpointEndpointMoveTol)
+                                    {
+                                        moveEnd = true;
+                                        targetEnd = clampedEnd;
+                                    }
+
+                                    if (traceClampThis && logger != null)
+                                    {
+                                        logger.WriteLine(
+                                            $"TRACE-LSD-CLAMP end-cand hasComp={hasEndComponent} comp=({t1.X:0.###},{t1.Y:0.###}) cand=({clampedEnd.X:0.###},{clampedEnd.Y:0.###}) moveEnd={moveEnd}.");
+                                    }
+                                }
                             }
 
                             if (moveStart && TryMoveEndpoint(writable, moveStart: true, targetStart, midpointEndpointMoveTol))
@@ -3572,6 +4573,12 @@ namespace AtsBackgroundBuilder
                                 qsecComponentClampEndpoints++;
                                 adjustedEndpoints++;
                                 movedAny = true;
+                            }
+
+                            if (traceClampThis && logger != null)
+                            {
+                                logger.WriteLine(
+                                    $"TRACE-LSD-CLAMP result movedAny={movedAny} targetStart=({targetStart.X:0.###},{targetStart.Y:0.###}) targetEnd=({targetEnd.X:0.###},{targetEnd.Y:0.###}).");
                             }
                         }
 
