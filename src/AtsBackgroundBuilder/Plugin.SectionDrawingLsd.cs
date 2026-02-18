@@ -396,16 +396,88 @@ namespace AtsBackgroundBuilder
                         return false;
                     }
 
-                    const double maxSnapDistance = 30.0;
-                    const double lineMatchTolerance = 1.25;
+                    const double strictMaxSnapDistance = 30.0;
+                    const double strictLineMatchTolerance = 1.25;
+                    const double relaxedMaxSnapDistance = 35.0;
+                    const double relaxedLineMatchTolerance = 8.0;
+                    const double relaxedSingleEdgeMissMaxDistance = 10.0;
+                    const double nearestEdgeMissMaxDistance = 10.0;
                     const double minMove = 0.01;
-                    var found = false;
-                    var bestDistance = double.MaxValue;
+
+                    bool TryPick(bool requireBothEdgeMatches, double lineMatchTolerance, double maxSnapDistance, out Point2d picked)
+                    {
+                        picked = vertex;
+                        var found = false;
+                        var bestDistance = double.MaxValue;
+                        for (var i = 0; i < hardBoundaryCornerEndpoints.Count; i++)
+                        {
+                            var candidate = hardBoundaryCornerEndpoints[i];
+                            var moveDistance = vertex.GetDistanceTo(candidate);
+                            if (moveDistance <= minMove || moveDistance > maxSnapDistance)
+                            {
+                                continue;
+                            }
+
+                            if (prev.GetDistanceTo(vertex) <= 1e-6 || next.GetDistanceTo(vertex) <= 1e-6)
+                            {
+                                continue;
+                            }
+
+                            var prevLineDistance = DistancePointToInfiniteLine(candidate, vertex, prev);
+                            var nextLineDistance = DistancePointToInfiniteLine(candidate, vertex, next);
+                            var prevMatch = prevLineDistance <= lineMatchTolerance;
+                            var nextMatch = nextLineDistance <= lineMatchTolerance;
+                            if (requireBothEdgeMatches)
+                            {
+                                if (!prevMatch || !nextMatch)
+                                {
+                                    continue;
+                                }
+                            }
+                            else if (!prevMatch && !nextMatch)
+                            {
+                                continue;
+                            }
+
+                            if (!requireBothEdgeMatches && prevMatch != nextMatch)
+                            {
+                                var unmatchedDistance = prevMatch ? nextLineDistance : prevLineDistance;
+                                if (unmatchedDistance > relaxedSingleEdgeMissMaxDistance)
+                                {
+                                    continue;
+                                }
+                            }
+
+                            if (!found || moveDistance < bestDistance)
+                            {
+                                found = true;
+                                bestDistance = moveDistance;
+                                picked = candidate;
+                            }
+                        }
+
+                        return found;
+                    }
+
+                    if (TryPick(requireBothEdgeMatches: true, strictLineMatchTolerance, strictMaxSnapDistance, out var strictTarget))
+                    {
+                        target = strictTarget;
+                        return true;
+                    }
+
+                    if (TryPick(requireBothEdgeMatches: false, relaxedLineMatchTolerance, relaxedMaxSnapDistance, out var relaxedTarget))
+                    {
+                        target = relaxedTarget;
+                        return true;
+                    }
+
+                    var foundNearest = false;
+                    var nearestDistance = double.MaxValue;
                     for (var i = 0; i < hardBoundaryCornerEndpoints.Count; i++)
                     {
                         var candidate = hardBoundaryCornerEndpoints[i];
                         var moveDistance = vertex.GetDistanceTo(candidate);
-                        if (moveDistance <= minMove || moveDistance > maxSnapDistance)
+                        if (moveDistance <= minMove || moveDistance > strictMaxSnapDistance)
                         {
                             continue;
                         }
@@ -416,26 +488,27 @@ namespace AtsBackgroundBuilder
                         }
 
                         var prevLineDistance = DistancePointToInfiniteLine(candidate, vertex, prev);
-                        if (prevLineDistance > lineMatchTolerance)
-                        {
-                            continue;
-                        }
-
                         var nextLineDistance = DistancePointToInfiniteLine(candidate, vertex, next);
-                        if (nextLineDistance > lineMatchTolerance)
+                        var edgeMatched = prevLineDistance <= relaxedLineMatchTolerance || nextLineDistance <= relaxedLineMatchTolerance;
+                        if (!edgeMatched)
                         {
                             continue;
                         }
 
-                        if (!found || moveDistance < bestDistance)
+                        if (Math.Max(prevLineDistance, nextLineDistance) > nearestEdgeMissMaxDistance)
                         {
-                            found = true;
-                            bestDistance = moveDistance;
+                            continue;
+                        }
+
+                        if (!foundNearest || moveDistance < nearestDistance)
+                        {
+                            foundNearest = true;
+                            nearestDistance = moveDistance;
                             target = candidate;
                         }
                     }
 
-                    return found;
+                    return foundNearest;
                 }
 
                 var boundarySegments = new List<(Point2d A, Point2d B, string Layer)>();
@@ -476,9 +549,9 @@ namespace AtsBackgroundBuilder
                     boundarySegments.Add((a, b, ent.Layer ?? string.Empty));
                 }
 
-                var hardBoundaryCornerClusters = new List<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical)>();
+                var hardBoundaryCornerClusters = new List<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)>();
                 const double cornerClusterTolerance = 0.40;
-                void AddBoundaryEndpointToCornerClusters(Point2d endpoint, bool isHorizontal, bool isVertical)
+                void AddBoundaryEndpointToCornerClusters(Point2d endpoint, bool isHorizontal, bool isVertical, int priority)
                 {
                     var bestIndex = -1;
                     var bestDistance = double.MaxValue;
@@ -497,20 +570,85 @@ namespace AtsBackgroundBuilder
 
                     if (bestIndex < 0)
                     {
-                        hardBoundaryCornerClusters.Add((endpoint, 1, isHorizontal, isVertical));
+                        hardBoundaryCornerClusters.Add((endpoint, 1, isHorizontal, isVertical, priority));
                         return;
                     }
 
                     var existing = hardBoundaryCornerClusters[bestIndex];
-                    var newCount = existing.Count + 1;
-                    var newRep = new Point2d(
-                        ((existing.Rep.X * existing.Count) + endpoint.X) / newCount,
-                        ((existing.Rep.Y * existing.Count) + endpoint.Y) / newCount);
+                    var replaceRep = priority < existing.Priority;
+                    var newRep = replaceRep ? endpoint : existing.Rep;
+                    var newPriority = replaceRep ? priority : existing.Priority;
                     hardBoundaryCornerClusters[bestIndex] = (
                         newRep,
-                        newCount,
+                        existing.Count + 1,
                         existing.HasHorizontal || isHorizontal,
-                        existing.HasVertical || isVertical);
+                        existing.HasVertical || isVertical,
+                        newPriority);
+                }
+
+                bool IsPointInAnyQuarterWindow(Point2d p, double tol)
+                {
+                    for (var i = 0; i < frames.Count; i++)
+                    {
+                        var w = frames[i].CleanupWindow;
+                        if (p.X >= (w.MinPoint.X - tol) && p.X <= (w.MaxPoint.X + tol) &&
+                            p.Y >= (w.MinPoint.Y - tol) && p.Y <= (w.MaxPoint.Y + tol))
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool TryFindApparentCornerIntersection(
+                    Point2d firstA,
+                    Point2d firstB,
+                    Point2d secondA,
+                    Point2d secondB,
+                    out Point2d corner)
+                {
+                    corner = default;
+                    if (firstA.GetDistanceTo(firstB) <= 1e-6 || secondA.GetDistanceTo(secondB) <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var r = firstB - firstA;
+                    var s = secondB - secondA;
+                    var denom = (r.X * s.Y) - (r.Y * s.X);
+                    if (Math.Abs(denom) <= 1e-9)
+                    {
+                        return false;
+                    }
+
+                    var diff = secondA - firstA;
+                    var t = ((diff.X * s.Y) - (diff.Y * s.X)) / denom;
+                    var u = ((diff.X * r.Y) - (diff.Y * r.X)) / denom;
+                    var hit = new Point2d(firstA.X + (r.X * t), firstA.Y + (r.Y * t));
+
+                    const double apparentIntersectionPadding = 80.0;
+                    bool WithinExpandedBounds(Point2d a, Point2d b)
+                    {
+                        var minX = Math.Min(a.X, b.X) - apparentIntersectionPadding;
+                        var maxX = Math.Max(a.X, b.X) + apparentIntersectionPadding;
+                        var minY = Math.Min(a.Y, b.Y) - apparentIntersectionPadding;
+                        var maxY = Math.Max(a.Y, b.Y) + apparentIntersectionPadding;
+                        return hit.X >= minX && hit.X <= maxX && hit.Y >= minY && hit.Y <= maxY;
+                    }
+
+                    if (!WithinExpandedBounds(firstA, firstB) || !WithinExpandedBounds(secondA, secondB))
+                    {
+                        return false;
+                    }
+
+                    if (!IsPointInAnyQuarterWindow(hit, 0.01))
+                    {
+                        return false;
+                    }
+
+                    corner = hit;
+                    return true;
                 }
 
                 for (var i = 0; i < boundarySegments.Count; i++)
@@ -526,15 +664,87 @@ namespace AtsBackgroundBuilder
 
                     var isHorizontal = absX >= absY;
                     var isVertical = absY >= absX;
-                    AddBoundaryEndpointToCornerClusters(seg.A, isHorizontal, isVertical);
-                    AddBoundaryEndpointToCornerClusters(seg.B, isHorizontal, isVertical);
+                    AddBoundaryEndpointToCornerClusters(seg.A, isHorizontal, isVertical, priority: 1);
+                    AddBoundaryEndpointToCornerClusters(seg.B, isHorizontal, isVertical, priority: 1);
                 }
+
+                for (var i = 0; i < boundarySegments.Count; i++)
+                {
+                    var first = boundarySegments[i];
+                    var firstDelta = first.B - first.A;
+                    var firstAbsX = Math.Abs(firstDelta.X);
+                    var firstAbsY = Math.Abs(firstDelta.Y);
+                    if (firstAbsX <= 1e-6 && firstAbsY <= 1e-6)
+                    {
+                        continue;
+                    }
+
+                    var firstLen = firstDelta.Length;
+                    if (firstLen <= 1e-9)
+                    {
+                        continue;
+                    }
+
+                    var firstUnit = firstDelta / firstLen;
+                    for (var j = i + 1; j < boundarySegments.Count; j++)
+                    {
+                        var second = boundarySegments[j];
+                        var secondDelta = second.B - second.A;
+                        var secondAbsX = Math.Abs(secondDelta.X);
+                        var secondAbsY = Math.Abs(secondDelta.Y);
+                        if (secondAbsX <= 1e-6 && secondAbsY <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        var secondLen = secondDelta.Length;
+                        if (secondLen <= 1e-9)
+                        {
+                            continue;
+                        }
+
+                        var secondUnit = secondDelta / secondLen;
+                        var absDot = Math.Abs(firstUnit.DotProduct(secondUnit));
+                        // Robust orthogonality test for skewed township geometry.
+                        if (absDot > 0.35)
+                        {
+                            continue;
+                        }
+
+                        if (!TryFindApparentCornerIntersection(first.A, first.B, second.A, second.B, out var corner))
+                        {
+                            continue;
+                        }
+
+                        AddBoundaryEndpointToCornerClusters(corner, isHorizontal: true, isVertical: true, priority: 0);
+                    }
+                }
+
                 var hardBoundaryCornerEndpoints = hardBoundaryCornerClusters
                     .Where(c => c.HasHorizontal && c.HasVertical)
                     .Select(c => c.Rep)
                     .ToList();
 
                 var erased = 0;
+                bool IsPointInsideAnyRebuiltSection(Point2d worldPoint)
+                {
+                    const double tol = 0.75;
+                    for (var i = 0; i < frames.Count; i++)
+                    {
+                        var frame = frames[i];
+                        var rel = worldPoint - frame.Origin;
+                        var u = rel.DotProduct(frame.EastUnit);
+                        var v = rel.DotProduct(frame.NorthUnit);
+                        if (u >= (frame.WestEdgeU - tol) && u <= (frame.EastEdgeU + tol) &&
+                            v >= (frame.SouthEdgeV - tol) && v <= (frame.NorthEdgeV + tol))
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
                 foreach (ObjectId id in modelSpace)
                 {
                     if (!(transaction.GetObject(id, OpenMode.ForWrite, false) is Entity ent) || ent.IsErased)
@@ -547,22 +757,22 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!(ent is Polyline poly) || !poly.Closed)
+                    if (!(ent is Polyline poly) || !poly.Closed || poly.NumberOfVertices < 3)
                     {
                         continue;
                     }
 
-                    Extents3d extents;
-                    try
+                    var sumX = 0.0;
+                    var sumY = 0.0;
+                    for (var vi = 0; vi < poly.NumberOfVertices; vi++)
                     {
-                        extents = poly.GeometricExtents;
-                    }
-                    catch
-                    {
-                        continue;
+                        var p = poly.GetPoint2dAt(vi);
+                        sumX += p.X;
+                        sumY += p.Y;
                     }
 
-                    if (!ExtentsIntersectAnyQuarterWindow(extents))
+                    var centroid = new Point2d(sumX / poly.NumberOfVertices, sumY / poly.NumberOfVertices);
+                    if (!IsPointInsideAnyRebuiltSection(centroid))
                     {
                         continue;
                     }

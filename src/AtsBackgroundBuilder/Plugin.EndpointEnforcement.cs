@@ -1053,6 +1053,11 @@ namespace AtsBackgroundBuilder
             {
                 return;
             }
+            var coreClipWindows = BuildBufferedQuarterWindows(database, requestedQuarterIds, 0.0);
+            if (coreClipWindows.Count == 0)
+            {
+                coreClipWindows = clipWindows;
+            }
 
             bool IsPointInAnyWindow(Point2d p)
             {
@@ -1094,6 +1099,21 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
+            bool IsPointInAnyCoreWindow(Point2d p)
+            {
+                for (var i = 0; i < coreClipWindows.Count; i++)
+                {
+                    var w = coreClipWindows[i];
+                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
+                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
             bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
             {
                 if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
@@ -1104,6 +1124,24 @@ namespace AtsBackgroundBuilder
                 for (var i = 0; i < clipWindows.Count; i++)
                 {
                     if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyCoreWindow(Point2d a, Point2d b)
+            {
+                if (IsPointInAnyCoreWindow(a) || IsPointInAnyCoreWindow(b))
+                {
+                    return true;
+                }
+
+                for (var i = 0; i < coreClipWindows.Count; i++)
+                {
+                    if (TryClipSegmentToWindow(a, b, coreClipWindows[i], out _, out _))
                     {
                         return true;
                     }
@@ -1348,7 +1386,8 @@ namespace AtsBackgroundBuilder
                     }
 
                     if (string.Equals(layer, "L-SECTION-LSD", StringComparison.OrdinalIgnoreCase) &&
-                        IsAdjustableLsdLineSegment(a, b))
+                        IsAdjustableLsdLineSegment(a, b) &&
+                        DoesSegmentIntersectAnyCoreWindow(a, b))
                     {
                         lsdLineIds.Add(id);
                     }
