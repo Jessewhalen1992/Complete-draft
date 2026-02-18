@@ -846,70 +846,19 @@ namespace AtsBackgroundBuilder
                         southAtWestV = southWestV;
                     }
 
-                    if (isCorrectionSouthBoundary &&
-                        TryResolveQuarterViewSouthMostCorrectionBoundarySegment(
-                            frame,
-                            correctionSouthBoundarySegments,
-                            out var southCorrectionSouthA,
-                            out var southCorrectionSouthB) &&
-                        TryResolveQuarterViewSouthWestCorrectionIntersection(
-                            frame,
-                            boundarySegments,
-                            southCorrectionSouthA,
-                            southCorrectionSouthB,
-                            out var westUsecZeroA,
-                            out var westUsecZeroB,
-                            out var forcedSouthWestU,
-                            out var forcedSouthWestV))
-                    {
-                        // Above correction lines, SW must terminate at the apparent
-                        // L-USEC-0 (vertical) x south L-USEC-C-0 intersection.
-                        westAtSouthU = forcedSouthWestU;
-                        southAtWestV = forcedSouthWestV;
-
-                        // Keep the SW-quarter SE corner on the same south correction
-                        // boundary so the south edge is consistent end-to-end.
-                        if (TryIntersectBoundarySegmentsLocal(
-                                frame,
-                                frame.BottomAnchor,
-                                frame.TopAnchor,
-                                southCorrectionSouthA,
-                                southCorrectionSouthB,
-                                out var forcedSouthMidU,
-                                out var forcedSouthMidV))
-                        {
-                            southAtMidU = forcedSouthMidU;
-                            southAtMidV = forcedSouthMidV;
-                        }
-
-                        if (TryProjectBoundarySegmentVAtU(
-                                frame,
-                                southCorrectionSouthA,
-                                southCorrectionSouthB,
-                                frame.EastEdgeU,
-                                out var forcedSouthEastV))
-                        {
-                            southAtEastV = forcedSouthEastV;
-                        }
-                    }
-
-                    if (isCorrectionSouthBoundary &&
-                        hasWestBoundarySegment &&
-                        TryIntersectBoundarySegmentWithLocalLine(
-                            frame,
-                            westBoundarySegmentA,
-                            westBoundarySegmentB,
-                            southAtMidU,
-                            southAtMidV,
-                            frame.EastEdgeU,
-                            southAtEastV,
-                            out var correctionSouthWestU,
-                            out var correctionSouthWestV))
-                    {
-                        // Keep SW on the same south trend used by mid/east correction endpoints.
-                        westAtSouthU = correctionSouthWestU;
-                        southAtWestV = correctionSouthWestV;
-                    }
+                    ApplyCorrectionSouthOverridesPreClamp(
+                        frame,
+                        boundarySegments,
+                        correctionSouthBoundarySegments,
+                        isCorrectionSouthBoundary,
+                        hasWestBoundarySegment,
+                        westBoundarySegmentA,
+                        westBoundarySegmentB,
+                        ref westAtSouthU,
+                        ref southAtWestV,
+                        ref southAtMidU,
+                        ref southAtMidV,
+                        ref southAtEastV);
 
                     if (hasWestBoundarySegment &&
                         hasNorthBoundarySegment &&
@@ -941,37 +890,20 @@ namespace AtsBackgroundBuilder
                         minQuarterSpan);
                     northAtMidV = ClampNorthBoundaryV(northAtMidV);
 
-                    if (isCorrectionSouthBoundary &&
-                        TryResolveQuarterViewEastBoundarySegmentOnLayer(
-                            frame,
-                            boundarySegments,
-                            LayerUsecZero,
-                            out var eastUsecZeroA,
-                            out var eastUsecZeroB) &&
-                        TryIntersectBoundarySegmentWithLocalLine(
-                            frame,
-                            eastUsecZeroA,
-                            eastUsecZeroB,
-                            westAtSouthU,
-                            westSouthV,
-                            southAtMidU,
-                            southAtMidV,
-                            out var projectedSouthEastU,
-                            out var projectedSouthEastV))
-                    {
-                        const double eastProjectionTolerance = 80.0;
-                        if (projectedSouthEastU >= (centerU + minQuarterSpan) &&
-                            Math.Abs(projectedSouthEastU - frame.EastEdgeU) <= eastProjectionTolerance)
-                        {
-                            southAtEastU = projectedSouthEastU;
-                            southAtEastV = ClampQuarterSouthBoundaryV(
-                                projectedSouthEastV,
-                                isCorrectionSouthBoundary,
-                                southBoundaryLimitV,
-                                centerV,
-                                minQuarterSpan);
-                        }
-                    }
+                    ApplyCorrectionSouthEastProjection(
+                        frame,
+                        boundarySegments,
+                        isCorrectionSouthBoundary,
+                        centerU,
+                        centerV,
+                        minQuarterSpan,
+                        southBoundaryLimitV,
+                        westAtSouthU,
+                        westSouthV,
+                        southAtMidU,
+                        southAtMidV,
+                        ref southAtEastU,
+                        ref southAtEastV);
 
                     var swNw = QuarterViewLocalToWorld(frame, westAtMidU, westAtMidV);
                     var swNe = QuarterViewLocalToWorld(frame, centerU, centerV);
@@ -1112,6 +1044,139 @@ namespace AtsBackgroundBuilder
             }
 
             return Math.Min(candidateV, southBoundaryLimitV);
+        }
+
+        private static void ApplyCorrectionSouthOverridesPreClamp(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            IReadOnlyList<(Point2d A, Point2d B)> correctionSouthBoundarySegments,
+            bool isCorrectionSouthBoundary,
+            bool hasWestBoundarySegment,
+            Point2d westBoundarySegmentA,
+            Point2d westBoundarySegmentB,
+            ref double westAtSouthU,
+            ref double southAtWestV,
+            ref double southAtMidU,
+            ref double southAtMidV,
+            ref double southAtEastV)
+        {
+            if (!isCorrectionSouthBoundary)
+            {
+                return;
+            }
+
+            if (TryResolveQuarterViewSouthMostCorrectionBoundarySegment(
+                    frame,
+                    correctionSouthBoundarySegments,
+                    out var southCorrectionSouthA,
+                    out var southCorrectionSouthB) &&
+                TryResolveQuarterViewSouthWestCorrectionIntersection(
+                    frame,
+                    boundarySegments,
+                    southCorrectionSouthA,
+                    southCorrectionSouthB,
+                    out var forcedSouthWestU,
+                    out var forcedSouthWestV))
+            {
+                // Above correction lines, SW must terminate at the apparent
+                // L-USEC-0 (vertical) x south L-USEC-C-0 intersection.
+                westAtSouthU = forcedSouthWestU;
+                southAtWestV = forcedSouthWestV;
+
+                // Keep the SW-quarter SE corner on the same south correction
+                // boundary so the south edge is consistent end-to-end.
+                if (TryIntersectBoundarySegmentsLocal(
+                        frame,
+                        frame.BottomAnchor,
+                        frame.TopAnchor,
+                        southCorrectionSouthA,
+                        southCorrectionSouthB,
+                        out var forcedSouthMidU,
+                        out var forcedSouthMidV))
+                {
+                    southAtMidU = forcedSouthMidU;
+                    southAtMidV = forcedSouthMidV;
+                }
+
+                if (TryProjectBoundarySegmentVAtU(
+                        frame,
+                        southCorrectionSouthA,
+                        southCorrectionSouthB,
+                        frame.EastEdgeU,
+                        out var forcedSouthEastV))
+                {
+                    southAtEastV = forcedSouthEastV;
+                }
+            }
+
+            if (hasWestBoundarySegment &&
+                TryIntersectBoundarySegmentWithLocalLine(
+                    frame,
+                    westBoundarySegmentA,
+                    westBoundarySegmentB,
+                    southAtMidU,
+                    southAtMidV,
+                    frame.EastEdgeU,
+                    southAtEastV,
+                    out var correctionSouthWestU,
+                    out var correctionSouthWestV))
+            {
+                // Keep SW on the same south trend used by mid/east correction endpoints.
+                westAtSouthU = correctionSouthWestU;
+                southAtWestV = correctionSouthWestV;
+            }
+        }
+
+        private static void ApplyCorrectionSouthEastProjection(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            bool isCorrectionSouthBoundary,
+            double centerU,
+            double centerV,
+            double minQuarterSpan,
+            double southBoundaryLimitV,
+            double westAtSouthU,
+            double westSouthV,
+            double southAtMidU,
+            double southAtMidV,
+            ref double southAtEastU,
+            ref double southAtEastV)
+        {
+            if (!isCorrectionSouthBoundary)
+            {
+                return;
+            }
+
+            if (TryResolveQuarterViewEastBoundarySegmentOnLayer(
+                    frame,
+                    boundarySegments,
+                    LayerUsecZero,
+                    out var eastUsecZeroA,
+                    out var eastUsecZeroB) &&
+                TryIntersectBoundarySegmentWithLocalLine(
+                    frame,
+                    eastUsecZeroA,
+                    eastUsecZeroB,
+                    westAtSouthU,
+                    westSouthV,
+                    southAtMidU,
+                    southAtMidV,
+                    out var projectedSouthEastU,
+                    out var projectedSouthEastV))
+            {
+                const double eastProjectionTolerance = 80.0;
+                if (projectedSouthEastU >= (centerU + minQuarterSpan) &&
+                    Math.Abs(projectedSouthEastU - frame.EastEdgeU) <= eastProjectionTolerance)
+                {
+                    southAtEastU = projectedSouthEastU;
+                    southAtEastV = ClampQuarterSouthBoundaryV(
+                        projectedSouthEastV,
+                        isCorrectionSouthBoundary,
+                        southBoundaryLimitV,
+                        centerV,
+                        minQuarterSpan);
+                }
+            }
         }
 
         private static bool IsQuarterViewBoundaryCandidateLayer(string? layerName)
@@ -1848,13 +1913,9 @@ namespace AtsBackgroundBuilder
             IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
             Point2d southSegmentA,
             Point2d southSegmentB,
-            out Point2d westSegmentA,
-            out Point2d westSegmentB,
             out double intersectionU,
             out double intersectionV)
         {
-            westSegmentA = default;
-            westSegmentB = default;
             intersectionU = default;
             intersectionV = default;
             if (boundarySegments == null || boundarySegments.Count == 0)
@@ -1934,8 +1995,6 @@ namespace AtsBackgroundBuilder
                     found = true;
                     bestScore = score;
                     bestWestOffsetError = westOffsetError;
-                    westSegmentA = seg.A;
-                    westSegmentB = seg.B;
                     intersectionU = candidateU;
                     intersectionV = candidateV;
                 }
