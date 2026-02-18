@@ -782,9 +782,12 @@ namespace AtsBackgroundBuilder
                         Math.Abs(southMidU - centerU) <= dividerIntersectionDriftTolerance)
                     {
                         southAtMidU = southMidU;
-                        southAtMidV = isCorrectionSouthBoundary
-                            ? Math.Min(southMidV, centerV - minQuarterSpan)
-                            : ClampSouthBoundaryV(southMidV);
+                        southAtMidV = ClampQuarterSouthBoundaryV(
+                            southMidV,
+                            isCorrectionSouthBoundary,
+                            southBoundaryLimitV,
+                            centerV,
+                            minQuarterSpan);
                     }
 
                     if (hasNorthBoundarySegment &&
@@ -802,20 +805,26 @@ namespace AtsBackgroundBuilder
                         northAtMidV = ClampNorthBoundaryV(northMidV);
                     }
 
-                    if (westAtMidV < (frame.SouthEdgeV - dividerIntersectionDriftTolerance) ||
-                        westAtMidV > (frame.NorthEdgeV + dividerIntersectionDriftTolerance))
+                    if (IsOutsideRange(
+                            westAtMidV,
+                            frame.SouthEdgeV - dividerIntersectionDriftTolerance,
+                            frame.NorthEdgeV + dividerIntersectionDriftTolerance))
                     {
                         westAtMidV = centerV;
                     }
 
-                    if (southAtMidU < (frame.WestEdgeU - dividerIntersectionDriftTolerance) ||
-                        southAtMidU > (frame.EastEdgeU + dividerIntersectionDriftTolerance))
+                    if (IsOutsideRange(
+                            southAtMidU,
+                            frame.WestEdgeU - dividerIntersectionDriftTolerance,
+                            frame.EastEdgeU + dividerIntersectionDriftTolerance))
                     {
                         southAtMidU = centerU;
                     }
 
-                    if (northAtMidU < (frame.WestEdgeU - dividerIntersectionDriftTolerance) ||
-                        northAtMidU > (frame.EastEdgeU + dividerIntersectionDriftTolerance))
+                    if (IsOutsideRange(
+                            northAtMidU,
+                            frame.WestEdgeU - dividerIntersectionDriftTolerance,
+                            frame.EastEdgeU + dividerIntersectionDriftTolerance))
                     {
                         northAtMidU = centerU;
                     }
@@ -924,9 +933,12 @@ namespace AtsBackgroundBuilder
                     var westNorthV = northAtWestV;
                     westSouthV = ClampSouthBoundaryV(westSouthV);
                     westNorthV = ClampNorthBoundaryV(westNorthV);
-                    southAtMidV = isCorrectionSouthBoundary
-                        ? Math.Min(southAtMidV, centerV - minQuarterSpan)
-                        : ClampSouthBoundaryV(southAtMidV);
+                    southAtMidV = ClampQuarterSouthBoundaryV(
+                        southAtMidV,
+                        isCorrectionSouthBoundary,
+                        southBoundaryLimitV,
+                        centerV,
+                        minQuarterSpan);
                     northAtMidV = ClampNorthBoundaryV(northAtMidV);
 
                     if (isCorrectionSouthBoundary &&
@@ -952,7 +964,12 @@ namespace AtsBackgroundBuilder
                             Math.Abs(projectedSouthEastU - frame.EastEdgeU) <= eastProjectionTolerance)
                         {
                             southAtEastU = projectedSouthEastU;
-                            southAtEastV = Math.Min(projectedSouthEastV, centerV - minQuarterSpan);
+                            southAtEastV = ClampQuarterSouthBoundaryV(
+                                projectedSouthEastV,
+                                isCorrectionSouthBoundary,
+                                southBoundaryLimitV,
+                                centerV,
+                                minQuarterSpan);
                         }
                     }
 
@@ -1075,6 +1092,26 @@ namespace AtsBackgroundBuilder
                 logger?.WriteLine($"Quarter view: endpoint snap adjusted {snappedVertices} vertex/vertices across {snappedBoxes} quarter box(es).");
                 transaction.Commit();
             }
+        }
+
+        private static bool IsOutsideRange(double value, double min, double max)
+        {
+            return value < min || value > max;
+        }
+
+        private static double ClampQuarterSouthBoundaryV(
+            double candidateV,
+            bool isCorrectionSouthBoundary,
+            double southBoundaryLimitV,
+            double centerV,
+            double minQuarterSpan)
+        {
+            if (isCorrectionSouthBoundary)
+            {
+                return Math.Min(candidateV, centerV - minQuarterSpan);
+            }
+
+            return Math.Min(candidateV, southBoundaryLimitV);
         }
 
         private static bool IsQuarterViewBoundaryCandidateLayer(string? layerName)
@@ -1648,89 +1685,6 @@ namespace AtsBackgroundBuilder
             }
 
             return false;
-        }
-
-        private static bool TryResolveQuarterViewWestBoundarySegmentOnLayer(
-            QuarterViewSectionFrame frame,
-            IReadOnlyList<(Point2d A, Point2d B, string Layer)> segments,
-            string targetLayer,
-            out Point2d segmentA,
-            out Point2d segmentB)
-        {
-            segmentA = default;
-            segmentB = default;
-            if (segments == null || segments.Count == 0 || string.IsNullOrWhiteSpace(targetLayer))
-            {
-                return false;
-            }
-
-            const double overlapPadding = 16.0;
-            const double minProjectedOverlap = 20.0;
-            const double minOffset = -0.75;
-            const double maxOffset = 60.0;
-            var found = false;
-            var bestScore = double.MaxValue;
-            var bestOutwardDistance = double.MaxValue;
-            for (var i = 0; i < segments.Count; i++)
-            {
-                var seg = segments[i];
-                if (!string.Equals(seg.Layer, targetLayer, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                var delta = seg.B - seg.A;
-                var eastComp = Math.Abs(delta.DotProduct(frame.EastUnit));
-                var northComp = Math.Abs(delta.DotProduct(frame.NorthUnit));
-                if (northComp <= eastComp)
-                {
-                    continue;
-                }
-
-                var relA = seg.A - frame.Origin;
-                var relB = seg.B - frame.Origin;
-                var uA = relA.DotProduct(frame.EastUnit);
-                var uB = relB.DotProduct(frame.EastUnit);
-                var vA = relA.DotProduct(frame.NorthUnit);
-                var vB = relB.DotProduct(frame.NorthUnit);
-                var overlap = Math.Min(Math.Max(vA, vB), frame.NorthEdgeV + overlapPadding) -
-                              Math.Max(Math.Min(vA, vB), frame.SouthEdgeV - overlapPadding);
-                if (overlap < minProjectedOverlap)
-                {
-                    continue;
-                }
-
-                var uAtMidV = 0.5 * (uA + uB);
-                var dv = vB - vA;
-                if (Math.Abs(dv) > 1e-6)
-                {
-                    var tMid = (frame.MidV - vA) / dv;
-                    if (tMid >= -0.35 && tMid <= 1.35)
-                    {
-                        uAtMidV = uA + ((uB - uA) * tMid);
-                    }
-                }
-
-                var outwardDistance = frame.WestEdgeU - uAtMidV;
-                if (outwardDistance < minOffset || outwardDistance > maxOffset)
-                {
-                    continue;
-                }
-
-                var score = Math.Abs(outwardDistance - RoadAllowanceUsecWidthMeters);
-                if (!found ||
-                    score < bestScore ||
-                    (Math.Abs(score - bestScore) <= 1e-6 && outwardDistance < bestOutwardDistance))
-                {
-                    found = true;
-                    bestScore = score;
-                    bestOutwardDistance = outwardDistance;
-                    segmentA = seg.A;
-                    segmentB = seg.B;
-                }
-            }
-
-            return found;
         }
 
         private static bool TryResolveQuarterViewEastBoundarySegmentOnLayer(
