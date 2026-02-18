@@ -1993,6 +1993,104 @@ namespace AtsBackgroundBuilder
                     return found;
                 }
 
+                // Exact midpoint anchor for regular horizontal boundaries (L-USEC/L-SEC/0/20).
+                // This intentionally excludes quarter-line/component targets so N-S regular LSD
+                // endpoints stay on the true midpoint of the boundary they already touch.
+                bool TryFindEndpointRegularHorizontalBoundaryMidpoint(
+                    Point2d endpoint,
+                    out double targetX,
+                    out double targetY,
+                    out int targetPriority)
+                {
+                    targetX = endpoint.X;
+                    targetY = endpoint.Y;
+                    targetPriority = int.MaxValue;
+                    if (horizontalMidpointTargetSegments.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    const double endpointYLineTol = 2.00;
+                    const double xSpanTol = 2.00;
+                    const double endpointOnSegmentTol = 0.75;
+                    const double maxMidpointShiftForPrimarySegments = 1200.0;
+                    const double maxMidpointShiftForComponentFallback = 80.0;
+                    var found = false;
+                    var bestPriority = int.MaxValue;
+                    var bestSegDistance = double.MaxValue;
+                    var bestYGap = double.MaxValue;
+                    var bestMove = double.MaxValue;
+                    for (var i = 0; i < horizontalMidpointTargetSegments.Count; i++)
+                    {
+                        var seg = horizontalMidpointTargetSegments[i];
+                        if (seg.Priority <= 0 || seg.Priority >= 3)
+                        {
+                            continue;
+                        }
+
+                        var segDistance = DistancePointToSegment(endpoint, seg.A, seg.B);
+                        if (segDistance > endpointOnSegmentTol)
+                        {
+                            continue;
+                        }
+
+                        var yLine = 0.5 * (seg.A.Y + seg.B.Y);
+                        var yAtEndpointX = yLine;
+                        var dx = seg.B.X - seg.A.X;
+                        if (Math.Abs(dx) > 1e-6)
+                        {
+                            var t = (endpoint.X - seg.A.X) / dx;
+                            if (t < 0.0) t = 0.0;
+                            if (t > 1.0) t = 1.0;
+                            yAtEndpointX = seg.A.Y + ((seg.B.Y - seg.A.Y) * t);
+                        }
+
+                        var yGap = Math.Abs(endpoint.Y - yAtEndpointX);
+                        if (yGap > endpointYLineTol)
+                        {
+                            continue;
+                        }
+
+                        var minX = Math.Min(seg.A.X, seg.B.X);
+                        var maxX = Math.Max(seg.A.X, seg.B.X);
+                        if (endpoint.X < (minX - xSpanTol) || endpoint.X > (maxX + xSpanTol))
+                        {
+                            continue;
+                        }
+
+                        var move = endpoint.GetDistanceTo(seg.Mid);
+                        var maxMidpointShift = seg.Priority >= 3
+                            ? maxMidpointShiftForComponentFallback
+                            : maxMidpointShiftForPrimarySegments;
+                        if (move > maxMidpointShift)
+                        {
+                            continue;
+                        }
+
+                        var better =
+                            !found ||
+                            seg.Priority < bestPriority ||
+                            (seg.Priority == bestPriority && segDistance < (bestSegDistance - 1e-6)) ||
+                            (seg.Priority == bestPriority && Math.Abs(segDistance - bestSegDistance) <= 1e-6 && yGap < (bestYGap - 1e-6)) ||
+                            (seg.Priority == bestPriority && Math.Abs(segDistance - bestSegDistance) <= 1e-6 && Math.Abs(yGap - bestYGap) <= 1e-6 && move < bestMove);
+                        if (!better)
+                        {
+                            continue;
+                        }
+
+                        found = true;
+                        bestPriority = seg.Priority;
+                        bestSegDistance = segDistance;
+                        bestYGap = yGap;
+                        bestMove = move;
+                        targetX = seg.Mid.X;
+                        targetY = seg.Mid.Y;
+                        targetPriority = seg.Priority;
+                    }
+
+                    return found;
+                }
+
                 bool TryResolveHorizontalQsecComponentMidpoint(Point2d endpoint, out double targetX, out double targetY)
                 {
                     targetX = endpoint.X;
@@ -4219,11 +4317,47 @@ namespace AtsBackgroundBuilder
                         var midEndX = p1.X;
                         var midStartY = p0.Y;
                         var midEndY = p1.Y;
+                        var hasStartRegularBoundaryMid = false;
+                        var hasEndRegularBoundaryMid = false;
 
-                        // Prefer exact segment midpoint resolution first; only fall back to
-                        // component-level midpoint when an endpoint cannot resolve exactly.
-                        hasStartMid = TryFindEndpointHorizontalMidpointX(p0, out midStartX, out midStartY, out _);
-                        hasEndMid = TryFindEndpointHorizontalMidpointX(p1, out midEndX, out midEndY, out _);
+                        // Prefer exact segment midpoint resolution on regular boundaries first;
+                        // only fall back to quarter/component midpoint logic when unresolved.
+                        if (!p0CorrectionAdjacentForMidpoint &&
+                            TryFindEndpointRegularHorizontalBoundaryMidpoint(
+                                p0,
+                                out var regularStartX,
+                                out var regularStartY,
+                                out _))
+                        {
+                            hasStartMid = true;
+                            midStartX = regularStartX;
+                            midStartY = regularStartY;
+                            hasStartRegularBoundaryMid = true;
+                        }
+
+                        if (!p1CorrectionAdjacentForMidpoint &&
+                            TryFindEndpointRegularHorizontalBoundaryMidpoint(
+                                p1,
+                                out var regularEndX,
+                                out var regularEndY,
+                                out _))
+                        {
+                            hasEndMid = true;
+                            midEndX = regularEndX;
+                            midEndY = regularEndY;
+                            hasEndRegularBoundaryMid = true;
+                        }
+
+                        if (!hasStartRegularBoundaryMid)
+                        {
+                            hasStartMid = TryFindEndpointHorizontalMidpointX(p0, out midStartX, out midStartY, out _);
+                        }
+
+                        if (!hasEndRegularBoundaryMid)
+                        {
+                            hasEndMid = TryFindEndpointHorizontalMidpointX(p1, out midEndX, out midEndY, out _);
+                        }
+
                         if (!hasStartMid)
                         {
                             hasStartMid = TryResolveHorizontalQsecComponentMidpoint(p0, out midStartX, out midStartY);

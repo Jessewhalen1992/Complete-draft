@@ -17,3 +17,8 @@
 - [x] Rebuild Release to confirm compile safety after follow-up adjustment.
 - [x] Extend `32 <-> 5` mapping to include both range variants so `58-19-5` can include `5-59-18-5`.
 - [x] Isolate forced correction-context sections from correction-line seam/LSD scope to avoid side effects.
+
+## Follow-up (LSD Midpoints)
+
+- [x] Prioritize exact regular-boundary (`L-SEC`/`L-USEC`/0/20) midpoint targets for vertical LSD endpoints before quarter/component midpoint fallbacks.
+- [x] Rebuild Release to confirm compile safety after midpoint-priority adjustment.
