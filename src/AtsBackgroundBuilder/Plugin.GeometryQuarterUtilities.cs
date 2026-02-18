@@ -109,7 +109,7 @@ namespace AtsBackgroundBuilder
                 if (touchesWest && touchesSouth) AddTownship(rangeNum + 1, townshipNum - 1);
                 if (touchesEast && touchesNorth) AddTownship(rangeNum - 1, townshipNum + 1);
                 if (touchesEast && touchesSouth) AddTownship(rangeNum - 1, townshipNum - 1);
-                }
+            }
 
             return keys;
         }

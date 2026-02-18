@@ -1016,6 +1016,85 @@ namespace AtsBackgroundBuilder
                 true);
         }
 
+        private static List<SectionKey> BuildForcedCorrectionContextSections(IReadOnlyList<SectionRequest> requests)
+        {
+            var forcedSections = new List<SectionKey>();
+            if (requests == null || requests.Count == 0)
+            {
+                return forcedSections;
+            }
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bool IsOnCorrectionCadence(int townshipCandidate)
+            {
+                if (townshipCandidate <= 0)
+                {
+                    return false;
+                }
+
+                const int cadenceAnchorTownship = 58;
+                var mod = (townshipCandidate - cadenceAnchorTownship) % 4;
+                if (mod < 0)
+                {
+                    mod += 4;
+                }
+
+                return mod == 0;
+            }
+
+            void AddForced(int zone, int section, int township, int range, string meridian)
+            {
+                if (section <= 0 || township <= 0 || range <= 0)
+                {
+                    return;
+                }
+
+                var key = new SectionKey(
+                    zone,
+                    section.ToString(CultureInfo.InvariantCulture),
+                    township.ToString(CultureInfo.InvariantCulture),
+                    range.ToString(CultureInfo.InvariantCulture),
+                    meridian);
+                var keyId = BuildSectionKeyId(key);
+                if (!seen.Add(keyId))
+                {
+                    return;
+                }
+
+                forcedSections.Add(key);
+            }
+
+            foreach (var request in requests)
+            {
+                if (request == null ||
+                    !TryParsePositiveToken(request.Key.Range, out var rangeNum) ||
+                    !TryParsePositiveToken(request.Key.Township, out var townshipNum))
+                {
+                    continue;
+                }
+
+                var sectionNumber = ParseSectionNumber(request.Key.Section);
+                if (sectionNumber == 36 && IsOnCorrectionCadence(townshipNum))
+                {
+                    AddForced(request.Key.Zone, 6, townshipNum + 1, rangeNum - 1, request.Key.Meridian);
+                }
+                else if (sectionNumber == 31 && IsOnCorrectionCadence(townshipNum))
+                {
+                    AddForced(request.Key.Zone, 1, townshipNum + 1, rangeNum + 1, request.Key.Meridian);
+                }
+                else if (sectionNumber == 6 && IsOnCorrectionCadence(townshipNum - 1))
+                {
+                    AddForced(request.Key.Zone, 36, townshipNum - 1, rangeNum + 1, request.Key.Meridian);
+                }
+                else if (sectionNumber == 1 && IsOnCorrectionCadence(townshipNum - 1))
+                {
+                    AddForced(request.Key.Zone, 31, townshipNum - 1, rangeNum - 1, request.Key.Meridian);
+                }
+            }
+
+            return forcedSections;
+        }
+
         private static List<ObjectId> DrawAdjoiningSectionsForContext(
             Database database,
             IReadOnlyList<string> searchFolders,
@@ -1089,7 +1168,21 @@ namespace AtsBackgroundBuilder
                 requests.Select(r => BuildSectionKeyId(r.Key)),
                 StringComparer.OrdinalIgnoreCase);
 
-            var townshipKeys = BuildContextTownshipKeys(requests).ToList();
+            var forcedCorrectionContextSections = BuildForcedCorrectionContextSections(requests);
+            var forcedCorrectionContextSectionKeyIds = new HashSet<string>(
+                forcedCorrectionContextSections.Select(BuildSectionKeyId),
+                StringComparer.OrdinalIgnoreCase);
+            var townshipKeySet = BuildContextTownshipKeys(requests);
+            foreach (var forcedSection in forcedCorrectionContextSections)
+            {
+                townshipKeySet.Add(BuildTownshipKey(forcedSection));
+            }
+
+            var townshipKeys = townshipKeySet.ToList();
+            if (forcedCorrectionContextSectionKeyIds.Count > 0)
+            {
+                logger?.WriteLine($"Context correction-force: sections={forcedCorrectionContextSectionKeyIds.Count}");
+            }
 
             var processedSections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             using (var tr = database.TransactionManager.StartTransaction())
@@ -1110,6 +1203,7 @@ namespace AtsBackgroundBuilder
                     {
                         var key = new SectionKey(zone, section.ToString(CultureInfo.InvariantCulture), township, range, meridian);
                         var keyId = BuildSectionKeyId(key);
+                        var forceIncludeCorrectionContext = forcedCorrectionContextSectionKeyIds.Contains(keyId);
                         if (requestedSectionKeys.Contains(keyId) || !processedSections.Add(keyId))
                         {
                             continue;
@@ -1133,7 +1227,8 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
 
-                            if (requestedGridKeys.Count > 0 &&
+                            if (!forceIncludeCorrectionContext &&
+                                requestedGridKeys.Count > 0 &&
                                 TryParsePositiveToken(range, out var rangeNum) &&
                                 TryParsePositiveToken(township, out var townshipNum) &&
                                 TryGetAtsSectionGridPosition(section, out var row, out var col))
@@ -1617,6 +1712,7 @@ namespace AtsBackgroundBuilder
                             anchors = GetFallbackAnchors(poly);
                         }
 
+                        var keyId = BuildSectionKeyId(sectionKey);
                         var eastUnit = GetUnitVector(anchors.Left, anchors.Right, new Vector2d(1, 0));
                         var northUnit = GetUnitVector(anchors.Bottom, anchors.Top, new Vector2d(0, 1));
                         if (!TryGetQuarterCorner(poly, eastUnit, northUnit, QuarterCorner.SouthWest, out var sw) ||
@@ -1664,7 +1760,7 @@ namespace AtsBackgroundBuilder
                         }
 
                         geoms.Add((
-                            BuildSectionKeyId(sectionKey),
+                            keyId,
                             BuildSectionDescriptor(sectionKey),
                             sw, se, nw, ne,
                             anchors.Left, anchors.Right, anchors.Top, anchors.Bottom,
@@ -1745,6 +1841,28 @@ namespace AtsBackgroundBuilder
                 logger?.WriteLine($"RA-DIAG selection: requested={selectedSectionKeyIds.Count}, local={localKeyIds.Count}, clipWindow={clipWindowKeyIds.Count}, active={selectedOrLocalKeyIds.Count}");
             }
 
+            bool IsTargetCorrectionPairLabel(string label)
+            {
+                if (string.IsNullOrWhiteSpace(label))
+                {
+                    return false;
+                }
+
+                return label.IndexOf("36-58-20-W.5M.", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                       label.IndexOf("6-59-19-W.5M.", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+
+            bool IsTargetCorrectionPair(string leftLabel, string rightLabel)
+            {
+                return IsTargetCorrectionPairLabel(leftLabel) &&
+                       IsTargetCorrectionPairLabel(rightLabel);
+            }
+
+            string ResolveRoadAllowanceOutputLayer(string layerName)
+            {
+                return NormalizeSecType(layerName);
+            }
+
             var seenSpecs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             void AddSpec(Point2d s, Point2d e, string tag, string keyA, string keyB, bool verticalMode, string sourceLayer)
             {
@@ -1770,9 +1888,10 @@ namespace AtsBackgroundBuilder
                 if (!seenSpecs.Add(dedupeKey))
                     return;
 
-                offsetSpecs.Add((s, e, tag, NormalizeSecType(sourceLayer)));
+                var resolvedLayer = ResolveRoadAllowanceOutputLayer(sourceLayer);
+                offsetSpecs.Add((s, e, tag, resolvedLayer));
                 if (EnableRoadAllowanceDiagnostics)
-                    logger?.WriteLine($"RA-DIAG ADD {tag}: layer={NormalizeSecType(sourceLayer)} A=({s.X:0.###},{s.Y:0.###}) B=({e.X:0.###},{e.Y:0.###})");
+                    logger?.WriteLine($"RA-DIAG ADD {tag}: layer={resolvedLayer} A=({s.X:0.###},{s.Y:0.###}) B=({e.X:0.###},{e.Y:0.###})");
             }
 
             void TryAddFromPair(
@@ -1794,6 +1913,7 @@ namespace AtsBackgroundBuilder
             {
                 double? gapP1 = null;
                 double? gapP2 = null;
+                var traceTargetPair = IsTargetCorrectionPair(baseLabel, otherLabel);
 
                 void TryAddQuarterOffsetSegment(
                     Point2d b0,
@@ -1816,8 +1936,15 @@ namespace AtsBackgroundBuilder
 
                     var baseU = baseDir / baseLen;
                     var otherU = otherDir / otherLen;
-                    if (Math.Abs(baseU.DotProduct(otherU)) < 0.99)
+                    var dot = Math.Abs(baseU.DotProduct(otherU));
+                    var parallelDotThreshold = 0.99;
+                    if (dot < parallelDotThreshold)
                     {
+                        if (traceTargetPair)
+                        {
+                            logger?.WriteLine($"RA-TGT reject parallel {baseLabel}/{otherLabel} {part}: dot={dot:0.###} threshold={parallelDotThreshold:0.###}");
+                        }
+
                         return;
                     }
 
@@ -1830,6 +1957,11 @@ namespace AtsBackgroundBuilder
                         otherLen = otherDir.Length;
                         if (otherLen <= 1e-6)
                         {
+                            if (traceTargetPair)
+                            {
+                                logger?.WriteLine($"RA-TGT reject reverse-len {baseLabel}/{otherLabel} {part}: otherLen<=1e-6");
+                            }
+
                             return;
                         }
                     }
@@ -1855,8 +1987,17 @@ namespace AtsBackgroundBuilder
 
                     var overlapLength = overlapMax - overlapMin;
                     var minEdgeLength = Math.Min(baseLen, otherLen);
-                    if (overlapLength < Math.Max(100.0, minEdgeLength * 0.75))
+                    var minRequiredOverlap = Math.Max(100.0, minEdgeLength * 0.75);
+                    if (overlapLength < minRequiredOverlap)
                     {
+                        if (traceTargetPair)
+                        {
+                            logger?.WriteLine(
+                                $"RA-TGT reject overlap {baseLabel}/{otherLabel} {part}: " +
+                                $"overlap={overlapLength:0.###} minReq={minRequiredOverlap:0.###} " +
+                                $"baseLen={baseLen:0.###} otherLen={otherLen:0.###}");
+                        }
+
                         return;
                     }
 
@@ -1873,6 +2014,11 @@ namespace AtsBackgroundBuilder
                     var otherLen2 = otherDir.DotProduct(otherDir);
                     if (otherLen2 <= 1e-9)
                     {
+                        if (traceTargetPair)
+                        {
+                            logger?.WriteLine($"RA-TGT reject otherLen2 {baseLabel}/{otherLabel} {part}: otherLen2<=1e-9");
+                        }
+
                         return;
                     }
 
@@ -1895,11 +2041,25 @@ namespace AtsBackgroundBuilder
 
                     if (Math.Abs(gap - RoadAllowanceSecWidthMeters) <= RoadAllowanceWidthToleranceMeters)
                     {
+                        if (traceTargetPair)
+                        {
+                            logger?.WriteLine(
+                                $"RA-TGT reject gap20 {baseLabel}/{otherLabel} {part}: gap={gap:0.###} " +
+                                $"target20={RoadAllowanceSecWidthMeters:0.###} tol={RoadAllowanceWidthToleranceMeters:0.###}");
+                        }
+
                         return;
                     }
 
                     if (Math.Abs(gap - RoadAllowanceUsecWidthMeters) > RoadAllowanceGapOffsetToleranceMeters)
                     {
+                        if (traceTargetPair)
+                        {
+                            logger?.WriteLine(
+                                $"RA-TGT reject gap30 {baseLabel}/{otherLabel} {part}: gap={gap:0.###} " +
+                                $"target30={RoadAllowanceUsecWidthMeters:0.###} tol={RoadAllowanceGapOffsetToleranceMeters:0.###}");
+                        }
+
                         return;
                     }
 
@@ -1907,6 +2067,12 @@ namespace AtsBackgroundBuilder
                     var offsetEnd = clippedBaseEnd + (normal * RoadAllowanceSecWidthMeters);
                     var tag = $"{(verticalMode ? "V" : "H")} {baseLabel}/{otherLabel} {part} gap={gap:0.###}";
                     AddSpec(offsetStart, offsetEnd, tag, baseKey, otherKey, verticalMode, sourceLayer);
+                    if (traceTargetPair)
+                    {
+                        logger?.WriteLine(
+                            $"RA-TGT add {baseLabel}/{otherLabel} {part}: " +
+                            $"gap={gap:0.###} A=({offsetStart.X:0.###},{offsetStart.Y:0.###}) B=({offsetEnd.X:0.###},{offsetEnd.Y:0.###})");
+                    }
                 }
 
                 // Per-half layer attribution avoids one quarter forcing the sibling quarter.
@@ -1957,6 +2123,19 @@ namespace AtsBackgroundBuilder
                 return geomIndexByGrid.TryGetValue(key, out index);
             }
 
+            bool IsNeighborGeometryCompatible(
+                (string KeyId, string Label, Point2d SW, Point2d SE, Point2d NW, Point2d NE, Point2d LeftMid, Point2d RightMid, Point2d TopMid, Point2d BottomMid, Point2d Center, int Zone, string Meridian, int GlobalX, int GlobalY, string SouthEdgeLayer, string EastEdgeLayer, string NorthEdgeLayer, string WestEdgeLayer, string SwQuarterLayer, string SeQuarterLayer, string NeQuarterLayer, string NwQuarterLayer, bool IntersectsClipWindow) a,
+                (string KeyId, string Label, Point2d SW, Point2d SE, Point2d NW, Point2d NE, Point2d LeftMid, Point2d RightMid, Point2d TopMid, Point2d BottomMid, Point2d Center, int Zone, string Meridian, int GlobalX, int GlobalY, string SouthEdgeLayer, string EastEdgeLayer, string NorthEdgeLayer, string WestEdgeLayer, string SwQuarterLayer, string SeQuarterLayer, string NeQuarterLayer, string NwQuarterLayer, bool IntersectsClipWindow) b,
+                double spanMultiplier = 1.8)
+            {
+                var centerDx = b.Center.X - a.Center.X;
+                var centerDy = b.Center.Y - a.Center.Y;
+                var centerDistance = Math.Sqrt((centerDx * centerDx) + (centerDy * centerDy));
+                var spanA = Math.Max((a.SE - a.SW).Length, (a.NW - a.SW).Length);
+                var spanB = Math.Max((b.SE - b.SW).Length, (b.NW - b.SW).Length);
+                return centerDistance <= (Math.Max(spanA, spanB) * spanMultiplier);
+            }
+
             bool IsNeighborPairEligible(
                 (string KeyId, string Label, Point2d SW, Point2d SE, Point2d NW, Point2d NE, Point2d LeftMid, Point2d RightMid, Point2d TopMid, Point2d BottomMid, Point2d Center, int Zone, string Meridian, int GlobalX, int GlobalY, string SouthEdgeLayer, string EastEdgeLayer, string NorthEdgeLayer, string WestEdgeLayer, string SwQuarterLayer, string SeQuarterLayer, string NeQuarterLayer, string NwQuarterLayer, bool IntersectsClipWindow) a,
                 (string KeyId, string Label, Point2d SW, Point2d SE, Point2d NW, Point2d NE, Point2d LeftMid, Point2d RightMid, Point2d TopMid, Point2d BottomMid, Point2d Center, int Zone, string Meridian, int GlobalX, int GlobalY, string SouthEdgeLayer, string EastEdgeLayer, string NorthEdgeLayer, string WestEdgeLayer, string SwQuarterLayer, string SeQuarterLayer, string NeQuarterLayer, string NwQuarterLayer, bool IntersectsClipWindow) b)
@@ -1967,12 +2146,7 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
-                var centerDx = b.Center.X - a.Center.X;
-                var centerDy = b.Center.Y - a.Center.Y;
-                var centerDistance = Math.Sqrt((centerDx * centerDx) + (centerDy * centerDy));
-                var spanA = Math.Max((a.SE - a.SW).Length, (a.NW - a.SW).Length);
-                var spanB = Math.Max((b.SE - b.SW).Length, (b.NW - b.SW).Length);
-                return centerDistance <= (Math.Max(spanA, spanB) * 1.8);
+                return IsNeighborGeometryCompatible(a, b);
             }
 
             for (var i = 0; i < geoms.Count; i++)
@@ -2078,7 +2252,7 @@ namespace AtsBackgroundBuilder
                         CultureInfo.InvariantCulture,
                         "{0:0.###},{1:0.###},{2:0.###},{3:0.###}|{4}",
                         p0.X, p0.Y, p1.X, p1.Y,
-                        NormalizeSecType(seg.Layer));
+                        ResolveRoadAllowanceOutputLayer(seg.Layer));
                     if (!drawnSegmentKeys.Add(key))
                     {
                         continue;
@@ -2104,7 +2278,7 @@ namespace AtsBackgroundBuilder
                 }
 
                 var layersToEnsure = alignedSegments
-                    .Select(s => NormalizeSecType(s.Layer))
+                    .Select(s => ResolveRoadAllowanceOutputLayer(s.Layer))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
                 if (layersToEnsure.Count == 0)
@@ -2121,7 +2295,7 @@ namespace AtsBackgroundBuilder
                 {
                     var poly = new Polyline(2)
                     {
-                        Layer = NormalizeSecType(seg.Layer),
+                        Layer = ResolveRoadAllowanceOutputLayer(seg.Layer),
                         ColorIndex = 256
                     };
                     poly.AddVertexAt(0, seg.A, 0, 0, 0);
