@@ -611,6 +611,7 @@ namespace AtsBackgroundBuilder
             var requestedSectionBoundaryIds = new HashSet<ObjectId>();
             var contextSectionIds = new HashSet<ObjectId>();
             var contextRuleSectionInfos = new List<QuarterLabelInfo>();
+            var correctionContextSectionInfos = new List<QuarterLabelInfo>();
             var contextSectionOutlineHelperIds = new List<ObjectId>();
             var sectionNumberById = new Dictionary<ObjectId, int>();
             var createdSections = new Dictionary<string, SectionBuildResult>(StringComparer.OrdinalIgnoreCase);
@@ -749,7 +750,8 @@ namespace AtsBackgroundBuilder
                 inferredQuarterSecTypes,
                 logger,
                 contextRuleSectionInfos,
-                contextSectionOutlineHelperIds))
+                contextSectionOutlineHelperIds,
+                correctionContextSectionInfos))
             {
                 contextSectionIds.Add(id);
             }
@@ -847,7 +849,7 @@ namespace AtsBackgroundBuilder
                 .Where(info => info != null)
                 .ToList();
             var correctionLineSectionInfos = lsdQuarterInfos
-                .Concat(contextRuleSectionInfos)
+                .Concat(correctionContextSectionInfos)
                 .Where(info => info != null)
                 .ToList();
             ConnectUsecSeSouthTwentyTwelveLinesToEastOriginalBoundary(
@@ -1077,21 +1079,46 @@ namespace AtsBackgroundBuilder
                 }
 
                 var sectionNumber = ParseSectionNumber(request.Key.Section);
-                if (sectionNumber == 36 && IsOnCorrectionCadence(townshipNum))
+                var isAboveCorrectionLine = IsOnCorrectionCadence(townshipNum - 1);
+                var isBelowCorrectionLine = IsOnCorrectionCadence(townshipNum);
+
+                if (isAboveCorrectionLine)
                 {
-                    AddForced(request.Key.Zone, 6, townshipNum + 1, rangeNum - 1, request.Key.Meridian);
+                    // Above correction line: shifted township below can require cross-range context.
+                    // Example: 6-59-18-5 needs 35-58-19-5.
+                    if (sectionNumber == 6)
+                    {
+                        AddForced(request.Key.Zone, 35, townshipNum - 1, rangeNum + 1, request.Key.Meridian);
+                    }
+                    // Symmetric seam partner for opposite-direction builds.
+                    else if (sectionNumber == 5)
+                    {
+                        AddForced(request.Key.Zone, 32, townshipNum - 1, rangeNum, request.Key.Meridian);
+                        AddForced(request.Key.Zone, 32, townshipNum - 1, rangeNum + 1, request.Key.Meridian);
+                    }
+                    // Example: 1-59-18-5 needs 36-58-18-5.
+                    else if (sectionNumber == 1)
+                    {
+                        AddForced(request.Key.Zone, 36, townshipNum - 1, rangeNum, request.Key.Meridian);
+                    }
                 }
-                else if (sectionNumber == 31 && IsOnCorrectionCadence(townshipNum))
+
+                if (isBelowCorrectionLine)
                 {
-                    AddForced(request.Key.Zone, 1, townshipNum + 1, rangeNum + 1, request.Key.Meridian);
-                }
-                else if (sectionNumber == 6 && IsOnCorrectionCadence(townshipNum - 1))
-                {
-                    AddForced(request.Key.Zone, 36, townshipNum - 1, rangeNum + 1, request.Key.Meridian);
-                }
-                else if (sectionNumber == 1 && IsOnCorrectionCadence(townshipNum - 1))
-                {
-                    AddForced(request.Key.Zone, 31, townshipNum - 1, rangeNum - 1, request.Key.Meridian);
+                    // Below correction line: apply the inverse mapping toward the township above.
+                    if (sectionNumber == 32)
+                    {
+                        AddForced(request.Key.Zone, 5, townshipNum + 1, rangeNum, request.Key.Meridian);
+                        AddForced(request.Key.Zone, 5, townshipNum + 1, rangeNum - 1, request.Key.Meridian);
+                    }
+                    else if (sectionNumber == 35)
+                    {
+                        AddForced(request.Key.Zone, 6, townshipNum + 1, rangeNum - 1, request.Key.Meridian);
+                    }
+                    else if (sectionNumber == 36)
+                    {
+                        AddForced(request.Key.Zone, 1, townshipNum + 1, rangeNum, request.Key.Meridian);
+                    }
                 }
             }
 
@@ -1107,7 +1134,8 @@ namespace AtsBackgroundBuilder
             IReadOnlyDictionary<string, string> inferredQuarterSecTypes,
             Logger logger,
             List<QuarterLabelInfo>? contextRuleSectionInfos = null,
-            List<ObjectId>? contextSectionOutlineHelperIds = null)
+            List<ObjectId>? contextSectionOutlineHelperIds = null,
+            List<QuarterLabelInfo>? correctionRuleSectionInfos = null)
         {
             var drawnIds = new List<ObjectId>();
             if (database == null || searchFolders == null || requests == null || requestedQuarterIds == null)
@@ -1289,12 +1317,17 @@ namespace AtsBackgroundBuilder
                             var helperSectionId = modelSpace.AppendEntity(helperSection);
                             tr.AddNewlyCreatedDBObject(helperSection, true);
                             contextSectionOutlineHelperIds?.Add(helperSectionId);
-                            contextRuleSectionInfos?.Add(new QuarterLabelInfo(
+                            var contextInfo = new QuarterLabelInfo(
                                 helperSectionId,
                                 key,
                                 QuarterSelection.SouthEast,
                                 secType,
-                                helperSectionId));
+                                helperSectionId);
+                            contextRuleSectionInfos?.Add(contextInfo);
+                            if (!forceIncludeCorrectionContext)
+                            {
+                                correctionRuleSectionInfos?.Add(contextInfo);
+                            }
 
                             foreach (var id in DrawSectionBoundaryQuarterSegmentPolylines(
                                 modelSpace,
