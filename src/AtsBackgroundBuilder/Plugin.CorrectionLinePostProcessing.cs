@@ -131,9 +131,14 @@ namespace AtsBackgroundBuilder
             }
 
             var anchorSummary = new List<string> { $"{selectedAnchorTownship}:{selectedAnchorMatches}" };
-            var useCadenceFilter = selectedAnchorMatches > 0;
+            const bool useCadenceFilter = true;
             logger?.WriteLine(
                 $"CorrectionLine: cadence anchor evaluation [{string.Join(", ", anchorSummary)}], selected={selectedAnchorTownship}, useCadenceFilter={useCadenceFilter}, sectionsInScope={sectionMetaById.Count}, parseTownshipFailed={parseTownshipFailed}, parseRangeFailed={parseRangeFailed}, parseSectionFailed={parseSectionFailed}.");
+            if (selectedAnchorMatches == 0)
+            {
+                logger?.WriteLine("CorrectionLine: skipped (no cadence-aligned seam sections in scope).");
+                return;
+            }
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -166,13 +171,10 @@ namespace AtsBackgroundBuilder
                     var sectionNumber = sectionMeta.SectionNumber;
                     var isNorthSeamSection = sectionNumber >= 1 && sectionNumber <= 6;
                     var isSouthSeamSection = sectionNumber >= 31 && sectionNumber <= 36;
-                    if (useCadenceFilter)
-                    {
-                        isNorthSeamSection = isNorthSeamSection &&
-                                             IsOnCorrectionCadence(townshipNumber - 1, selectedAnchorTownship);
-                        isSouthSeamSection = isSouthSeamSection &&
-                                             IsOnCorrectionCadence(townshipNumber, selectedAnchorTownship);
-                    }
+                    isNorthSeamSection = isNorthSeamSection &&
+                                         IsOnCorrectionCadence(townshipNumber - 1, selectedAnchorTownship);
+                    isSouthSeamSection = isSouthSeamSection &&
+                                         IsOnCorrectionCadence(townshipNumber, selectedAnchorTownship);
                     if (!isNorthSeamSection && !isSouthSeamSection)
                     {
                         continue;

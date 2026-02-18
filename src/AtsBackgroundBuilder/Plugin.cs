@@ -32,6 +32,8 @@ namespace AtsBackgroundBuilder
         private const string LayerUsecThirty = "L-USEC3018";
         private const string LayerUsecCorrection = "L-USEC-C";
         private const string LayerUsecCorrectionZero = "L-USEC-C-0";
+        private const string LayerQuarterView = "L-QUATER";
+        private const short QuarterViewLayerColorIndex = 30; // orange
         private const double RoadAllowanceUsecWidthMeters = SectionRules.RoadAllowanceUsecWidthMeters;
         private const double RoadAllowanceSecWidthMeters = SectionRules.RoadAllowanceSecWidthMeters;
         private const double SurveyedUnsurveyedThresholdMeters = SectionRules.SurveyedUnsurveyedThresholdMeters;
@@ -55,11 +57,29 @@ namespace AtsBackgroundBuilder
             string.Equals(Environment.GetEnvironmentVariable("ATSBUILD_EXPORT_GEOJSON"), "1", StringComparison.OrdinalIgnoreCase);
         private static readonly string CadGeoJsonExportPath =
             Environment.GetEnvironmentVariable("ATSBUILD_EXPORT_GEOJSON_PATH") ?? string.Empty;
+        private static readonly bool EnableQuarterViewByEnvironment =
+            IsAffirmativeToggle(Environment.GetEnvironmentVariable("QUATERVIEW")) ||
+            IsAffirmativeToggle(Environment.GetEnvironmentVariable("ATSBUILD_QUATERVIEW"));
         private static readonly object SectionOutlineCacheLock = new object();
         private static readonly object BufferedDefpointsWindowLock = new object();
         private static readonly Dictionary<string, SectionOutline?> SectionOutlineCache = new Dictionary<string, SectionOutline?>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, bool> FolderIndexCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         private static readonly HashSet<ObjectId> BufferedDefpointsWindowIds = new HashSet<ObjectId>();
+
+        private static bool IsAffirmativeToggle(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            var normalized = raw.Trim();
+            return string.Equals(normalized, "1", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "true", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "yes", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "on", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "y", StringComparison.OrdinalIgnoreCase);
+        }
 
         public void Initialize()
         {
@@ -98,6 +118,8 @@ namespace AtsBackgroundBuilder
             var configPath = Path.Combine(dllFolder, "Config.json");
             var config = Config.Load(configPath, logger);
             config.AllowMultiQuarterDispositions = true;
+            var drawQuarterView = IsAffirmativeToggle(config.Quaterview) || EnableQuarterViewByEnvironment;
+            logger.WriteLine($"Quarter view: {(drawQuarterView ? "ON" : "OFF")} (Config.Quaterview='{config.Quaterview}', envOverride={(EnableQuarterViewByEnvironment ? "ON" : "OFF")}).");
 
             var companyLookupPath = ResolveLookupPath(config.LookupFolder, config.CompanyLookupFile, dllFolder, "CompanyLookup.xlsx");
             var purposeLookupPath = ResolveLookupPath(config.LookupFolder, config.PurposeLookupFile, dllFolder, "PurposeLookup.xlsx");
@@ -174,7 +196,8 @@ namespace AtsBackgroundBuilder
                 input.SectionRequests,
                 config,
                 logger,
-                input.DrawLsdSubdivisionLines);
+                input.DrawLsdSubdivisionLines,
+                drawQuarterView);
             exitStage = "sections_built";
             var quarterPolylinesForLabelling = sectionDrawResult.LabelQuarterPolylineIds;
             if (quarterPolylinesForLabelling.Count == 0)
@@ -581,7 +604,8 @@ namespace AtsBackgroundBuilder
             List<SectionRequest> requests,
             Config config,
             Logger logger,
-            bool drawLsds)
+            bool drawLsds,
+            bool drawQuarterView)
         {
             var timer = Stopwatch.StartNew();
             if (logger == null)
@@ -672,7 +696,15 @@ namespace AtsBackgroundBuilder
                     resolvedQuarterSecTypes = ResolveQuarterSectionTypes(request.Key, resolvedSecType, inferredQuarterSecTypes);
                     // Draw LSD geometry in the final stage after road-allowance/section cleanup.
                     // This keeps LSD endpoint decisions deterministic against final hard boundaries.
-                    buildResult = DrawSectionFromIndex(editor, database, outline, request.Key, drawLsds: false, resolvedSecType, resolvedQuarterSecTypes);
+                    buildResult = DrawSectionFromIndex(
+                        editor,
+                        database,
+                        outline,
+                        request.Key,
+                        drawLsds: false,
+                        drawQuarterView: drawQuarterView,
+                        secType: resolvedSecType,
+                        quarterSecTypes: resolvedQuarterSecTypes);
                     createdSections[keyId] = buildResult;
                     createdSectionQuarterSecTypes[keyId] = resolvedQuarterSecTypes;
                     sectionIds.Add(buildResult.SectionPolylineId);
@@ -994,6 +1026,10 @@ namespace AtsBackgroundBuilder
             if (drawLsds)
             {
                 RebuildLsdLabelsAtFinalIntersections(database, lsdQuarterInfos, logger);
+            }
+            if (drawQuarterView)
+            {
+                DrawQuarterViewFromFinalRoadAllowanceGeometry(database, sectionIds, sectionNumberById, logger);
             }
             NormalizeCorrectionLayerEntityColorByLayer(database, logger);
             logger.WriteLine("Cleanup: final endpoint convergence pass complete.");

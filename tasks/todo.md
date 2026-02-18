@@ -22,3 +22,9 @@
 
 - [x] Prioritize exact regular-boundary (`L-SEC`/`L-USEC`/0/20) midpoint targets for vertical LSD endpoints before quarter/component midpoint fallbacks.
 - [x] Rebuild Release to confirm compile safety after midpoint-priority adjustment.
+
+## Feature (Quaterview)
+
+- [x] Add user toggle `Quaterview` (YES/NO) to control quarter-boundary visualization.
+- [x] Draw persistent quarter polygons on new orange layer `L-QUATER` when toggle is enabled.
+- [x] Rebuild Release to verify compile safety after feature addition.
