@@ -976,7 +976,6 @@ namespace AtsBackgroundBuilder
             if (drawLsds)
             {
                 EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
-                RebuildLsdLabelsAtFinalIntersections(database, lsdQuarterInfos, logger);
             }
             var restoredNearbySectionIds = RestoreStashedSectionBuildingGeometry(database, stashedNearbySectionEntities, logger);
             CleanupOverlappingSectionLinesByShortest(
@@ -990,6 +989,10 @@ namespace AtsBackgroundBuilder
                 requestedScopeIds,
                 drawLsds,
                 logger);
+            if (drawLsds)
+            {
+                RebuildLsdLabelsAtFinalIntersections(database, lsdQuarterInfos, logger);
+            }
             NormalizeCorrectionLayerEntityColorByLayer(database, logger);
             logger.WriteLine("Cleanup: final endpoint convergence pass complete.");
             logger.WriteLine($"TIMING DrawSectionsFromRequests: road allowances processed in {timer.ElapsedMilliseconds} ms");
