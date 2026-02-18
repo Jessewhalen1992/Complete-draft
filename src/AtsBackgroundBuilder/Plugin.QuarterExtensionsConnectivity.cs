@@ -1700,48 +1700,6 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
-                bool TryMoveEndpoint(Entity writable, Point2d oldEndpoint, Point2d newEndpoint)
-                {
-                    if (newEndpoint.GetDistanceTo(oldEndpoint) <= endpointMoveTol)
-                    {
-                        return false;
-                    }
-
-                    if (writable is Line ln)
-                    {
-                        var start = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                        var end = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                        if (start.GetDistanceTo(oldEndpoint) <= end.GetDistanceTo(oldEndpoint))
-                        {
-                            ln.StartPoint = new Point3d(newEndpoint.X, newEndpoint.Y, ln.StartPoint.Z);
-                        }
-                        else
-                        {
-                            ln.EndPoint = new Point3d(newEndpoint.X, newEndpoint.Y, ln.EndPoint.Z);
-                        }
-
-                        return true;
-                    }
-
-                    if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices == 2)
-                    {
-                        var p0 = pl.GetPoint2dAt(0);
-                        var p1 = pl.GetPoint2dAt(1);
-                        if (p0.GetDistanceTo(oldEndpoint) <= p1.GetDistanceTo(oldEndpoint))
-                        {
-                            pl.SetPointAt(0, newEndpoint);
-                        }
-                        else
-                        {
-                            pl.SetPointAt(1, newEndpoint);
-                        }
-
-                        return true;
-                    }
-
-                    return false;
-                }
-
                 bool TryAddConnectorSegment(Point2d from, Point2d to, string layerName)
                 {
                     if (to.GetDistanceTo(from) <= endpointMoveTol)
@@ -4197,6 +4155,9 @@ namespace AtsBackgroundBuilder
                     (lsdMidpointAdjustments.Count > 0 || lsdVerticalMidpointAdjustments.Count > 0) &&
                     lsdSegments.Count > 0)
                 {
+                    List<(ObjectId SectionId, Point2d SwCorner, Vector2d EastUnit, Vector2d NorthUnit, double Width, double Height, Extents3d Window)> owningSectionTargets = sectionTargets!;
+                    List<(ObjectId SectionId, Point2d OldA, Point2d OldB, Point2d OldMid, Point2d NewMid)> horizontalMidpointAdjustments = lsdMidpointAdjustments!;
+                    List<(ObjectId SectionId, Point2d OldA, Point2d OldB, Point2d OldMid, Point2d NewMid)> verticalMidpointAdjustments = lsdVerticalMidpointAdjustments!;
                     const double lsdOldSegmentTol = 2.0;
                     const double lsdOldMidpointTol = 45.0;
                     const double lsdFallbackOldMidpointTol = 90.0;
@@ -4213,9 +4174,9 @@ namespace AtsBackgroundBuilder
                         sectionIndex = -1;
                         var mid = Midpoint(a, b);
                         var bestDistance = double.MaxValue;
-                        for (var si = 0; si < sectionTargets.Count; si++)
+                        for (var si = 0; si < owningSectionTargets.Count; si++)
                         {
-                            var sectionTarget = sectionTargets[si];
+                            var sectionTarget = owningSectionTargets[si];
                             if (!DoesSegmentIntersectWindow(a, b, sectionTarget.Window) &&
                                 !IsPointInWindow(mid, sectionTarget.Window))
                             {
@@ -4253,15 +4214,15 @@ namespace AtsBackgroundBuilder
                     {
                         targetMidpoint = southEndpoint;
                         usedFallback = false;
-                        var sectionTarget = sectionTargets[sectionIndex];
+                        var sectionTarget = owningSectionTargets[sectionIndex];
                         var endpointV = (southEndpoint - sectionTarget.SwCorner).DotProduct(sectionTarget.NorthUnit);
 
                         var found = false;
                         var bestSouthDelta = double.MaxValue;
                         var bestMoveDistance = double.MaxValue;
-                        for (var i = 0; i < lsdMidpointAdjustments.Count; i++)
+                        for (var i = 0; i < horizontalMidpointAdjustments.Count; i++)
                         {
-                            var adj = lsdMidpointAdjustments[i];
+                            var adj = horizontalMidpointAdjustments[i];
                             if (adj.SectionId != sectionTarget.SectionId)
                             {
                                 continue;
@@ -4312,9 +4273,9 @@ namespace AtsBackgroundBuilder
                         }
 
                         // Fallback for noisy exploded LSD geometry: same section only, still southward-only.
-                        for (var i = 0; i < lsdMidpointAdjustments.Count; i++)
+                        for (var i = 0; i < horizontalMidpointAdjustments.Count; i++)
                         {
-                            var adj = lsdMidpointAdjustments[i];
+                            var adj = horizontalMidpointAdjustments[i];
                             if (adj.SectionId != sectionTarget.SectionId)
                             {
                                 continue;
@@ -4372,16 +4333,16 @@ namespace AtsBackgroundBuilder
                     {
                         targetMidpoint = westEndpoint;
                         usedFallback = false;
-                        var sectionTarget = sectionTargets[sectionIndex];
+                        var sectionTarget = owningSectionTargets[sectionIndex];
                         var endpointU = (westEndpoint - sectionTarget.SwCorner).DotProduct(sectionTarget.EastUnit);
 
                         var found = false;
                         var bestSegDistance = double.MaxValue;
                         var bestMidDistance = double.MaxValue;
                         var bestMoveDistance = double.MaxValue;
-                        for (var i = 0; i < lsdVerticalMidpointAdjustments.Count; i++)
+                        for (var i = 0; i < verticalMidpointAdjustments.Count; i++)
                         {
-                            var adj = lsdVerticalMidpointAdjustments[i];
+                            var adj = verticalMidpointAdjustments[i];
                             if (adj.SectionId != sectionTarget.SectionId)
                             {
                                 continue;
@@ -4434,9 +4395,9 @@ namespace AtsBackgroundBuilder
                             return true;
                         }
 
-                        for (var i = 0; i < lsdVerticalMidpointAdjustments.Count; i++)
+                        for (var i = 0; i < verticalMidpointAdjustments.Count; i++)
                         {
-                            var adj = lsdVerticalMidpointAdjustments[i];
+                            var adj = verticalMidpointAdjustments[i];
                             if (adj.SectionId != sectionTarget.SectionId)
                             {
                                 continue;

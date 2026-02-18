@@ -2667,9 +2667,6 @@ namespace AtsBackgroundBuilder
                 const double usecApparentYTol = 6.0;
                 const double tenOhSixStep = CorrectionLinePairGapMeters;
                 const double tenOhSixTol = 2.8;
-                const double thirtyEighteenStep = RoadAllowanceUsecWidthMeters;
-                const double twentyTwelveStep = 20.11;
-                const double corridorStepTol = 4.5;
                 const double lsdMidpointXTol = 1.50;
                 const double lsdMidpointYTol = 2.0;
                 const double lsdMaxMove = 80.0;

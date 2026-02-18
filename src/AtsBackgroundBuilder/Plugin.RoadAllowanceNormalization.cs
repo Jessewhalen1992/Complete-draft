@@ -571,16 +571,6 @@ namespace AtsBackgroundBuilder
                 return Math.Abs(d.X) >= Math.Abs(d.Y);
             }
 
-            bool HorizontalOverlaps((Point2d A, Point2d B) a, (Point2d A, Point2d B) b, double minOverlap)
-            {
-                var aMin = Math.Min(a.A.X, a.B.X);
-                var aMax = Math.Max(a.A.X, a.B.X);
-                var bMin = Math.Min(b.A.X, b.B.X);
-                var bMax = Math.Max(b.A.X, b.B.X);
-                var overlap = Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
-                return overlap >= minOverlap;
-            }
-
             bool IsSeamLayer(string layer)
             {
                 if (string.IsNullOrWhiteSpace(layer))
@@ -671,6 +661,16 @@ namespace AtsBackgroundBuilder
                 const double candidateMaxLen = 140.0;
                 const double neighborAxisTol = 0.80;
                 const double neighborOverlapMin = 8.0;
+
+                bool HorizontalOverlaps((Point2d A, Point2d B) a, (Point2d A, Point2d B) b, double minOverlap)
+                {
+                    var aMin = Math.Min(a.A.X, a.B.X);
+                    var aMax = Math.Max(a.A.X, a.B.X);
+                    var bMin = Math.Min(b.A.X, b.B.X);
+                    var bMax = Math.Max(b.A.X, b.B.X);
+                    var overlap = Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
+                    return overlap >= minOverlap;
+                }
 
                 (bool SecLeft, bool SecRight, bool UsecLeft, bool UsecRight) AnalyzeNeighbors(int index)
                 {
@@ -957,16 +957,6 @@ namespace AtsBackgroundBuilder
             {
                 var d = b - a;
                 return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool HorizontalOverlaps((Point2d A, Point2d B) a, (Point2d A, Point2d B) b, double minOverlap)
-            {
-                var aMin = Math.Min(a.A.X, a.B.X);
-                var aMax = Math.Max(a.A.X, a.B.X);
-                var bMin = Math.Min(b.A.X, b.B.X);
-                var bMax = Math.Max(b.A.X, b.B.X);
-                var overlap = Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
-                return overlap >= minOverlap;
             }
 
             bool IsSeamLayer(string layer)

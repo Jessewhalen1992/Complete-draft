@@ -1209,7 +1209,7 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!TryLoadSectionOutline(searchFolders, key, logger, out var outline))
+                        if (!TryLoadSectionOutline(searchFolders, key, logger!, out var outline))
                         {
                             continue;
                         }
@@ -4945,18 +4945,6 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
-            }
-
             bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
             {
                 if (writable is Line ln)
@@ -5461,18 +5449,6 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
-            }
-
             bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
             {
                 if (writable is Line ln)
@@ -5896,18 +5872,6 @@ namespace AtsBackgroundBuilder
                 }
 
                 return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
             }
 
             bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
