@@ -48,6 +48,10 @@ namespace AtsBackgroundBuilder
                 {
                     EraseEntities(database, dispositionPolylineIds, logger, "disposition linework");
                 }
+
+                // Helper construction geometry should never ship in the final drawing.
+                EraseEntitiesOnLayer(database, "L-QSEC-BOX", logger, "L-QSEC-BOX helper");
+                TryDeleteLayer(database, "L-QSEC-BOX", logger);
             }
             catch (System.Exception ex)
             {
@@ -90,6 +94,116 @@ namespace AtsBackgroundBuilder
                 {
                     logger?.WriteLine($"Cleanup: erased {erased} {label} entities");
                 }
+            }
+        }
+
+        private static void EraseEntitiesOnLayer(Database database, string layerName, Logger logger, string label)
+        {
+            if (database == null || string.IsNullOrWhiteSpace(layerName))
+            {
+                return;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                var erased = 0;
+
+                foreach (ObjectId id in modelSpace)
+                {
+                    Entity? entity;
+                    try
+                    {
+                        entity = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (entity == null || entity.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(entity.Layer, layerName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        entity.Erase(true);
+                        erased++;
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                tr.Commit();
+                if (erased > 0)
+                {
+                    logger?.WriteLine($"Cleanup: erased {erased} {label} entities by layer");
+                }
+            }
+        }
+
+        private static void TryDeleteLayer(Database database, string layerName, Logger logger)
+        {
+            if (database == null || string.IsNullOrWhiteSpace(layerName))
+            {
+                return;
+            }
+
+            try
+            {
+                using (var tr = database.TransactionManager.StartTransaction())
+                {
+                    var layerTable = (LayerTable)tr.GetObject(database.LayerTableId, OpenMode.ForRead);
+                    if (!layerTable.Has(layerName))
+                    {
+                        tr.Commit();
+                        return;
+                    }
+
+                    var layerId = layerTable[layerName];
+                    if (database.Clayer == layerId && layerTable.Has("0"))
+                    {
+                        database.Clayer = layerTable["0"];
+                    }
+
+                    var purgeCandidates = new ObjectIdCollection();
+                    purgeCandidates.Add(layerId);
+                    database.Purge(purgeCandidates);
+                    if (purgeCandidates.Count == 0)
+                    {
+                        tr.Commit();
+                        logger?.WriteLine($"Cleanup: helper layer {layerName} retained (still referenced).");
+                        return;
+                    }
+
+                    var layer = tr.GetObject(layerId, OpenMode.ForWrite, false) as LayerTableRecord;
+                    if (layer == null || layer.IsErased || layer.IsDependent)
+                    {
+                        tr.Commit();
+                        return;
+                    }
+
+                    if (layer.IsLocked)
+                    {
+                        layer.IsLocked = false;
+                    }
+
+                    layer.Erase(true);
+                    tr.Commit();
+                    logger?.WriteLine($"Cleanup: deleted helper layer {layerName}.");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine($"Cleanup: unable to delete layer {layerName}: {ex.Message}");
             }
         }
 
@@ -355,8 +469,7 @@ namespace AtsBackgroundBuilder
                 string.Equals(normalized, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(normalized, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(normalized, "L-QSEC", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(normalized, "L-SECTION-LSD", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(normalized, "L-QSEC-BOX", StringComparison.OrdinalIgnoreCase);
+                string.Equals(normalized, "L-SECTION-LSD", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string NormalizeCadDiagnosticLayerName(string layer)
