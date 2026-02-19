@@ -140,20 +140,18 @@ namespace AtsBackgroundBuilder
                     clientNames = companyLookup.Values;
                 }
 
-                using (var form = new AtsBuildForm(clientNames, config))
+                var window = new AtsBuildWindow(clientNames, config);
+                var dr = window.ShowDialog();
+                if (dr != true || window.Result == null)
                 {
-                    var dr = form.ShowDialog();
-                    if (dr != System.Windows.Forms.DialogResult.OK || form.Result == null)
-                    {
-                        exitStage = "ui_cancelled";
-                        editor.WriteMessage("\nATSBUILD cancelled.");
-                        EmitExit("cancelled");
-                        logger.Dispose();
-                        return;
-                    }
-
-                    input = form.Result;
+                    exitStage = "ui_cancelled";
+                    editor.WriteMessage("\nATSBUILD cancelled.");
+                    EmitExit("cancelled");
+                    logger.Dispose();
+                    return;
                 }
+
+                input = window.Result;
             }
             catch (System.Exception ex)
             {

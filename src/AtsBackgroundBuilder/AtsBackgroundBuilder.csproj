@@ -10,6 +10,7 @@
     <Prefer32Bit>false</Prefer32Bit>
     <DefineConstants>NET8_0_WINDOWS;$(DefineConstants)</DefineConstants>
     <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
   </PropertyGroup>
 
