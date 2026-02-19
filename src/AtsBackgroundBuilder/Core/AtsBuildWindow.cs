@@ -211,8 +211,8 @@ namespace AtsBackgroundBuilder.Core
             numericStack.Children.Add(_maxAttemptsBox);
             settingsGrid.Children.Add(numericStack);
 
-            ConfigureOptionCheckBox(_includeDispoLinework, "Disposition linework", true);
-            ConfigureOptionCheckBox(_includeDispoLabels, "Disposition labels", true);
+            ConfigureOptionCheckBox(_includeDispoLinework, "Disposition linework", false);
+            ConfigureOptionCheckBox(_includeDispoLabels, "Disposition labels", false);
             ConfigureOptionCheckBox(_includeAtsFabric, "ATS fabric", false);
             ConfigureOptionCheckBox(_includeLsds, "LSDs", false);
             ConfigureOptionCheckBox(_includeP3Shapes, "Include P3 Shapes", false);

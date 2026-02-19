@@ -8088,6 +8088,16 @@ namespace AtsBackgroundBuilder
                         targetLayer = LayerUsecZero;
                         preservedTwentyByZeroCompanion++;
                     }
+                    else if (string.Equals(targetLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) &&
+                             !string.Equals(existingCanonicalLayer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) &&
+                             HasParallelZeroCompanionAtTwentyOffset(si))
+                    {
+                        // Geometric invariant:
+                        // a segment with a same-orientation zero companion at 20.12m cannot be
+                        // the 30.16 outer boundary; classify as 20.12 instead.
+                        targetLayer = LayerUsecTwenty;
+                        preservedTwentyByZeroCompanion++;
+                    }
 
                     if (string.Equals(existingCanonicalLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) &&
                         string.Equals(targetLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) &&

@@ -26,8 +26,8 @@ namespace AtsBackgroundBuilder.Core
         /// <summary>
         /// When false, imported disposition linework is removed at cleanup.
         /// </summary>
-        public bool IncludeDispositionLinework { get; set; } = true;
-        public bool IncludeDispositionLabels { get; set; } = true;
+        public bool IncludeDispositionLinework { get; set; } = false;
+        public bool IncludeDispositionLabels { get; set; } = false;
         public bool IncludeQuarterSectionLabels { get; set; } = false;
         public bool UseAlignedDimensions { get; set; } = false;
 
@@ -330,8 +330,8 @@ namespace AtsBackgroundBuilder.Core
             numericStack.Controls.Add(CreateFieldLabel("Max Overlap Attempts"), 0, 2);
             numericStack.Controls.Add(_maxAttempts, 0, 3);
 
-            ConfigureOptionCheckBox(_includeDispoLinework, "Disposition linework", true);
-            ConfigureOptionCheckBox(_includeDispoLabels, "Disposition labels", true);
+            ConfigureOptionCheckBox(_includeDispoLinework, "Disposition linework", false);
+            ConfigureOptionCheckBox(_includeDispoLabels, "Disposition labels", false);
             ConfigureOptionCheckBox(_includeAtsFabric, "ATS fabric", false);
             ConfigureOptionCheckBox(_includeLsds, "LSDs", false);
             ConfigureOptionCheckBox(_includeP3Shapes, "Include P3 Shapes", false);

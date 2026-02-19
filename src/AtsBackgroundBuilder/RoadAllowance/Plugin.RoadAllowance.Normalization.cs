@@ -578,13 +578,12 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
+                // Baseline seam forcing is for hard seam boundaries only.
+                // Never force 30.16/30.18 corridor bands (L-USEC / L-USEC-3018) to L-SEC.
                 return string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
             }
@@ -966,13 +965,13 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
+                // Baseline township forcing targets SEC + surveyed hard-boundary rows (0/20.12),
+                // but never 30.16/30.18 corridor bands.
                 return string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
             }
@@ -1023,7 +1022,7 @@ namespace AtsBackgroundBuilder
                     candidates.Add((id, layerName, a, b, y, len));
                 }
 
-                var baselineHints = new List<(double Y, double MinX, double MaxX)>();
+                var baselineHints = new List<(Point2d A, Point2d B)>();
                 var seenBaselineHintKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 if (sectionInfos != null)
                 {
@@ -1039,8 +1038,17 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var includeTop = (township % 4) == 0;
-                        var includeBottom = (township % 4) == 1;
+                        if (!TryParsePositiveToken(info.SectionKey.Section, out var sectionNumber))
+                        {
+                            continue;
+                        }
+
+                        var includeTop = (township % 4) == 0 &&
+                                         sectionNumber >= 31 &&
+                                         sectionNumber <= 36;
+                        var includeBottom = (township % 4) == 1 &&
+                                            sectionNumber >= 1 &&
+                                            sectionNumber <= 6;
                         if (!includeTop && !includeBottom)
                         {
                             continue;
@@ -1057,50 +1065,77 @@ namespace AtsBackgroundBuilder
                             anchors = GetFallbackAnchors(section);
                         }
 
-                        Extents3d ext;
-                        try
-                        {
-                            ext = section.GeometricExtents;
-                        }
-                        catch
-                        {
-                            continue;
-                        }
+                        var eastUnit = GetUnitVector(anchors.Left, anchors.Right, new Vector2d(1.0, 0.0));
+                        var northUnit = GetUnitVector(anchors.Bottom, anchors.Top, new Vector2d(0.0, 1.0));
 
-                        var xMin = ext.MinPoint.X;
-                        var xMax = ext.MaxPoint.X;
-                        if ((xMax - xMin) < 4.0)
+                        bool TryGetHintEndpoints(
+                            bool top,
+                            out Point2d a,
+                            out Point2d b)
                         {
-                            continue;
+                            a = default;
+                            b = default;
+                            if (top)
+                            {
+                                if (TryGetQuarterCorner(section, eastUnit, northUnit, QuarterCorner.NorthWest, out var nw) &&
+                                    TryGetQuarterCorner(section, eastUnit, northUnit, QuarterCorner.NorthEast, out var ne))
+                                {
+                                    a = nw;
+                                    b = ne;
+                                    return a.GetDistanceTo(b) > 4.0;
+                                }
+
+                                return false;
+                            }
+
+                            if (TryGetQuarterCorner(section, eastUnit, northUnit, QuarterCorner.SouthWest, out var sw) &&
+                                TryGetQuarterCorner(section, eastUnit, northUnit, QuarterCorner.SouthEast, out var se))
+                            {
+                                a = sw;
+                                b = se;
+                                return a.GetDistanceTo(b) > 4.0;
+                            }
+
+                            return false;
                         }
 
                         if (includeTop)
                         {
-                            var y = anchors.Top.Y;
+                            if (!TryGetHintEndpoints(top: true, out var a, out var b))
+                            {
+                                continue;
+                            }
+
                             var key = string.Format(
                                 CultureInfo.InvariantCulture,
-                                "T|{0:0.###}|{1:0.###}|{2:0.###}",
-                                y,
-                                xMin,
-                                xMax);
+                                "T|{0:0.###},{1:0.###}|{2:0.###},{3:0.###}",
+                                a.X,
+                                a.Y,
+                                b.X,
+                                b.Y);
                             if (seenBaselineHintKeys.Add(key))
                             {
-                                baselineHints.Add((y, xMin, xMax));
+                                baselineHints.Add((a, b));
                             }
                         }
 
                         if (includeBottom)
                         {
-                            var y = anchors.Bottom.Y;
+                            if (!TryGetHintEndpoints(top: false, out var a, out var b))
+                            {
+                                continue;
+                            }
+
                             var key = string.Format(
                                 CultureInfo.InvariantCulture,
-                                "B|{0:0.###}|{1:0.###}|{2:0.###}",
-                                y,
-                                xMin,
-                                xMax);
+                                "B|{0:0.###},{1:0.###}|{2:0.###},{3:0.###}",
+                                a.X,
+                                a.Y,
+                                b.X,
+                                b.Y);
                             if (seenBaselineHintKeys.Add(key))
                             {
-                                baselineHints.Add((y, xMin, xMax));
+                                baselineHints.Add((a, b));
                             }
                         }
                     }
@@ -1112,81 +1147,68 @@ namespace AtsBackgroundBuilder
                     return;
                 }
 
-                const double baselineBandTol = 36.0;
+                // Baseline surveyed rows are expected about one 20.12 allowance from the section edge.
+                const double baselineExpectedOffset = RoadAllowanceSecWidthMeters;
+                const double baselineOffsetTol = 4.0;
                 const double baselineMinOverlap = 20.0;
-                const double baselineYForceTol = 1.60;
 
-                double NormalizeBaselineY(double y)
+                bool IsParallelEnough(Point2d a1, Point2d b1, Point2d a2, Point2d b2)
                 {
-                    return Math.Round(y, 2);
+                    var d1 = b1 - a1;
+                    var d2 = b2 - a2;
+                    var l1 = d1.Length;
+                    var l2 = d2.Length;
+                    if (l1 < 1e-6 || l2 < 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var dot = Math.Abs((d1.X * d2.X + d1.Y * d2.Y) / (l1 * l2));
+                    return dot >= 0.94;
                 }
 
-                var forcedBaselineYs = new HashSet<double>();
-                if (baselineHints.Count > 0)
+                double OverlapAlongHintAxis(Point2d segA, Point2d segB, Point2d hintA, Point2d hintB)
                 {
-                    for (var bi = 0; bi < baselineHints.Count; bi++)
+                    var hintDir = hintB - hintA;
+                    var hintLen = hintDir.Length;
+                    if (hintLen < 1e-6)
                     {
-                        var hint = baselineHints[bi];
-                        var nearestDy = double.MaxValue;
-                        var nearestY = double.NaN;
-                        for (var ci = 0; ci < candidates.Count; ci++)
-                        {
-                            var c = candidates[ci];
-                            var dy = Math.Abs(c.Y - hint.Y);
-                            if (dy > baselineBandTol || dy >= nearestDy)
-                            {
-                                continue;
-                            }
-
-                            nearestDy = dy;
-                            nearestY = c.Y;
-                        }
-
-                        if (nearestDy == double.MaxValue || double.IsNaN(nearestY))
-                        {
-                            continue;
-                        }
-
-                        forcedBaselineYs.Add(NormalizeBaselineY(nearestY));
+                        return 0.0;
                     }
+
+                    var hintUnit = new Vector2d(hintDir.X / hintLen, hintDir.Y / hintLen);
+                    var t0 = (segA - hintA).DotProduct(hintUnit);
+                    var t1 = (segB - hintA).DotProduct(hintUnit);
+                    var segMin = Math.Min(t0, t1);
+                    var segMax = Math.Max(t0, t1);
+                    return Math.Min(segMax, hintLen) - Math.Max(segMin, 0.0);
                 }
 
                 bool IsBaselineBoundaryCandidate(int index)
                 {
-                    if (forcedBaselineYs.Count == 0)
+                    if (baselineHints.Count == 0)
                     {
                         return false;
                     }
 
                     var s = candidates[index];
-                    var normalizedY = NormalizeBaselineY(s.Y);
-                    if (forcedBaselineYs.Contains(normalizedY))
-                    {
-                        return true;
-                    }
-
-                    // Keep a small tolerance around matched baseline Y values to absorb tiny
-                    // endpoint numeric drift between neighboring segments.
-                    foreach (var by in forcedBaselineYs)
-                    {
-                        if (Math.Abs(s.Y - by) <= baselineYForceTol)
-                        {
-                            return true;
-                        }
-                    }
-
-                    var sMinX = Math.Min(s.A.X, s.B.X);
-                    var sMaxX = Math.Max(s.A.X, s.B.X);
+                    var sMid = Midpoint(s.A, s.B);
                     for (var bi = 0; bi < baselineHints.Count; bi++)
                     {
                         var hint = baselineHints[bi];
-                        if (Math.Abs(s.Y - hint.Y) > baselineBandTol)
+                        if (!IsParallelEnough(s.A, s.B, hint.A, hint.B))
                         {
                             continue;
                         }
 
-                        var overlap = Math.Min(sMaxX, hint.MaxX) - Math.Max(sMinX, hint.MinX);
+                        var overlap = OverlapAlongHintAxis(s.A, s.B, hint.A, hint.B);
                         if (overlap < baselineMinOverlap)
+                        {
+                            continue;
+                        }
+
+                        var offset = DistancePointToInfiniteLine(sMid, hint.A, hint.B);
+                        if (Math.Abs(offset - baselineExpectedOffset) > baselineOffsetTol)
                         {
                             continue;
                         }

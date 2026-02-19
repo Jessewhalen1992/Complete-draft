@@ -50,7 +50,7 @@ namespace AtsBackgroundBuilder.Core
         public bool UseSectionIndex { get; set; } = true;
         public string SectionIndexFolder { get; set; } = @"C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\RES MANAGER";
         // Quarter view overlay toggle: YES/NO.
-        public string Quaterview { get; set; } = "NO";
+        public string Quaterview { get; set; } = "YES";
 
         /// <summary>
         /// Buffer around section extents used to filter imported features.
