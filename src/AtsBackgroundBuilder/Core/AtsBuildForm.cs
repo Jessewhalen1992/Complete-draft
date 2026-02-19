@@ -6,6 +6,7 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 namespace AtsBackgroundBuilder.Core
@@ -64,8 +65,16 @@ namespace AtsBackgroundBuilder.Core
         private readonly CheckBox _includeQuarterSectionLabels = new CheckBox();
         private readonly CheckBox _useAlignedDimensions = new CheckBox();
         private readonly DataGridView _grid = new DataGridView();
+        private readonly ComboBox _shapeTypeCombo = new ComboBox();
+        private readonly Button _updateShape = new Button();
         private readonly Button _build = new Button();
         private readonly Button _cancel = new Button();
+        private static readonly string[] ShapeUpdateSourceRoots =
+        {
+            @"N:\Mapping\FTP Updates\AltaLIS",
+            @"O:\Mapping\FTP Updates\AltaLIS",
+        };
+        private const string DispositionShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\DISPOS";
 
         public AtsBuildForm(IEnumerable<string> clientNames, Config config)
         {
@@ -316,6 +325,18 @@ namespace AtsBackgroundBuilder.Core
                 AutoSize = true
             };
 
+            _shapeTypeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+            _shapeTypeCombo.Width = 140;
+            _shapeTypeCombo.Margin = new Padding(0, 4, 6, 4);
+            _shapeTypeCombo.Items.Add("Disposition");
+            _shapeTypeCombo.SelectedIndex = 0;
+
+            _updateShape.Text = "Update Shape";
+            _updateShape.Width = 120;
+            _updateShape.Height = 32;
+            _updateShape.Margin = new Padding(0, 0, 14, 0);
+            _updateShape.Click += (_, __) => OnUpdateShape();
+
             _build.Text = "BUILD";
             _build.Width = 120;
             _build.Height = 32;
@@ -328,8 +349,275 @@ namespace AtsBackgroundBuilder.Core
 
             panel.Controls.Add(_build);
             panel.Controls.Add(_cancel);
+            panel.Controls.Add(_updateShape);
+            panel.Controls.Add(_shapeTypeCombo);
 
             return panel;
+        }
+
+        private void OnUpdateShape()
+        {
+            var shapeType = _shapeTypeCombo.SelectedItem?.ToString()?.Trim() ?? string.Empty;
+            if (!string.Equals(shapeType, "Disposition", StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show(this, $"Unsupported shape type: {shapeType}", "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!TryResolveNewestDidsFolderAcrossRoots(
+                    out var sourceRoot,
+                    out var newestFolder,
+                    out var newestDate,
+                    out var newestFolderError))
+            {
+                MessageBox.Show(this, newestFolderError, "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var confirm = MessageBox.Show(
+                this,
+                "Copy latest Disposition shape files?\n\n" +
+                $"Source root: {sourceRoot}\n" +
+                $"Latest folder: {newestFolder}\n" +
+                $"Detected date: {newestDate:yyyy-MM-dd}\n\n" +
+                $"Destination: {DispositionShapeDestinationFolder}\n\n" +
+                "This will replace current destination contents.",
+                "Update Shape",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+            if (confirm != DialogResult.Yes)
+            {
+                return;
+            }
+
+            _updateShape.Enabled = false;
+            var previousCursor = Cursor.Current;
+            Cursor.Current = Cursors.WaitCursor;
+            try
+            {
+                var copiedCount = ReplaceDirectoryContents(newestFolder, DispositionShapeDestinationFolder);
+                MessageBox.Show(
+                    this,
+                    $"Shape update complete.\n\nCopied {copiedCount} file(s) from:\n{newestFolder}\n\nto:\n{DispositionShapeDestinationFolder}",
+                    "Update Shape",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    this,
+                    "Shape update failed:\n" + ex.Message,
+                    "Update Shape",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+            finally
+            {
+                if (previousCursor != null)
+                {
+                    Cursor.Current = previousCursor;
+                }
+                _updateShape.Enabled = true;
+            }
+        }
+
+        private static bool TryFindNewestDidsFolder(string sourceRoot, out string newestFolder, out DateTime newestDate, out string error)
+        {
+            newestFolder = string.Empty;
+            newestDate = default;
+            error = string.Empty;
+            if (string.IsNullOrWhiteSpace(sourceRoot) || !Directory.Exists(sourceRoot))
+            {
+                error = $"Source root not found: {sourceRoot}";
+                return false;
+            }
+
+            var candidates = new List<(string FolderPath, DateTime Date)>();
+            foreach (var folder in Directory.GetDirectories(sourceRoot, "dids_*", SearchOption.TopDirectoryOnly))
+            {
+                var name = Path.GetFileName(folder) ?? string.Empty;
+                if (TryParseDateFromFolderName(name, out var parsedDate))
+                {
+                    candidates.Add((folder, parsedDate));
+                }
+            }
+
+            if (candidates.Count == 0)
+            {
+                error = $"No dated dids_* folders found under:\n{sourceRoot}";
+                return false;
+            }
+
+            var selected = candidates
+                .OrderByDescending(c => c.Date)
+                .ThenByDescending(c => Path.GetFileName(c.FolderPath), StringComparer.OrdinalIgnoreCase)
+                .First();
+
+            newestFolder = selected.FolderPath;
+            newestDate = selected.Date;
+            return true;
+        }
+
+        private static bool TryResolveNewestDidsFolderAcrossRoots(
+            out string selectedSourceRoot,
+            out string newestFolder,
+            out DateTime newestDate,
+            out string error)
+        {
+            selectedSourceRoot = string.Empty;
+            newestFolder = string.Empty;
+            newestDate = default;
+            error = string.Empty;
+
+            var existingRoots = ShapeUpdateSourceRoots
+                .Where(Directory.Exists)
+                .ToList();
+            if (existingRoots.Count == 0)
+            {
+                error = "Unable to find AltaLIS FTP update folder.\nChecked:\n" + string.Join("\n", ShapeUpdateSourceRoots);
+                return false;
+            }
+
+            var foundAny = false;
+            var bestDate = DateTime.MinValue;
+            var bestFolder = string.Empty;
+            var bestRoot = string.Empty;
+            var diagnostics = new List<string>();
+
+            foreach (var root in existingRoots)
+            {
+                if (!TryFindNewestDidsFolder(root, out var candidateFolder, out var candidateDate, out var rootError))
+                {
+                    diagnostics.Add(rootError);
+                    continue;
+                }
+
+                if (!foundAny || candidateDate > bestDate)
+                {
+                    foundAny = true;
+                    bestDate = candidateDate;
+                    bestFolder = candidateFolder;
+                    bestRoot = root;
+                }
+            }
+
+            if (!foundAny)
+            {
+                error = "No dated dids_* folders were found in available AltaLIS roots.\n" + string.Join("\n", diagnostics);
+                return false;
+            }
+
+            selectedSourceRoot = bestRoot;
+            newestFolder = bestFolder;
+            newestDate = bestDate;
+            return true;
+        }
+
+        private static bool TryParseDateFromFolderName(string folderName, out DateTime date)
+        {
+            date = default;
+            if (string.IsNullOrWhiteSpace(folderName))
+            {
+                return false;
+            }
+
+            var match = Regex.Match(folderName, @"(?<a>\d{1,2})-(?<b>\d{1,2})-(?<y>\d{4})");
+            if (!match.Success)
+            {
+                return false;
+            }
+
+            if (!int.TryParse(match.Groups["a"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var first) ||
+                !int.TryParse(match.Groups["b"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var second) ||
+                !int.TryParse(match.Groups["y"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var year))
+            {
+                return false;
+            }
+
+            int month;
+            int day;
+            if (first > 12 && second <= 12)
+            {
+                // Unambiguous: dd-MM-yyyy
+                day = first;
+                month = second;
+            }
+            else if (second > 12 && first <= 12)
+            {
+                // Unambiguous: MM-dd-yyyy
+                month = first;
+                day = second;
+            }
+            else
+            {
+                // Ambiguous (both <= 12): default to dd-MM-yyyy to match FTP folder naming.
+                day = first;
+                month = second;
+            }
+
+            if (month < 1 || month > 12 || day < 1)
+            {
+                return false;
+            }
+
+            var maxDay = DateTime.DaysInMonth(year, month);
+            if (day > maxDay)
+            {
+                return false;
+            }
+
+            date = new DateTime(year, month, day);
+            return true;
+        }
+
+        private static int ReplaceDirectoryContents(string sourceDirectory, string destinationDirectory)
+        {
+            if (!Directory.Exists(sourceDirectory))
+            {
+                throw new DirectoryNotFoundException("Source folder not found: " + sourceDirectory);
+            }
+
+            Directory.CreateDirectory(destinationDirectory);
+            ClearDirectoryContents(destinationDirectory);
+
+            var copiedCount = 0;
+            foreach (var sourcePath in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+            {
+                var relativePath = Path.GetRelativePath(sourceDirectory, sourcePath);
+                var destinationPath = Path.Combine(destinationDirectory, relativePath);
+                var destinationFolder = Path.GetDirectoryName(destinationPath);
+                if (!string.IsNullOrWhiteSpace(destinationFolder))
+                {
+                    Directory.CreateDirectory(destinationFolder);
+                }
+
+                File.Copy(sourcePath, destinationPath, overwrite: true);
+                copiedCount++;
+            }
+
+            return copiedCount;
+        }
+
+        private static void ClearDirectoryContents(string directoryPath)
+        {
+            if (!Directory.Exists(directoryPath))
+            {
+                return;
+            }
+
+            var directory = new DirectoryInfo(directoryPath);
+            foreach (var file in directory.GetFiles("*", SearchOption.TopDirectoryOnly))
+            {
+                file.IsReadOnly = false;
+                file.Delete();
+            }
+
+            foreach (var childDirectory in directory.GetDirectories("*", SearchOption.TopDirectoryOnly))
+            {
+                childDirectory.Delete(recursive: true);
+            }
         }
 
         private void OnBuild()
