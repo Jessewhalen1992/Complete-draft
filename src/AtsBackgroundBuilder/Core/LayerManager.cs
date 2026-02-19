@@ -4,7 +4,7 @@ using System;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Colors;
 
-namespace AtsBackgroundBuilder
+namespace AtsBackgroundBuilder.Core
 {
     public sealed class LayerManager
     {

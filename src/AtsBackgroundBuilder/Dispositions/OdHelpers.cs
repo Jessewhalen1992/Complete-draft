@@ -7,7 +7,7 @@ using Autodesk.Gis.Map;
 using Autodesk.Gis.Map.ObjectData;
 using Autodesk.Gis.Map.Utilities;
 
-namespace AtsBackgroundBuilder
+namespace AtsBackgroundBuilder.Dispositions
 {
     public static class OdHelpers
     {

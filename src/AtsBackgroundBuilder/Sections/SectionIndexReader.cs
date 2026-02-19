@@ -9,7 +9,7 @@ using System.Text.Json;
 using System.Diagnostics.CodeAnalysis;
 using Autodesk.AutoCAD.Geometry;
 
-namespace AtsBackgroundBuilder
+namespace AtsBackgroundBuilder.Sections
 {
     public readonly struct SectionKey
     {

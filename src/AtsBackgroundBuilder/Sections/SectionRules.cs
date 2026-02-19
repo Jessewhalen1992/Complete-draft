@@ -1,4 +1,4 @@
-namespace AtsBackgroundBuilder
+namespace AtsBackgroundBuilder.Sections
 {
     /// <summary>
     /// Canonical section-building rule constants.

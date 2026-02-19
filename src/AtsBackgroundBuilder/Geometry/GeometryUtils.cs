@@ -7,7 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 
-namespace AtsBackgroundBuilder
+namespace AtsBackgroundBuilder.Geometry
 {
     public static class GeometryUtils
     {

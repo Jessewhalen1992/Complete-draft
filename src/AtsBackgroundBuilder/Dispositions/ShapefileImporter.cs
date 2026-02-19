@@ -20,7 +20,7 @@ using MapDataType = Autodesk.Gis.Map.Constants.DataType;
 using OdRecord = Autodesk.Gis.Map.ObjectData.Record;
 using OdRecords = Autodesk.Gis.Map.ObjectData.Records;
 
-namespace AtsBackgroundBuilder
+namespace AtsBackgroundBuilder.Dispositions
 {
     public sealed class ShapefileImportSummary
     {

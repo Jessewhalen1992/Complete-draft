@@ -7,7 +7,7 @@ using System.Data.OleDb;
 using System.IO;
 using System.Linq;
 
-namespace AtsBackgroundBuilder
+namespace AtsBackgroundBuilder.Core
 {
     public sealed class LookupEntry
     {

@@ -9,7 +9,7 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
 
-namespace AtsBackgroundBuilder
+namespace AtsBackgroundBuilder.Dispositions
 {
     public sealed class LabelPlacer
     {

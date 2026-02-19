@@ -8,7 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 
-namespace AtsBackgroundBuilder
+namespace AtsBackgroundBuilder.Core
 {
     /// <summary>
     /// UI input bundle for ATSBUILD.

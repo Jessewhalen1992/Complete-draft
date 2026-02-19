@@ -5,7 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 
-namespace AtsBackgroundBuilder
+namespace AtsBackgroundBuilder.Core
 {
     /// <summary>
     /// Central configuration loaded from a JSON file beside the plugin DLL.
