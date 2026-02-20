@@ -48,7 +48,8 @@ namespace AtsBackgroundBuilder.Dispositions
                 return summary;
             }
 
-            var sectionExtents = BuildSectionBufferExtents(database, scopePolylineIds, 0.0);
+            const double scopeBuffer = 0.0;
+            var sectionExtents = BuildSectionBufferExtents(database, scopePolylineIds, scopeBuffer);
             if (sectionExtents.Count == 0)
             {
                 logger.WriteLine("No section extents available for shapefile filtering.");
@@ -62,7 +63,7 @@ namespace AtsBackgroundBuilder.Dispositions
 
             var searchFolders = BuildShapefileSearchFolders(config);
             logger.WriteLine($"Shapefile search folders: {string.Join("; ", searchFolders)}");
-            logger.WriteLine($"Section extents loaded: {sectionExtents.Count} (buffer {config.SectionBufferDistance}).");
+            logger.WriteLine($"Section extents loaded: {sectionExtents.Count} (buffer {scopeBuffer}).");
 
             if (!TryGetMap3dImporter(logger, out var importer))
             {

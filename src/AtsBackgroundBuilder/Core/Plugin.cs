@@ -229,14 +229,16 @@ namespace AtsBackgroundBuilder
             if (input.IncludeDispositionLinework || input.IncludeDispositionLabels)
             {
                 exitStage = "disposition_import";
+                var dispositionImportScopeIds = BuildDispositionImportScopeIds(
+                    database,
+                    sectionDrawResult,
+                    logger);
                 importSummary = ShapefileImporter.ImportShapefiles(
                     database,
                     editor,
                     logger,
                     config,
-                    sectionDrawResult.LabelQuarterPolylineIds.Count > 0
-                        ? sectionDrawResult.LabelQuarterPolylineIds
-                        : sectionDrawResult.SectionPolylineIds,
+                    dispositionImportScopeIds,
                     dispositionPolylines);
                 if (dispositionPolylines.Count == 0)
                 {
@@ -511,7 +513,8 @@ namespace AtsBackgroundBuilder
                 }
                 else
                 {
-                    RunPlsrCheck(database, editor, logger, companyLookup, input, quarters);
+                    var plsrQuarters = BuildPlsrQuarterInfos(database, sectionDrawResult, quarters, logger);
+                    RunPlsrCheck(database, editor, logger, companyLookup, input, plsrQuarters);
                 }
             }
 
@@ -564,6 +567,309 @@ namespace AtsBackgroundBuilder
             exitStage = "completed";
             EmitExit("ok");
             logger.Dispose();
+        }
+
+        private static List<ObjectId> BuildDispositionImportScopeIds(
+            Database database,
+            SectionDrawResult sectionDrawResult,
+            Logger logger)
+        {
+            var requestedQuarterIds = sectionDrawResult?.LabelQuarterPolylineIds?
+                .Where(id => !id.IsNull && !id.IsErased)
+                .Distinct()
+                .ToList() ?? new List<ObjectId>();
+
+            if (requestedQuarterIds.Count == 0)
+            {
+                return sectionDrawResult?.SectionPolylineIds?
+                    .Where(id => !id.IsNull && !id.IsErased)
+                    .Distinct()
+                    .ToList() ?? new List<ObjectId>();
+            }
+
+            var quarterViewScopeIds = ResolveQuarterViewScopeIdsForRequestedQuarters(
+                database,
+                requestedQuarterIds,
+                logger);
+
+            if (quarterViewScopeIds.Count > 0)
+            {
+                logger.WriteLine($"Disposition import scope: using {quarterViewScopeIds.Count} L-QUATER polygon(s) matched to requested quarter(s).");
+                return quarterViewScopeIds;
+            }
+
+            logger.WriteLine("Disposition import scope: no matching L-QUATER polygons found; falling back to requested L-QSEC-BOX quarter polygons.");
+            return requestedQuarterIds;
+        }
+
+        private static List<ObjectId> ResolveQuarterViewScopeIdsForRequestedQuarters(
+            Database database,
+            IReadOnlyList<ObjectId> requestedQuarterIds,
+            Logger logger)
+        {
+            var matchedQuarterViewIds = new List<ObjectId>();
+            if (database == null || requestedQuarterIds == null || requestedQuarterIds.Count == 0)
+            {
+                return matchedQuarterViewIds;
+            }
+
+            var requestedQuarterClones = new List<Polyline>();
+            try
+            {
+                using (var tr = database.TransactionManager.StartTransaction())
+                {
+                    foreach (var id in requestedQuarterIds)
+                    {
+                        if (id.IsNull || id.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!(tr.GetObject(id, OpenMode.ForRead, false) is Polyline requested) ||
+                            requested.IsErased ||
+                            !requested.Closed ||
+                            requested.NumberOfVertices < 3)
+                        {
+                            continue;
+                        }
+
+                        requestedQuarterClones.Add((Polyline)requested.Clone());
+                    }
+
+                    if (requestedQuarterClones.Count == 0)
+                    {
+                        tr.Commit();
+                        return matchedQuarterViewIds;
+                    }
+
+                    var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                    var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                    var seen = new HashSet<ObjectId>();
+                    foreach (ObjectId id in modelSpace)
+                    {
+                        if (!seen.Add(id))
+                        {
+                            continue;
+                        }
+
+                        if (!(tr.GetObject(id, OpenMode.ForRead, false) is Polyline candidate) ||
+                            candidate.IsErased ||
+                            !candidate.Closed ||
+                            candidate.NumberOfVertices < 3 ||
+                            !string.Equals(candidate.Layer, LayerQuarterView, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        Point2d testPoint;
+                        try
+                        {
+                            testPoint = GeometryUtils.GetSafeInteriorPoint(candidate);
+                        }
+                        catch
+                        {
+                            try
+                            {
+                                var ext = candidate.GeometricExtents;
+                                testPoint = new Point2d(
+                                    0.5 * (ext.MinPoint.X + ext.MaxPoint.X),
+                                    0.5 * (ext.MinPoint.Y + ext.MaxPoint.Y));
+                            }
+                            catch
+                            {
+                                continue;
+                            }
+                        }
+
+                        var insideRequestedQuarter = false;
+                        for (var i = 0; i < requestedQuarterClones.Count; i++)
+                        {
+                            if (GeometryUtils.IsPointInsidePolyline(requestedQuarterClones[i], testPoint))
+                            {
+                                insideRequestedQuarter = true;
+                                break;
+                            }
+                        }
+
+                        if (!insideRequestedQuarter)
+                        {
+                            continue;
+                        }
+
+                        matchedQuarterViewIds.Add(id);
+                    }
+
+                    tr.Commit();
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("Disposition import scope: L-QUATER matching failed: " + ex.Message);
+            }
+            finally
+            {
+                foreach (var clone in requestedQuarterClones)
+                {
+                    try { clone.Dispose(); } catch { }
+                }
+            }
+
+            return matchedQuarterViewIds
+                .Where(id => !id.IsNull && !id.IsErased)
+                .Distinct()
+                .ToList();
+        }
+
+        private static List<QuarterInfo> BuildPlsrQuarterInfos(
+            Database database,
+            SectionDrawResult sectionDrawResult,
+            List<QuarterInfo> fallbackQuarters,
+            Logger logger)
+        {
+            if (database == null ||
+                sectionDrawResult == null ||
+                sectionDrawResult.LabelQuarterInfos == null ||
+                sectionDrawResult.LabelQuarterInfos.Count == 0)
+            {
+                return fallbackQuarters ?? new List<QuarterInfo>();
+            }
+
+            var requestedInfos = sectionDrawResult.LabelQuarterInfos
+                .Where(info => info != null && info.Quarter != QuarterSelection.None && !info.QuarterId.IsNull && !info.QuarterId.IsErased)
+                .GroupBy(info => info.QuarterId)
+                .Select(group => group.First())
+                .ToList();
+            if (requestedInfos.Count == 0)
+            {
+                return fallbackQuarters ?? new List<QuarterInfo>();
+            }
+
+            var output = new List<QuarterInfo>(requestedInfos.Count);
+            var requestedQuarterClones = new Dictionary<ObjectId, Polyline>();
+            var quarterViewCandidates = new List<(ObjectId Id, Polyline Polyline, Point2d TestPoint)>();
+            try
+            {
+                using (var tr = database.TransactionManager.StartTransaction())
+                {
+                    foreach (var info in requestedInfos)
+                    {
+                        if (!(tr.GetObject(info.QuarterId, OpenMode.ForRead, false) is Polyline requested) ||
+                            requested.IsErased ||
+                            !requested.Closed ||
+                            requested.NumberOfVertices < 3)
+                        {
+                            continue;
+                        }
+
+                        requestedQuarterClones[info.QuarterId] = (Polyline)requested.Clone();
+                    }
+
+                    if (requestedQuarterClones.Count == 0)
+                    {
+                        tr.Commit();
+                        return fallbackQuarters ?? new List<QuarterInfo>();
+                    }
+
+                    var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                    var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                    foreach (ObjectId id in modelSpace)
+                    {
+                        if (!(tr.GetObject(id, OpenMode.ForRead, false) is Polyline candidate) ||
+                            candidate.IsErased ||
+                            !candidate.Closed ||
+                            candidate.NumberOfVertices < 3 ||
+                            !string.Equals(candidate.Layer, LayerQuarterView, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        Point2d testPoint;
+                        try
+                        {
+                            testPoint = GeometryUtils.GetSafeInteriorPoint(candidate);
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+
+                        quarterViewCandidates.Add((id, (Polyline)candidate.Clone(), testPoint));
+                    }
+
+                    tr.Commit();
+                }
+
+                var usedQuarterViewIds = new HashSet<ObjectId>();
+                var matched = 0;
+                var fallback = 0;
+                foreach (var info in requestedInfos)
+                {
+                    if (!requestedQuarterClones.TryGetValue(info.QuarterId, out var requestedClone))
+                    {
+                        continue;
+                    }
+
+                    Polyline? matchedQuarterView = null;
+                    ObjectId matchedQuarterViewId = ObjectId.Null;
+                    foreach (var candidate in quarterViewCandidates)
+                    {
+                        if (usedQuarterViewIds.Contains(candidate.Id))
+                        {
+                            continue;
+                        }
+
+                        if (!GeometryUtils.ExtentsIntersect(candidate.Polyline.GeometricExtents, requestedClone.GeometricExtents))
+                        {
+                            continue;
+                        }
+
+                        if (!GeometryUtils.IsPointInsidePolyline(requestedClone, candidate.TestPoint))
+                        {
+                            continue;
+                        }
+
+                        matchedQuarterView = candidate.Polyline;
+                        matchedQuarterViewId = candidate.Id;
+                        break;
+                    }
+
+                    if (matchedQuarterView != null && !matchedQuarterViewId.IsNull)
+                    {
+                        usedQuarterViewIds.Add(matchedQuarterViewId);
+                        output.Add(new QuarterInfo((Polyline)matchedQuarterView.Clone(), info.SectionKey, info.Quarter));
+                        matched++;
+                    }
+                    else
+                    {
+                        output.Add(new QuarterInfo((Polyline)requestedClone.Clone(), info.SectionKey, info.Quarter));
+                        fallback++;
+                    }
+                }
+
+                if (output.Count > 0)
+                {
+                    logger?.WriteLine($"PLSR quarter scope: matched {matched} L-QUATER polygon(s), fallback {fallback} requested quarter polygon(s).");
+                    return output;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("PLSR quarter scope: unable to map L-QUATER polygons, using fallback quarters: " + ex.Message);
+            }
+            finally
+            {
+                foreach (var pair in requestedQuarterClones)
+                {
+                    try { pair.Value.Dispose(); } catch { }
+                }
+
+                foreach (var candidate in quarterViewCandidates)
+                {
+                    try { candidate.Polyline.Dispose(); } catch { }
+                }
+            }
+
+            return fallbackQuarters ?? new List<QuarterInfo>();
         }
 
 
