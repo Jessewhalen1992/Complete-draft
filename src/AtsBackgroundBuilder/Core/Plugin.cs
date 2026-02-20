@@ -195,7 +195,8 @@ namespace AtsBackgroundBuilder
                 config,
                 logger,
                 input.DrawLsdSubdivisionLines,
-                drawQuarterView);
+                drawQuarterView,
+                input.IncludeAtsFabric);
             exitStage = "sections_built";
             var quarterPolylinesForLabelling = sectionDrawResult.LabelQuarterPolylineIds;
             if (quarterPolylinesForLabelling.Count == 0)
@@ -233,7 +234,9 @@ namespace AtsBackgroundBuilder
                     editor,
                     logger,
                     config,
-                    sectionDrawResult.SectionPolylineIds,
+                    sectionDrawResult.LabelQuarterPolylineIds.Count > 0
+                        ? sectionDrawResult.LabelQuarterPolylineIds
+                        : sectionDrawResult.SectionPolylineIds,
                     dispositionPolylines);
                 if (dispositionPolylines.Count == 0)
                 {
@@ -312,7 +315,6 @@ namespace AtsBackgroundBuilder
                         var purposeExtra = purposeLookup.Lookup(purpose)?.Extra ?? string.Empty;
 
                     var dispNumFormatted = FormatDispNum(dispNum);
-                    var safePoint = GeometryUtils.GetSafeInteriorPoint(clone);
 
                     var isSurfaceLabel = (mappedPurpose ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0;
                     if (input.IncludeDispositionLabels && (IsWellSitePurpose(purpose) || isSurfaceLabel))
@@ -406,6 +408,8 @@ namespace AtsBackgroundBuilder
                         clone.Dispose();
                         continue;
                     }
+
+                    var safePoint = GeometryUtils.GetSafeInteriorPoint(clone);
 
                     var requiresWidth = PurposeRequiresWidth(purpose, config);
                     string labelText;
@@ -603,7 +607,8 @@ namespace AtsBackgroundBuilder
             Config config,
             Logger logger,
             bool drawLsds,
-            bool drawQuarterView)
+            bool drawQuarterView,
+            bool keepGeneratedAtsFabric)
         {
             var timer = Stopwatch.StartNew();
             if (logger == null)
@@ -723,16 +728,6 @@ namespace AtsBackgroundBuilder
                 // Track all quarter geometry we created (always removed during cleanup).
                 foreach (var quarterId in buildResult.QuarterPolylineIds.Values)
                     allQuarterIds.Add(quarterId);
-                foreach (var pair in buildResult.QuarterPolylineIds)
-                {
-                    if (!lsdQuarterInfoIds.Add(pair.Value))
-                    {
-                        continue;
-                    }
-
-                    var quarterSecType = ResolveQuarterSecTypeForQuarter(resolvedQuarterSecTypes, pair.Key, resolvedSecType);
-                    lsdQuarterInfos.Add(new QuarterLabelInfo(pair.Value, request.Key, pair.Key, quarterSecType, buildResult.SectionPolylineId));
-                }
 
                     foreach (var helperId in buildResult.QuarterHelperEntityIds)
                     {
@@ -748,6 +743,12 @@ namespace AtsBackgroundBuilder
                 {
                     if (buildResult.QuarterPolylineIds.TryGetValue(quarter, out var qid))
                     {
+                        if (lsdQuarterInfoIds.Add(qid))
+                        {
+                            var lsdQuarterSecType = ResolveQuarterSecTypeForQuarter(resolvedQuarterSecTypes, quarter, resolvedSecType);
+                            lsdQuarterInfos.Add(new QuarterLabelInfo(qid, request.Key, quarter, lsdQuarterSecType, buildResult.SectionPolylineId));
+                        }
+
                         if (labelQuarterIds.Add(qid))
                         {
                             var quarterSecType = ResolveQuarterSecTypeForQuarter(resolvedQuarterSecTypes, quarter, resolvedSecType);
@@ -1010,11 +1011,18 @@ namespace AtsBackgroundBuilder
                 EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
             }
             var restoredNearbySectionIds = RestoreStashedSectionBuildingGeometry(database, stashedNearbySectionEntities, logger);
-            CleanupOverlappingSectionLinesByShortest(
-                database,
-                requestedIsolationWindows,
-                restoredNearbySectionIds,
-                logger);
+            if (keepGeneratedAtsFabric)
+            {
+                CleanupOverlappingSectionLinesByShortest(
+                    database,
+                    requestedIsolationWindows,
+                    restoredNearbySectionIds,
+                    logger);
+            }
+            else
+            {
+                logger.WriteLine("Cleanup: skipped overlap shortest-wins on restored existing section segments (ATS fabric disabled).");
+            }
             ApplyCorrectionLinePostBuildRules(
                 database,
                 correctionLineSectionInfos,

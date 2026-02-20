@@ -210,18 +210,64 @@ namespace AtsBackgroundBuilder.Geometry
 
         public static Point2d GetSafeInteriorPoint(Polyline polyline)
         {
-            // Try extents center first
-            var ext = polyline.GeometricExtents;
-            var center = new Point2d(
-                (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
-                (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
-            );
+            if (polyline == null)
+                return new Point2d(0, 0);
+
+            Point2d center;
+            try
+            {
+                // Try extents center first.
+                var ext = polyline.GeometricExtents;
+                center = new Point2d(
+                    (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
+                    (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
+                );
+            }
+            catch
+            {
+                // Fallback to vertex average (or first vertex) when extents are unavailable.
+                var n = polyline.NumberOfVertices;
+                if (n <= 0)
+                    return new Point2d(0, 0);
+
+                double sx = 0;
+                double sy = 0;
+                int count = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    try
+                    {
+                        var p = polyline.GetPoint2dAt(i);
+                        sx += p.X;
+                        sy += p.Y;
+                        count++;
+                    }
+                    catch
+                    {
+                        // ignore bad vertex reads
+                    }
+                }
+
+                if (count > 0)
+                    center = new Point2d(sx / count, sy / count);
+                else
+                    center = polyline.GetPoint2dAt(0);
+            }
 
             if (IsPointInsidePolyline(polyline, center))
                 return center;
 
             // Spiral search
-            double step = Math.Max(polyline.Length / 200.0, 1.0);
+            double step;
+            try
+            {
+                step = Math.Max(polyline.Length / 200.0, 1.0);
+            }
+            catch
+            {
+                step = 1.0;
+            }
+
             for (int r = 1; r <= 50; r++)
             {
                 for (int i = 0; i < 8; i++)

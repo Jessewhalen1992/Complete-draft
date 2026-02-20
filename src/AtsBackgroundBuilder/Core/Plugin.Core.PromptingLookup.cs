@@ -24,7 +24,7 @@ namespace AtsBackgroundBuilder
                 if (requests.Count > 0)
                 {
                     var drawQuarterView = IsAffirmativeToggle(config.Quaterview) || EnableQuarterViewByEnvironment;
-                    var result = DrawSectionsFromRequests(editor, database, requests, config, logger, false, drawQuarterView);
+                    var result = DrawSectionsFromRequests(editor, database, requests, config, logger, false, drawQuarterView, true);
                     if (result.QuarterPolylineIds.Count == 0)
                     {
                         var searchFolders = BuildSectionIndexSearchFolders(config);

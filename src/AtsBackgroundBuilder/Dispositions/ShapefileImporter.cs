@@ -37,7 +37,7 @@ namespace AtsBackgroundBuilder.Dispositions
             Editor editor,
             Logger logger,
             Config config,
-            IReadOnlyList<ObjectId> sectionPolylineIds,
+            IReadOnlyList<ObjectId> scopePolylineIds,
             List<ObjectId> dispositionPolylines)
         {
             var summary = new ShapefileImportSummary();
@@ -48,7 +48,7 @@ namespace AtsBackgroundBuilder.Dispositions
                 return summary;
             }
 
-            var sectionExtents = BuildSectionBufferExtents(database, sectionPolylineIds, config.SectionBufferDistance);
+            var sectionExtents = BuildSectionBufferExtents(database, scopePolylineIds, 0.0);
             if (sectionExtents.Count == 0)
             {
                 logger.WriteLine("No section extents available for shapefile filtering.");
@@ -891,7 +891,19 @@ namespace AtsBackgroundBuilder.Dispositions
                             continue;
                         }
 
-                        var ext = pl.GeometricExtents;
+                        Extents3d ext;
+                        try
+                        {
+                            ext = pl.GeometricExtents;
+                        }
+                        catch (System.Exception ex)
+                        {
+                            logger.WriteLine($"Filtered polyline {id} due to invalid extents: {ex.Message}");
+                            summary.FilteredDispositions++;
+                            try { pl.Erase(); } catch { }
+                            continue;
+                        }
+
                         var e2d = new Extents2d(
                             new Point2d(ext.MinPoint.X, ext.MinPoint.Y),
                             new Point2d(ext.MaxPoint.X, ext.MaxPoint.Y));
@@ -944,10 +956,19 @@ namespace AtsBackgroundBuilder.Dispositions
 
         private static string BuildFeatureKey(Polyline polyline, ObjectId id, Logger logger)
         {
-            var extents = polyline.GeometricExtents;
-            var centerX = (extents.MinPoint.X + extents.MaxPoint.X) / 2.0;
-            var centerY = (extents.MinPoint.Y + extents.MaxPoint.Y) / 2.0;
-            var roundedCenter = $"{Math.Round(centerX, 2):F2},{Math.Round(centerY, 2):F2}";
+            string roundedCenter;
+            try
+            {
+                var extents = polyline.GeometricExtents;
+                var centerX = (extents.MinPoint.X + extents.MaxPoint.X) / 2.0;
+                var centerY = (extents.MinPoint.Y + extents.MaxPoint.Y) / 2.0;
+                roundedCenter = $"{Math.Round(centerX, 2):F2},{Math.Round(centerY, 2):F2}";
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine($"Feature key fallback for polyline {id}: {ex.Message}");
+                roundedCenter = id.ToString();
+            }
 
             var od = OdHelpers.ReadObjectData(id, logger);
             if (od != null)

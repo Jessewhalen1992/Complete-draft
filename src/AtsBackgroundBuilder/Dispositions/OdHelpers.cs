@@ -15,33 +15,66 @@ namespace AtsBackgroundBuilder.Dispositions
         {
             try
             {
-                var tables = HostMapApplicationServices.Application.ActiveProject.ODTables;
+                var project = HostMapApplicationServices.Application?.ActiveProject;
+                if (project == null)
+                {
+                    return null;
+                }
+
+                var tables = project.ODTables;
                 var tableNames = tables.GetTableNames();
                 if (tableNames == null || tableNames.Count == 0)
                 {
                     return null;
                 }
 
-                foreach (var tableName in tableNames)
+                foreach (var tableNameObj in tableNames)
                 {
-                    Autodesk.Gis.Map.ObjectData.Table table = tables[tableName];
-                    var records = GetRecordsForObject(table, objectId, logger);
-                    if (records == null || records.Count == 0)
+                    var tableName = tableNameObj as string ?? tableNameObj?.ToString();
+                    if (string.IsNullOrWhiteSpace(tableName))
                     {
                         continue;
                     }
 
-                    var record = records[0];
-                    var fieldDefinitions = table.FieldDefinitions;
-                    var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    for (var i = 0; i < record.Count; i++)
+                    Autodesk.Gis.Map.ObjectData.Table table;
+                    try
                     {
-                        var field = record[i];
-                        var fieldName = fieldDefinitions[i].Name;
-                        dict[fieldName] = MapValueToString(field);
+                        table = tables[tableName];
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.WriteLine("OD table lookup failed for '" + tableName + "': " + ex.Message);
+                        continue;
                     }
 
-                    return dict;
+                    using (var records = GetRecordsForObject(table, objectId, logger))
+                    {
+                        if (records == null || records.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        var record = records[0];
+                        var fieldDefinitions = table.FieldDefinitions;
+                        var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        var fieldCount = Math.Min(record.Count, fieldDefinitions.Count);
+                        for (var i = 0; i < fieldCount; i++)
+                        {
+                            var field = record[i];
+                            var fieldName = fieldDefinitions[i].Name;
+                            if (string.IsNullOrWhiteSpace(fieldName))
+                            {
+                                continue;
+                            }
+
+                            dict[fieldName] = MapValueToString(field);
+                        }
+
+                        if (dict.Count > 0)
+                        {
+                            return dict;
+                        }
+                    }
                 }
             }
             catch (Exception ex)
