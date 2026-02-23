@@ -280,16 +280,7 @@ namespace AtsBackgroundBuilder.Dispositions
                                     var predicted = InflateExtents(EstimateTextExtents(pt, labelText, _config.TextHeight), labelGap);
                                     int labelOverlapCount = placedLabelExtents.Count(b => GeometryUtils.ExtentsIntersect(b, predicted));
                                     int crowdednessCount = CountNearbyPlacedLabels(placedLabelExtents, predicted, _config.TextHeight * 3.0);
-                                    int lineworkOverlapCount = CountIntersectingDispositionLinework(predicted, dispositions);
-                                    bool isAlignedWidthLabel = _useAlignedDimensions && disposition.RequiresWidth;
-                                    if (isAlignedWidthLabel)
-                                    {
-                                        // A-DIM labels are anchored to geometry and naturally cross linework.
-                                        // Regular text overlap heuristics over-reject them and force fallback placements.
-                                        labelOverlapCount = 0;
-                                        crowdednessCount = 0;
-                                        lineworkOverlapCount = 0;
-                                    }
+                                    int lineworkOverlapCount = CountIntersectingDispositionLinework(predicted, dispositions, disposition);
                                     bool overlaps = labelOverlapCount > 0 || lineworkOverlapCount > 0;
 
                                     if (overlaps)
@@ -450,6 +441,10 @@ namespace AtsBackgroundBuilder.Dispositions
             {
                 signedOffset = (_config.TextHeight * 1.5) * (signedOffset < 0 ? -1.0 : 1.0);
             }
+            // Keep aligned-dimension text anchor inside the disposition so text doesn't drift
+            // outside narrow/angled corridors.
+            var insideMargin = Math.Max(_config.TextHeight * 0.9, 1.0);
+            signedOffset = ClampSignedOffsetInsideDisposition(widthSource, mid, normal, signedOffset, insideMargin);
             var dimLinePoint = new Point3d(
                 mid.X + normal.X * signedOffset,
                 mid.Y + normal.Y * signedOffset,
@@ -479,6 +474,115 @@ namespace AtsBackgroundBuilder.Dispositions
             tr.AddNewlyCreatedDBObject(dimension, true);
             dimension.DimensionText = dimText;
             return dimension;
+        }
+
+        private static double ClampSignedOffsetInsideDisposition(
+            Polyline disposition,
+            Point2d origin,
+            Vector2d axisUnit,
+            double requestedOffset,
+            double margin)
+        {
+            if (disposition == null || axisUnit.Length <= 1e-9)
+            {
+                return requestedOffset;
+            }
+
+            if (!TryGetSignedRangeAcrossDisposition(disposition, origin, axisUnit, out var minS, out var maxS))
+            {
+                return requestedOffset;
+            }
+
+            var minAllowed = minS + Math.Max(0.0, margin);
+            var maxAllowed = maxS - Math.Max(0.0, margin);
+            if (minAllowed > maxAllowed)
+            {
+                // Extremely tight corridor: place as centered as possible.
+                return (minS + maxS) * 0.5;
+            }
+
+            if (requestedOffset < minAllowed) return minAllowed;
+            if (requestedOffset > maxAllowed) return maxAllowed;
+            return requestedOffset;
+        }
+
+        private static bool TryGetSignedRangeAcrossDisposition(
+            Polyline disposition,
+            Point2d origin,
+            Vector2d axisUnit,
+            out double minS,
+            out double maxS)
+        {
+            minS = 0.0;
+            maxS = 0.0;
+            if (disposition == null || disposition.NumberOfVertices < 3 || axisUnit.Length <= 1e-9)
+            {
+                return false;
+            }
+
+            try
+            {
+                var unit = axisUnit.GetNormal();
+                var ext = disposition.GeometricExtents;
+                var halfLen = Math.Max(50.0, ext.MaxPoint.DistanceTo(ext.MinPoint) * 2.0);
+
+                using (var probe = new Line(
+                    new Point3d(origin.X - unit.X * halfLen, origin.Y - unit.Y * halfLen, disposition.Elevation),
+                    new Point3d(origin.X + unit.X * halfLen, origin.Y + unit.Y * halfLen, disposition.Elevation)))
+                {
+                    var pts = new Point3dCollection();
+                    disposition.IntersectWith(probe, Intersect.OnBothOperands, pts, IntPtr.Zero, IntPtr.Zero);
+                    if (pts.Count < 2)
+                    {
+                        return false;
+                    }
+
+                    var signed = new List<double>(pts.Count);
+                    for (var i = 0; i < pts.Count; i++)
+                    {
+                        var p = pts[i];
+                        var s = (p.X - origin.X) * unit.X + (p.Y - origin.Y) * unit.Y;
+                        if (!signed.Any(x => Math.Abs(x - s) < 1e-6))
+                        {
+                            signed.Add(s);
+                        }
+                    }
+
+                    if (signed.Count < 2)
+                    {
+                        return false;
+                    }
+
+                    signed.Sort();
+                    const double eps = 1e-6;
+                    var lower = signed.First();
+                    var upper = signed.Last();
+
+                    // Prefer interval bracketing the origin.
+                    var neg = double.NegativeInfinity;
+                    var pos = double.PositiveInfinity;
+                    foreach (var s in signed)
+                    {
+                        if (s < -eps && s > neg) neg = s;
+                        if (s > eps && s < pos) pos = s;
+                    }
+
+                    if (neg > double.NegativeInfinity) lower = neg;
+                    if (pos < double.PositiveInfinity) upper = pos;
+                    if (upper - lower <= eps)
+                    {
+                        return false;
+                    }
+
+                    minS = lower;
+                    maxS = upper;
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool TryGetPerpendicularSpanAcrossDisposition(
@@ -1077,7 +1181,8 @@ namespace AtsBackgroundBuilder.Dispositions
 
         private static int CountIntersectingDispositionLinework(
             Extents3d labelExtents,
-            List<DispositionInfo> dispositions)
+            List<DispositionInfo> dispositions,
+            DispositionInfo currentDisposition)
         {
             if (dispositions == null || dispositions.Count == 0)
                 return 0;
@@ -1087,6 +1192,19 @@ namespace AtsBackgroundBuilder.Dispositions
             {
                 if (disposition?.Polyline == null)
                     continue;
+
+                if (currentDisposition != null)
+                {
+                    if (ReferenceEquals(disposition, currentDisposition))
+                        continue;
+
+                    if (!disposition.ObjectId.IsNull &&
+                        !currentDisposition.ObjectId.IsNull &&
+                        disposition.ObjectId == currentDisposition.ObjectId)
+                    {
+                        continue;
+                    }
+                }
 
                 if (!GeometryUtils.ExtentsIntersect(labelExtents, disposition.Bounds))
                     continue;

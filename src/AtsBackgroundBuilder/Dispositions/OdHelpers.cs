@@ -11,6 +11,9 @@ namespace AtsBackgroundBuilder.Dispositions
 {
     public static class OdHelpers
     {
+        private static readonly object FailedOdTablesLock = new object();
+        private static readonly HashSet<string> FailedOdTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         public static Dictionary<string, string>? ReadObjectData(ObjectId objectId, Logger logger)
         {
             try
@@ -36,6 +39,11 @@ namespace AtsBackgroundBuilder.Dispositions
                         continue;
                     }
 
+                    if (IsFailedTable(tableName))
+                    {
+                        continue;
+                    }
+
                     Autodesk.Gis.Map.ObjectData.Table table;
                     try
                     {
@@ -43,11 +51,11 @@ namespace AtsBackgroundBuilder.Dispositions
                     }
                     catch (Exception ex)
                     {
-                        logger.WriteLine("OD table lookup failed for '" + tableName + "': " + ex.Message);
+                        MarkTableFailed(tableName, logger, "OD table lookup failed for '", ex);
                         continue;
                     }
 
-                    using (var records = GetRecordsForObject(table, objectId, logger))
+                    using (var records = GetRecordsForObject(table, tableName, objectId, logger))
                     {
                         if (records == null || records.Count == 0)
                         {
@@ -95,6 +103,49 @@ namespace AtsBackgroundBuilder.Dispositions
             {
                 logger.WriteLine("OD GetObjectRecords failed: " + ex.Message);
                 return null;
+            }
+        }
+
+        private static Records? GetRecordsForObject(
+            Autodesk.Gis.Map.ObjectData.Table table,
+            string tableName,
+            ObjectId objectId,
+            Logger logger)
+        {
+            try
+            {
+                return table.GetObjectTableRecords(0, objectId, Autodesk.Gis.Map.Constants.OpenMode.OpenForRead, false);
+            }
+            catch (Exception ex)
+            {
+                MarkTableFailed(tableName, logger, "OD GetObjectRecords failed for '", ex);
+                return null;
+            }
+        }
+
+        private static bool IsFailedTable(string tableName)
+        {
+            lock (FailedOdTablesLock)
+            {
+                return FailedOdTables.Contains(tableName);
+            }
+        }
+
+        private static void MarkTableFailed(string tableName, Logger logger, string prefix, Exception ex)
+        {
+            var shouldLog = false;
+            lock (FailedOdTablesLock)
+            {
+                if (!FailedOdTables.Contains(tableName))
+                {
+                    FailedOdTables.Add(tableName);
+                    shouldLog = true;
+                }
+            }
+
+            if (shouldLog)
+            {
+                logger.WriteLine(prefix + tableName + "': " + ex.Message);
             }
         }
 

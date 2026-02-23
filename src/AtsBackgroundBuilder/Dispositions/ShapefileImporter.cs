@@ -38,7 +38,8 @@ namespace AtsBackgroundBuilder.Dispositions
             Logger logger,
             Config config,
             IReadOnlyList<ObjectId> scopePolylineIds,
-            List<ObjectId> dispositionPolylines)
+            List<ObjectId> dispositionPolylines,
+            double scopeBufferMeters = 0.0)
         {
             var summary = new ShapefileImportSummary();
 
@@ -48,7 +49,7 @@ namespace AtsBackgroundBuilder.Dispositions
                 return summary;
             }
 
-            const double scopeBuffer = 0.0;
+            var scopeBuffer = Math.Max(0.0, scopeBufferMeters);
             var sectionExtents = BuildSectionBufferExtents(database, scopePolylineIds, scopeBuffer);
             if (sectionExtents.Count == 0)
             {
@@ -75,6 +76,8 @@ namespace AtsBackgroundBuilder.Dispositions
             // This is the safest way to avoid MPOLYGON + POLYDISPLAY altogether.
             object? prevMapUseMPolygon = null;
             bool mapUseMPolygonChanged = TrySetSystemVariable("MAPUSEMPOLYGON", 0, logger, out prevMapUseMPolygon);
+            object? prevPolyDisplay = null;
+            bool polyDisplayChanged = TrySetSystemVariable("POLYDISPLAY", 1, logger, out prevPolyDisplay);
 
             Autodesk.AutoCAD.Runtime.ProgressMeter? overallMeter = null;
             try
@@ -139,12 +142,38 @@ namespace AtsBackgroundBuilder.Dispositions
                     // Fallback: If Map still made MPOLYGON, convert to LWPOLYLINE and erase MPOLYGON.
                     if (newMPolygons.Count > 0)
                     {
-                        var converted = ConvertPolygonEntitiesToPolylines(
-                            database: database,
-                            logger: logger,
-                            polygonEntityIds: newMPolygons,
-                            odTableName: odTableName,
-                            sectionExtents: sectionExtents);
+                        var converted = new List<ObjectId>();
+                        const int batchSize = 40;
+                        var batchCount = (newMPolygons.Count + batchSize - 1) / batchSize;
+                        var verboseImportLogging = IsVerboseImportLoggingEnabled();
+                        if (verboseImportLogging)
+                        {
+                            logger.WriteLine($"MPOLYGON conversion start: total={newMPolygons.Count}, batchSize={batchSize}, batches={batchCount}.");
+                        }
+
+                        for (var offset = 0; offset < newMPolygons.Count; offset += batchSize)
+                        {
+                            var batchIndex = (offset / batchSize) + 1;
+                            var batch = newMPolygons.Skip(offset).Take(batchSize).ToList();
+                            try
+                            {
+                                var convertedBatch = ConvertPolygonEntitiesToPolylines(
+                                    database: database,
+                                    logger: logger,
+                                    polygonEntityIds: batch,
+                                    odTableName: odTableName,
+                                    sectionExtents: sectionExtents);
+                                converted.AddRange(convertedBatch);
+                                if (verboseImportLogging)
+                                {
+                                    logger.WriteLine($"MPOLYGON conversion batch {batchIndex}/{batchCount}: converted={convertedBatch.Count}, source={batch.Count}.");
+                                }
+                            }
+                            catch (System.Exception ex)
+                            {
+                                logger.WriteLine($"MPOLYGON conversion batch {batchIndex}/{batchCount} failed: {ex.Message}");
+                            }
+                        }
 
                         foreach (var mpId in newMPolygons)
                             existingCandidates.Remove(mpId);
@@ -182,6 +211,11 @@ namespace AtsBackgroundBuilder.Dispositions
                 if (mapUseMPolygonChanged && prevMapUseMPolygon != null)
                 {
                     TrySetSystemVariable("MAPUSEMPOLYGON", prevMapUseMPolygon, logger, out _);
+                }
+
+                if (polyDisplayChanged && prevPolyDisplay != null)
+                {
+                    TrySetSystemVariable("POLYDISPLAY", prevPolyDisplay, logger, out _);
                 }
 
                 // Important: don't dispose importer (Map may own lifetime).
@@ -252,40 +286,49 @@ namespace AtsBackgroundBuilder.Dispositions
                     TrySetLocationWindow(importer, sectionExtents, logger);
                 }
 
-                // Ensure DBF attributes become Object Data (OD)
                 var mappingMode = DetermineDataMappingMode(odTableName, logger);
-
+                var isCompassSurveyShapefile = IsCompassSurveyedShapefile(shapefilePath);
+                var verboseImportLogging = IsVerboseImportLoggingEnabled();
                 int layerCount = 0;
+                var mappingSuccessCount = 0;
+                var mappingFailureCount = 0;
+                string? firstMappingFailure = null;
                 foreach (InputLayer layer in importer)
                 {
                     layerCount++;
                     layer.ImportFromInputLayerOn = true;
-
-                    try
+                    // Ensure DBF attributes become Object Data (OD)
+                    var logMappingDetails = !isCompassSurveyShapefile || verboseImportLogging;
+                    if (TrySetLayerDataMapping(layer, mappingMode, odTableName, logger, logMappingDetails, out var mappingFailure))
                     {
-                        layer.SetDataMapping(mappingMode, odTableName);
+                        mappingSuccessCount++;
                     }
-                    catch (System.Exception ex)
+                    else
                     {
-                        // Try opposite mapping mode as fallback
-                        try
+                        mappingFailureCount++;
+                        if (string.IsNullOrWhiteSpace(firstMappingFailure) && !string.IsNullOrWhiteSpace(mappingFailure))
                         {
-                            var fallbackMode = mappingMode == ImportDataMapping.NewObjectDataOnly
-                                ? ImportDataMapping.ExistingObjectDataOnly
-                                : ImportDataMapping.NewObjectDataOnly;
-
-                            layer.SetDataMapping(fallbackMode, odTableName);
-                            logger.WriteLine($"SetDataMapping fallback succeeded for '{layer.Name}' using mode '{fallbackMode}'.");
-                        }
-                        catch (System.Exception fallbackEx)
-                        {
-                            logger.WriteLine($"SetDataMapping failed for '{layer.Name}': {ex.Message} (fallback failed: {fallbackEx.Message})");
+                            firstMappingFailure = mappingFailure;
                         }
                     }
                 }
 
                 if (layerCount == 0)
                     logger.WriteLine("Importer.Init succeeded but no input layers were returned.");
+
+                if (isCompassSurveyShapefile && !verboseImportLogging && layerCount > 0)
+                {
+                    if (mappingFailureCount > 0)
+                    {
+                        logger.WriteLine(
+                            $"Compass data mapping failed for '{Path.GetFileName(shapefilePath)}' on {mappingFailureCount}/{layerCount} layer(s). First='{firstMappingFailure ?? "n/a"}'.");
+                    }
+                    else
+                    {
+                        logger.WriteLine(
+                            $"Compass data mapping applied for '{Path.GetFileName(shapefilePath)}' on {mappingSuccessCount} layer(s).");
+                    }
+                }
 
                 // SAFEST: plain Import() (no reflection)
                 importer.Import();
@@ -373,6 +416,281 @@ namespace AtsBackgroundBuilder.Dispositions
             }
 
             return ImportDataMapping.NewObjectDataOnly;
+        }
+
+        private static bool IsCompassSurveyedShapefile(string shapefilePath)
+        {
+            var baseName = Path.GetFileNameWithoutExtension(shapefilePath) ?? string.Empty;
+            return baseName.StartsWith("SURVEYED_POLYGON_N83UTMZ", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsVerboseImportLoggingEnabled()
+        {
+            var value = Environment.GetEnvironmentVariable("ATSBUILD_VERBOSE_LOG");
+            return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TrySetLayerDataMapping(
+            InputLayer layer,
+            ImportDataMapping preferredMode,
+            string preferredOdTableName,
+            Logger logger,
+            bool logDetails,
+            out string? failureSummary)
+        {
+            failureSummary = null;
+            var candidateTables = BuildDataMappingTableCandidates(layer, preferredOdTableName);
+            var modeCandidates = BuildDataMappingModeCandidates(preferredMode);
+            var attempts = new List<(ImportDataMapping Mode, string TableName)>();
+            foreach (var mode in modeCandidates)
+            {
+                foreach (var tableName in candidateTables)
+                {
+                    attempts.Add((mode, tableName));
+                }
+            }
+
+            string? firstError = null;
+            string? lastError = null;
+            foreach (var attempt in attempts)
+            {
+                try
+                {
+                    layer.SetDataMapping(attempt.Mode, attempt.TableName);
+                    if (!string.Equals(attempt.TableName, preferredOdTableName, StringComparison.OrdinalIgnoreCase) ||
+                        attempt.Mode != preferredMode)
+                    {
+                        if (logDetails)
+                        {
+                            logger.WriteLine(
+                                $"SetDataMapping fallback succeeded for '{layer.Name}' using mode '{attempt.Mode}' and table '{attempt.TableName}'.");
+                        }
+                    }
+
+                    return true;
+                }
+                catch (System.Exception ex)
+                {
+                    firstError ??= ex.Message;
+                    lastError = ex.Message;
+                }
+            }
+
+            foreach (var mode in modeCandidates)
+            {
+                if (TrySetLayerDataMappingWithoutTable(layer, mode, out var noTableError))
+                {
+                    if (logDetails)
+                    {
+                        logger.WriteLine(
+                            $"SetDataMapping fallback succeeded for '{layer.Name}' using mode '{mode}' without explicit table.");
+                    }
+
+                    return true;
+                }
+
+                if (!string.IsNullOrWhiteSpace(noTableError))
+                {
+                    firstError ??= noTableError;
+                    lastError = noTableError;
+                }
+            }
+
+            failureSummary = $"First='{firstError ?? "n/a"}', Last='{lastError ?? "n/a"}'";
+            if (logDetails)
+            {
+                logger.WriteLine(
+                    $"SetDataMapping failed for '{layer.Name}' after {attempts.Count} attempts (+ no-table fallback). {failureSummary}.");
+            }
+
+            return false;
+        }
+
+        private static List<ImportDataMapping> BuildDataMappingModeCandidates(ImportDataMapping preferredMode)
+        {
+            var modes = new List<ImportDataMapping>();
+            AddUniqueMappingMode(modes, preferredMode);
+            AddUniqueMappingMode(
+                modes,
+                preferredMode == ImportDataMapping.NewObjectDataOnly
+                    ? ImportDataMapping.ExistingObjectDataOnly
+                    : ImportDataMapping.NewObjectDataOnly);
+
+            return modes;
+        }
+
+        private static void AddUniqueMappingMode(List<ImportDataMapping> modes, ImportDataMapping mode)
+        {
+            if (!modes.Contains(mode))
+            {
+                modes.Add(mode);
+            }
+        }
+
+        private static List<string> BuildDataMappingTableCandidates(InputLayer layer, string preferredOdTableName)
+        {
+            var candidates = new List<string>();
+            AddUniqueCandidate(candidates, preferredOdTableName);
+            AddTruncatedTableNameVariants(candidates, preferredOdTableName);
+            if (preferredOdTableName.StartsWith("ATS_", StringComparison.OrdinalIgnoreCase))
+            {
+                AddUniqueCandidate(candidates, preferredOdTableName.Substring(4));
+                AddTruncatedTableNameVariants(candidates, preferredOdTableName.Substring(4));
+            }
+
+            var layerName = layer.Name ?? string.Empty;
+            var colonIdx = layerName.LastIndexOf(':');
+            if (colonIdx >= 0 && colonIdx < layerName.Length - 1)
+            {
+                layerName = layerName.Substring(colonIdx + 1);
+            }
+
+            if (layerName.EndsWith(".shp", StringComparison.OrdinalIgnoreCase))
+            {
+                layerName = Path.GetFileNameWithoutExtension(layerName) ?? layerName;
+            }
+
+            if (!string.IsNullOrWhiteSpace(layerName))
+            {
+                var layerDerived = BuildOdTableName(layerName);
+                AddUniqueCandidate(candidates, layerDerived);
+                AddTruncatedTableNameVariants(candidates, layerDerived);
+                if (layerDerived.StartsWith("ATS_", StringComparison.OrdinalIgnoreCase))
+                {
+                    AddUniqueCandidate(candidates, layerDerived.Substring(4));
+                    AddTruncatedTableNameVariants(candidates, layerDerived.Substring(4));
+                }
+                AddUniqueCandidate(candidates, layerName);
+                AddTruncatedTableNameVariants(candidates, layerName);
+            }
+
+            AddUniqueCandidate(candidates, string.Empty);
+            return candidates;
+        }
+
+        private static void AddUniqueCandidate(List<string> candidates, string tableName)
+        {
+            if (candidates.Any(c => string.Equals(c, tableName, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            candidates.Add(tableName);
+        }
+
+        private static void AddTruncatedTableNameVariants(List<string> candidates, string tableName)
+        {
+            if (string.IsNullOrWhiteSpace(tableName))
+            {
+                return;
+            }
+
+            // Map 3D OD table-name limits vary by version/provider; try both common limits.
+            AddTruncatedTableNameVariant(candidates, tableName, 25);
+            AddTruncatedTableNameVariant(candidates, tableName, 31);
+        }
+
+        private static void AddTruncatedTableNameVariant(List<string> candidates, string tableName, int maxLength)
+        {
+            if (string.IsNullOrWhiteSpace(tableName) || maxLength <= 0 || tableName.Length <= maxLength)
+            {
+                return;
+            }
+
+            AddUniqueCandidate(candidates, tableName.Substring(0, maxLength));
+        }
+
+        private static bool TrySetLayerDataMappingWithoutTable(
+            InputLayer layer,
+            ImportDataMapping mode,
+            out string? error)
+        {
+            error = null;
+            try
+            {
+                var method = layer.GetType().GetMethod(
+                    "SetDataMapping",
+                    BindingFlags.Public | BindingFlags.Instance,
+                    binder: null,
+                    types: new[] { typeof(ImportDataMapping) },
+                    modifiers: null);
+
+                if (method == null)
+                {
+                    error = "SetDataMapping(mode) overload not found.";
+                    return false;
+                }
+
+                method.Invoke(layer, new object[] { mode });
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                error = ex.InnerException?.Message ?? ex.Message;
+                return false;
+            }
+        }
+
+        private static bool TryDeleteObjectDataTable(string tableName, Logger logger)
+        {
+            if (string.IsNullOrWhiteSpace(tableName))
+            {
+                return false;
+            }
+
+            try
+            {
+                var tables = HostMapApplicationServices.Application?.ActiveProject?.ODTables;
+                if (tables == null)
+                {
+                    return false;
+                }
+
+                var names = tables.GetTableNames();
+                var exists = false;
+                if (names != null)
+                {
+                    foreach (var nObj in names)
+                    {
+                        var n = nObj as string ?? nObj?.ToString();
+                        if (string.Equals(n, tableName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            exists = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!exists)
+                {
+                    return false;
+                }
+
+                var tablesType = tables.GetType();
+                foreach (var methodName in new[] { "Remove", "Delete", "RemoveTable" })
+                {
+                    var method = tablesType.GetMethod(
+                        methodName,
+                        BindingFlags.Public | BindingFlags.Instance,
+                        binder: null,
+                        types: new[] { typeof(string) },
+                        modifiers: null);
+                    if (method == null)
+                    {
+                        continue;
+                    }
+
+                    method.Invoke(tables, new object[] { tableName });
+                    logger.WriteLine($"Deleted existing OD table '{tableName}' using {methodName}(string) prior to remap.");
+                    return true;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine($"OD table delete failed for '{tableName}': {ex.Message}");
+            }
+
+            return false;
         }
 
         private static IReadOnlyList<string> BuildShapefileSearchFolders(Config config)
@@ -467,9 +785,31 @@ namespace AtsBackgroundBuilder.Dispositions
         {
             var dxf = id.ObjectClass?.DxfName;
             var cls = id.ObjectClass?.Name;
+            if (string.Equals(dxf, "MPOLYGON", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(cls, "AcDbMPolygon", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
 
-            return string.Equals(dxf, "MPOLYGON", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(cls, "AcDbMPolygon", StringComparison.OrdinalIgnoreCase);
+            if (string.Equals(dxf, "POLYGON", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(cls, "AcDbPolygon", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(dxf) &&
+                dxf.IndexOf("MPOLYGON", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(cls) &&
+                cls.IndexOf("MPOLYGON", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private static List<ObjectId> ConvertPolygonEntitiesToPolylines(
@@ -644,82 +984,96 @@ namespace AtsBackgroundBuilder.Dispositions
 
         private static void TryCopyObjectData(ObjectId sourceId, ObjectId destId, string odTableName, Logger logger)
         {
-            if (string.IsNullOrWhiteSpace(odTableName))
-                return;
-
             try
             {
                 var project = HostMapApplicationServices.Application?.ActiveProject;
                 if (project == null)
+                {
                     return;
+                }
 
                 var tables = project.ODTables;
                 var names = tables.GetTableNames();
-
-                // FIX: no .Any() on StringCollection — manual check
-                bool exists = false;
-                if (names != null)
+                if (tables == null || names == null)
                 {
-                    foreach (var nObj in names)
+                    return;
+                }
+
+                var candidateTables = new List<string>();
+                if (!string.IsNullOrWhiteSpace(odTableName))
+                {
+                    candidateTables.Add(odTableName);
+                }
+
+                foreach (var nObj in names)
+                {
+                    var n = nObj as string ?? nObj?.ToString();
+                    if (!string.IsNullOrWhiteSpace(n) &&
+                        !candidateTables.Any(c => string.Equals(c, n, StringComparison.OrdinalIgnoreCase)))
                     {
-                        var n = nObj as string ?? nObj?.ToString();
-                        if (string.Equals(n, odTableName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            exists = true;
-                            break;
-                        }
+                        candidateTables.Add(n);
                     }
                 }
 
-                if (!exists)
-                    return;
-
-                var table = tables[odTableName];
-
-                using (OdRecords records = table.GetObjectTableRecords(0, sourceId, MapOpenMode.OpenForRead, true))
+                foreach (var tableName in candidateTables)
                 {
-                    if (records == null || records.Count == 0)
-                        return;
-
-                    foreach (OdRecord srcRecord in records)
+                    Autodesk.Gis.Map.ObjectData.Table table;
+                    try
                     {
-                        var newRecord = OdRecord.Create();
-                        table.InitRecord(newRecord);
+                        table = tables[tableName];
+                    }
+                    catch
+                    {
+                        continue;
+                    }
 
-                        int n = Math.Min(srcRecord.Count, newRecord.Count);
-                        for (int i = 0; i < n; i++)
+                    using (OdRecords records = table.GetObjectTableRecords(0, sourceId, MapOpenMode.OpenForRead, true))
+                    {
+                        if (records == null || records.Count == 0)
                         {
-                            try
-                            {
-                                var srcVal = srcRecord[i];
-                                var dstVal = newRecord[i];
-
-                                switch (srcVal.Type)
-                                {
-                                    case MapDataType.Character:
-                                        dstVal.Assign(srcVal.StrValue ?? string.Empty);
-                                        break;
-
-                                    case MapDataType.Integer:
-                                        dstVal.Assign(srcVal.Int32Value);
-                                        break;
-
-                                    case MapDataType.Real:
-                                        dstVal.Assign(srcVal.DoubleValue);
-                                        break;
-
-                                    default:
-                                        dstVal.Assign(srcVal.ToString());
-                                        break;
-                                }
-                            }
-                            catch
-                            {
-                                // ignore per-field failures
-                            }
+                            continue;
                         }
 
-                        table.AddRecord(newRecord, destId);
+                        foreach (OdRecord srcRecord in records)
+                        {
+                            var newRecord = OdRecord.Create();
+                            table.InitRecord(newRecord);
+
+                            int fieldCount = Math.Min(srcRecord.Count, newRecord.Count);
+                            for (int i = 0; i < fieldCount; i++)
+                            {
+                                try
+                                {
+                                    var srcVal = srcRecord[i];
+                                    var dstVal = newRecord[i];
+
+                                    switch (srcVal.Type)
+                                    {
+                                        case MapDataType.Character:
+                                            dstVal.Assign(srcVal.StrValue ?? string.Empty);
+                                            break;
+
+                                        case MapDataType.Integer:
+                                            dstVal.Assign(srcVal.Int32Value);
+                                            break;
+
+                                        case MapDataType.Real:
+                                            dstVal.Assign(srcVal.DoubleValue);
+                                            break;
+
+                                        default:
+                                            dstVal.Assign(srcVal.ToString());
+                                            break;
+                                    }
+                                }
+                                catch
+                                {
+                                    // ignore per-field failures
+                                }
+                            }
+
+                            table.AddRecord(newRecord, destId);
+                        }
                     }
                 }
             }
@@ -1021,3 +1375,4 @@ namespace AtsBackgroundBuilder.Dispositions
         }
     }
 }
+

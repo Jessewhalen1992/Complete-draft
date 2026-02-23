@@ -22,12 +22,16 @@ namespace AtsBackgroundBuilder.Core
         public int MaxOverlapAttempts { get; set; } = 25;
         public bool DrawLsdSubdivisionLines { get; set; } = false;
         public bool IncludeP3Shapefiles { get; set; } = false;
+        public bool IncludeCompassMapping { get; set; } = false;
+        public bool IncludeCrownReservations { get; set; } = false;
+        public bool AutoCheckUpdateShapefilesAlways { get; set; } = false;
 
         /// <summary>
         /// When false, imported disposition linework is removed at cleanup.
         /// </summary>
         public bool IncludeDispositionLinework { get; set; } = false;
         public bool IncludeDispositionLabels { get; set; } = false;
+        public bool AllowMultiQuarterDispositions { get; set; } = true;
         public bool IncludeQuarterSectionLabels { get; set; } = false;
         public bool UseAlignedDimensions { get; set; } = false;
 
@@ -62,9 +66,13 @@ namespace AtsBackgroundBuilder.Core
         private readonly CheckBox _includeAtsFabric = new CheckBox();
         private readonly CheckBox _includeLsds = new CheckBox();
         private readonly CheckBox _includeP3Shapes = new CheckBox();
+        private readonly CheckBox _includeCompassMapping = new CheckBox();
+        private readonly CheckBox _includeCrownReservations = new CheckBox();
         private readonly CheckBox _checkPlsr = new CheckBox();
+        private readonly CheckBox _allowMultiQuarterDispositions = new CheckBox();
         private readonly CheckBox _includeQuarterSectionLabels = new CheckBox();
         private readonly CheckBox _useAlignedDimensions = new CheckBox();
+        private readonly CheckBox _autoCheckUpdateShapesAlways = new CheckBox();
         private readonly DataGridView _grid = new DataGridView();
         private readonly Button _addGridRow = new Button();
         private readonly ComboBox _shapeTypeCombo = new ComboBox();
@@ -79,12 +87,33 @@ namespace AtsBackgroundBuilder.Core
         private static readonly Color HeaderBackColor = Color.FromArgb(243, 244, 246);
         private static readonly Color InfoBackColor = Color.FromArgb(239, 246, 255);
         private static readonly Color InfoTextColor = Color.FromArgb(30, 64, 175);
-        private static readonly string[] ShapeUpdateSourceRoots =
+        private static readonly string[] DispositionShapeUpdateSourceRoots =
         {
             @"N:\Mapping\FTP Updates\AltaLIS",
             @"O:\Mapping\FTP Updates\AltaLIS",
         };
+        private static readonly string[] CompassMappingShapeUpdateSourceRoots =
+        {
+            @"N:\Mapping\Mapping\COMPASS_SURVEYED\SHP",
+            @"O:\Mapping\Mapping\COMPASS_SURVEYED\SHP",
+        };
+        private static readonly string[] CrownReservationsShapeUpdateSourceRoots =
+        {
+            @"N:\Mapping\FTP Updates\GoA",
+            @"O:\Mapping\FTP Updates\GoA",
+        };
+        private static readonly string[] CompassMappingShapeBaseNames =
+        {
+            "SURVEYED_POLYGON_N83UTMZ11",
+            "SURVEYED_POLYGON_N83UTMZ12",
+        };
+        private static readonly string[] CrownReservationsShapeBaseNames =
+        {
+            "CrownLandReservations",
+        };
         private const string DispositionShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\DISPOS";
+        private const string CompassMappingShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\COMPASS MAPPING";
+        private const string CrownReservationsShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\CLR";
 
         public AtsBuildForm(IEnumerable<string> clientNames, Config config)
         {
@@ -335,7 +364,10 @@ namespace AtsBackgroundBuilder.Core
             ConfigureOptionCheckBox(_includeAtsFabric, "ATS fabric", false);
             ConfigureOptionCheckBox(_includeLsds, "LSDs", false);
             ConfigureOptionCheckBox(_includeP3Shapes, "Include P3 Shapes", false);
+            ConfigureOptionCheckBox(_includeCompassMapping, "COMPASS MAPPING", false);
+            ConfigureOptionCheckBox(_includeCrownReservations, "Crown Reservations", false);
             ConfigureOptionCheckBox(_checkPlsr, "Check PLSR", false);
+            ConfigureOptionCheckBox(_allowMultiQuarterDispositions, "1/4 Definition", config?.AllowMultiQuarterDispositions ?? true);
             ConfigureOptionCheckBox(_includeQuarterSectionLabels, "1/4 SEC Labels", false);
             ConfigureOptionCheckBox(_useAlignedDimensions, "A-DIM", false);
 
@@ -359,7 +391,10 @@ namespace AtsBackgroundBuilder.Core
                 Margin = new Padding(0, 0, 0, 0),
             };
             toggleColumnB.Controls.Add(_includeP3Shapes);
+            toggleColumnB.Controls.Add(_includeCompassMapping);
+            toggleColumnB.Controls.Add(_includeCrownReservations);
             toggleColumnB.Controls.Add(_checkPlsr);
+            toggleColumnB.Controls.Add(_allowMultiQuarterDispositions);
             toggleColumnB.Controls.Add(_includeQuarterSectionLabels);
             toggleColumnB.Controls.Add(_useAlignedDimensions);
 
@@ -524,6 +559,8 @@ namespace AtsBackgroundBuilder.Core
             _shapeTypeCombo.Width = 180;
             _shapeTypeCombo.Margin = new Padding(0, 2, 10, 0);
             _shapeTypeCombo.Items.Add("Disposition");
+            _shapeTypeCombo.Items.Add("Compass Mapping");
+            _shapeTypeCombo.Items.Add("Crown Reservations");
             _shapeTypeCombo.SelectedIndex = 0;
             leftActions.Controls.Add(_shapeTypeCombo);
 
@@ -534,6 +571,10 @@ namespace AtsBackgroundBuilder.Core
             _updateShape.Click += (_, __) => OnUpdateShape();
             ConfigureOutlineButton(_updateShape);
             leftActions.Controls.Add(_updateShape);
+
+            ConfigureOptionCheckBox(_autoCheckUpdateShapesAlways, "CHECK/UPDATE SHAPES ALWAYS", false);
+            _autoCheckUpdateShapesAlways.Margin = new Padding(10, 7, 0, 0);
+            leftActions.Controls.Add(_autoCheckUpdateShapesAlways);
 
             _build.Text = "BUILD";
             _build.Width = 120;
@@ -652,69 +693,201 @@ namespace AtsBackgroundBuilder.Core
         private void OnUpdateShape()
         {
             var shapeType = _shapeTypeCombo.SelectedItem?.ToString()?.Trim() ?? string.Empty;
-            if (!string.Equals(shapeType, "Disposition", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(shapeType, "Disposition", StringComparison.OrdinalIgnoreCase))
             {
-                MessageBox.Show(this, $"Unsupported shape type: {shapeType}", "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            if (!TryResolveNewestDidsFolderAcrossRoots(
-                    out var sourceRoot,
-                    out var newestFolder,
-                    out var newestDate,
-                    out var newestFolderError))
-            {
-                MessageBox.Show(this, newestFolderError, "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            var confirm = MessageBox.Show(
-                this,
-                "Copy latest Disposition shape files?\n\n" +
-                $"Source root: {sourceRoot}\n" +
-                $"Latest folder: {newestFolder}\n" +
-                $"Detected date: {newestDate:yyyy-MM-dd}\n\n" +
-                $"Destination: {DispositionShapeDestinationFolder}\n\n" +
-                "This will replace current destination contents.",
-                "Update Shape",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning,
-                MessageBoxDefaultButton.Button2);
-            if (confirm != DialogResult.Yes)
-            {
-                return;
-            }
-
-            _updateShape.Enabled = false;
-            var previousCursor = Cursor.Current;
-            Cursor.Current = Cursors.WaitCursor;
-            try
-            {
-                var copiedCount = ReplaceDirectoryContents(newestFolder, DispositionShapeDestinationFolder);
-                MessageBox.Show(
-                    this,
-                    $"Shape update complete.\n\nCopied {copiedCount} file(s) from:\n{newestFolder}\n\nto:\n{DispositionShapeDestinationFolder}",
-                    "Update Shape",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    this,
-                    "Shape update failed:\n" + ex.Message,
-                    "Update Shape",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-            }
-            finally
-            {
-                if (previousCursor != null)
+                if (!TryResolveNewestDidsFolderAcrossRoots(
+                        out var sourceRoot,
+                        out var newestFolder,
+                        out var newestDate,
+                        out var newestFolderError))
                 {
-                    Cursor.Current = previousCursor;
+                    MessageBox.Show(this, newestFolderError, "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
                 }
-                _updateShape.Enabled = true;
+
+                var confirm = MessageBox.Show(
+                    this,
+                    "Copy latest Disposition shape files?\n\n" +
+                    $"Source root: {sourceRoot}\n" +
+                    $"Latest folder: {newestFolder}\n" +
+                    $"Detected date: {newestDate:yyyy-MM-dd}\n\n" +
+                    $"Destination: {DispositionShapeDestinationFolder}\n\n" +
+                    "This will replace current destination contents.",
+                    "Update Shape",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2);
+                if (confirm != DialogResult.Yes)
+                {
+                    return;
+                }
+
+                _updateShape.Enabled = false;
+                var previousCursor = Cursor.Current;
+                Cursor.Current = Cursors.WaitCursor;
+                try
+                {
+                    var copiedCount = ReplaceDirectoryContents(newestFolder, DispositionShapeDestinationFolder);
+                    MessageBox.Show(
+                        this,
+                        $"Shape update complete.\n\nCopied {copiedCount} file(s) from:\n{newestFolder}\n\nto:\n{DispositionShapeDestinationFolder}",
+                        "Update Shape",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(
+                        this,
+                        "Shape update failed:\n" + ex.Message,
+                        "Update Shape",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                }
+                finally
+                {
+                    if (previousCursor != null)
+                    {
+                        Cursor.Current = previousCursor;
+                    }
+                    _updateShape.Enabled = true;
+                }
+                return;
             }
+
+            if (string.Equals(shapeType, "Compass Mapping", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!TryResolveFirstExistingRootAcrossRoots(
+                        CompassMappingShapeUpdateSourceRoots,
+                        "COMPASS MAPPING update folder",
+                        out var sourceRoot,
+                        out var rootError))
+                {
+                    MessageBox.Show(this, rootError, "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                var confirm = MessageBox.Show(
+                    this,
+                    "Copy COMPASS MAPPING shape files?\n\n" +
+                    $"Source: {sourceRoot}\n\n" +
+                    $"Shape sets: {string.Join(", ", CompassMappingShapeBaseNames)}\n\n" +
+                    $"Destination: {CompassMappingShapeDestinationFolder}\n\n" +
+                    "This will replace current destination contents.",
+                    "Update Shape",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2);
+                if (confirm != DialogResult.Yes)
+                {
+                    return;
+                }
+
+                _updateShape.Enabled = false;
+                var previousCursor = Cursor.Current;
+                Cursor.Current = Cursors.WaitCursor;
+                try
+                {
+                    var copiedCount = ReplaceDirectoryContentsWithSelectedShapeSets(
+                        sourceRoot,
+                        CompassMappingShapeDestinationFolder,
+                        CompassMappingShapeBaseNames);
+                    MessageBox.Show(
+                        this,
+                        $"Shape update complete.\n\nCopied {copiedCount} file(s) from:\n{sourceRoot}\n\nto:\n{CompassMappingShapeDestinationFolder}",
+                        "Update Shape",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(
+                        this,
+                        "Shape update failed:\n" + ex.Message,
+                        "Update Shape",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                }
+                finally
+                {
+                    if (previousCursor != null)
+                    {
+                        Cursor.Current = previousCursor;
+                    }
+                    _updateShape.Enabled = true;
+                }
+                return;
+            }
+
+            if (string.Equals(shapeType, "Crown Reservations", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!TryResolveNewestDatedFolderAcrossRoots(
+                        CrownReservationsShapeUpdateSourceRoots,
+                        "Crown Reservations update folder",
+                        out var sourceRoot,
+                        out var newestFolder,
+                        out var newestDate,
+                        out var rootError))
+                {
+                    MessageBox.Show(this, rootError, "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                var confirm = MessageBox.Show(
+                    this,
+                    "Copy Crown Reservations shape files?\n\n" +
+                    $"Source root: {sourceRoot}\n" +
+                    $"Latest folder: {newestFolder}\n" +
+                    $"Detected date: {newestDate:yyyy-MM-dd}\n\n" +
+                    $"Shape sets: {string.Join(", ", CrownReservationsShapeBaseNames)}\n\n" +
+                    $"Destination: {CrownReservationsShapeDestinationFolder}\n\n" +
+                    "This will replace current destination contents.",
+                    "Update Shape",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2);
+                if (confirm != DialogResult.Yes)
+                {
+                    return;
+                }
+
+                _updateShape.Enabled = false;
+                var previousCursor = Cursor.Current;
+                Cursor.Current = Cursors.WaitCursor;
+                try
+                {
+                    var copiedCount = ReplaceDirectoryContentsWithSelectedShapeSets(
+                        newestFolder,
+                        CrownReservationsShapeDestinationFolder,
+                        CrownReservationsShapeBaseNames);
+                    MessageBox.Show(
+                        this,
+                        $"Shape update complete.\n\nCopied {copiedCount} file(s) from:\n{newestFolder}\n\nto:\n{CrownReservationsShapeDestinationFolder}",
+                        "Update Shape",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(
+                        this,
+                        "Shape update failed:\n" + ex.Message,
+                        "Update Shape",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                }
+                finally
+                {
+                    if (previousCursor != null)
+                    {
+                        Cursor.Current = previousCursor;
+                    }
+                    _updateShape.Enabled = true;
+                }
+                return;
+            }
+
+            MessageBox.Show(this, $"Unsupported shape type: {shapeType}", "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         private static bool TryFindNewestDidsFolder(string sourceRoot, out string newestFolder, out DateTime newestDate, out string error)
@@ -765,12 +938,12 @@ namespace AtsBackgroundBuilder.Core
             newestDate = default;
             error = string.Empty;
 
-            var existingRoots = ShapeUpdateSourceRoots
+            var existingRoots = DispositionShapeUpdateSourceRoots
                 .Where(Directory.Exists)
                 .ToList();
             if (existingRoots.Count == 0)
             {
-                error = "Unable to find AltaLIS FTP update folder.\nChecked:\n" + string.Join("\n", ShapeUpdateSourceRoots);
+                error = "Unable to find AltaLIS FTP update folder.\nChecked:\n" + string.Join("\n", DispositionShapeUpdateSourceRoots);
                 return false;
             }
 
@@ -809,6 +982,126 @@ namespace AtsBackgroundBuilder.Core
             return true;
         }
 
+        private static bool TryResolveFirstExistingRootAcrossRoots(
+            IReadOnlyList<string> roots,
+            string sourceDescription,
+            out string selectedRoot,
+            out string error)
+        {
+            selectedRoot = string.Empty;
+            error = string.Empty;
+            if (roots == null || roots.Count == 0)
+            {
+                error = $"No candidate roots configured for {sourceDescription}.";
+                return false;
+            }
+
+            foreach (var root in roots)
+            {
+                if (!string.IsNullOrWhiteSpace(root) && Directory.Exists(root))
+                {
+                    selectedRoot = root;
+                    return true;
+                }
+            }
+
+            error = $"Unable to find {sourceDescription}.\nChecked:\n" + string.Join("\n", roots);
+            return false;
+        }
+
+        private static bool TryResolveNewestDatedFolderAcrossRoots(
+            IReadOnlyList<string> roots,
+            string sourceDescription,
+            out string selectedSourceRoot,
+            out string newestFolder,
+            out DateTime newestDate,
+            out string error)
+        {
+            selectedSourceRoot = string.Empty;
+            newestFolder = string.Empty;
+            newestDate = default;
+            error = string.Empty;
+
+            var existingRoots = roots
+                .Where(Directory.Exists)
+                .ToList();
+            if (existingRoots.Count == 0)
+            {
+                error = $"Unable to find {sourceDescription}.\nChecked:\n" + string.Join("\n", roots);
+                return false;
+            }
+
+            var foundAny = false;
+            var bestDate = DateTime.MinValue;
+            var bestFolder = string.Empty;
+            var bestRoot = string.Empty;
+            var diagnostics = new List<string>();
+            foreach (var root in existingRoots)
+            {
+                if (!TryFindNewestDatedSubfolder(root, out var candidateFolder, out var candidateDate, out var rootError))
+                {
+                    diagnostics.Add(rootError);
+                    continue;
+                }
+
+                if (!foundAny || candidateDate > bestDate)
+                {
+                    foundAny = true;
+                    bestDate = candidateDate;
+                    bestFolder = candidateFolder;
+                    bestRoot = root;
+                }
+            }
+
+            if (!foundAny)
+            {
+                error = $"No dated folders were found in available roots for {sourceDescription}.\n" + string.Join("\n", diagnostics);
+                return false;
+            }
+
+            selectedSourceRoot = bestRoot;
+            newestFolder = bestFolder;
+            newestDate = bestDate;
+            return true;
+        }
+
+        private static bool TryFindNewestDatedSubfolder(string sourceRoot, out string newestFolder, out DateTime newestDate, out string error)
+        {
+            newestFolder = string.Empty;
+            newestDate = default;
+            error = string.Empty;
+            if (string.IsNullOrWhiteSpace(sourceRoot) || !Directory.Exists(sourceRoot))
+            {
+                error = $"Source root not found: {sourceRoot}";
+                return false;
+            }
+
+            var candidates = new List<(string FolderPath, DateTime Date)>();
+            foreach (var folder in Directory.GetDirectories(sourceRoot, "*", SearchOption.TopDirectoryOnly))
+            {
+                var name = Path.GetFileName(folder) ?? string.Empty;
+                if (TryParseDateFromFolderName(name, out var parsedDate))
+                {
+                    candidates.Add((folder, parsedDate));
+                }
+            }
+
+            if (candidates.Count == 0)
+            {
+                error = $"No dated folders found under:\n{sourceRoot}";
+                return false;
+            }
+
+            var selected = candidates
+                .OrderByDescending(c => c.Date)
+                .ThenByDescending(c => Path.GetFileName(c.FolderPath), StringComparer.OrdinalIgnoreCase)
+                .First();
+
+            newestFolder = selected.FolderPath;
+            newestDate = selected.Date;
+            return true;
+        }
+
         private static bool TryParseDateFromFolderName(string folderName, out DateTime date)
         {
             date = default;
@@ -817,7 +1110,7 @@ namespace AtsBackgroundBuilder.Core
                 return false;
             }
 
-            var match = Regex.Match(folderName, @"(?<a>\d{1,2})-(?<b>\d{1,2})-(?<y>\d{4})");
+            var match = Regex.Match(folderName, @"(?<a>\d{1,2})-(?<b>\d{1,2})-(?<y>\d{2,4})");
             if (!match.Success)
             {
                 return false;
@@ -828,6 +1121,11 @@ namespace AtsBackgroundBuilder.Core
                 !int.TryParse(match.Groups["y"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var year))
             {
                 return false;
+            }
+
+            if (year < 100)
+            {
+                year += 2000;
             }
 
             int month;
@@ -894,6 +1192,46 @@ namespace AtsBackgroundBuilder.Core
             return copiedCount;
         }
 
+        private static int ReplaceDirectoryContentsWithSelectedShapeSets(
+            string sourceDirectory,
+            string destinationDirectory,
+            IReadOnlyList<string> shapeBaseNames)
+        {
+            if (!Directory.Exists(sourceDirectory))
+            {
+                throw new DirectoryNotFoundException("Source folder not found: " + sourceDirectory);
+            }
+
+            Directory.CreateDirectory(destinationDirectory);
+            ClearDirectoryContents(destinationDirectory);
+
+            var selectedBaseNames = new HashSet<string>(
+                shapeBaseNames?.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()) ?? Enumerable.Empty<string>(),
+                StringComparer.OrdinalIgnoreCase);
+            var copiedCount = 0;
+            foreach (var sourcePath in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+            {
+                var baseName = Path.GetFileNameWithoutExtension(sourcePath);
+                if (string.IsNullOrWhiteSpace(baseName) || !selectedBaseNames.Contains(baseName))
+                {
+                    continue;
+                }
+
+                var relativePath = Path.GetRelativePath(sourceDirectory, sourcePath);
+                var destinationPath = Path.Combine(destinationDirectory, relativePath);
+                var destinationFolder = Path.GetDirectoryName(destinationPath);
+                if (!string.IsNullOrWhiteSpace(destinationFolder))
+                {
+                    Directory.CreateDirectory(destinationFolder);
+                }
+
+                File.Copy(sourcePath, destinationPath, overwrite: true);
+                copiedCount++;
+            }
+
+            return copiedCount;
+        }
+
         private static void ClearDirectoryContents(string directoryPath)
         {
             if (!Directory.Exists(directoryPath))
@@ -940,9 +1278,13 @@ namespace AtsBackgroundBuilder.Core
                 MaxOverlapAttempts = (int)_maxAttempts.Value,
                 IncludeDispositionLinework = _includeDispoLinework.Checked,
                 IncludeDispositionLabels = _includeDispoLabels.Checked,
+                AllowMultiQuarterDispositions = _allowMultiQuarterDispositions.Checked,
                 IncludeAtsFabric = _includeAtsFabric.Checked,
                 DrawLsdSubdivisionLines = _includeLsds.Checked,
                 IncludeP3Shapefiles = _includeP3Shapes.Checked,
+                IncludeCompassMapping = _includeCompassMapping.Checked,
+                IncludeCrownReservations = _includeCrownReservations.Checked,
+                AutoCheckUpdateShapefilesAlways = _autoCheckUpdateShapesAlways.Checked,
                 CheckPlsr = _checkPlsr.Checked,
                 IncludeQuarterSectionLabels = _includeQuarterSectionLabels.Checked,
                 UseAlignedDimensions = _useAlignedDimensions.Checked,

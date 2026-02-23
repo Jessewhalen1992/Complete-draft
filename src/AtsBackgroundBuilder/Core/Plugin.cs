@@ -117,7 +117,6 @@ namespace AtsBackgroundBuilder
 
             var configPath = Path.Combine(dllFolder, "Config.json");
             var config = Config.Load(configPath, logger);
-            config.AllowMultiQuarterDispositions = true;
             var drawQuarterView = IsAffirmativeToggle(config.Quaterview) || EnableQuarterViewByEnvironment;
             logger.WriteLine($"Quarter view: {(drawQuarterView ? "ON" : "OFF")} (Config.Quaterview='{config.Quaterview}', envOverride={(EnableQuarterViewByEnvironment ? "ON" : "OFF")}).");
 
@@ -172,10 +171,19 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            // Enforce existing behavior (multi-quarter labeling) unless you later decide to expose this in the UI.
+            var showQuarterDefinitionLinework = input.AllowMultiQuarterDispositions;
+            drawQuarterView = showQuarterDefinitionLinework || EnableQuarterViewByEnvironment;
+            // Keep per-quarter disposition label/intersection logic enabled regardless of
+            // whether quarter-definition linework is shown.
             config.AllowMultiQuarterDispositions = true;
             config.TextHeight = input.TextHeight;
             config.MaxOverlapAttempts = input.MaxOverlapAttempts;
+            logger.WriteLine($"Quarter view (UI): {(drawQuarterView ? "ON" : "OFF")} (UI 1/4 Definition linework={(showQuarterDefinitionLinework ? "ON" : "OFF")}, envOverride={(EnableQuarterViewByEnvironment ? "ON" : "OFF")}).");
+            logger.WriteLine("Disposition 1/4 definition mode: ON (always enabled for per-quarter label logic).");
+            if (input.AutoCheckUpdateShapefilesAlways)
+            {
+                AutoUpdateSelectedShapeSetsIfNeeded(input, logger);
+            }
 
             if (!config.UseSectionIndex)
             {
@@ -224,15 +232,40 @@ namespace AtsBackgroundBuilder
                 logger.WriteLine($"P3 import summary: imported={p3Summary.ImportedEntities}, filtered={p3Summary.FilteredEntities}, failures={p3Summary.ImportFailures}");
             }
 
+            var dispositionImportScopeIds = (input.IncludeDispositionLinework || input.IncludeDispositionLabels)
+                ? BuildDispositionImportScopeIds(database, sectionDrawResult, logger)
+                : new List<ObjectId>();
+
+            if (input.IncludeCompassMapping)
+            {
+                exitStage = "compass_mapping_import";
+                var compassSummary = ImportCompassMappingShapefile(
+                    database,
+                    editor,
+                    logger,
+                    sectionDrawResult.SectionPolylineIds,
+                    input.Zone);
+                editor.WriteMessage($"\nCompass Mapping import: imported {compassSummary.ImportedEntities}, filtered {compassSummary.FilteredEntities}, failures {compassSummary.ImportFailures}.");
+                logger.WriteLine($"Compass Mapping import summary: imported={compassSummary.ImportedEntities}, filtered={compassSummary.FilteredEntities}, failures={compassSummary.ImportFailures}");
+            }
+
+            if (input.IncludeCrownReservations)
+            {
+                exitStage = "crown_reservations_import";
+                var crownSummary = ImportCrownReservationsShapefile(
+                    database,
+                    editor,
+                    logger,
+                    sectionDrawResult.SectionPolylineIds);
+                editor.WriteMessage($"\nCrown Reservations import: imported {crownSummary.ImportedEntities}, filtered {crownSummary.FilteredEntities}, failures {crownSummary.ImportFailures}.");
+                logger.WriteLine($"Crown Reservations import summary: imported={crownSummary.ImportedEntities}, filtered={crownSummary.FilteredEntities}, failures={crownSummary.ImportFailures}");
+            }
+
             var dispositionPolylines = new List<ObjectId>();
             ShapefileImportSummary importSummary;
             if (input.IncludeDispositionLinework || input.IncludeDispositionLabels)
             {
                 exitStage = "disposition_import";
-                var dispositionImportScopeIds = BuildDispositionImportScopeIds(
-                    database,
-                    sectionDrawResult,
-                    logger);
                 importSummary = ShapefileImporter.ImportShapefiles(
                     database,
                     editor,
@@ -6898,6 +6931,23 @@ namespace AtsBackgroundBuilder
 
     public sealed class Logger : IDisposable
     {
+        private static readonly bool EnableVerboseLogging = IsAffirmative(Environment.GetEnvironmentVariable("ATSBUILD_VERBOSE_LOG"));
+        private static readonly string[] SuppressedVerbosePrefixes =
+        {
+            "WELLSITE DEBUG:",
+            "No quarter intersection:",
+            "Quarter view SW coords",
+            "Quarter view west corners",
+            "Quarter view section",
+            "OD table lookup failed for '",
+            "TRACE-LSD-CORR",
+            "CorrectionLine:",
+        };
+        private static readonly string[] SuppressedVerboseContains =
+        {
+            "RA-DIAG",
+            "RA-TGT reject",
+        };
         private StreamWriter? _writer;
 
         public void Initialize(string path)
@@ -6928,6 +6978,11 @@ namespace AtsBackgroundBuilder
 
         public void WriteLine(string message)
         {
+            if (ShouldSuppressVerboseMessage(message))
+            {
+                return;
+            }
+
             _writer?.WriteLine(message);
         }
 
@@ -6942,6 +6997,52 @@ namespace AtsBackgroundBuilder
             var baseName = Path.GetFileNameWithoutExtension(path);
             var extension = Path.GetExtension(path);
             return Path.Combine(directory, $"{baseName}-{DateTime.Now:yyyyMMdd-HHmmss}{extension}");
+        }
+
+        private static bool ShouldSuppressVerboseMessage(string? message)
+        {
+            if (EnableVerboseLogging || string.IsNullOrWhiteSpace(message))
+            {
+                return false;
+            }
+
+            foreach (var prefix in SuppressedVerbosePrefixes)
+            {
+                if (message.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            foreach (var token in SuppressedVerboseContains)
+            {
+                if (message.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsAffirmative(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            switch (value.Trim().ToUpperInvariant())
+            {
+                case "1":
+                case "TRUE":
+                case "YES":
+                case "Y":
+                case "ON":
+                    return true;
+                default:
+                    return false;
+            }
         }
     }
 }
