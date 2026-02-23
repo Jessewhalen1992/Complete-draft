@@ -1335,16 +1335,17 @@ namespace AtsBackgroundBuilder
                 requestedScopeIds,
                 drawLsds,
                 logger);
-            if (drawLsds)
-            {
-                RebuildLsdLabelsAtFinalIntersections(database, lsdQuarterInfos, logger);
-            }
             if (drawQuarterView)
             {
                 DrawQuarterViewFromFinalRoadAllowanceGeometry(database, sectionIds, sectionNumberById, logger);
             }
             EnforceFinalCorrectionOuterLayerConsistency(database, requestedScopeIds, logger);
             NormalizeCorrectionLayerEntityColorByLayer(database, logger);
+            if (drawLsds)
+            {
+                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
+                RebuildLsdLabelsAtFinalIntersections(database, lsdQuarterInfos, logger);
+            }
             logger.WriteLine("Cleanup: final endpoint convergence pass complete.");
             logger.WriteLine($"TIMING DrawSectionsFromRequests: road allowances processed in {timer.ElapsedMilliseconds} ms");
 

@@ -1109,6 +1109,7 @@ namespace AtsBackgroundBuilder
                     }
 
                     var isTwentyLikeLayer =
+                        string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase);
@@ -2097,7 +2098,7 @@ namespace AtsBackgroundBuilder
                     }
                 }
 
-                // Final layer guard: if any seam-overlap horizontal L-USEC-2012 survives,
+                // Final layer guard: if any seam-overlap horizontal L-USEC-0 / L-USEC-2012 survives,
                 // force it to L-USEC-C. This is layer-only and does not modify geometry.
                 var forcedOuterRelayer = 0;
                 var correctionOuterAnchors = new List<(Point2d A, Point2d B, Point2d Mid, double MinX, double MaxX)>();
@@ -2157,6 +2158,7 @@ namespace AtsBackgroundBuilder
 
                         var layer = writable.Layer ?? string.Empty;
                         var isTwentyLikeLayer =
+                            string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
                         if (!isTwentyLikeLayer)
