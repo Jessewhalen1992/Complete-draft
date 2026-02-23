@@ -89,7 +89,11 @@ namespace AtsBackgroundBuilder
                 }
 
                 return string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase);
             }
 
             var sectionMetaById = new Dictionary<ObjectId, (SectionKey Key, int Township, int Range, int SectionNumber)>();
@@ -579,6 +583,7 @@ namespace AtsBackgroundBuilder
                 var postRelayeredTwenty = 0;
                 var postRelayerSamples = new List<string>();
                 var postSeen = new HashSet<ObjectId>();
+                var lateOuterCompanionCandidates = new List<(CorrectionSegment Outer, CorrectionSeam Seam)>();
                 for (var si = 0; si < seams.Count; si++)
                 {
                     var seam = seams[si];
@@ -620,6 +625,7 @@ namespace AtsBackgroundBuilder
 
                         postRelayeredTwenty++;
                         correctionGeometryChanged = true;
+                        lateOuterCompanionCandidates.Add((new CorrectionSegment(seg.Id, LayerUsecCorrection, seg.A, seg.B), seam));
                         if (postRelayerSamples.Count < 12)
                         {
                             postRelayerSamples.Add(
@@ -820,6 +826,91 @@ namespace AtsBackgroundBuilder
                     for (var i = 0; i < bridgeSamples.Count; i++)
                     {
                         logger?.WriteLine("CorrectionLine:   " + bridgeSamples[i]);
+                    }
+                }
+
+                // Late relayer companion pass: post-relayered seam segments were converted after
+                // the main outer/inner pairing pass, so create/relayer their C-0 companions here.
+                var lateCompanionRelayered = 0;
+                var lateCompanionCreated = 0;
+                var lateCompanionNoOp = 0;
+                var lateCompanionSamples = new List<string>();
+                for (var i = 0; i < lateOuterCompanionCandidates.Count; i++)
+                {
+                    var candidate = lateOuterCompanionCandidates[i];
+                    var outer = candidate.Outer;
+                    var seam = candidate.Seam;
+                    if (TryFindCorrectionInnerCompanion(
+                        outer,
+                        segments,
+                        CorrectionLinePostInsetMeters,
+                        x => seam.GetCenterYAt(x),
+                        out var existingInner))
+                    {
+                        if (TryRelayerCorrectionSegment(tr, existingInner.Id, LayerUsecCorrectionZero))
+                        {
+                            relayeredInner++;
+                            lateCompanionRelayered++;
+                            correctionGeometryChanged = true;
+                            if (lateCompanionSamples.Count < 10)
+                            {
+                                lateCompanionSamples.Add(
+                                    string.Format(
+                                        CultureInfo.InvariantCulture,
+                                        "relayer id={0} A=({1:0.###},{2:0.###}) B=({3:0.###},{4:0.###}) -> {5}",
+                                        existingInner.Id.Handle.ToString(),
+                                        existingInner.A.X,
+                                        existingInner.A.Y,
+                                        existingInner.B.X,
+                                        existingInner.B.Y,
+                                        LayerUsecCorrectionZero));
+                            }
+                        }
+
+                        continue;
+                    }
+
+                    if (TryCreateCorrectionInnerCompanion(
+                        outer,
+                        x => seam.GetCenterYAt(x),
+                        CorrectionLinePostInsetMeters,
+                        segments,
+                        ms,
+                        tr,
+                        out var newId,
+                        out var newA,
+                        out var newB))
+                    {
+                        createdInner++;
+                        lateCompanionCreated++;
+                        correctionGeometryChanged = true;
+                        segments.Add(new CorrectionSegment(newId, LayerUsecCorrectionZero, newA, newB));
+                        if (lateCompanionSamples.Count < 10)
+                        {
+                            lateCompanionSamples.Add(
+                                string.Format(
+                                    CultureInfo.InvariantCulture,
+                                    "create id={0} A=({1:0.###},{2:0.###}) B=({3:0.###},{4:0.###}) layer={5}",
+                                    newId.Handle.ToString(),
+                                    newA.X,
+                                    newA.Y,
+                                    newB.X,
+                                    newB.Y,
+                                    LayerUsecCorrectionZero));
+                        }
+                    }
+                    else
+                    {
+                        lateCompanionNoOp++;
+                    }
+                }
+                if (lateCompanionRelayered > 0 || lateCompanionCreated > 0 || lateCompanionNoOp > 0)
+                {
+                    logger?.WriteLine(
+                        $"CorrectionLine: late companion pass relayered={lateCompanionRelayered}, created={lateCompanionCreated}, noOp={lateCompanionNoOp}.");
+                    for (var i = 0; i < lateCompanionSamples.Count; i++)
+                    {
+                        logger?.WriteLine("CorrectionLine:   " + lateCompanionSamples[i]);
                     }
                 }
 
@@ -1112,7 +1203,10 @@ namespace AtsBackgroundBuilder
                         string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase);
+                        string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase);
                     if (isTwentyLikeLayer)
                     {
                         twentyCandidates.Add((id, a, b));
@@ -2160,7 +2254,11 @@ namespace AtsBackgroundBuilder
                         var isTwentyLikeLayer =
                             string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+                            string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase);
                         if (!isTwentyLikeLayer)
                         {
                             continue;
@@ -2224,7 +2322,7 @@ namespace AtsBackgroundBuilder
                 logger?.WriteLine(
                     $"CorrectionLine: C-0 split at boundaries sources={splitInnerSources}, created={splitInnerCreated}, outerAnchors={splitInnerFromOuterAnchors}.");
                 logger?.WriteLine(
-                    $"CorrectionLine: forced correction outer relayer converted {forcedOuterRelayer} seam-overlap L-USEC2012 segment(s) to {LayerUsecCorrection} (anchors={correctionOuterAnchors.Count}).");
+                    $"CorrectionLine: forced correction outer relayer converted {forcedOuterRelayer} seam-overlap L-USEC20/3018 segment(s) to {LayerUsecCorrection} (anchors={correctionOuterAnchors.Count}).");
                 if (sampleMoves.Count > 0)
                 {
                     logger?.WriteLine($"CorrectionLine: C-0 endpoint snap samples ({sampleMoves.Count})");
