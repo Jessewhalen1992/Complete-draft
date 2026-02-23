@@ -5814,9 +5814,10 @@ namespace AtsBackgroundBuilder
                 const double axisNeighborhoodTolerance = 55.0;
                 const double bucketTolerance = 1.6;
                 const double spanTouchTolerance = 6.0;
-                const double twoLineSecGapTolerance = 1.2;
-                const double twoLineThirtyGapTolerance = 1.6;
-                const double twoLineMiddleToOuterGapTolerance = 1.4;
+                const double twoLineSecGapTolerance = 0.05;
+                const double twoLineThirtyGapMin = 30.15;
+                const double twoLineThirtyGapMax = 30.18;
+                const double twoLineMiddleToOuterGapTolerance = 0.05;
                 const double lenTolerance = 0.35;
                 const double secThirtyRatio = RoadAllowanceSecWidthMeters / RoadAllowanceUsecWidthMeters;
                 const double rangeEdgeBand = 145.0;
@@ -5994,7 +5995,7 @@ namespace AtsBackgroundBuilder
                                 bucketLayers[1] = LayerUsecThirty;
                             }
                         }
-                        else if (Math.Abs(gap - RoadAllowanceUsecWidthMeters) <= twoLineThirtyGapTolerance)
+                        else if (gap >= twoLineThirtyGapMin && gap <= twoLineThirtyGapMax)
                         {
                             bucketLayers[0] = LayerUsecZero;
                             bucketLayers[1] = LayerUsecThirty;

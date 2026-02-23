@@ -1343,6 +1343,7 @@ namespace AtsBackgroundBuilder
             {
                 DrawQuarterViewFromFinalRoadAllowanceGeometry(database, sectionIds, sectionNumberById, logger);
             }
+            EnforceFinalCorrectionOuterLayerConsistency(database, requestedScopeIds, logger);
             NormalizeCorrectionLayerEntityColorByLayer(database, logger);
             logger.WriteLine("Cleanup: final endpoint convergence pass complete.");
             logger.WriteLine($"TIMING DrawSectionsFromRequests: road allowances processed in {timer.ElapsedMilliseconds} ms");
@@ -2242,6 +2243,93 @@ namespace AtsBackgroundBuilder
                        IsTargetCorrectionPairLabel(rightLabel);
             }
 
+            static bool IsOnCorrectionCadence(int townshipCandidate)
+            {
+                if (townshipCandidate <= 0)
+                {
+                    return false;
+                }
+
+                const int cadenceAnchorTownship = 58;
+                var mod = (townshipCandidate - cadenceAnchorTownship) % 4;
+                if (mod < 0)
+                {
+                    mod += 4;
+                }
+
+                return mod == 0;
+            }
+
+            static bool TryParseSectionAndTownshipFromSectionKeyId(
+                string keyId,
+                out int sectionNumber,
+                out int townshipNumber)
+            {
+                sectionNumber = 0;
+                townshipNumber = 0;
+                if (string.IsNullOrWhiteSpace(keyId))
+                {
+                    return false;
+                }
+
+                static bool TryReadTokenInt(string source, string marker, out int value)
+                {
+                    value = 0;
+                    var start = source.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                    if (start < 0)
+                    {
+                        return false;
+                    }
+
+                    start += marker.Length;
+                    if (start >= source.Length)
+                    {
+                        return false;
+                    }
+
+                    var end = source.IndexOf('_', start);
+                    var token = end >= start
+                        ? source.Substring(start, end - start)
+                        : source.Substring(start);
+                    return TryParsePositiveToken(token, out value);
+                }
+
+                return TryReadTokenInt(keyId, "_SEC", out sectionNumber) &&
+                       TryReadTokenInt(keyId, "_TWP", out townshipNumber);
+            }
+
+            static bool IsCorrectionNorthSouthSeamPair(string southKeyId, string northKeyId, bool verticalMode)
+            {
+                if (verticalMode)
+                {
+                    return false;
+                }
+
+                if (!TryParseSectionAndTownshipFromSectionKeyId(southKeyId, out var southSection, out var southTownship) ||
+                    !TryParseSectionAndTownshipFromSectionKeyId(northKeyId, out var northSection, out var northTownship))
+                {
+                    return false;
+                }
+
+                if (northTownship != (southTownship + 1))
+                {
+                    return false;
+                }
+
+                var isSouthRowPair =
+                    (southSection >= 31 && southSection <= 36) &&
+                    (northSection >= 1 && northSection <= 6);
+                var isNorthRowPair =
+                    (southSection >= 1 && southSection <= 6) &&
+                    (northSection >= 31 && northSection <= 36);
+                if (!isSouthRowPair && !isNorthRowPair)
+                {
+                    return false;
+                }
+
+                return IsOnCorrectionCadence(southTownship);
+            }
+
             string ResolveRoadAllowanceOutputLayer(string layerName)
             {
                 return NormalizeSecType(layerName);
@@ -2298,6 +2386,7 @@ namespace AtsBackgroundBuilder
                 double? gapP1 = null;
                 double? gapP2 = null;
                 var traceTargetPair = IsTargetCorrectionPair(baseLabel, otherLabel);
+                var suppressOffsetsForCorrectionSeam = IsCorrectionNorthSouthSeamPair(baseKey, otherKey, verticalMode);
 
                 void TryAddQuarterOffsetSegment(
                     Point2d b0,
@@ -2309,6 +2398,11 @@ namespace AtsBackgroundBuilder
                     out double? gapOut)
                 {
                     gapOut = null;
+                    if (suppressOffsetsForCorrectionSeam)
+                    {
+                        return;
+                    }
+
                     var baseDir = b1 - b0;
                     var otherDir = o1 - o0;
                     var baseLen = baseDir.Length;
