@@ -98,7 +98,7 @@ namespace AtsBackgroundBuilder.Dispositions
                     try { overallMeter?.MeterProgress(); } catch { }
 
                     logger.WriteLine($"Resolving shapefile: {shapefile}");
-                    var shapefilePath = ResolveShapefilePath(searchFolders, shapefile);
+                    var shapefilePath = ResolveShapefilePath(searchFolders, shapefile, logger);
                     if (string.IsNullOrWhiteSpace(shapefilePath))
                     {
                         logger.WriteLine($"Shapefile missing: {shapefile}. Searched: {string.Join("; ", searchFolders)}");
@@ -278,12 +278,28 @@ namespace AtsBackgroundBuilder.Dispositions
 
             try
             {
+                logger.WriteLine($"Importer.Init begin: {Path.GetFileName(shapefilePath)}");
                 importer.Init("SHP", shapefilePath);
+                logger.WriteLine("Importer.Init completed.");
 
                 // Import window restriction to reduce heavy loads
+                var locationWindowApplied = true;
                 if (useLocationWindow)
                 {
-                    TrySetLocationWindow(importer, sectionExtents, logger);
+                    locationWindowApplied = TrySetLocationWindow(importer, sectionExtents, logger);
+                    var allowNoWindowImport = IsNoLocationWindowImportAllowed();
+                    if (!locationWindowApplied)
+                    {
+                        if (IsCompassSurveyedShapefile(shapefilePath) && !allowNoWindowImport)
+                        {
+                            logger.WriteLine(
+                                $"Shapefile import skipped for '{Path.GetFileName(shapefilePath)}': location window unavailable; refusing unsafe full-file import. Set ATSBUILD_ALLOW_NO_LOCATION_WINDOW_IMPORT=1 to override.");
+                            return false;
+                        }
+
+                        logger.WriteLine(
+                            $"Proceeding without location window for '{Path.GetFileName(shapefilePath)}' (ATSBUILD_ALLOW_NO_LOCATION_WINDOW_IMPORT={(allowNoWindowImport ? "1" : "0")}).");
+                    }
                 }
 
                 var mappingMode = DetermineDataMappingMode(odTableName, logger);
@@ -331,7 +347,9 @@ namespace AtsBackgroundBuilder.Dispositions
                 }
 
                 // SAFEST: plain Import() (no reflection)
+                logger.WriteLine("Importer.Import begin.");
                 importer.Import();
+                logger.WriteLine("Importer.Import completed.");
                 return true;
             }
             catch (System.Exception ex)
@@ -341,42 +359,101 @@ namespace AtsBackgroundBuilder.Dispositions
             }
         }
 
-        private static void TrySetLocationWindow(Importer importer, List<Extents2d> sectionExtents, Logger logger)
+        private static bool TrySetLocationWindow(Importer importer, List<Extents2d> sectionExtents, Logger logger)
         {
             if (sectionExtents == null || sectionExtents.Count == 0)
-                return;
+            {
+                logger.WriteLine("Importer location window skipped: no section extents.");
+                return false;
+            }
 
             var union = UnionExtents(sectionExtents);
+            var minX = union.MinPoint.X;
+            var minY = union.MinPoint.Y;
+            var maxX = union.MaxPoint.X;
+            var maxY = union.MaxPoint.Y;
 
             try
             {
                 var method = importer.GetType().GetMethod("SetLocationWindowAndOptions");
                 if (method == null)
-                    return;
+                {
+                    logger.WriteLine("Importer location window unsupported: SetLocationWindowAndOptions not found.");
+                    return false;
+                }
 
                 var ps = method.GetParameters();
                 if (ps.Length != 5 || ps[0].ParameterType != typeof(double) || ps[1].ParameterType != typeof(double) ||
                     ps[2].ParameterType != typeof(double) || ps[3].ParameterType != typeof(double) || !ps[4].ParameterType.IsEnum)
-                    return;
+                {
+                    logger.WriteLine("Importer location window unsupported: unexpected SetLocationWindowAndOptions signature.");
+                    return false;
+                }
 
                 // LocationOption: usually 2 == kUseLocationWindow
                 var option = GetEnumValue(ps[4].ParameterType, 2, "kUseLocationWindow", "UseLocationWindow");
 
-                method.Invoke(importer, new object[]
+                // Try standard extent ordering first: (xmin, ymin, xmax, ymax).
+                try
                 {
-                    union.MinPoint.X,
-                    union.MaxPoint.X,
-                    union.MinPoint.Y,
-                    union.MaxPoint.Y,
-                    option
-                });
+                    method.Invoke(importer, new object[]
+                    {
+                        minX,
+                        minY,
+                        maxX,
+                        maxY,
+                        option
+                    });
 
-                logger.WriteLine($"Importer location window set: X[{union.MinPoint.X:G},{union.MaxPoint.X:G}] Y[{union.MinPoint.Y:G},{union.MaxPoint.Y:G}]");
+                    logger.WriteLine($"Importer location window set (xmin,ymin,xmax,ymax): X[{minX:G},{maxX:G}] Y[{minY:G},{maxY:G}]");
+                    return true;
+                }
+                catch (System.Exception exStandard)
+                {
+                    var standardMessage = exStandard.InnerException?.Message ?? exStandard.Message;
+
+                    // Fallback for API variants observed in older builds: (xmin, xmax, ymin, ymax).
+                    try
+                    {
+                        method.Invoke(importer, new object[]
+                        {
+                            minX,
+                            maxX,
+                            minY,
+                            maxY,
+                            option
+                        });
+
+                        logger.WriteLine($"Importer location window set (xmin,xmax,ymin,ymax): X[{minX:G},{maxX:G}] Y[{minY:G},{maxY:G}]");
+                        return true;
+                    }
+                    catch (System.Exception exFallback)
+                    {
+                        var fallbackMessage = exFallback.InnerException?.Message ?? exFallback.Message;
+                        logger.WriteLine($"Importer location window setup failed: standard='{standardMessage}', fallback='{fallbackMessage}'.");
+                        return false;
+                    }
+                }
             }
-            catch
+            catch (System.Exception ex)
             {
-                // non-critical
+                logger.WriteLine("Importer location window setup failed: " + ex.Message);
+                return false;
             }
+        }
+
+        private static bool IsNoLocationWindowImportAllowed()
+        {
+            var value = Environment.GetEnvironmentVariable("ATSBUILD_ALLOW_NO_LOCATION_WINDOW_IMPORT");
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
         }
 
         private static object GetEnumValue(Type enumType, int fallbackNumeric, params string[] names)
@@ -715,19 +792,273 @@ namespace AtsBackgroundBuilder.Dispositions
                 folders.Add(folder);
         }
 
-        private static string? ResolveShapefilePath(IReadOnlyList<string> folders, string shapefile)
+        private static string? ResolveShapefilePath(IReadOnlyList<string> folders, string shapefile, Logger logger)
         {
-            if (File.Exists(shapefile))
-                return shapefile;
+            var checkedCandidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var invalidCandidates = new List<string>();
+            string? validatedPath = null;
+
+            void TryCandidate(string? candidate)
+            {
+                if (validatedPath != null)
+                {
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    return;
+                }
+
+                string fullPath;
+                try
+                {
+                    fullPath = Path.GetFullPath(candidate);
+                }
+                catch (System.Exception ex)
+                {
+                    invalidCandidates.Add(candidate + " (invalid path: " + ex.Message + ")");
+                    return;
+                }
+
+                if (!checkedCandidates.Add(fullPath))
+                {
+                    return;
+                }
+
+                if (!File.Exists(fullPath))
+                {
+                    return;
+                }
+
+                if (TryValidateShapefile(fullPath, out var reason))
+                {
+                    validatedPath = fullPath;
+                    return;
+                }
+
+                invalidCandidates.Add(fullPath + " (" + reason + ")");
+            }
+
+            TryCandidate(shapefile);
+            if (!string.IsNullOrWhiteSpace(validatedPath))
+            {
+                return validatedPath;
+            }
 
             foreach (var folder in folders)
             {
-                var candidate = Path.Combine(folder, shapefile);
-                if (File.Exists(candidate))
-                    return candidate;
+                TryCandidate(Path.Combine(folder, shapefile));
+                if (!string.IsNullOrWhiteSpace(validatedPath))
+                {
+                    return validatedPath;
+                }
+            }
+
+            var shapefileName = Path.GetFileName(shapefile);
+            if (string.IsNullOrWhiteSpace(shapefileName))
+            {
+                shapefileName = shapefile;
+            }
+
+            var fallbackCandidates = new List<string>();
+            foreach (var folder in folders)
+            {
+                if (!Directory.Exists(folder))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var matches = Directory.EnumerateFiles(folder, shapefileName, SearchOption.AllDirectories);
+                    foreach (var match in matches)
+                    {
+                        var fullMatch = Path.GetFullPath(match);
+                        if (!checkedCandidates.Contains(fullMatch))
+                        {
+                            fallbackCandidates.Add(fullMatch);
+                        }
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    logger.WriteLine($"Shapefile fallback search failed in '{folder}' for '{shapefileName}': {ex.Message}");
+                }
+            }
+
+            string? bestFallback = null;
+            long bestFallbackTicks = long.MinValue;
+            foreach (var candidate in fallbackCandidates)
+            {
+                checkedCandidates.Add(candidate);
+                if (!TryValidateShapefile(candidate, out var reason))
+                {
+                    invalidCandidates.Add(candidate + " (" + reason + ")");
+                    continue;
+                }
+
+                var candidateTicks = GetSafeLastWriteTimeUtcTicks(candidate);
+                if (bestFallback == null || candidateTicks > bestFallbackTicks)
+                {
+                    bestFallback = candidate;
+                    bestFallbackTicks = candidateTicks;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(bestFallback))
+            {
+                logger.WriteLine(
+                    $"Using fallback valid shapefile copy for '{shapefileName}': {bestFallback}");
+                return bestFallback;
+            }
+
+            if (invalidCandidates.Count > 0)
+            {
+                logger.WriteLine($"No valid shapefile copy found for '{shapefileName}'. Checked invalid candidates: {string.Join("; ", invalidCandidates)}");
             }
 
             return null;
+        }
+
+        private static bool TryValidateShapefile(string shapefilePath, [NotNullWhen(false)] out string? failureReason)
+        {
+            failureReason = null;
+
+            try
+            {
+                var basePath = Path.Combine(
+                    Path.GetDirectoryName(shapefilePath) ?? string.Empty,
+                    Path.GetFileNameWithoutExtension(shapefilePath) ?? string.Empty);
+                var requiredSidecars = new[] { ".shx", ".dbf" };
+                foreach (var ext in requiredSidecars)
+                {
+                    var sidecarPath = basePath + ext;
+                    if (!File.Exists(sidecarPath))
+                    {
+                        failureReason = "Missing required sidecar: " + sidecarPath;
+                        return false;
+                    }
+                }
+
+                using (var shpStream = new FileStream(shapefilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var shpReader = new BinaryReader(shpStream))
+                {
+                    if (shpStream.Length < 100)
+                    {
+                        failureReason = "Shapefile is shorter than 100-byte header.";
+                        return false;
+                    }
+
+                    var fileCode = ReadInt32BigEndian(shpReader);
+                    if (fileCode != 9994)
+                    {
+                        failureReason = $"Unexpected SHP file code {fileCode}.";
+                        return false;
+                    }
+
+                    shpStream.Seek(24, SeekOrigin.Begin);
+                    var fileLengthWords = ReadInt32BigEndian(shpReader);
+                    var expectedLengthBytes = (long)fileLengthWords * 2L;
+                    if (expectedLengthBytes != shpStream.Length)
+                    {
+                        failureReason = $"Header length mismatch (header={expectedLengthBytes}, actual={shpStream.Length}).";
+                        return false;
+                    }
+
+                    long offset = 100;
+                    shpStream.Seek(offset, SeekOrigin.Begin);
+                    while (offset < shpStream.Length)
+                    {
+                        if (shpStream.Length - offset < 8)
+                        {
+                            failureReason = $"Truncated record header at byte {offset}.";
+                            return false;
+                        }
+
+                        _ = ReadInt32BigEndian(shpReader); // record number
+                        var contentLengthWords = ReadInt32BigEndian(shpReader);
+                        if (contentLengthWords < 2)
+                        {
+                            failureReason = $"Invalid record length {contentLengthWords} words at byte {offset}.";
+                            return false;
+                        }
+
+                        var contentLengthBytes = (long)contentLengthWords * 2L;
+                        var nextOffset = offset + 8L + contentLengthBytes;
+                        if (nextOffset > shpStream.Length)
+                        {
+                            failureReason = $"Truncated record body at byte {offset} (needs {contentLengthBytes} bytes).";
+                            return false;
+                        }
+
+                        offset = nextOffset;
+                        shpStream.Seek(offset, SeekOrigin.Begin);
+                    }
+                }
+
+                var shxPath = basePath + ".shx";
+                using (var shxStream = new FileStream(shxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var shxReader = new BinaryReader(shxStream))
+                {
+                    if (shxStream.Length < 100 || ((shxStream.Length - 100) % 8) != 0)
+                    {
+                        failureReason = $"Invalid SHX file size {shxStream.Length}.";
+                        return false;
+                    }
+
+                    var fileCode = ReadInt32BigEndian(shxReader);
+                    if (fileCode != 9994)
+                    {
+                        failureReason = $"Unexpected SHX file code {fileCode}.";
+                        return false;
+                    }
+
+                    shxStream.Seek(24, SeekOrigin.Begin);
+                    var fileLengthWords = ReadInt32BigEndian(shxReader);
+                    var expectedLengthBytes = (long)fileLengthWords * 2L;
+                    if (expectedLengthBytes != shxStream.Length)
+                    {
+                        failureReason = $"SHX header length mismatch (header={expectedLengthBytes}, actual={shxStream.Length}).";
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                failureReason = ex.Message;
+                return false;
+            }
+        }
+
+        private static int ReadInt32BigEndian(BinaryReader reader)
+        {
+            var bytes = reader.ReadBytes(4);
+            if (bytes.Length != 4)
+            {
+                throw new EndOfStreamException("Unable to read 4-byte integer.");
+            }
+
+            if (BitConverter.IsLittleEndian)
+            {
+                Array.Reverse(bytes);
+            }
+
+            return BitConverter.ToInt32(bytes, 0);
+        }
+
+        private static long GetSafeLastWriteTimeUtcTicks(string path)
+        {
+            try
+            {
+                return File.GetLastWriteTimeUtc(path).Ticks;
+            }
+            catch
+            {
+                return DateTime.MinValue.Ticks;
+            }
         }
 
         private static HashSet<ObjectId> CaptureDispositionCandidateIds(Database database)

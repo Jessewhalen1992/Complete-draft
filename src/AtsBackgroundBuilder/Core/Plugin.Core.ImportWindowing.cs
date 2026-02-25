@@ -47,7 +47,7 @@ namespace AtsBackgroundBuilder
         private const string CompassMappingShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\COMPASS MAPPING";
         private const string CrownReservationsShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\CLR";
 
-        private static void AutoUpdateSelectedShapeSetsIfNeeded(AtsBuildInput input, Logger? logger)
+        private static void AutoUpdateSelectedShapeSetsIfNeeded(AtsBuildInput input, Config config, Logger? logger)
         {
             if (input == null)
             {
@@ -57,6 +57,7 @@ namespace AtsBackgroundBuilder
             try
             {
                 var needsDisposition = input.IncludeDispositionLinework || input.IncludeDispositionLabels;
+                var dispositionShapeBaseNames = BuildShapeBaseNamesFromShapefileNames(config?.DispositionShapefiles, "DAB_APPL");
                 var dispositionError = string.Empty;
                 if (needsDisposition &&
                     TryResolveNewestDidsFolderAcrossRoots(
@@ -66,10 +67,13 @@ namespace AtsBackgroundBuilder
                         out var newestDate,
                         out dispositionError))
                 {
-                    if (DirectoryContentsDiffer(newestFolder, DispositionShapeDestinationFolder))
+                    if (DirectoryContentsDifferForBaseNames(newestFolder, DispositionShapeDestinationFolder, dispositionShapeBaseNames))
                     {
-                        var copied = ReplaceDirectoryContents(newestFolder, DispositionShapeDestinationFolder);
-                        logger?.WriteLine($"Shape auto-update: Disposition copied {copied} file(s) from '{newestFolder}' (root '{sourceRoot}', date {newestDate:yyyy-MM-dd}).");
+                        var copied = ReplaceDirectoryContentsWithSelectedShapeSets(
+                            newestFolder,
+                            DispositionShapeDestinationFolder,
+                            dispositionShapeBaseNames);
+                        logger?.WriteLine($"Shape auto-update: Disposition copied {copied} file(s) from '{newestFolder}' (root '{sourceRoot}', date {newestDate:yyyy-MM-dd}, shapeSets={string.Join(", ", dispositionShapeBaseNames)}).");
                     }
                     else
                     {
@@ -790,14 +794,24 @@ namespace AtsBackgroundBuilder
             var selectedBaseNames = new HashSet<string>(
                 baseNames?.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()) ?? Enumerable.Empty<string>(),
                 StringComparer.OrdinalIgnoreCase);
-            var src = Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories)
-                .Where(path => selectedBaseNames.Contains(Path.GetFileNameWithoutExtension(path) ?? string.Empty))
-                .Select(path => BuildFileSignature(sourceDirectory, path))
+            if (selectedBaseNames.Count == 0)
+            {
+                return true;
+            }
+
+            var sourceFilesByName = ResolveSelectedShapeSourceFiles(sourceDirectory, selectedBaseNames, out _);
+            if (sourceFilesByName.Count == 0)
+            {
+                return true;
+            }
+
+            var src = sourceFilesByName
+                .Select(pair => BuildFlatFileSignature(pair.Key, pair.Value))
                 .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            var dst = Directory.GetFiles(destinationDirectory, "*", SearchOption.AllDirectories)
+            var dst = Directory.GetFiles(destinationDirectory, "*", SearchOption.TopDirectoryOnly)
                 .Where(path => selectedBaseNames.Contains(Path.GetFileNameWithoutExtension(path) ?? string.Empty))
-                .Select(path => BuildFileSignature(destinationDirectory, path))
+                .Select(path => BuildFlatFileSignature(Path.GetFileName(path), path))
                 .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
                 .ToList();
             return !src.SequenceEqual(dst, StringComparer.OrdinalIgnoreCase);
@@ -813,6 +827,304 @@ namespace AtsBackgroundBuilder
                 relative,
                 info.Length,
                 info.LastWriteTimeUtc.Ticks);
+        }
+
+        private static string BuildFlatFileSignature(string fileName, string fullPath)
+        {
+            var info = new FileInfo(fullPath);
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}|{1}|{2}",
+                fileName,
+                info.Length,
+                info.LastWriteTimeUtc.Ticks);
+        }
+
+        private static Dictionary<string, string> ResolveSelectedShapeSourceFiles(
+            string sourceDirectory,
+            IReadOnlyCollection<string> shapeBaseNames,
+            out List<string> missingBaseNames)
+        {
+            missingBaseNames = new List<string>();
+            var selectedFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (!Directory.Exists(sourceDirectory))
+            {
+                missingBaseNames.AddRange(shapeBaseNames ?? Array.Empty<string>());
+                return selectedFiles;
+            }
+
+            foreach (var baseName in shapeBaseNames)
+            {
+                if (string.IsNullOrWhiteSpace(baseName))
+                {
+                    continue;
+                }
+
+                var matches = Directory.GetFiles(sourceDirectory, baseName + ".*", SearchOption.TopDirectoryOnly)
+                    .Where(path => string.Equals(Path.GetFileNameWithoutExtension(path), baseName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (!IsMatchSetValidForShapefile(matches))
+                {
+                    matches.Clear();
+                }
+
+                if (matches.Count == 0)
+                {
+                    var recursiveMatches = Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories)
+                        .Where(path => string.Equals(Path.GetFileNameWithoutExtension(path), baseName, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    if (recursiveMatches.Count > 0)
+                    {
+                        var preferredAnchors = recursiveMatches
+                            .Where(path => string.Equals(Path.GetExtension(path), ".shp", StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+                        var anchors = preferredAnchors.Count > 0
+                            ? preferredAnchors
+                                .Where(path => TryValidateShapefileSet(path, out _))
+                                .ToList()
+                            : recursiveMatches;
+                        var anchor = anchors
+                            .OrderByDescending(GetSafeLastWriteTimeUtcTicks)
+                            .ThenBy(path => path.Length)
+                            .FirstOrDefault();
+                        if (!string.IsNullOrWhiteSpace(anchor))
+                        {
+                            var anchorFolder = Path.GetDirectoryName(anchor) ?? sourceDirectory;
+                            matches = Directory.GetFiles(anchorFolder, baseName + ".*", SearchOption.TopDirectoryOnly)
+                                .Where(path => string.Equals(Path.GetFileNameWithoutExtension(path), baseName, StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+                            if (matches.Count == 0)
+                            {
+                                matches.Add(anchor);
+                            }
+                        }
+                    }
+                }
+
+                if (matches.Count == 0)
+                {
+                    missingBaseNames.Add(baseName);
+                    continue;
+                }
+
+                foreach (var path in matches)
+                {
+                    var fileName = Path.GetFileName(path);
+                    if (string.IsNullOrWhiteSpace(fileName))
+                    {
+                        continue;
+                    }
+
+                    if (!selectedFiles.TryGetValue(fileName, out var existingPath))
+                    {
+                        selectedFiles[fileName] = path;
+                        continue;
+                    }
+
+                    if (GetSafeLastWriteTimeUtcTicks(path) > GetSafeLastWriteTimeUtcTicks(existingPath))
+                    {
+                        selectedFiles[fileName] = path;
+                    }
+                }
+            }
+
+            return selectedFiles;
+        }
+
+        private static bool IsMatchSetValidForShapefile(IReadOnlyList<string> matches)
+        {
+            if (matches == null || matches.Count == 0)
+            {
+                return true;
+            }
+
+            var shpPath = matches.FirstOrDefault(path =>
+                string.Equals(Path.GetExtension(path), ".shp", StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(shpPath))
+            {
+                return true;
+            }
+
+            return TryValidateShapefileSet(shpPath, out _);
+        }
+
+        private static bool TryValidateShapefileSet(string shapefilePath, out string failureReason)
+        {
+            failureReason = string.Empty;
+
+            try
+            {
+                if (!File.Exists(shapefilePath))
+                {
+                    failureReason = "Missing .shp file.";
+                    return false;
+                }
+
+                var basePath = Path.Combine(
+                    Path.GetDirectoryName(shapefilePath) ?? string.Empty,
+                    Path.GetFileNameWithoutExtension(shapefilePath) ?? string.Empty);
+                foreach (var ext in new[] { ".shx", ".dbf" })
+                {
+                    var sidecarPath = basePath + ext;
+                    if (!File.Exists(sidecarPath))
+                    {
+                        failureReason = "Missing required sidecar: " + sidecarPath;
+                        return false;
+                    }
+                }
+
+                using (var shpStream = new FileStream(shapefilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var shpReader = new BinaryReader(shpStream))
+                {
+                    if (shpStream.Length < 100)
+                    {
+                        failureReason = "Shapefile is shorter than 100-byte header.";
+                        return false;
+                    }
+
+                    var fileCode = ReadInt32BigEndian(shpReader);
+                    if (fileCode != 9994)
+                    {
+                        failureReason = $"Unexpected SHP file code {fileCode}.";
+                        return false;
+                    }
+
+                    shpStream.Seek(24, SeekOrigin.Begin);
+                    var fileLengthWords = ReadInt32BigEndian(shpReader);
+                    var expectedLengthBytes = (long)fileLengthWords * 2L;
+                    if (expectedLengthBytes != shpStream.Length)
+                    {
+                        failureReason = $"Header length mismatch (header={expectedLengthBytes}, actual={shpStream.Length}).";
+                        return false;
+                    }
+
+                    long offset = 100;
+                    shpStream.Seek(offset, SeekOrigin.Begin);
+                    while (offset < shpStream.Length)
+                    {
+                        if (shpStream.Length - offset < 8)
+                        {
+                            failureReason = $"Truncated record header at byte {offset}.";
+                            return false;
+                        }
+
+                        _ = ReadInt32BigEndian(shpReader);
+                        var contentLengthWords = ReadInt32BigEndian(shpReader);
+                        if (contentLengthWords < 2)
+                        {
+                            failureReason = $"Invalid record length {contentLengthWords} words at byte {offset}.";
+                            return false;
+                        }
+
+                        var contentLengthBytes = (long)contentLengthWords * 2L;
+                        var nextOffset = offset + 8L + contentLengthBytes;
+                        if (nextOffset > shpStream.Length)
+                        {
+                            failureReason = $"Truncated record body at byte {offset} (needs {contentLengthBytes} bytes).";
+                            return false;
+                        }
+
+                        offset = nextOffset;
+                        shpStream.Seek(offset, SeekOrigin.Begin);
+                    }
+                }
+
+                var shxPath = basePath + ".shx";
+                using (var shxStream = new FileStream(shxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var shxReader = new BinaryReader(shxStream))
+                {
+                    if (shxStream.Length < 100 || ((shxStream.Length - 100) % 8) != 0)
+                    {
+                        failureReason = $"Invalid SHX file size {shxStream.Length}.";
+                        return false;
+                    }
+
+                    var fileCode = ReadInt32BigEndian(shxReader);
+                    if (fileCode != 9994)
+                    {
+                        failureReason = $"Unexpected SHX file code {fileCode}.";
+                        return false;
+                    }
+
+                    shxStream.Seek(24, SeekOrigin.Begin);
+                    var fileLengthWords = ReadInt32BigEndian(shxReader);
+                    var expectedLengthBytes = (long)fileLengthWords * 2L;
+                    if (expectedLengthBytes != shxStream.Length)
+                    {
+                        failureReason = $"SHX header length mismatch (header={expectedLengthBytes}, actual={shxStream.Length}).";
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                failureReason = ex.Message;
+                return false;
+            }
+        }
+
+        private static int ReadInt32BigEndian(BinaryReader reader)
+        {
+            var bytes = reader.ReadBytes(4);
+            if (bytes.Length != 4)
+            {
+                throw new EndOfStreamException("Unable to read 4-byte integer.");
+            }
+
+            if (BitConverter.IsLittleEndian)
+            {
+                Array.Reverse(bytes);
+            }
+
+            return BitConverter.ToInt32(bytes, 0);
+        }
+
+        private static long GetSafeLastWriteTimeUtcTicks(string path)
+        {
+            try
+            {
+                return File.GetLastWriteTimeUtc(path).Ticks;
+            }
+            catch
+            {
+                return DateTime.MinValue.Ticks;
+            }
+        }
+
+        private static string[] BuildShapeBaseNamesFromShapefileNames(IEnumerable<string>? shapefileNames, params string[] fallbackBaseNames)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (shapefileNames != null)
+            {
+                foreach (var value in shapefileNames)
+                {
+                    if (string.IsNullOrWhiteSpace(value))
+                    {
+                        continue;
+                    }
+
+                    var baseName = Path.GetFileNameWithoutExtension(value.Trim());
+                    if (!string.IsNullOrWhiteSpace(baseName))
+                    {
+                        set.Add(baseName);
+                    }
+                }
+            }
+
+            if (set.Count == 0 && fallbackBaseNames != null)
+            {
+                foreach (var fallback in fallbackBaseNames)
+                {
+                    if (!string.IsNullOrWhiteSpace(fallback))
+                    {
+                        set.Add(fallback.Trim());
+                    }
+                }
+            }
+
+            return set.ToArray();
         }
 
         private static int ReplaceDirectoryContents(string sourceDirectory, string destinationDirectory)
@@ -853,30 +1165,35 @@ namespace AtsBackgroundBuilder
                 throw new DirectoryNotFoundException("Source folder not found: " + sourceDirectory);
             }
 
-            Directory.CreateDirectory(destinationDirectory);
-            ClearDirectoryContents(destinationDirectory);
-
             var selectedBaseNames = new HashSet<string>(
                 shapeBaseNames?.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()) ?? Enumerable.Empty<string>(),
                 StringComparer.OrdinalIgnoreCase);
-            var copiedCount = 0;
-            foreach (var sourcePath in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+            if (selectedBaseNames.Count == 0)
             {
-                var baseName = Path.GetFileNameWithoutExtension(sourcePath);
-                if (string.IsNullOrWhiteSpace(baseName) || !selectedBaseNames.Contains(baseName))
-                {
-                    continue;
-                }
+                throw new InvalidOperationException("No shape base names configured for selected shape-set copy.");
+            }
 
-                var relativePath = Path.GetRelativePath(sourceDirectory, sourcePath);
-                var destinationPath = Path.Combine(destinationDirectory, relativePath);
-                var destinationFolder = Path.GetDirectoryName(destinationPath);
-                if (!string.IsNullOrWhiteSpace(destinationFolder))
-                {
-                    Directory.CreateDirectory(destinationFolder);
-                }
+            var sourceFilesByName = ResolveSelectedShapeSourceFiles(sourceDirectory, selectedBaseNames, out var missingBaseNames);
+            if (missingBaseNames.Count > 0)
+            {
+                throw new FileNotFoundException(
+                    $"Missing selected shape set(s) in source '{sourceDirectory}': {string.Join(", ", missingBaseNames)}");
+            }
 
-                File.Copy(sourcePath, destinationPath, overwrite: true);
+            if (sourceFilesByName.Count == 0)
+            {
+                throw new FileNotFoundException(
+                    $"No files found for selected shape set(s) in source '{sourceDirectory}': {string.Join(", ", selectedBaseNames)}");
+            }
+
+            Directory.CreateDirectory(destinationDirectory);
+            ClearDirectoryContents(destinationDirectory);
+
+            var copiedCount = 0;
+            foreach (var pair in sourceFilesByName)
+            {
+                var destinationPath = Path.Combine(destinationDirectory, pair.Key);
+                File.Copy(pair.Value, destinationPath, overwrite: true);
                 copiedCount++;
             }
 
@@ -1124,34 +1441,74 @@ namespace AtsBackgroundBuilder
         {
             if (importer == null || sectionExtents == null || sectionExtents.Count == 0)
             {
+                logger?.WriteLine("P3 location window skipped: no section extents.");
                 return;
             }
 
             var union = UnionExtents(sectionExtents);
+            var minX = union.MinPoint.X;
+            var minY = union.MinPoint.Y;
+            var maxX = union.MaxPoint.X;
+            var maxY = union.MaxPoint.Y;
             try
             {
                 var method = importer.GetType().GetMethod("SetLocationWindowAndOptions");
                 if (method == null)
                 {
+                    logger?.WriteLine("P3 location window unsupported: SetLocationWindowAndOptions not found.");
                     return;
                 }
 
                 var parameters = method.GetParameters();
-                if (parameters.Length != 5 || !parameters[4].ParameterType.IsEnum)
+                if (parameters.Length != 5 ||
+                    parameters[0].ParameterType != typeof(double) ||
+                    parameters[1].ParameterType != typeof(double) ||
+                    parameters[2].ParameterType != typeof(double) ||
+                    parameters[3].ParameterType != typeof(double) ||
+                    !parameters[4].ParameterType.IsEnum)
                 {
+                    logger?.WriteLine("P3 location window unsupported: unexpected SetLocationWindowAndOptions signature.");
                     return;
                 }
 
                 var option = GetEnumValue(parameters[4].ParameterType, 2, "kUseLocationWindow", "UseLocationWindow");
-                method.Invoke(importer, new object[]
+                try
                 {
-                    union.MinPoint.X,
-                    union.MaxPoint.X,
-                    union.MinPoint.Y,
-                    union.MaxPoint.Y,
-                    option
-                });
-                logger?.WriteLine($"P3 importer location window set: X[{union.MinPoint.X:G},{union.MaxPoint.X:G}] Y[{union.MinPoint.Y:G},{union.MaxPoint.Y:G}]");
+                    method.Invoke(importer, new object[]
+                    {
+                        minX,
+                        minY,
+                        maxX,
+                        maxY,
+                        option
+                    });
+                    logger?.WriteLine($"P3 importer location window set (xmin,ymin,xmax,ymax): X[{minX:G},{maxX:G}] Y[{minY:G},{maxY:G}]");
+                    return;
+                }
+                catch (System.Exception exStandard)
+                {
+                    var standardMessage = exStandard.InnerException?.Message ?? exStandard.Message;
+
+                    try
+                    {
+                        method.Invoke(importer, new object[]
+                        {
+                            minX,
+                            maxX,
+                            minY,
+                            maxY,
+                            option
+                        });
+                        logger?.WriteLine($"P3 importer location window set (xmin,xmax,ymin,ymax): X[{minX:G},{maxX:G}] Y[{minY:G},{maxY:G}]");
+                        return;
+                    }
+                    catch (System.Exception exFallback)
+                    {
+                        var fallbackMessage = exFallback.InnerException?.Message ?? exFallback.Message;
+                        logger?.WriteLine($"P3 location window setup failed: standard='{standardMessage}', fallback='{fallbackMessage}'.");
+                        return;
+                    }
+                }
             }
             catch (System.Exception ex)
             {

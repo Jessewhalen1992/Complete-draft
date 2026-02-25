@@ -108,3 +108,22 @@
 - [x] Relax surveyed horizontal seam-band and edge tolerances for one-sided seams only while preserving strict thresholds for two-sided seams.
 - [x] Add one-sided x-only surveyed proximity fallback when strict seam-band edge hits are absent.
 - [x] Rebuild solution and run Python sanity checks for one-sided vs two-sided surveyed classification behavior.
+
+## Follow-up (Full-Build Crash During Shapefile Import, 2026-02-25)
+
+- [x] Trace latest runtime log and confirm crash boundary occurs inside shapefile import phase (run ends after `Starting shapefile import.`).
+- [x] Add importer phase diagnostics (`Init begin/completed`, `Import begin/completed`) to isolate native-import failure boundaries.
+- [x] Harden location-window setup to try both coordinate argument orders and log signature/setup failures explicitly.
+- [x] Guard large surveyed shapefile imports from unsafe no-window execution by default; require `ATSBUILD_ALLOW_NO_LOCATION_WINDOW_IMPORT=1` to override.
+- [x] Apply the same location-window ordering/logging hardening to P3 import helper for consistency.
+- [x] Rebuild solution to verify compile safety after importer hardening changes.
+
+## Follow-up (Latest Crash Root Cause + Shape-Set Guardrails, 2026-02-25)
+
+- [x] Inspect latest crash log and confirm failure boundary is native `Importer.Init` on `SURVEYED_POLYGON_N83UTMZ11.shp`.
+- [x] Validate active shapefile binary structure in Python and confirm top-level `SURVEYED_POLYGON_N83UTMZ11.shp` is corrupt.
+- [x] Add pre-import shapefile structure validation in `ShapefileImporter` and skip/fallback before calling native `Importer.Init`.
+- [x] Add recursive valid-copy fallback selection for disposition shapefiles (newest valid matching filename).
+- [x] Finish shape auto-update selected-set copy path (no blanket recursive folder copy).
+- [x] Add shape-set validity checks to auto-update source selection so corrupted top-level `.shp` does not win over valid backup copies.
+- [x] Rebuild `AtsBackgroundBuilder` Debug and verify 0 warnings/0 errors.

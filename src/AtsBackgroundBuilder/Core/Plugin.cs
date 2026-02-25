@@ -182,7 +182,7 @@ namespace AtsBackgroundBuilder
             logger.WriteLine("Disposition 1/4 definition mode: ON (always enabled for per-quarter label logic).");
             if (input.AutoCheckUpdateShapefilesAlways)
             {
-                AutoUpdateSelectedShapeSetsIfNeeded(input, logger);
+                AutoUpdateSelectedShapeSetsIfNeeded(input, config, logger);
             }
 
             if (!config.UseSectionIndex)
