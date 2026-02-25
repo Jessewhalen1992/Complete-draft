@@ -1981,6 +1981,10 @@ namespace AtsBackgroundBuilder
                     bool lineIsHorizontal,
                     Vector2d eastUnit,
                     Vector2d northUnit,
+                    double sectionMinU,
+                    double sectionMaxU,
+                    double sectionMinV,
+                    double sectionMaxV,
                     IReadOnlyList<string> preferredKinds,
                     out Point2d target)
                 {
@@ -2004,6 +2008,7 @@ namespace AtsBackgroundBuilder
                     const double axisTol = 20.0;
                     const double stationTol = 8.0;
                     const double minOutwardAdvance = 2.0;
+                    const double sectionScopePad = 8.0;
                     var found = false;
                     var bestScore = double.MaxValue;
                     for (var pi = 0; pi < preferredKinds.Count; pi++)
@@ -2018,6 +2023,14 @@ namespace AtsBackgroundBuilder
                         {
                             var seg = segments[si];
                             var midpoint = seg.Mid;
+                            var midU = ProjectOnAxis(midpoint, eastUnit);
+                            var midV = ProjectOnAxis(midpoint, northUnit);
+                            if (midU < (sectionMinU - sectionScopePad) || midU > (sectionMaxU + sectionScopePad) ||
+                                midV < (sectionMinV - sectionScopePad) || midV > (sectionMaxV + sectionScopePad))
+                            {
+                                continue;
+                            }
+
                             var move = endpoint.GetDistanceTo(midpoint);
                             if (move <= minMove || move > maxMove)
                             {
@@ -2146,13 +2159,13 @@ namespace AtsBackgroundBuilder
                     {
                         if (IsWestQuarter(context.Quarter))
                         {
-                            preferredKinds.Add("TWENTY");
                             preferredKinds.Add("SEC");
+                            preferredKinds.Add("TWENTY");
                         }
                         else if (IsEastQuarter(context.Quarter))
                         {
-                            preferredKinds.Add("ZERO");
                             preferredKinds.Add("SEC");
+                            preferredKinds.Add("ZERO");
                         }
                     }
                     else
@@ -2204,6 +2217,10 @@ namespace AtsBackgroundBuilder
                             lineIsHorizontal,
                             context.EastUnit,
                             context.NorthUnit,
+                            context.SectionMinU,
+                            context.SectionMaxU,
+                            context.SectionMinV,
+                            context.SectionMaxV,
                             preferredKinds,
                             out var outerTarget))
                     {

@@ -2616,9 +2616,6 @@ namespace AtsBackgroundBuilder
                 .Where(id => !id.IsNull && !id.IsErased)
                 .Distinct()
                 .ToList();
-            // Redraw only within the exact requested quarter extents so adjacent
-            // pre-existing LSD lines are never erased during adjoining builds.
-            var clipWindows = BuildBufferedQuarterWindows(database, scopedQuarterIds, 0.0);
 
             bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
             {
@@ -2651,31 +2648,70 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (clipWindows.Count == 0)
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
             using (var transaction = database.TransactionManager.StartTransaction())
             {
                 var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                 EnsureLayer(database, transaction, "L-SECTION-LSD");
+                var scopedQuarterPolylines = new List<(Polyline Polyline, Extents3d Extents)>();
+                foreach (var info in uniqueQuarterInfos)
+                {
+                    if (!(transaction.GetObject(info.QuarterId, OpenMode.ForRead, false) is Polyline scopedQuarter) ||
+                        scopedQuarter.IsErased ||
+                        !scopedQuarter.Closed ||
+                        scopedQuarter.NumberOfVertices < 3)
+                    {
+                        continue;
+                    }
+
+                    Extents3d scopedExtents;
+                    try
+                    {
+                        scopedExtents = scopedQuarter.GeometricExtents;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    scopedQuarterPolylines.Add((scopedQuarter, scopedExtents));
+                }
 
                 var erased = 0;
+                bool IsPointInAnyScopedQuarter(Point2d p)
+                {
+                    const double extPad = 0.50;
+                    for (var i = 0; i < scopedQuarterPolylines.Count; i++)
+                    {
+                        var candidate = scopedQuarterPolylines[i];
+                        if (p.X < (candidate.Extents.MinPoint.X - extPad) || p.X > (candidate.Extents.MaxPoint.X + extPad) ||
+                            p.Y < (candidate.Extents.MinPoint.Y - extPad) || p.Y > (candidate.Extents.MaxPoint.Y + extPad))
+                        {
+                            continue;
+                        }
+
+                        if (GeometryUtils.IsPointInsidePolyline(candidate.Polyline, p))
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool IsSegmentOwnedByScopedQuarters(Point2d a, Point2d b)
+                {
+                    // Ownership for deferred redraw should follow the source quarter interior.
+                    // Midpoint containment avoids deleting adjoining boundary-touching LSD lines.
+                    var mid = Midpoint(a, b);
+                    if (IsPointInAnyScopedQuarter(mid))
+                    {
+                        return true;
+                    }
+
+                    return IsPointInAnyScopedQuarter(a) && IsPointInAnyScopedQuarter(b);
+                }
+
                 foreach (ObjectId id in modelSpace)
                 {
                     if (!(transaction.GetObject(id, OpenMode.ForRead, false) is Entity existing) || existing.IsErased)
@@ -2698,7 +2734,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!DoesSegmentIntersectAnyWindow(existingA, existingB))
+                    if (!IsSegmentOwnedByScopedQuarters(existingA, existingB))
                     {
                         continue;
                     }
