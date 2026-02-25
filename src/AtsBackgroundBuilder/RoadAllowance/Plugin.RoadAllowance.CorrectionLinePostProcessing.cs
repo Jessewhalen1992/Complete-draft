@@ -971,7 +971,7 @@ namespace AtsBackgroundBuilder
             EnforceBlindLineEndpointsOnSectionBoundaries(database, requestedScopeIds, logger);
             if (drawLsds)
             {
-                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
+                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger, sectionInfos);
             }
         }
 

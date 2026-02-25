@@ -1332,7 +1332,7 @@ namespace AtsBackgroundBuilder
             if (drawLsds)
             {
                 DrawDeferredLsdSubdivisionLines(database, lsdQuarterInfos, logger);
-                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
+                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger, lsdQuarterInfos);
             }
             logger.WriteLine("Cleanup: final endpoint convergence pass begins (all endpoint targets recalculated from final geometry).");
             ConnectDanglingUsecZeroTwentyEndpoints(database, requestedScopeIds, logger);
@@ -1347,7 +1347,7 @@ namespace AtsBackgroundBuilder
             EnforceBlindLineEndpointsOnSectionBoundaries(database, requestedScopeIds, logger);
             if (drawLsds)
             {
-                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
+                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger, lsdQuarterInfos);
             }
             var restoredNearbySectionIds = RestoreStashedSectionBuildingGeometry(database, stashedNearbySectionEntities, logger);
             if (keepGeneratedAtsFabric)
@@ -1376,7 +1376,7 @@ namespace AtsBackgroundBuilder
             NormalizeCorrectionLayerEntityColorByLayer(database, logger);
             if (drawLsds)
             {
-                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
+                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger, lsdQuarterInfos);
                 RebuildLsdLabelsAtFinalIntersections(database, lsdQuarterInfos, logger);
             }
             logger.WriteLine("Cleanup: final endpoint convergence pass complete.");
