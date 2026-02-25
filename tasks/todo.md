@@ -75,3 +75,36 @@
 
 - [x] Constrain post-adjustment `L-QSEC` component resolution to the owning section envelope before computing 1/4 half-midpoint targets.
 - [x] Rebuild solution to verify compile safety after section-scoping change.
+
+## Follow-up (Deferred LSD Erase Scope, 2026-02-25)
+
+- [x] Fix deferred LSD redraw erase rule to use requested-quarter ownership (segment midpoint inside requested quarter polygon), not window intersection.
+- [x] Rebuild solution to verify compile safety after erase-scope fix.
+
+## Follow-up (Horizontal LSD Crossing L-SEC, 2026-02-25)
+
+- [x] Change horizontal LSD outer-target priority to prefer surveyed `L-SEC` before `L-USEC` (`2012`/`0`) in matrix endpoint pass.
+- [x] Rebuild solution to verify compile safety after priority change.
+
+## Follow-up (Surveyed SEC Cross-Section Targeting, 2026-02-25)
+
+- [x] Scope matrix outer midpoint target candidates to the owning section envelope to prevent selecting adjacent-section `L-SEC` midpoints.
+- [x] Rebuild solution to verify compile safety after section-scope candidate filter.
+
+## Follow-up (Correction Seam North-Missing Fallback, 2026-02-25)
+
+- [x] Add surveyed seam classification fallback using south/north surveyed horizontal boundary evidence when surveyed vertical evidence is missing.
+- [x] Rebuild solution to verify compile safety after correction seam evidence update.
+
+## Follow-up (Correction Debug Logging, 2026-02-25)
+
+- [x] Add seam-input debug logs for 100m-buffer/range-over cases: section-to-seam side contributions and one-sided synthesized seam detection.
+- [x] Add per-seam evidence diagnostics: vertical counts plus surveyed horizontal x-only vs seam-band counts and nearest north/south edge deltas.
+- [x] Rebuild solution to verify compile safety after logging instrumentation.
+
+## Follow-up (One-Sided Seam Surveyed Fallback, 2026-02-25)
+
+- [x] Add one-sided seam state to correction seam model so classification can distinguish synthesized opposite-side seams.
+- [x] Relax surveyed horizontal seam-band and edge tolerances for one-sided seams only while preserving strict thresholds for two-sided seams.
+- [x] Add one-sided x-only surveyed proximity fallback when strict seam-band edge hits are absent.
+- [x] Rebuild solution and run Python sanity checks for one-sided vs two-sided surveyed classification behavior.

@@ -172,6 +172,7 @@ namespace AtsBackgroundBuilder
                     $"CorrectionLine: ensured layer colors {LayerUsecCorrection}/{LayerUsecCorrectionZero}=ACI {correctionLayerColorIndex} (magenta).");
 
                 var seamAccumulators = new Dictionary<string, CorrectionSeamAccumulator>(StringComparer.OrdinalIgnoreCase);
+                var seamInputSamples = new List<string>();
                 foreach (var pair in sectionMetaById)
                 {
                     if (!(tr.GetObject(pair.Key, OpenMode.ForRead, false) is Polyline section) || section.IsErased)
@@ -235,11 +236,70 @@ namespace AtsBackgroundBuilder
                     {
                         accumulator.AddSouthBoundary(seamY, minX, maxX);
                     }
+
+                    if (seamInputSamples.Count < 64)
+                    {
+                        seamInputSamples.Add(
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "seamKey={0} src={1}-{2}-{3}-{4}-{5} section={6} side={7} y={8:0.###} x=[{9:0.###},{10:0.###}]",
+                                seamKey,
+                                sectionKey.Zone,
+                                NormalizeNumberToken(sectionKey.Meridian),
+                                NormalizeNumberToken(sectionKey.Range),
+                                NormalizeNumberToken(sectionKey.Township),
+                                NormalizeNumberToken(sectionKey.Section),
+                                sectionNumber,
+                                isNorthSeamSection ? "NORTH" : "SOUTH",
+                                seamY,
+                                minX,
+                                maxX));
+                    }
                 }
 
                 var seams = new List<CorrectionSeam>();
+                logger?.WriteLine(
+                    $"CorrectionLine: seam accumulators={seamAccumulators.Count}, scopeQuarterIds={requestedScopeIds.Count}, sectionsInScope={sectionMetaById.Count}, correctionBandSections={matchedCorrectionSections}.");
+                if (seamInputSamples.Count > 0)
+                {
+                    logger?.WriteLine($"CorrectionLine: seam input samples ({seamInputSamples.Count})");
+                    for (var i = 0; i < seamInputSamples.Count; i++)
+                    {
+                        logger?.WriteLine("CorrectionLine:   " + seamInputSamples[i]);
+                    }
+                }
+
                 foreach (var accumulator in seamAccumulators.Values)
                 {
+                    logger?.WriteLine(
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "CorrectionLine: seam accumulator Z{0} M{1} R{2} T{3}/{4} northSamples={5}, southSamples={6}, x=[{7:0.###},{8:0.###}]",
+                            accumulator.Zone,
+                            accumulator.Meridian,
+                            accumulator.Range,
+                            accumulator.NorthTownship,
+                            accumulator.NorthTownship - 1,
+                            accumulator.NorthSampleCount,
+                            accumulator.SouthSampleCount,
+                            accumulator.MinX,
+                            accumulator.MaxX));
+                    if (accumulator.NorthSampleCount == 0 || accumulator.SouthSampleCount == 0)
+                    {
+                        logger?.WriteLine(
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "CorrectionLine: seam accumulator Z{0} M{1} R{2} T{3}/{4} is one-sided (northSamples={5}, southSamples={6}); opposite side synthesized at width={7:0.##}m.",
+                                accumulator.Zone,
+                                accumulator.Meridian,
+                                accumulator.Range,
+                                accumulator.NorthTownship,
+                                accumulator.NorthTownship - 1,
+                                accumulator.NorthSampleCount,
+                                accumulator.SouthSampleCount,
+                                CorrectionLinePostExpectedUsecWidthMeters));
+                    }
+
                     if (accumulator.TryBuild(out var seam))
                     {
                         seams.Add(seam);
@@ -334,31 +394,114 @@ namespace AtsBackgroundBuilder
                         .ToList();
                     var hasSurveyedVertical = surveyedVerticalCandidates.Count > 0;
                     var hasUsecVertical = usecVerticalCandidates.Count > 0;
+                    var surveyedHorizontalBandTol = seam.IsOneSidedSynthesized ? 30.0 : 20.0;
+                    var surveyedHorizontalEdgeTol = seam.IsOneSidedSynthesized ? 8.0 : 2.6;
+                    var surveyedHorizontalXOnlyCandidates = segments
+                        .Where(s => s.IsHorizontalLike &&
+                                    IsCorrectionSurveyedLayer(s.Layer) &&
+                                    s.MaxX >= seam.MinX - 25.0 &&
+                                    s.MinX <= seam.MaxX + 25.0)
+                        .ToList();
+                    var surveyedHorizontalCandidates = segments
+                        .Where(s => s.IsHorizontalLike &&
+                                    IsCorrectionSurveyedLayer(s.Layer) &&
+                                    s.MaxX >= seam.MinX - 25.0 &&
+                                    s.MinX <= seam.MaxX + 25.0 &&
+                                    s.MidY >= seam.GetSouthYAt(s.MidX) - surveyedHorizontalBandTol &&
+                                    s.MidY <= seam.GetNorthYAt(s.MidX) + surveyedHorizontalBandTol &&
+                                    GetCorrectionHorizontalOverlap(s, seam.MinX, seam.MaxX) >= 8.0)
+                        .ToList();
+                    var surveyedNorthEdgeHits = 0;
+                    var surveyedSouthEdgeHits = 0;
+                    var surveyedRelaxedEdgeHits = 0;
+                    var nearestNorthEdgeDelta = double.MaxValue;
+                    var nearestSouthEdgeDelta = double.MaxValue;
+                    for (var hi = 0; hi < surveyedHorizontalCandidates.Count; hi++)
+                    {
+                        var h = surveyedHorizontalCandidates[hi];
+                        var northDelta = Math.Abs(h.MidY - seam.GetNorthYAt(h.MidX));
+                        var southDelta = Math.Abs(h.MidY - seam.GetSouthYAt(h.MidX));
+                        if (northDelta < nearestNorthEdgeDelta)
+                        {
+                            nearestNorthEdgeDelta = northDelta;
+                        }
+
+                        if (southDelta < nearestSouthEdgeDelta)
+                        {
+                            nearestSouthEdgeDelta = southDelta;
+                        }
+
+                        if (northDelta <= surveyedHorizontalEdgeTol)
+                        {
+                            surveyedNorthEdgeHits++;
+                        }
+
+                        if (southDelta <= surveyedHorizontalEdgeTol)
+                        {
+                            surveyedSouthEdgeHits++;
+                        }
+                    }
+                    if (seam.IsOneSidedSynthesized && surveyedNorthEdgeHits == 0 && surveyedSouthEdgeHits == 0)
+                    {
+                        for (var hi = 0; hi < surveyedHorizontalXOnlyCandidates.Count; hi++)
+                        {
+                            var h = surveyedHorizontalXOnlyCandidates[hi];
+                            var northDelta = Math.Abs(h.MidY - seam.GetNorthYAt(h.MidX));
+                            var southDelta = Math.Abs(h.MidY - seam.GetSouthYAt(h.MidX));
+                            if (northDelta <= surveyedHorizontalEdgeTol || southDelta <= surveyedHorizontalEdgeTol)
+                            {
+                                surveyedRelaxedEdgeHits++;
+                            }
+                        }
+                    }
+
+                    var hasSurveyedHorizontalBoundary = surveyedNorthEdgeHits > 0 ||
+                                                       surveyedSouthEdgeHits > 0 ||
+                                                       surveyedRelaxedEdgeHits > 0;
+                    var nearestNorthText = nearestNorthEdgeDelta == double.MaxValue
+                        ? "n/a"
+                        : nearestNorthEdgeDelta.ToString("0.###", CultureInfo.InvariantCulture);
+                    var nearestSouthText = nearestSouthEdgeDelta == double.MaxValue
+                        ? "n/a"
+                        : nearestSouthEdgeDelta.ToString("0.###", CultureInfo.InvariantCulture);
                     logger?.WriteLine(
                         string.Format(
                             CultureInfo.InvariantCulture,
-                            "CorrectionLine: seam vertical evidence Z{0} M{1} R{2} T{3}/{4} total={5}, surveyed={6}, usec={7}.",
+                            "CorrectionLine: seam evidence Z{0} M{1} R{2} T{3}/{4} oneSided={5} vertical(total={6}, surveyed={7}, usec={8}), horizontalSurveyed(xOnly={9}, seamBand={10}, northHits={11}, southHits={12}, relaxedHits={13}, bandTol={14:0.#}, edgeTol={15:0.#}, nearestNorthDelta={16}, nearestSouthDelta={17}).",
                             seam.Zone,
                             seam.Meridian,
                             seam.Range,
                             seam.NorthTownship,
                             seam.NorthTownship - 1,
+                            seam.IsOneSidedSynthesized,
                             verticalCandidates.Count,
                             surveyedVerticalCandidates.Count,
-                            usecVerticalCandidates.Count));
+                            usecVerticalCandidates.Count,
+                            surveyedHorizontalXOnlyCandidates.Count,
+                            surveyedHorizontalCandidates.Count,
+                            surveyedNorthEdgeHits,
+                            surveyedSouthEdgeHits,
+                            surveyedRelaxedEdgeHits,
+                            surveyedHorizontalBandTol,
+                            surveyedHorizontalEdgeTol,
+                            nearestNorthText,
+                            nearestSouthText));
 
-                    if (hasSurveyedVertical)
+                    if (hasSurveyedVertical || hasSurveyedHorizontalBoundary)
                     {
                         surveyedCount++;
                         logger?.WriteLine(
                             string.Format(
                                 CultureInfo.InvariantCulture,
-                                "CorrectionLine: seam Z{0} M{1} R{2} T{3}/{4} classified as L-SEC (surveyed vertical RA found).",
+                                "CorrectionLine: seam Z{0} M{1} R{2} T{3}/{4} classified as L-SEC (surveyed evidence: vertical={5}, northHorizontal={6}, southHorizontal={7}).",
                                 seam.Zone,
                                 seam.Meridian,
                                 seam.Range,
                                 seam.NorthTownship,
-                                seam.NorthTownship - 1));
+                                seam.NorthTownship - 1,
+                                surveyedVerticalCandidates.Count,
+                                surveyedNorthEdgeHits,
+                                surveyedSouthEdgeHits));
                         continue;
                     }
 
@@ -2700,6 +2843,8 @@ namespace AtsBackgroundBuilder
             public int NorthTownship { get; }
             public double MinX { get; private set; }
             public double MaxX { get; private set; }
+            public int NorthSampleCount => _northBoundarySamples.Count;
+            public int SouthSampleCount => _southBoundarySamples.Count;
 
             public void AddNorthBoundary(double y, double minX, double maxX)
             {
@@ -2790,6 +2935,7 @@ namespace AtsBackgroundBuilder
                     Meridian,
                     Range,
                     NorthTownship,
+                    !hasNorth || !hasSouth,
                     MinX,
                     MaxX,
                     northY,
@@ -2850,6 +2996,7 @@ namespace AtsBackgroundBuilder
                 string meridian,
                 int range,
                 int northTownship,
+                bool isOneSidedSynthesized,
                 double minX,
                 double maxX,
                 double northY,
@@ -2863,6 +3010,7 @@ namespace AtsBackgroundBuilder
                 Meridian = meridian;
                 Range = range;
                 NorthTownship = northTownship;
+                IsOneSidedSynthesized = isOneSidedSynthesized;
                 MinX = minX;
                 MaxX = maxX;
                 NorthY = northY;
@@ -2878,6 +3026,7 @@ namespace AtsBackgroundBuilder
             public string Meridian { get; }
             public int Range { get; }
             public int NorthTownship { get; }
+            public bool IsOneSidedSynthesized { get; }
             public double MinX { get; }
             public double MaxX { get; }
             public double NorthY { get; }
