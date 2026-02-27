@@ -52,3 +52,4 @@
 - For `N.E.1/4` on blind sections, cluster-only snapping is not sufficient: solve the corner from the selected east segment intersecting a west-running boundary segment that actually reaches that node (bounded extension), and only use cluster snap as fallback.
 - Enforce endpoint authority by section type: non-correction-adjoining sections must resolve `N.E.1/4` at real endpoint nodes (horizontal+vertical endpoint evidence), while endpointless apparent intersections are allowed only on correction-adjoining sections.
 - After introducing section-type endpoint authority, prune dead/unsafe fallback paths: non-correction NE branches should not continue into hard-node/cluster fallbacks, or they can reintroduce endpoint misses.
+- When post-correction LSD endpoint enforcement runs, never pass combined requested+context quarter infos into the rule-matrix; scope quarter contexts to requested ids only or adjacent prebuilt sections can be mutated by later builds.

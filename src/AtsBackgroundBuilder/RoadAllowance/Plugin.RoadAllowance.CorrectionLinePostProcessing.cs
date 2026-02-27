@@ -34,6 +34,7 @@ namespace AtsBackgroundBuilder
             {
                 return;
             }
+            var requestedScopeSet = new HashSet<ObjectId>(requestedScopeIds);
 
             var sectionById = new Dictionary<ObjectId, SectionKey>();
             foreach (var info in sectionInfos)
@@ -1114,7 +1115,13 @@ namespace AtsBackgroundBuilder
             EnforceBlindLineEndpointsOnSectionBoundaries(database, requestedScopeIds, logger);
             if (drawLsds)
             {
-                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger, sectionInfos);
+                var scopedLsdInfos = sectionInfos
+                    .Where(info =>
+                        info != null &&
+                        ((!info.QuarterId.IsNull && requestedScopeSet.Contains(info.QuarterId)) ||
+                         (!info.SectionPolylineId.IsNull && requestedScopeSet.Contains(info.SectionPolylineId))))
+                    .ToList();
+                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger, scopedLsdInfos);
             }
         }
 

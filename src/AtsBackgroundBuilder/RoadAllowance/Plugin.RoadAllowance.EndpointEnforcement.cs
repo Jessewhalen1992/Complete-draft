@@ -1132,6 +1132,7 @@ namespace AtsBackgroundBuilder
             {
                 return false;
             }
+            var requestedScopeSet = new HashSet<ObjectId>(requestedScopeIds);
 
             var clipWindows = BuildBufferedQuarterWindows(database, requestedScopeIds, 100.0);
             if (clipWindows.Count == 0)
@@ -1458,6 +1459,13 @@ namespace AtsBackgroundBuilder
                         info.QuarterId.IsNull ||
                         info.SectionPolylineId.IsNull ||
                         !seenQuarterIds.Add(info.QuarterId))
+                    {
+                        continue;
+                    }
+
+                    // Limit rule-matrix quarter ownership to requested scope only.
+                    if (!requestedScopeSet.Contains(info.QuarterId) &&
+                        !requestedScopeSet.Contains(info.SectionPolylineId))
                     {
                         continue;
                     }

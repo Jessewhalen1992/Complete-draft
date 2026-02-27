@@ -419,6 +419,24 @@
   - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -p:RestoreIgnoreFailedSources=true` (with `DOTNET_CLI_HOME=.dotnet-home`)
   - 0 warnings, 0 errors.
 
+## Follow-up (LSD Enforcement Scope Isolation Across Adjacent Section Builds, 2026-02-27)
+
+- [x] Trace report where building `64-3-6` then `63-3-6` mutates LSD lines in unrelated `64-3-6` area above correction line.
+- [x] Restrict correction post-build LSD enforcement to requested-only quarter infos instead of combined requested+context infos.
+- [x] Add rule-matrix guard so LSD quarter contexts are ignored unless their quarter/section ids are in the requested scope set.
+- [ ] Rebuild default solution output path and verify compile safety.
+- [ ] Confirm in fresh `/debug-config` run that building `63-3-6` no longer alters LSD lines in previously-built `64-3-6` above correction line.
+
+## Review (LSD Enforcement Scope Isolation Across Adjacent Section Builds, 2026-02-27)
+
+- Updated `RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs`:
+  - post-correction LSD enforcement now passes a requested-scope-only `QuarterLabelInfo` list (filtered by requested quarter id or section polyline id).
+- Updated `RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs`:
+  - added a defensive rule-matrix guard to ignore quarter contexts not in requested scope.
+- Build status:
+  - attempted `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -p:RestoreIgnoreFailedSources=true` (with `DOTNET_CLI_HOME=.dotnet-home`)
+  - blocked in this environment by missing package restore (`NU1101 System.Data.OleDb`) due offline NuGet access.
+
 ## Follow-up (Section 11 Locked West-Corner U Clamp Drift, 2026-02-26)
 
 - [x] Trace residual drift and confirm `S.W.1/4 S.W.` / `N.W.1/4 N.W.` can be moved by post-lock west-U clamp.
