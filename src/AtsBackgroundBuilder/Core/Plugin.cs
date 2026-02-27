@@ -3519,6 +3519,14 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
+                        if (DoSegmentsShareEndpoint(a.A, a.B, b.A, b.B, endpointTol: 0.20) &&
+                            !AreSegmentEndpointsNear(a.A, a.B, b.A, b.B, endpointTol: 0.20))
+                        {
+                            // Adjacent section fragments are allowed to meet at one endpoint.
+                            // Do not erase either segment solely because they touch.
+                            continue;
+                        }
+
                         ObjectId eraseId;
                         var lengthDiff = a.Length - b.Length;
                         if (Math.Abs(lengthDiff) <= equalLengthTol)
@@ -6643,6 +6651,12 @@ namespace AtsBackgroundBuilder
             GetCanonicalSegmentEndpoints(b0, b1, out var bFirst, out var bSecond);
             return aFirst.GetDistanceTo(bFirst) <= endpointTol &&
                    aSecond.GetDistanceTo(bSecond) <= endpointTol;
+        }
+
+        private static bool DoSegmentsShareEndpoint(Point2d a0, Point2d a1, Point2d b0, Point2d b1, double endpointTol)
+        {
+            bool Near(Point2d p, Point2d q) => p.GetDistanceTo(q) <= endpointTol;
+            return Near(a0, b0) || Near(a0, b1) || Near(a1, b0) || Near(a1, b1);
         }
 
         private static bool AreSegmentsDuplicateOrCollinearOverlap(Point2d a0, Point2d a1, Point2d b0, Point2d b1)

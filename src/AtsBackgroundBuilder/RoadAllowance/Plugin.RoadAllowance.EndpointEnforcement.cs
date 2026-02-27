@@ -734,6 +734,51 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
+                bool TryIntersectInfiniteLineWithBoundedSegmentExtension(
+                    Point2d linePoint,
+                    Vector2d lineDir,
+                    Point2d segA,
+                    Point2d segB,
+                    double maxSegmentExtension,
+                    out double tOnLine)
+                {
+                    tOnLine = 0.0;
+                    var segDir = segB - segA;
+                    var segLen = segDir.Length;
+                    if (segLen <= 1e-9)
+                    {
+                        return false;
+                    }
+
+                    var denom = Cross2d(lineDir, segDir);
+                    if (Math.Abs(denom) <= 1e-9)
+                    {
+                        return false;
+                    }
+
+                    var diff = segA - linePoint;
+                    var t = Cross2d(diff, segDir) / denom;
+                    var u = Cross2d(diff, lineDir) / denom;
+
+                    var extension = 0.0;
+                    if (u < 0.0)
+                    {
+                        extension = -u * segLen;
+                    }
+                    else if (u > 1.0)
+                    {
+                        extension = (u - 1.0) * segLen;
+                    }
+
+                    if (extension > maxSegmentExtension)
+                    {
+                        return false;
+                    }
+
+                    tOnLine = t;
+                    return true;
+                }
+
                 bool TryFindSnapTarget(Point2d endpoint, Point2d other, out Point2d target)
                 {
                     target = endpoint;
@@ -749,6 +794,7 @@ namespace AtsBackgroundBuilder
                     var bestAbsT = double.MaxValue;
                     var bestT = 0.0;
                     var bestIsFallback = true;
+                    const double apparentSegmentExtensionTol = 6.0;
                     void ConsiderCandidate(double t, bool isFallback)
                     {
                         var absT = Math.Abs(t);
@@ -782,12 +828,23 @@ namespace AtsBackgroundBuilder
                     for (var i = 0; i < boundarySegments.Count; i++)
                     {
                         var seg = boundarySegments[i];
-                        if (!TryIntersectInfiniteLineWithSegment(endpoint, outwardDir, seg.A, seg.B, out var t))
+                        if (TryIntersectInfiniteLineWithSegment(endpoint, outwardDir, seg.A, seg.B, out var t))
                         {
+                            ConsiderCandidate(t, isFallback: false);
                             continue;
                         }
 
-                        ConsiderCandidate(t, isFallback: false);
+                        if (TryIntersectInfiniteLineWithBoundedSegmentExtension(
+                            endpoint,
+                            outwardDir,
+                            seg.A,
+                            seg.B,
+                            apparentSegmentExtensionTol,
+                            out var apparentT))
+                        {
+                            // Apparent intersection fallback for tiny boundary truncations.
+                            ConsiderCandidate(apparentT, isFallback: true);
+                        }
                     }
 
                     for (var i = 0; i < boundarySegments.Count; i++)
@@ -832,6 +889,7 @@ namespace AtsBackgroundBuilder
                     var found = false;
                     var bestU = double.MaxValue;
                     var bestIsFallback = true;
+                    const double apparentSegmentExtensionTol = 6.0;
                     void ConsiderCandidate(double u, bool isFallback)
                     {
                         if (u < minRemainingLength)
@@ -865,12 +923,23 @@ namespace AtsBackgroundBuilder
                         for (var i = 0; i < segments.Count; i++)
                         {
                             var seg = segments[i];
-                            if (!TryIntersectInfiniteLineWithSegment(other, outwardDir, seg.A, seg.B, out var u))
+                            if (TryIntersectInfiniteLineWithSegment(other, outwardDir, seg.A, seg.B, out var u))
                             {
+                                ConsiderCandidate(u, isFallback: false);
                                 continue;
                             }
 
-                            ConsiderCandidate(u, isFallback: false);
+                            if (TryIntersectInfiniteLineWithBoundedSegmentExtension(
+                                other,
+                                outwardDir,
+                                seg.A,
+                                seg.B,
+                                apparentSegmentExtensionTol,
+                                out var apparentU))
+                            {
+                                // Apparent intersection fallback for tiny boundary truncations.
+                                ConsiderCandidate(apparentU, isFallback: true);
+                            }
                         }
 
                         for (var i = 0; i < segments.Count; i++)
@@ -890,10 +959,13 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
-                    // Correction-adjacent rule: prefer correction boundaries first; fall back to
-                    // generic section boundaries only when no correction candidate resolves.
+                    // Correction-adjacent rule: scan correction boundaries first, but if the best
+                    // correction candidate is effectively the current endpoint (no meaningful move),
+                    // continue and allow generic hard boundaries to provide the actual projected hit.
                     ScanSegments(correctionBoundarySegments);
-                    if (!found)
+                    var correctionCandidateIsCurrent =
+                        found && Math.Abs(bestU - outwardLen) <= endpointTouchTol;
+                    if (!found || correctionCandidateIsCurrent)
                     {
                         ScanSegments(boundarySegments);
                     }
@@ -2009,8 +2081,63 @@ namespace AtsBackgroundBuilder
                     const double stationTol = 8.0;
                     const double minOutwardAdvance = 2.0;
                     const double sectionScopePad = 8.0;
+                    const double endpointOnBoundaryTol = 0.40;
                     var found = false;
                     var bestScore = double.MaxValue;
+
+                    // If endpoint already lands on a preferred boundary in-scope, preserve it.
+                    for (var pi = 0; pi < preferredKinds.Count; pi++)
+                    {
+                        var kind = preferredKinds[pi];
+                        if (!source.TryGetValue(kind, out var segments) || segments.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        for (var si = 0; si < segments.Count; si++)
+                        {
+                            var seg = segments[si];
+                            var midU = ProjectOnAxis(seg.Mid, eastUnit);
+                            var midV = ProjectOnAxis(seg.Mid, northUnit);
+                            if (midU < (sectionMinU - sectionScopePad) || midU > (sectionMaxU + sectionScopePad) ||
+                                midV < (sectionMinV - sectionScopePad) || midV > (sectionMaxV + sectionScopePad))
+                            {
+                                continue;
+                            }
+
+                            if (DistancePointToSegment(endpoint, seg.A, seg.B) > endpointOnBoundaryTol)
+                            {
+                                continue;
+                            }
+
+                            double endpointStation;
+                            double aStation;
+                            double bStation;
+                            if (lineIsHorizontal)
+                            {
+                                endpointStation = ProjectOnAxis(endpoint, northUnit);
+                                aStation = ProjectOnAxis(seg.A, northUnit);
+                                bStation = ProjectOnAxis(seg.B, northUnit);
+                            }
+                            else
+                            {
+                                endpointStation = ProjectOnAxis(endpoint, eastUnit);
+                                aStation = ProjectOnAxis(seg.A, eastUnit);
+                                bStation = ProjectOnAxis(seg.B, eastUnit);
+                            }
+
+                            var minStation = Math.Min(aStation, bStation) - stationTol;
+                            var maxStation = Math.Max(aStation, bStation) + stationTol;
+                            if (endpointStation < minStation || endpointStation > maxStation)
+                            {
+                                continue;
+                            }
+
+                            target = endpoint;
+                            return true;
+                        }
+                    }
+
                     for (var pi = 0; pi < preferredKinds.Count; pi++)
                     {
                         var kind = preferredKinds[pi];
@@ -2074,7 +2201,9 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
 
-                            var score = (pi * 1000000.0) + (axisGap * 100.0) + move;
+                            // Prefer the first valid boundary encountered outward from the inner target.
+                            // This prevents endpoint scoring from skipping a nearer SEC boundary and crossing to a farther one.
+                            var score = (pi * 1000000.0) + (outwardAdvance * 1000.0) + (axisGap * 100.0) + move;
                             if (score >= bestScore)
                             {
                                 continue;
@@ -2231,6 +2360,13 @@ namespace AtsBackgroundBuilder
                     if (TryMoveEndpoint(writable, !startIsInner, outerTarget, endpointMoveTol))
                     {
                         outerAdjusted++;
+                        if (context.SectionNumber == 6 || context.SectionNumber == 36)
+                        {
+                            logger?.WriteLine(
+                                $"VERIFY-LSD-OUTER sec={context.SectionNumber} q={context.Quarter} line={(lineIsHorizontal ? "H" : "V")} " +
+                                $"inner={innerPoint.X:0.###},{innerPoint.Y:0.###} outerFrom={outerPoint.X:0.###},{outerPoint.Y:0.###} " +
+                                $"outerTo={outerTarget.X:0.###},{outerTarget.Y:0.###} kinds={string.Join("/", preferredKinds)}");
+                        }
                     }
                 }
 
