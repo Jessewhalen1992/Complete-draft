@@ -33,7 +33,7 @@ namespace AtsBackgroundBuilder.Core
         public bool IncludeDispositionLabels { get; set; } = false;
         public bool AllowMultiQuarterDispositions { get; set; } = false;
         public bool IncludeQuarterSectionLabels { get; set; } = false;
-        public bool UseAlignedDimensions { get; set; } = false;
+        public bool UseAlignedDimensions { get; set; } = true;
 
         /// <summary>
         /// Placeholder for future feature layers.
@@ -71,7 +71,6 @@ namespace AtsBackgroundBuilder.Core
         private readonly CheckBox _checkPlsr = new CheckBox();
         private readonly CheckBox _allowMultiQuarterDispositions = new CheckBox();
         private readonly CheckBox _includeQuarterSectionLabels = new CheckBox();
-        private readonly CheckBox _useAlignedDimensions = new CheckBox();
         private readonly CheckBox _autoCheckUpdateShapesAlways = new CheckBox();
         private readonly DataGridView _grid = new DataGridView();
         private readonly Button _addGridRow = new Button();
@@ -369,7 +368,6 @@ namespace AtsBackgroundBuilder.Core
             ConfigureOptionCheckBox(_checkPlsr, "Check PLSR", false);
             ConfigureOptionCheckBox(_allowMultiQuarterDispositions, "1/4 Definition", config?.AllowMultiQuarterDispositions ?? false);
             ConfigureOptionCheckBox(_includeQuarterSectionLabels, "1/4 SEC Labels", false);
-            ConfigureOptionCheckBox(_useAlignedDimensions, "A-DIM", false);
 
             var toggleColumnA = new FlowLayoutPanel
             {
@@ -396,7 +394,6 @@ namespace AtsBackgroundBuilder.Core
             toggleColumnB.Controls.Add(_checkPlsr);
             toggleColumnB.Controls.Add(_allowMultiQuarterDispositions);
             toggleColumnB.Controls.Add(_includeQuarterSectionLabels);
-            toggleColumnB.Controls.Add(_useAlignedDimensions);
 
             settingsGrid.Controls.Add(numericStack, 0, 0);
             settingsGrid.Controls.Add(toggleColumnA, 1, 0);
@@ -1287,7 +1284,7 @@ namespace AtsBackgroundBuilder.Core
                 AutoCheckUpdateShapefilesAlways = _autoCheckUpdateShapesAlways.Checked,
                 CheckPlsr = _checkPlsr.Checked,
                 IncludeQuarterSectionLabels = _includeQuarterSectionLabels.Checked,
-                UseAlignedDimensions = _useAlignedDimensions.Checked,
+                UseAlignedDimensions = true,
             };
             Result.SectionRequests.AddRange(requests);
 

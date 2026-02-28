@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using AtsBackgroundBuilder.Dispositions;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
@@ -591,7 +592,8 @@ namespace AtsBackgroundBuilder
         {
             None,
             TagExpired,
-            UpdateOwner
+            UpdateOwner,
+            CreateMissingLabel
         }
 
         private sealed class PlsrCheckIssue
@@ -606,9 +608,17 @@ namespace AtsBackgroundBuilder
             public string SummaryLine { get; set; } = string.Empty;
             public PlsrIssueChangeType ChangeType { get; set; } = PlsrIssueChangeType.None;
             public PlsrLabelEntry? Label { get; set; }
+            public DispositionInfo? Disposition { get; set; }
+            public QuarterInfo? Quarter { get; set; }
             public string ProposedOwner { get; set; } = string.Empty;
 
-            public bool IsActionable => ChangeType != PlsrIssueChangeType.None && Label != null;
+            public bool IsActionable => ChangeType switch
+            {
+                PlsrIssueChangeType.UpdateOwner => Label != null,
+                PlsrIssueChangeType.TagExpired => Label != null,
+                PlsrIssueChangeType.CreateMissingLabel => Disposition != null && Quarter != null,
+                _ => false
+            };
         }
 
         private sealed class PlsrReviewRow
@@ -636,7 +646,9 @@ namespace AtsBackgroundBuilder
             Logger logger,
             ExcelLookup companyLookup,
             AtsBuildInput input,
-            List<QuarterInfo> quarters)
+            List<QuarterInfo> quarters,
+            List<DispositionInfo> dispositions,
+            Config config)
         {
             if (input.PlsrXmlPaths == null || input.PlsrXmlPaths.Count == 0)
             {
@@ -652,6 +664,9 @@ namespace AtsBackgroundBuilder
             var missingQuarterKeys = requestedQuarterKeys.Where(k => !quarterData.ContainsKey(k)).ToList();
 
             var labelByQuarter = CollectPlsrLabels(database, quarters, logger);
+            var quarterByKey = BuildQuarterInfoByKey(quarters);
+            var dispositionsByDispNum = IndexDispositionsByDispNum(dispositions);
+            var dispositionSourceCache = new Dictionary<string, DispositionInfo?>(StringComparer.OrdinalIgnoreCase);
             var issues = new List<PlsrCheckIssue>();
             int missingLabels = 0;
             int ownerMismatches = 0;
@@ -714,6 +729,25 @@ namespace AtsBackgroundBuilder
                     if (!labelByDisp.TryGetValue(dispNum, out var label))
                     {
                         missingLabels++;
+                        DispositionInfo? sourceDisposition = null;
+                        QuarterInfo? sourceQuarter = null;
+                        var hasDispositionSource = false;
+                        if (quarterByKey.TryGetValue(quarterKey, out var quarterMatch) && quarterMatch != null)
+                        {
+                            sourceQuarter = quarterMatch;
+                            if (TryFindDispositionSourceForQuarterDisp(
+                                quarterKey,
+                                quarterMatch,
+                                dispNum,
+                                dispositionsByDispNum,
+                                dispositionSourceCache,
+                                out var dispositionMatch) &&
+                                dispositionMatch != null)
+                            {
+                                sourceDisposition = dispositionMatch;
+                                hasDispositionSource = true;
+                            }
+                        }
                         issues.Add(new PlsrCheckIssue
                         {
                             Type = "Missing label",
@@ -721,10 +755,14 @@ namespace AtsBackgroundBuilder
                             DispNum = dispNum,
                             CurrentValue = "(none)",
                             ExpectedValue = act.Owner ?? string.Empty,
-                            Detail = "No label found in this quarter.",
+                            Detail = hasDispositionSource
+                                ? "No label found in this quarter. Create missing label if accepted."
+                                : "No label found in this quarter and no source disposition geometry was found.",
                             SummaryLine = $"Missing label: {dispNum} in {quarterKey}",
-                            ChangeType = PlsrIssueChangeType.None,
-                            Label = null
+                            ChangeType = hasDispositionSource ? PlsrIssueChangeType.CreateMissingLabel : PlsrIssueChangeType.None,
+                            Label = null,
+                            Disposition = hasDispositionSource ? sourceDisposition : null,
+                            Quarter = hasDispositionSource ? sourceQuarter : null
                         });
                         continue;
                     }
@@ -812,14 +850,16 @@ namespace AtsBackgroundBuilder
 
             int ownerUpdated = 0;
             int expiredTagged = 0;
+            int missingCreated = 0;
             int acceptedActionable = 0;
             int ignoredActionable = 0;
+            var acceptedCreateMissingIssues = new List<PlsrCheckIssue>();
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 foreach (var issue in issues)
                 {
-                    if (!issue.IsActionable || issue.Label == null)
+                    if (!issue.IsActionable)
                     {
                         continue;
                     }
@@ -836,7 +876,7 @@ namespace AtsBackgroundBuilder
                     {
                         case PlsrIssueChangeType.UpdateOwner:
                         {
-                            if (TryApplyOwnerUpdate(tr, issue.Label, issue.ProposedOwner, out _))
+                            if (issue.Label != null && TryApplyOwnerUpdate(tr, issue.Label, issue.ProposedOwner, out _))
                             {
                                 ownerUpdated++;
                             }
@@ -845,17 +885,43 @@ namespace AtsBackgroundBuilder
                         }
                         case PlsrIssueChangeType.TagExpired:
                         {
-                            if (TryApplyExpiredMarker(tr, issue.Label, out _))
+                            if (issue.Label != null && TryApplyExpiredMarker(tr, issue.Label, out _))
                             {
                                 expiredTagged++;
                             }
 
                             break;
                         }
+                        case PlsrIssueChangeType.CreateMissingLabel:
+                        {
+                            acceptedCreateMissingIssues.Add(issue);
+                            break;
+                        }
                     }
                 }
 
                 tr.Commit();
+            }
+
+            if (acceptedCreateMissingIssues.Count > 0)
+            {
+                var existingDispNumsByQuarter = BuildExistingDispNumsByQuarter(labelByQuarter);
+                var layerManager = new LayerManager(database);
+                var placer = new LabelPlacer(database, editor, layerManager, config, logger, useAlignedDimensions: true);
+                foreach (var issue in acceptedCreateMissingIssues)
+                {
+                    if (issue.Disposition == null || issue.Quarter == null)
+                    {
+                        continue;
+                    }
+
+                    var placement = placer.PlaceLabels(
+                        new List<QuarterInfo> { issue.Quarter },
+                        new List<DispositionInfo> { issue.Disposition },
+                        input.CurrentClient,
+                        existingDispNumsByQuarter);
+                    missingCreated += placement.LabelsPlaced;
+                }
             }
 
             var summary = new StringBuilder();
@@ -878,6 +944,7 @@ namespace AtsBackgroundBuilder
             summary.AppendLine($"Owner mismatches: {ownerMismatches}");
             summary.AppendLine($"Extra labels not in PLSR: {extraLabels}");
             summary.AppendLine($"Expired candidates: {expiredCandidates}");
+            summary.AppendLine($"Missing labels created: {missingCreated}");
             summary.AppendLine($"Owner updates applied: {ownerUpdated}");
             summary.AppendLine($"Expired tags added: {expiredTagged}");
             summary.AppendLine($"Actionable results accepted: {acceptedActionable}");
@@ -894,6 +961,240 @@ namespace AtsBackgroundBuilder
             }
 
             WritePlsrLog(database, summaryText, logger);
+        }
+
+        private static Dictionary<string, QuarterInfo> BuildQuarterInfoByKey(List<QuarterInfo> quarters)
+        {
+            var byKey = new Dictionary<string, QuarterInfo>(StringComparer.OrdinalIgnoreCase);
+            if (quarters == null || quarters.Count == 0)
+            {
+                return byKey;
+            }
+
+            foreach (var quarter in quarters)
+            {
+                if (quarter == null || quarter.SectionKey == null || quarter.Quarter == QuarterSelection.None)
+                {
+                    continue;
+                }
+
+                var key = BuildQuarterKey(quarter.SectionKey.Value, quarter.Quarter);
+                if (!byKey.ContainsKey(key))
+                {
+                    byKey[key] = quarter;
+                }
+            }
+
+            return byKey;
+        }
+
+        private static Dictionary<string, List<DispositionInfo>> IndexDispositionsByDispNum(List<DispositionInfo> dispositions)
+        {
+            var indexed = new Dictionary<string, List<DispositionInfo>>(StringComparer.OrdinalIgnoreCase);
+            if (dispositions == null || dispositions.Count == 0)
+            {
+                return indexed;
+            }
+
+            foreach (var disposition in dispositions)
+            {
+                if (disposition == null || disposition.Polyline == null)
+                {
+                    continue;
+                }
+
+                var dispNum = NormalizeDispNum(disposition.DispNumFormatted);
+                if (string.IsNullOrWhiteSpace(dispNum))
+                {
+                    continue;
+                }
+
+                if (!indexed.TryGetValue(dispNum, out var list))
+                {
+                    list = new List<DispositionInfo>();
+                    indexed[dispNum] = list;
+                }
+
+                list.Add(disposition);
+            }
+
+            return indexed;
+        }
+
+        private static bool TryFindDispositionSourceForQuarterDisp(
+            string quarterKey,
+            QuarterInfo quarter,
+            string dispNum,
+            Dictionary<string, List<DispositionInfo>> dispositionsByDispNum,
+            Dictionary<string, DispositionInfo?> dispositionSourceCache,
+            out DispositionInfo? matchedDisposition)
+        {
+            matchedDisposition = null;
+
+            if (quarter == null ||
+                quarter.Polyline == null ||
+                string.IsNullOrWhiteSpace(quarterKey))
+            {
+                return false;
+            }
+
+            var normalizedDispNum = NormalizeDispNum(dispNum);
+            if (string.IsNullOrWhiteSpace(normalizedDispNum))
+            {
+                return false;
+            }
+
+            var cacheKey = quarterKey + "|" + normalizedDispNum;
+            if (dispositionSourceCache.TryGetValue(cacheKey, out var cached))
+            {
+                matchedDisposition = cached;
+                return cached != null;
+            }
+
+            if (!dispositionsByDispNum.TryGetValue(normalizedDispNum, out var candidates) || candidates == null || candidates.Count == 0)
+            {
+                dispositionSourceCache[cacheKey] = null;
+                return false;
+            }
+
+            var quarterBounds = quarter.Bounds;
+            foreach (var candidate in candidates)
+            {
+                if (candidate == null || candidate.Polyline == null)
+                {
+                    continue;
+                }
+
+                if (!GeometryUtils.ExtentsIntersect(quarterBounds, candidate.Bounds))
+                {
+                    continue;
+                }
+
+                if (GeometryUtils.IsPointInsidePolyline(quarter.Polyline, candidate.SafePoint))
+                {
+                    matchedDisposition = candidate;
+                    dispositionSourceCache[cacheKey] = candidate;
+                    return true;
+                }
+
+                if (!GeometryUtils.TryFindPointInsideBoth(quarter.Polyline, candidate.Polyline, out _))
+                {
+                    continue;
+                }
+
+                matchedDisposition = candidate;
+                dispositionSourceCache[cacheKey] = candidate;
+                return true;
+            }
+
+            dispositionSourceCache[cacheKey] = null;
+            return false;
+        }
+
+        private static Dictionary<string, HashSet<string>> BuildExistingDispNumsByQuarter(
+            Dictionary<string, List<PlsrLabelEntry>> labelByQuarter)
+        {
+            var indexed = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            if (labelByQuarter == null || labelByQuarter.Count == 0)
+            {
+                return indexed;
+            }
+
+            foreach (var pair in labelByQuarter)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key) || pair.Value == null || pair.Value.Count == 0)
+                {
+                    continue;
+                }
+
+                if (!indexed.TryGetValue(pair.Key, out var dispNums))
+                {
+                    dispNums = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    indexed[pair.Key] = dispNums;
+                }
+
+                foreach (var label in pair.Value)
+                {
+                    var normalized = NormalizeDispNum(label?.DispNum ?? string.Empty);
+                    if (!string.IsNullOrWhiteSpace(normalized))
+                    {
+                        dispNums.Add(normalized);
+                    }
+                }
+            }
+
+            return indexed;
+        }
+
+        private static bool HasPotentialMissingPlsrLabels(
+            Database database,
+            Logger logger,
+            AtsBuildInput input,
+            List<QuarterInfo> plsrQuarters)
+        {
+            if (database == null ||
+                input == null ||
+                input.PlsrXmlPaths == null ||
+                input.PlsrXmlPaths.Count == 0 ||
+                input.SectionRequests == null ||
+                input.SectionRequests.Count == 0 ||
+                plsrQuarters == null ||
+                plsrQuarters.Count == 0)
+            {
+                return false;
+            }
+
+            var requestedQuarterKeys = BuildRequestedQuarterKeys(input.SectionRequests);
+            if (requestedQuarterKeys.Count == 0)
+            {
+                return false;
+            }
+
+            var notIncludedPrefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var quarterData = LoadPlsrQuarterData(input.PlsrXmlPaths, logger, notIncludedPrefixes);
+            if (quarterData.Count == 0)
+            {
+                return false;
+            }
+
+            var labelByQuarter = CollectPlsrLabels(database, plsrQuarters, logger);
+            var existingDispNumsByQuarter = BuildExistingDispNumsByQuarter(labelByQuarter);
+            var emptySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var quarterKey in requestedQuarterKeys)
+            {
+                if (!quarterData.TryGetValue(quarterKey, out var expected) || expected == null)
+                {
+                    continue;
+                }
+
+                if (!existingDispNumsByQuarter.TryGetValue(quarterKey, out var existingDispNums) || existingDispNums == null)
+                {
+                    existingDispNums = emptySet;
+                }
+
+                foreach (var act in expected.Activities)
+                {
+                    var dispNum = NormalizeDispNum(act?.DispNum ?? string.Empty);
+                    if (string.IsNullOrWhiteSpace(dispNum))
+                    {
+                        continue;
+                    }
+
+                    var prefix = GetDispositionPrefix(dispNum);
+                    if (!string.IsNullOrWhiteSpace(prefix) && !PlsrDispositionPrefixes.Contains(prefix))
+                    {
+                        continue;
+                    }
+
+                    if (!existingDispNums.Contains(dispNum))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         private static Dictionary<string, PlsrQuarterData> LoadPlsrQuarterData(
@@ -1216,6 +1517,14 @@ namespace AtsBackgroundBuilder
                     quarterMap.Add(key, q);
             }
 
+            var quarterEntries = quarterMap
+                .Select(pair => (
+                    Key: pair.Key,
+                    Polyline: pair.Value.Polyline,
+                    Bounds: pair.Value.Bounds))
+                .ToList();
+            var layerMatchCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
@@ -1231,7 +1540,19 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!IsDispositionTextLayer(labelEntity.Layer))
+                    if (!(dbObject is MText || dbObject is MLeader || dbObject is AlignedDimension))
+                    {
+                        continue;
+                    }
+
+                    var layerName = labelEntity.Layer ?? string.Empty;
+                    if (!layerMatchCache.TryGetValue(layerName, out var isDispositionTextLayer))
+                    {
+                        isDispositionTextLayer = IsDispositionTextLayer(layerName);
+                        layerMatchCache[layerName] = isDispositionTextLayer;
+                    }
+
+                    if (!isDispositionTextLayer)
                     {
                         continue;
                     }
@@ -1271,24 +1592,28 @@ namespace AtsBackgroundBuilder
                     if (string.IsNullOrWhiteSpace(prefix) || !PlsrDispositionPrefixes.Contains(prefix))
                         continue;
 
-                    bool assigned = false;
-                    foreach (var pair in quarterMap)
+                    foreach (var quarterEntry in quarterEntries)
                     {
-                        if (GeometryUtils.IsPointInsidePolyline(pair.Value.Polyline, entry.Location))
+                        if (entry.Location.X < quarterEntry.Bounds.MinPoint.X ||
+                            entry.Location.X > quarterEntry.Bounds.MaxPoint.X ||
+                            entry.Location.Y < quarterEntry.Bounds.MinPoint.Y ||
+                            entry.Location.Y > quarterEntry.Bounds.MaxPoint.Y)
                         {
-                            if (!byQuarter.TryGetValue(pair.Key, out var list))
+                            continue;
+                        }
+
+                        if (GeometryUtils.IsPointInsidePolyline(quarterEntry.Polyline, entry.Location))
+                        {
+                            if (!byQuarter.TryGetValue(quarterEntry.Key, out var list))
                             {
                                 list = new List<PlsrLabelEntry>();
-                                byQuarter[pair.Key] = list;
+                                byQuarter[quarterEntry.Key] = list;
                             }
 
                             list.Add(entry);
-                            assigned = true;
                             break;
                         }
                     }
-
-                    _ = assigned;
                 }
 
                 tr.Commit();
@@ -1721,7 +2046,18 @@ namespace AtsBackgroundBuilder
             // Keep this aligned with disposition layering logic:
             // text layers are generated as C-<suffix>-T or F-<suffix>-T.
             var normalized = layerName.Trim();
-            return Regex.IsMatch(normalized, "^[CF]-.+-T$", RegexOptions.IgnoreCase);
+            if (normalized.Length < 5)
+            {
+                return false;
+            }
+
+            var prefix = char.ToUpperInvariant(normalized[0]);
+            if ((prefix != 'C' && prefix != 'F') || normalized[1] != '-')
+            {
+                return false;
+            }
+
+            return normalized.EndsWith("-T", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string NormalizeDispNum(string dispNum)
@@ -1829,6 +2165,7 @@ namespace AtsBackgroundBuilder
                     grid.MultiSelect = false;
                     grid.SelectionMode = WinForms.DataGridViewSelectionMode.FullRowSelect;
                     grid.RowHeadersVisible = false;
+                    grid.EditMode = WinForms.DataGridViewEditMode.EditOnEnter;
                     grid.DataSource = rows;
 
                     var decisionColumn = new WinForms.DataGridViewComboBoxColumn
@@ -1851,24 +2188,6 @@ namespace AtsBackgroundBuilder
                     grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Expected), HeaderText = "Expected", ReadOnly = true, Width = 230 });
                     grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Detail), HeaderText = "Detail", ReadOnly = true, AutoSizeMode = WinForms.DataGridViewAutoSizeColumnMode.Fill });
 
-                    grid.CellBeginEdit += (_, e) =>
-                    {
-                        if (e.RowIndex < 0 || e.ColumnIndex < 0)
-                        {
-                            return;
-                        }
-
-                        if (!string.Equals(grid.Columns[e.ColumnIndex].Name, "Decision", StringComparison.OrdinalIgnoreCase))
-                        {
-                            return;
-                        }
-
-                        if (rows[e.RowIndex] != null && !rows[e.RowIndex].Actionable)
-                        {
-                            e.Cancel = true;
-                        }
-                    };
-
                     buttonPanel.Dock = WinForms.DockStyle.Bottom;
                     buttonPanel.Height = 52;
                     buttonPanel.FlowDirection = WinForms.FlowDirection.RightToLeft;
@@ -1877,6 +2196,14 @@ namespace AtsBackgroundBuilder
                     applyButton.Text = "Apply Decisions";
                     applyButton.Width = 130;
                     applyButton.DialogResult = WinForms.DialogResult.OK;
+                    applyButton.Click += (_, __) =>
+                    {
+                        grid.EndEdit();
+                        if (form.BindingContext[rows] is WinForms.CurrencyManager manager)
+                        {
+                            manager.EndCurrentEdit();
+                        }
+                    };
 
                     cancelButton.Text = "Cancel";
                     cancelButton.Width = 90;
@@ -1951,6 +2278,7 @@ namespace AtsBackgroundBuilder
             {
                 PlsrIssueChangeType.UpdateOwner => "Update label owner",
                 PlsrIssueChangeType.TagExpired => "Add (Expired)",
+                PlsrIssueChangeType.CreateMissingLabel => "Create missing label",
                 _ => "No change"
             };
         }

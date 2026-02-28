@@ -985,3 +985,161 @@
 - Post-sync verification:
   - both `bin` and `build` DLLs now match (`23:22:33`, `863232` bytes).
   - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+
+## Follow-up (PLSR Review Decision Dropdown Not Working, 2026-02-28)
+
+- [x] Fix row decision dropdown interactivity so `Accept/Ignore` can be changed in the review grid.
+- [x] Ensure selected dropdown value is committed when clicking `Apply Decisions`.
+- [x] Rebuild and verify compile/build safety.
+
+## Review (PLSR Review Decision Dropdown Not Working, 2026-02-28)
+
+- Root cause: `ShowPlsrReviewDialog(...)` canceled `CellBeginEdit` for non-actionable rows, which made dropdowns appear broken in common result sets.
+- Fixes in `Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - Removed the `CellBeginEdit` cancellation gate for decision column.
+  - Set `grid.EditMode = EditOnEnter` to make combo interaction immediate.
+  - Added `Apply Decisions` handler commit path (`grid.EndEdit()` + `CurrencyManager.EndCurrentEdit()`) before dialog close so latest user selection is persisted.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release` succeeded.
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (0 errors).
+
+## Follow-up (PLSR-Driven Missing Label Generation + A-DIM Only, 2026-02-28)
+
+- [x] Ensure `Check PLSR` can generate disposition labels even when `Disposition labels` toggle is off.
+- [x] For PLSR-only runs, first reuse existing in-drawing disposition polylines with OD in the requested scope; if none are found, import disposition shapefiles and label from those.
+- [x] Force label placement to use A-DIM style for disposition labeling (no leader-version path).
+- [x] Remove `A-DIM` checkbox from both UI implementations (WPF + WinForms) and default input to A-DIM mode.
+- [x] Rebuild Release and verify output artifact sync.
+
+## Review (PLSR-Driven Missing Label Generation + A-DIM Only, 2026-02-28)
+
+- Updated build flow in `Core/Plugin.cs`:
+  - Added `shouldGenerateDispositionLabels = IncludeDispositionLabels || CheckPlsr`.
+  - For PLSR-only runs, scans existing modelspace polylines in requested quarter scope for disposition OD (`DISP_NUM`) before importing shapefiles.
+  - Imports disposition shapefiles as fallback when PLSR is on and no existing OD dispositions are found.
+  - Label placement now runs when `Check PLSR` is on (even with labels toggle off), with duplicate-prevention reuse index as before.
+  - `LabelPlacer` is invoked with `useAlignedDimensions: true` to keep disposition labels on A-DIM path.
+- Added helper methods in `Core/Plugin.cs`:
+  - `FindExistingDispositionPolylinesWithObjectData(...)`
+  - `IsLikelyDispositionLineLayer(...)`
+- Updated shape auto-update gating in `Core/Plugin.Core.ImportWindowing.cs`:
+  - Disposition shape-set auto-update now triggers for `Check PLSR` runs too.
+- Updated UI/input:
+  - Removed `A-DIM` checkbox from `Core/AtsBuildWindow.cs` and `Core/AtsBuildForm.cs`.
+  - `AtsBuildInput.UseAlignedDimensions` now defaults to `true`.
+  - Input builders now set `UseAlignedDimensions = true` directly.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release` succeeded.
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - Output parity confirmed:
+    - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+    - `build\net8.0-windows\AtsBackgroundBuilder.dll`
+
+## Follow-up (PLSR Missing Labels Must Be Accept-Driven, 2026-02-28)
+
+- [x] Stop pre-generating disposition labels when `Check PLSR` is enabled.
+- [x] Make missing-label findings actionable (`Create missing label`) only when source disposition geometry is available in the quarter.
+- [x] Apply missing-label creation only for rows user accepts in PLSR review.
+- [x] Keep normal owner/expired apply behavior unchanged.
+- [x] Rebuild and verify artifact sync.
+
+## Review (PLSR Missing Labels Must Be Accept-Driven, 2026-02-28)
+
+- Updated pre-PLSR flow in `Core/Plugin.cs`:
+  - Label auto-placement before PLSR now runs only when `IncludeDispositionLabels && !CheckPlsr`.
+  - This prevents auto-generation of all missing labels during PLSR checks.
+- Updated PLSR issue model and apply flow in `Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - Added `CreateMissingLabel` change type.
+  - Missing-label rows are now actionable only when matching disposition source + quarter are found.
+  - Accepted missing-label rows are created after review via `LabelPlacer` (A-DIM path), one accepted row at a time.
+  - Non-accepted rows remain unchanged.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release` succeeded.
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `bin` and `build` DLL outputs are synchronized (`867840` bytes, same timestamp).
+
+## Follow-up (PLSR Accepted Missing-Label Apply Guard, 2026-02-28)
+
+- [x] Fix PLSR apply loop so `CreateMissingLabel` rows are not skipped by a `Label != null` precondition.
+- [x] Keep owner/expired label edits guarded by existing label presence.
+- [x] Rebuild to verify compile/build safety.
+
+## Review (PLSR Accepted Missing-Label Apply Guard, 2026-02-28)
+
+- Root cause:
+  - Apply loop short-circuited with `if (!issue.IsActionable || issue.Label == null) continue;`.
+  - `CreateMissingLabel` issues are intentionally actionable without `Label` (they use `Disposition+Quarter`), so accepted rows were skipped.
+- Fix in `Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - Changed top guard to `if (!issue.IsActionable) continue;`.
+  - Kept `issue.Label != null` checks scoped to `UpdateOwner` and `TagExpired` switch branches only.
+  - `CreateMissingLabel` accepted rows now flow into post-transaction placement list as intended.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (0 errors, existing nullable warnings).
+
+## Follow-up (PLSR Check Runtime Optimization, 2026-02-28)
+
+- [x] Reduce expensive per-entity work while collecting existing PLSR labels from modelspace.
+- [x] Add cheaper prechecks/caching before expensive disposition-quarter overlap checks.
+- [x] Rebuild to verify compile/build safety after optimization.
+
+## Review (PLSR Check Runtime Optimization, 2026-02-28)
+
+- Updated `Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - `CollectPlsrLabels(...)` now:
+    - skips non-text/non-dimension entities before layer matching,
+    - caches disposition-layer match results per layer name,
+    - uses quarter extents prefilter before `IsPointInsidePolyline(...)`.
+  - `TryFindDispositionSourceForQuarterDisp(...)` now:
+    - uses cached `QuarterInfo.Bounds` and `DispositionInfo.Bounds` instead of recomputing geometric extents,
+    - checks `candidate.SafePoint` inside quarter first, then falls back to expensive polygon-overlap test.
+  - `IsDispositionTextLayer(...)` now uses an equivalent fast string check instead of regex.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors, existing nullable warnings).
+
+## Follow-up (PLSR Pre-Result Slowdown Before Fallback Import, 2026-02-28)
+
+- [x] Diagnose remaining `Check PLSR` delay occurring before review output.
+- [x] Avoid fallback disposition shapefile import in PLSR-only mode when no missing labels are detected.
+- [x] Optimize existing in-drawing disposition source scan used by PLSR-only runs.
+- [x] Rebuild to verify compile/build safety.
+
+## Review (PLSR Pre-Result Slowdown Before Fallback Import, 2026-02-28)
+
+- Updated `Core/Plugin.cs`:
+  - Added PLSR-only precheck gate before fallback import:
+    - builds PLSR quarter scope,
+    - compares XML activities vs existing labels,
+    - skips fallback shapefile import when no missing labels are present.
+  - Added precheck timing log output (`PLSR precheck: ... ms`).
+  - Optimized `FindExistingDispositionPolylinesWithObjectData(...)`:
+    - removed expensive per-entity closed-boundary cloning,
+    - switched to extents-based scope prefilter + OD check,
+    - added scan timing log output.
+  - Replaced regex in `IsLikelyDispositionLineLayer(...)` with equivalent fast string checks.
+- Added helper in `Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - `HasPotentialMissingPlsrLabels(...)` for import gating logic.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors, existing nullable warnings).
+
+## Follow-up (/debug-config Logging Overhead Optimization, 2026-02-28)
+
+- [x] Reduce high-volume debug-config logging overhead without removing targeted diagnostics.
+- [x] Buffer logger disk writes to avoid per-line flush cost.
+- [x] Move heavy wellsite debug command-line output behind explicit opt-in.
+- [x] Rebuild/compile to verify safety after logger changes.
+
+## Review (/debug-config Logging Overhead Optimization, 2026-02-28)
+
+- Updated `Core/Plugin.cs`:
+  - Added `ATSBUILD_WELLSITE_DEBUG` env toggle to gate `WELLSITE DEBUG` `editor.WriteMessage(...)` + logger spam.
+  - Logger now writes with buffered flushes (`FlushIntervalLines=64`) instead of `AutoFlush=true` per line.
+  - Immediate flush retained for key terminal messages (`ATSBUILD exit stage`, summary, PLSR log write).
+  - Added default suppression prefixes for high-volume trace lines:
+    - `TRACE-LSD-PAIRY`
+    - `TRACE-LSD-CLAMP`
+    - `TRACE-RELAYER id=`
+    - existing `TRACE-LSD-CORR` suppression kept.
+  - Logger null-safety cleanup to avoid nullable warning in new path.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release` succeeded (`0` errors, existing nullable warnings).
+  - Full `build` also succeeded; observed only existing warnings plus locked-output copy retries when `build\net8.0-windows\AtsBackgroundBuilder.dll` was in use.

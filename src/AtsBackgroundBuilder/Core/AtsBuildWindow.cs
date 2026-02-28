@@ -31,7 +31,6 @@ namespace AtsBackgroundBuilder.Core
         private readonly CheckBox _checkPlsr = new CheckBox();
         private readonly CheckBox _allowMultiQuarterDispositions = new CheckBox();
         private readonly CheckBox _includeQuarterSectionLabels = new CheckBox();
-        private readonly CheckBox _useAlignedDimensions = new CheckBox();
         private readonly CheckBox _autoCheckUpdateShapesAlways = new CheckBox();
         private readonly ComboBox _shapeTypeCombo = new ComboBox();
         private readonly Button _updateShape = new Button();
@@ -246,7 +245,6 @@ namespace AtsBackgroundBuilder.Core
             ConfigureOptionCheckBox(_checkPlsr, "Check PLSR", false);
             ConfigureOptionCheckBox(_allowMultiQuarterDispositions, "1/4 Definition", config?.AllowMultiQuarterDispositions ?? false);
             ConfigureOptionCheckBox(_includeQuarterSectionLabels, "1/4 SEC Labels", false);
-            ConfigureOptionCheckBox(_useAlignedDimensions, "A-DIM", false);
 
             var leftToggleStack = new StackPanel { Margin = new Thickness(0, 0, 24, 0) };
             leftToggleStack.Children.Add(_includeDispoLinework);
@@ -263,7 +261,6 @@ namespace AtsBackgroundBuilder.Core
             rightToggleStack.Children.Add(_checkPlsr);
             rightToggleStack.Children.Add(_allowMultiQuarterDispositions);
             rightToggleStack.Children.Add(_includeQuarterSectionLabels);
-            rightToggleStack.Children.Add(_useAlignedDimensions);
             Grid.SetColumn(rightToggleStack, 2);
             settingsGrid.Children.Add(rightToggleStack);
 
@@ -549,7 +546,7 @@ namespace AtsBackgroundBuilder.Core
                 AutoCheckUpdateShapefilesAlways = _autoCheckUpdateShapesAlways.IsChecked == true,
                 CheckPlsr = _checkPlsr.IsChecked == true,
                 IncludeQuarterSectionLabels = _includeQuarterSectionLabels.IsChecked == true,
-                UseAlignedDimensions = _useAlignedDimensions.IsChecked == true,
+                UseAlignedDimensions = true,
             };
             input.SectionRequests.AddRange(requests);
 

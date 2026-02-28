@@ -56,7 +56,7 @@ namespace AtsBackgroundBuilder
 
             try
             {
-                var needsDisposition = input.IncludeDispositionLinework || input.IncludeDispositionLabels;
+                var needsDisposition = input.IncludeDispositionLinework || input.IncludeDispositionLabels || input.CheckPlsr;
                 var dispositionShapeBaseNames = BuildShapeBaseNamesFromShapefileNames(config?.DispositionShapefiles, "DAB_APPL");
                 var dispositionError = string.Empty;
                 if (needsDisposition &&

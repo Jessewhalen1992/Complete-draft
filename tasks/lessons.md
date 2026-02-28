@@ -61,3 +61,10 @@
 - PLSR review should never display raw `MText.Contents`; flatten sanitized lines for UI output, because raw content carries control groups (`\P`, `\pxqc;`, etc.) that users interpret as parsing failures.
 - For PLSR expiry checks, do not create `Add (Expired)` actions when label text already contains an expired marker; detection must be normalized/sanitized (not literal raw `(Expired)` string matching only).
 - When copy-to-`build` fails (locked DLL), users may unknowingly run stale plugin code; always verify `bin` vs `build` timestamps/sizes and sync artifacts before asking for retest.
+- In review grids, never gate `Accept/Ignore` editing by actionability at cell-edit time; users expect dropdowns to work for all rows. Keep actionability enforcement in apply logic, and force commit of in-cell edits before closing dialogs.
+- `Check PLSR` runs must be able to generate missing labels independently of the `Disposition labels` toggle: scan existing OD disposition polylines in requested scope first, then import shapefiles only as fallback when none are present.
+- If A-DIM is the required standard, remove style toggles from UI and force aligned-dimension placement in code paths; keeping optional leader toggles invites mixed output styles.
+- For PLSR workflows, missing-label generation must be review-driven: do not pre-place all labels when `Check PLSR` is on; surface `Missing label` as actionable and create only accepted rows.
+- In mixed-action PLSR apply loops, never gate all actionable rows on `issue.Label != null`; `CreateMissingLabel` actions require `Disposition+Quarter` and must be routed by `ChangeType` so accepted missing-label rows are actually created.
+- For `Check PLSR` performance, never force fallback disposition shapefile import before proving missing labels exist; precheck XML vs existing labels first, then import only when missing-label creation is actually needed.
+- For `/debug-config` performance, high-volume trace logging must be buffered and selectively suppressed by default; keep deep traces (`TRACE-LSD-*`, per-segment relayer logs, wellsite debug spam) opt-in via env toggles.

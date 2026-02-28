@@ -60,6 +60,8 @@ namespace AtsBackgroundBuilder
         private static readonly bool EnableQuarterViewByEnvironment =
             IsAffirmativeToggle(Environment.GetEnvironmentVariable("QUATERVIEW")) ||
             IsAffirmativeToggle(Environment.GetEnvironmentVariable("ATSBUILD_QUATERVIEW"));
+        private static readonly bool EnableWellsiteDebug =
+            IsAffirmativeToggle(Environment.GetEnvironmentVariable("ATSBUILD_WELLSITE_DEBUG"));
         private static readonly object SectionOutlineCacheLock = new object();
         private static readonly object BufferedDefpointsWindowLock = new object();
         private static readonly Dictionary<string, SectionOutline?> SectionOutlineCache = new Dictionary<string, SectionOutline?>(StringComparer.OrdinalIgnoreCase);
@@ -232,7 +234,8 @@ namespace AtsBackgroundBuilder
                 logger.WriteLine($"P3 import summary: imported={p3Summary.ImportedEntities}, filtered={p3Summary.FilteredEntities}, failures={p3Summary.ImportFailures}");
             }
 
-            var dispositionImportScopeIds = (input.IncludeDispositionLinework || input.IncludeDispositionLabels)
+            var shouldGenerateDispositionLabels = input.IncludeDispositionLabels || input.CheckPlsr;
+            var dispositionImportScopeIds = (input.IncludeDispositionLinework || shouldGenerateDispositionLabels)
                 ? BuildDispositionImportScopeIds(database, sectionDrawResult, logger)
                 : new List<ObjectId>();
 
@@ -262,8 +265,44 @@ namespace AtsBackgroundBuilder
             }
 
             var dispositionPolylines = new List<ObjectId>();
+            if (input.CheckPlsr &&
+                !input.IncludeDispositionLabels &&
+                dispositionImportScopeIds.Count > 0)
+            {
+                dispositionPolylines.AddRange(
+                    FindExistingDispositionPolylinesWithObjectData(
+                        database,
+                        dispositionImportScopeIds,
+                        logger));
+            }
+
             ShapefileImportSummary importSummary;
-            if (input.IncludeDispositionLinework || input.IncludeDispositionLabels)
+            var shouldImportDispositions =
+                input.IncludeDispositionLinework ||
+                input.IncludeDispositionLabels ||
+                (input.CheckPlsr && dispositionPolylines.Count == 0);
+
+            if (shouldImportDispositions &&
+                input.CheckPlsr &&
+                !input.IncludeDispositionLinework &&
+                !input.IncludeDispositionLabels &&
+                dispositionPolylines.Count == 0)
+            {
+                exitStage = "plsr_missing_precheck";
+                var precheckTimer = Stopwatch.StartNew();
+                var precheckQuarters = BuildPlsrQuarterInfos(database, sectionDrawResult, new List<QuarterInfo>(), logger);
+                var hasPotentialMissingLabels = HasPotentialMissingPlsrLabels(database, logger, input, precheckQuarters);
+                precheckTimer.Stop();
+                logger.WriteLine(
+                    $"PLSR precheck: missingLabels={(hasPotentialMissingLabels ? "yes" : "no")} in {precheckTimer.ElapsedMilliseconds} ms.");
+                if (!hasPotentialMissingLabels)
+                {
+                    shouldImportDispositions = false;
+                    logger.WriteLine("PLSR precheck: skipped fallback disposition shapefile import (no missing labels detected).");
+                }
+            }
+
+            if (shouldImportDispositions)
             {
                 exitStage = "disposition_import";
                 importSummary = ShapefileImporter.ImportShapefiles(
@@ -297,7 +336,7 @@ namespace AtsBackgroundBuilder
             var layerManager = new LayerManager(database);
             var dispositions = new List<DispositionInfo>();
             var result = new SummaryResult();
-            var shouldLoadSupplementalSectionInfos = input.IncludeDispositionLabels && dispositionPolylines.Count > 0;
+            var shouldLoadSupplementalSectionInfos = shouldGenerateDispositionLabels && dispositionPolylines.Count > 0;
             var supplementalSectionInfos = shouldLoadSupplementalSectionInfos
                 ? LoadSupplementalSectionSpatialInfos(input.SectionRequests, config, logger)
                 : new List<SectionSpatialInfo>();
@@ -352,45 +391,66 @@ namespace AtsBackgroundBuilder
                     var dispNumFormatted = FormatDispNum(dispNum);
 
                     var isSurfaceLabel = (mappedPurpose ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0;
-                    if (input.IncludeDispositionLabels && (IsWellSitePurpose(purpose) || isSurfaceLabel))
+                    if (shouldGenerateDispositionLabels && (IsWellSitePurpose(purpose) || isSurfaceLabel))
                     {
                         var normalizedPurpose = NormalizePurposeCode(purpose);
-                        editor.WriteMessage($"\nWELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}' surface={isSurfaceLabel}");
-                        logger.WriteLine($"WELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}' surface={isSurfaceLabel}");
+                        if (EnableWellsiteDebug)
+                        {
+                            editor.WriteMessage($"\nWELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}' surface={isSurfaceLabel}");
+                            logger.WriteLine($"WELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}' surface={isSurfaceLabel}");
+                        }
 
                         var lsdSecToken = GetDominantLsdSectionToken(clone, lsdCells);
-                        editor.WriteMessage($"\nWELLSITE DEBUG: primary-token='{lsdSecToken}' lsd-cells={lsdCells.Count}");
-                        logger.WriteLine($"WELLSITE DEBUG: primary-token='{lsdSecToken}' lsd-cells={lsdCells.Count}");
+                        if (EnableWellsiteDebug)
+                        {
+                            editor.WriteMessage($"\nWELLSITE DEBUG: primary-token='{lsdSecToken}' lsd-cells={lsdCells.Count}");
+                            logger.WriteLine($"WELLSITE DEBUG: primary-token='{lsdSecToken}' lsd-cells={lsdCells.Count}");
+                        }
                         if (string.IsNullOrWhiteSpace(lsdSecToken))
                         {
                             lsdSecToken = GetDominantLsdSectionTokenBySection(clone, sectionInfos);
-                            editor.WriteMessage($"\nWELLSITE DEBUG: fallback-token='{lsdSecToken}' section-infos={sectionInfos.Count}");
-                            logger.WriteLine($"WELLSITE DEBUG: fallback-token='{lsdSecToken}' section-infos={sectionInfos.Count}");
+                            if (EnableWellsiteDebug)
+                            {
+                                editor.WriteMessage($"\nWELLSITE DEBUG: fallback-token='{lsdSecToken}' section-infos={sectionInfos.Count}");
+                                logger.WriteLine($"WELLSITE DEBUG: fallback-token='{lsdSecToken}' section-infos={sectionInfos.Count}");
+                            }
                             if (string.IsNullOrWhiteSpace(lsdSecToken))
                             {
                                 lsdSecToken = GetPointBasedLsdSectionToken(clone, sectionInfos, out var pointDebug);
-                                editor.WriteMessage($"\nWELLSITE DEBUG: point-token='{lsdSecToken}' detail={pointDebug}");
-                                logger.WriteLine($"WELLSITE DEBUG: point-token='{lsdSecToken}' detail={pointDebug}");
+                                if (EnableWellsiteDebug)
+                                {
+                                    editor.WriteMessage($"\nWELLSITE DEBUG: point-token='{lsdSecToken}' detail={pointDebug}");
+                                    logger.WriteLine($"WELLSITE DEBUG: point-token='{lsdSecToken}' detail={pointDebug}");
+                                }
                             }
                             if (string.IsNullOrWhiteSpace(lsdSecToken))
                             {
                                 var overlapDebug = GetSectionOverlapDebugString(clone, sectionInfos);
-                                editor.WriteMessage($"\nWELLSITE DEBUG: overlaps {overlapDebug}");
-                                logger.WriteLine($"WELLSITE DEBUG: overlaps {overlapDebug}");
+                                if (EnableWellsiteDebug)
+                                {
+                                    editor.WriteMessage($"\nWELLSITE DEBUG: overlaps {overlapDebug}");
+                                    logger.WriteLine($"WELLSITE DEBUG: overlaps {overlapDebug}");
+                                }
                             }
                         }
                         if (!string.IsNullOrWhiteSpace(lsdSecToken))
                         {
                             mappedPurpose = lsdSecToken + " " + mappedPurpose;
-                            editor.WriteMessage($"\nWELLSITE DEBUG: final surface line='{mappedPurpose}'");
-                            logger.WriteLine($"WELLSITE DEBUG: final surface line='{mappedPurpose}'");
+                            if (EnableWellsiteDebug)
+                            {
+                                editor.WriteMessage($"\nWELLSITE DEBUG: final surface line='{mappedPurpose}'");
+                                logger.WriteLine($"WELLSITE DEBUG: final surface line='{mappedPurpose}'");
+                            }
                         }
                     }
-                    else if (input.IncludeDispositionLabels && (mappedPurpose ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0)
+                    else if (shouldGenerateDispositionLabels && (mappedPurpose ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         var normalizedPurpose = NormalizePurposeCode(purpose);
-                        editor.WriteMessage($"\nWELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}'");
-                        logger.WriteLine($"WELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}'");
+                        if (EnableWellsiteDebug)
+                        {
+                            editor.WriteMessage($"\nWELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}'");
+                            logger.WriteLine($"WELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}'");
+                        }
                     }
 
                         // Default output layers; will be overridden when mapping succeeds.
@@ -438,7 +498,7 @@ namespace AtsBackgroundBuilder
                         lineEntity.ColorIndex = 256;  // ensure ByLayer colour
                     }
 
-                    if (!input.IncludeDispositionLabels)
+                    if (!shouldGenerateDispositionLabels)
                     {
                         clone.Dispose();
                         continue;
@@ -522,7 +582,7 @@ namespace AtsBackgroundBuilder
             }
 
             var existingDispNumsByQuarter = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-            if (input.IncludeDispositionLabels && quarters.Count > 0)
+            if (shouldGenerateDispositionLabels && quarters.Count > 0)
             {
                 var existingLabelsByQuarter = CollectPlsrLabels(database, quarters, logger);
                 var existingLabelCount = 0;
@@ -558,10 +618,11 @@ namespace AtsBackgroundBuilder
                     $"Disposition label reuse: indexed {existingLabelCount} existing label(s) across {existingDispNumsByQuarter.Count} quarter(s).");
             }
 
-            if (input.IncludeDispositionLabels)
+            var shouldPlaceLabelsBeforePlsr = input.IncludeDispositionLabels && !input.CheckPlsr;
+            if (shouldPlaceLabelsBeforePlsr)
             {
                 exitStage = "placing_labels";
-                var placer = new LabelPlacer(database, editor, layerManager, config, logger, input.UseAlignedDimensions);
+                var placer = new LabelPlacer(database, editor, layerManager, config, logger, useAlignedDimensions: true);
                 var placement = placer.PlaceLabels(quarters, dispositions, currentClient, existingDispNumsByQuarter);
 
                 result.LabelsPlaced = placement.LabelsPlaced;
@@ -578,7 +639,7 @@ namespace AtsBackgroundBuilder
             {
                 exitStage = "plsr_check";
                 var plsrQuarters = BuildPlsrQuarterInfos(database, sectionDrawResult, quarters, logger);
-                RunPlsrCheck(database, editor, logger, companyLookup, input, plsrQuarters);
+                RunPlsrCheck(database, editor, logger, companyLookup, input, plsrQuarters, dispositions, config);
             }
 
             if (input.IncludeQuarterSectionLabels)
@@ -781,6 +842,149 @@ namespace AtsBackgroundBuilder
                 .Where(id => !id.IsNull && !id.IsErased)
                 .Distinct()
                 .ToList();
+        }
+
+        private static List<ObjectId> FindExistingDispositionPolylinesWithObjectData(
+            Database database,
+            IReadOnlyList<ObjectId> scopeIds,
+            Logger logger)
+        {
+            var matches = new List<ObjectId>();
+            if (database == null || scopeIds == null || scopeIds.Count == 0)
+            {
+                return matches;
+            }
+
+            var scanTimer = Stopwatch.StartNew();
+            var scopeBounds = new List<Extents3d>();
+            var scopeIdSet = new HashSet<ObjectId>(scopeIds.Where(id => !id.IsNull && !id.IsErased));
+            try
+            {
+                using (var tr = database.TransactionManager.StartTransaction())
+                {
+                    foreach (var scopeId in scopeIdSet)
+                    {
+                        if (!(tr.GetObject(scopeId, OpenMode.ForRead, false) is Polyline scopePoly) ||
+                            scopePoly.IsErased ||
+                            !scopePoly.Closed ||
+                            scopePoly.NumberOfVertices < 3)
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            scopeBounds.Add(scopePoly.GeometricExtents);
+                        }
+                        catch
+                        {
+                            // ignore invalid extents
+                        }
+                    }
+
+                    if (scopeBounds.Count == 0)
+                    {
+                        tr.Commit();
+                        return matches;
+                    }
+
+                    var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                    var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                    var seen = new HashSet<ObjectId>();
+                    foreach (ObjectId id in modelSpace)
+                    {
+                        if (!seen.Add(id) || scopeIdSet.Contains(id))
+                        {
+                            continue;
+                        }
+
+                        if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity entity) ||
+                            entity.IsErased ||
+                            !IsLikelyDispositionLineLayer(entity.Layer))
+                        {
+                            continue;
+                        }
+
+                        Extents3d entityBounds;
+                        try
+                        {
+                            entityBounds = entity.GeometricExtents;
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+
+                        var intersectsScope = false;
+                        foreach (var scopeBound in scopeBounds)
+                        {
+                            if (!GeometryUtils.ExtentsIntersect(scopeBound, entityBounds))
+                            {
+                                continue;
+                            }
+
+                            intersectsScope = true;
+                            break;
+                        }
+
+                        if (!intersectsScope)
+                        {
+                            continue;
+                        }
+
+                        var od = OdHelpers.ReadObjectData(id, logger);
+                        if (od == null)
+                        {
+                            continue;
+                        }
+
+                        if (!od.TryGetValue("DISP_NUM", out var dispNum) || string.IsNullOrWhiteSpace(dispNum))
+                        {
+                            continue;
+                        }
+
+                        matches.Add(id);
+                    }
+
+                    tr.Commit();
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine("Disposition source scan failed: " + ex.Message);
+            }
+
+            var unique = matches
+                .Where(id => !id.IsNull && !id.IsErased)
+                .Distinct()
+                .ToList();
+
+            scanTimer.Stop();
+            logger.WriteLine(
+                $"Disposition source scan: found {unique.Count} existing OD polyline(s) in requested scope ({scanTimer.ElapsedMilliseconds} ms).");
+            return unique;
+        }
+
+        private static bool IsLikelyDispositionLineLayer(string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+            {
+                return false;
+            }
+
+            var normalized = layerName.Trim();
+            if (normalized.Length < 3)
+            {
+                return false;
+            }
+
+            if (normalized.EndsWith("-T", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var prefix = char.ToUpperInvariant(normalized[0]);
+            return (prefix == 'C' || prefix == 'F') && normalized[1] == '-';
         }
 
         private static List<QuarterInfo> BuildPlsrQuarterInfos(
@@ -6976,6 +7180,7 @@ namespace AtsBackgroundBuilder
     public sealed class Logger : IDisposable
     {
         private static readonly bool EnableVerboseLogging = IsAffirmative(Environment.GetEnvironmentVariable("ATSBUILD_VERBOSE_LOG"));
+        private const int FlushIntervalLines = 64;
         private static readonly string[] SuppressedVerbosePrefixes =
         {
             "WELLSITE DEBUG:",
@@ -6986,6 +7191,9 @@ namespace AtsBackgroundBuilder
             "OD table lookup failed for '",
             "TRACE-LSD-CORR",
             "CorrectionLine:",
+            "TRACE-LSD-PAIRY",
+            "TRACE-LSD-CLAMP",
+            "TRACE-RELAYER id=",
         };
         private static readonly string[] SuppressedVerboseContains =
         {
@@ -6993,13 +7201,14 @@ namespace AtsBackgroundBuilder
             "RA-TGT reject",
         };
         private StreamWriter? _writer;
+        private int _linesSinceFlush;
 
         public void Initialize(string path)
         {
             try
             {
                 var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
-                _writer = new StreamWriter(stream) { AutoFlush = true };
+                _writer = new StreamWriter(stream) { AutoFlush = false };
                 WriteLine("---- ATSBUILD " + DateTime.Now + " ----");
             }
             catch (IOException ex)
@@ -7009,7 +7218,7 @@ namespace AtsBackgroundBuilder
                 try
                 {
                     var stream = new FileStream(fallbackPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
-                    _writer = new StreamWriter(stream) { AutoFlush = true };
+                    _writer = new StreamWriter(stream) { AutoFlush = false };
                     WriteLine("---- ATSBUILD " + DateTime.Now + " ----");
                     WriteLine($"Logger initialized with fallback path: {fallbackPath}");
                 }
@@ -7027,12 +7236,46 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            _writer?.WriteLine(message);
+            var writer = _writer;
+            if (writer == null)
+            {
+                return;
+            }
+
+            writer.WriteLine(message);
+            _linesSinceFlush++;
+            if (_linesSinceFlush >= FlushIntervalLines || ShouldFlushImmediately(message))
+            {
+                try
+                {
+                    writer.Flush();
+                    _linesSinceFlush = 0;
+                }
+                catch
+                {
+                    // best-effort flush
+                }
+            }
         }
 
         public void Dispose()
         {
-            _writer?.Dispose();
+            var writer = _writer;
+            if (writer == null)
+            {
+                return;
+            }
+
+            try
+            {
+                writer.Flush();
+            }
+            catch
+            {
+                // best-effort flush
+            }
+
+            writer.Dispose();
         }
 
         private static string BuildFallbackLogPath(string path)
@@ -7067,6 +7310,18 @@ namespace AtsBackgroundBuilder
             }
 
             return false;
+        }
+
+        private static bool ShouldFlushImmediately(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return false;
+            }
+
+            return message.StartsWith("ATSBUILD exit stage:", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("ATSBUILD summary", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("PLSR check log written:", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsAffirmative(string? value)
