@@ -30,7 +30,11 @@ namespace AtsBackgroundBuilder.Dispositions
             _useAlignedDimensions = useAlignedDimensions;
         }
 
-        public PlacementResult PlaceLabels(List<QuarterInfo> quarters, List<DispositionInfo> dispositions, string currentClient)
+        public PlacementResult PlaceLabels(
+            List<QuarterInfo> quarters,
+            List<DispositionInfo> dispositions,
+            string currentClient,
+            Dictionary<string, HashSet<string>>? existingDispNumsByQuarter = null)
         {
             var result = new PlacementResult();
             var processedDispositionIds = new HashSet<ObjectId>();
@@ -48,10 +52,25 @@ namespace AtsBackgroundBuilder.Dispositions
 
                 foreach (var quarter in quarters)
                 {
+                    var quarterKey = BuildQuarterKey(quarter.SectionKey, quarter.Quarter);
+                    HashSet<string>? existingQuarterDispNums = null;
+                    if (!string.IsNullOrWhiteSpace(quarterKey) && existingDispNumsByQuarter != null)
+                    {
+                        existingDispNumsByQuarter.TryGetValue(quarterKey, out existingQuarterDispNums);
+                    }
+
                     using (var quarterClone = (Polyline)quarter.Polyline.Clone())
                     {
                         foreach (var disposition in dispositions)
                         {
+                            var normalizedDispNum = NormalizeDispNum(disposition.DispNumFormatted);
+                            if (existingQuarterDispNums != null &&
+                                !string.IsNullOrWhiteSpace(normalizedDispNum) &&
+                                existingQuarterDispNums.Contains(normalizedDispNum))
+                            {
+                                continue;
+                            }
+
                             if (!_config.AllowMultiQuarterDispositions && processedDispositionIds.Contains(disposition.ObjectId))
                                 continue;
 
@@ -303,6 +322,18 @@ namespace AtsBackgroundBuilder.Dispositions
                                     placedLabelExtents.Add(predicted);
                                     placed = true;
                                     result.LabelsPlaced++;
+                                    if (existingDispNumsByQuarter != null &&
+                                        !string.IsNullOrWhiteSpace(quarterKey) &&
+                                        !string.IsNullOrWhiteSpace(normalizedDispNum))
+                                    {
+                                        if (existingQuarterDispNums == null)
+                                        {
+                                            existingQuarterDispNums = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                            existingDispNumsByQuarter[quarterKey] = existingQuarterDispNums;
+                                        }
+
+                                        existingQuarterDispNums.Add(normalizedDispNum);
+                                    }
                                     break;
                                 }
 
@@ -323,6 +354,18 @@ namespace AtsBackgroundBuilder.Dispositions
                                     placedLabelExtents.Add(predicted);
                                     result.LabelsPlaced++;
                                     result.OverlapForced++;
+                                    if (existingDispNumsByQuarter != null &&
+                                        !string.IsNullOrWhiteSpace(quarterKey) &&
+                                        !string.IsNullOrWhiteSpace(normalizedDispNum))
+                                    {
+                                        if (existingQuarterDispNums == null)
+                                        {
+                                            existingQuarterDispNums = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                            existingDispNumsByQuarter[quarterKey] = existingQuarterDispNums;
+                                        }
+
+                                        existingQuarterDispNums.Add(normalizedDispNum);
+                                    }
 
                                     placed = true;
                                 }
@@ -1399,6 +1442,76 @@ namespace AtsBackgroundBuilder.Dispositions
 
             widthMeters = parsed;
             return true;
+        }
+
+        private static string BuildQuarterKey(SectionKey? key, QuarterSelection quarter)
+        {
+            if (!key.HasValue || quarter == QuarterSelection.None)
+            {
+                return string.Empty;
+            }
+
+            var quarterToken = quarter switch
+            {
+                QuarterSelection.NorthWest => "NW",
+                QuarterSelection.NorthEast => "NE",
+                QuarterSelection.SouthWest => "SW",
+                QuarterSelection.SouthEast => "SE",
+                _ => string.Empty
+            };
+
+            if (string.IsNullOrWhiteSpace(quarterToken))
+            {
+                return string.Empty;
+            }
+
+            var sectionKey = key.Value;
+            var meridian = NormalizeMeridianToken(sectionKey.Meridian);
+            var range = NormalizeNumberToken(sectionKey.Range);
+            var township = NormalizeNumberToken(sectionKey.Township);
+            var section = NormalizeNumberToken(sectionKey.Section);
+            return $"{meridian}|{range}|{township}|{section}|{quarterToken}";
+        }
+
+        private static string NormalizeMeridianToken(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return string.Empty;
+            }
+
+            var digits = new string(token.Where(char.IsDigit).ToArray());
+            if (int.TryParse(digits, out var num))
+            {
+                return num.ToString();
+            }
+
+            return token.Trim().ToUpperInvariant();
+        }
+
+        private static string NormalizeNumberToken(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return string.Empty;
+            }
+
+            if (int.TryParse(token.Trim(), out var num))
+            {
+                return num.ToString();
+            }
+
+            return token.Trim().TrimStart('0');
+        }
+
+        private static string NormalizeDispNum(string dispNum)
+        {
+            if (string.IsNullOrWhiteSpace(dispNum))
+            {
+                return string.Empty;
+            }
+
+            return Regex.Replace(dispNum, "\\s+", string.Empty).ToUpperInvariant();
         }
 
     }

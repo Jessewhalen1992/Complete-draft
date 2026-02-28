@@ -23,19 +23,19 @@
 
   <ItemGroup>
     <Reference Include="accoremgd">
-      <HintPath>..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\accoremgd.dll</HintPath>
+      <HintPath>$(ProgramFiles)\Autodesk\AutoCAD 2025\accoremgd.dll</HintPath>
     </Reference>
     <Reference Include="Acdbmgd">
-      <HintPath>..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\acdbmgd.dll</HintPath>
+      <HintPath>$(ProgramFiles)\Autodesk\AutoCAD 2025\acdbmgd.dll</HintPath>
     </Reference>
     <Reference Include="Acmgd">
-      <HintPath>..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\acmgd.dll</HintPath>
+      <HintPath>$(ProgramFiles)\Autodesk\AutoCAD 2025\acmgd.dll</HintPath>
     </Reference>
     <Reference Include="AcMPolygonMGD">
-      <HintPath>..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\AcMPolygonMGD.dll</HintPath>
+      <HintPath>$(ProgramFiles)\Autodesk\AutoCAD 2025\AcMPolygonMGD.dll</HintPath>
     </Reference>
     <Reference Include="ManagedMapApi">
-      <HintPath>..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\Map\ManagedMapApi.dll</HintPath>
+      <HintPath>$(ProgramFiles)\Autodesk\AutoCAD 2025\Map\ManagedMapApi.dll</HintPath>
     </Reference>
   </ItemGroup>
 

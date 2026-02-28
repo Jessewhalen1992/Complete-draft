@@ -812,3 +812,176 @@
 - Build passed:
   - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -p:RestoreIgnoreFailedSources=true` (with `DOTNET_CLI_HOME=.dotnet-home`)
   - 0 warnings, 0 errors.
+## Follow-up (Build Recovery, 2026-02-27)
+
+- [x] Identify why local build in this environment fails with missing `Autodesk.*` namespaces.
+- [x] Fix project AutoCAD reference hint paths so they resolve correctly from any repo location.
+- [x] Rebuild `AtsBackgroundBuilder` Release and confirm output artifacts in `build/net8.0-windows`.
+
+## Review (Build Recovery, 2026-02-27)
+
+- Root cause: AutoCAD assembly `HintPath` entries in `AtsBackgroundBuilder.csproj` used an over-long relative path that resolved to `C:\Users\Program Files\...` instead of `C:\Program Files\...`.
+- Fix: switched AutoCAD reference hint paths to `$(ProgramFiles)\Autodesk\AutoCAD 2025\...` for deterministic resolution.
+- Build verification:
+  - `C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --configfile src\AtsBackgroundBuilder\NuGet.Config`
+  - Result: success, 0 errors (57 existing nullable warnings).
+- Artifacts verified in:
+  - `build\net8.0-windows\AtsBackgroundBuilder.dll`
+  - `src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+
+## Follow-up (PLSR Existing Labels + 1/4 UI Default, 2026-02-27)
+
+- [x] Remove hard dependency that required `Disposition labels` to be enabled before running `Check PLSR`.
+- [x] Reuse existing disposition labels per quarter (from disposition text layers) so label generation skips already-labeled `dispNum` in that same 1/4.
+- [x] Keep missing-label generation gated behind `Disposition labels` toggle.
+- [x] Keep/verify PLSR expiry tagging by appending `(Expired)` on existing labels where XML shows expired activity.
+- [x] Set `1/4 Definition` default to off in UI (WPF + WinForms) and config defaults.
+- [x] Verify compile safety after changes.
+
+## Review (PLSR Existing Labels + 1/4 UI Default, 2026-02-27)
+
+- Updated PLSR/build flow in `Core/Plugin.cs`:
+  - Quarter scope is now built when either `Disposition labels` OR `Check PLSR` is enabled.
+  - `Check PLSR` no longer skips when labels are disabled.
+  - Existing labels are indexed by quarter+disp before placement and passed into label placement to prevent duplicate labels.
+- Updated label placement in `Dispositions/LabelPlacer.cs`:
+  - `PlaceLabels(...)` accepts an optional `existingDispNumsByQuarter` index.
+  - Label creation now skips when the same normalized `dispNum` already exists in the same 1/4.
+  - New labels added in-run are inserted into the same index to avoid same-run duplicates.
+- Updated PLSR label collection in `Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - Existing labels are now filtered to disposition text layers aligned with layering logic (`C-*-T` / `F-*-T`).
+- Updated defaults:
+  - `Core/Config.cs`: `AllowMultiQuarterDispositions` default set to `false`.
+  - `Core/AtsBuildWindow.cs` and `Core/AtsBuildForm.cs`: `1/4 Definition` UI default now falls back to `false`.
+  - `Core/AtsBuildForm.cs`: `AtsBuildInput.AllowMultiQuarterDispositions` default set to `false`.
+- Verification:
+  - `dotnet build` reached compile/link successfully but failed final copy to `build\net8.0-windows` due file lock/access denied on `AtsBackgroundBuilder.dll/.pdb`.
+  - `dotnet msbuild src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release` succeeded (0 errors; existing nullable warnings only).
+
+## Follow-up (PLSR Review Window + AB_LCON Shape Set, 2026-02-28)
+
+- [x] Include `AB_LCON.shp` in default disposition shapefile list.
+- [x] Ensure older config files inherit newly added default disposition shapefiles without dropping existing user entries.
+- [x] Add a PLSR review window listing results with per-row `Accept/Ignore` decisions.
+- [x] Add `Accept All` and `Ignore All` controls in the PLSR review window.
+- [x] Apply only accepted actionable PLSR results (`owner mismatch`, `expired`) and leave ignored rows unchanged.
+- [x] Rebuild Release and verify output artifact paths.
+
+## Review (PLSR Review Window + AB_LCON Shape Set, 2026-02-28)
+
+- Updated `Core/Config.cs`:
+  - `DispositionShapefiles` default now includes both `DAB_APPL.shp` and `AB_LCON.shp`.
+  - Added merge logic so loaded configs keep user values and also inherit newly introduced default shape names.
+- Updated `Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - Added interactive PLSR review form with per-result `Decision` (`Accept`/`Ignore`), `Accept All`, and `Ignore All`.
+  - Applied accepted actionable changes in a transaction:
+    - Owner correction for owner mismatches.
+    - `(Expired)` tagging for expired PLSR entries.
+  - Ignored rows are explicitly skipped.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release` succeeded.
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - Artifacts:
+    - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+    - `build\net8.0-windows\AtsBackgroundBuilder.dll`
+
+## Follow-up (PLSR False Missing Labels, 2026-02-28)
+
+- [x] Inspect reference screenshots and trace why existing labels were still reported as missing.
+- [x] Fix PLSR label parser to extract `dispNum` from any label line (not only the last line).
+- [x] Preserve support for labels with trailing `(Expired)` or additional note lines.
+- [x] Recompile to verify compile safety after parser fix.
+
+## Review (PLSR False Missing Labels, 2026-02-28)
+
+- Root cause: `CollectPlsrLabels -> BuildLabelEntry` used `lines.LastOrDefault()` as `dispNum`.
+  - Labels ending with `(Expired)` (or other trailing notes) were parsed as disp=`(Expired)` and filtered out.
+  - This produced false `Missing label` rows even when the label existed in the drawing.
+- Fix in `Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - Added `ExtractDispositionNumber(...)` and `TryParseDispositionNumberFromText(...)`.
+  - Parser now scans label lines from bottom to top and extracts known disposition prefixes + numeric suffix (`LOC`, `PLA`, `MSL`, etc.).
+  - Falls back to raw contents scan when needed.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release`
+  - Result: success (0 errors, existing nullable warnings only).
+
+## Follow-up (PLSR MText Formatting Codes, 2026-02-28)
+
+- [x] Remove AutoCAD MText control codes (example `\A1;`) from PLSR owner/disp parsing.
+- [x] Ensure formatting codes do not trigger false owner mismatch or dirty current-value display.
+- [x] Recompile to verify compile safety after formatting cleanup.
+
+## Review (PLSR MText Formatting Codes, 2026-02-28)
+
+- Added `StripMTextControlCodes(...)` in `Dispositions/Plugin.Dispositions.LabelingPlsr.cs`.
+- Wired cleanup into:
+  - `SplitMTextLines(...)` so parsed owner/disp lines are plain text.
+  - `NormalizeOwner(...)` so owner comparison ignores inline formatting commands.
+  - `TryParseDispositionNumberFromText(...)` so disp extraction works even if line contains formatting tags.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release`
+  - Result: success (0 errors, existing nullable warnings only).
+
+## Follow-up (PLSR Quarter-Level Disp Display, 2026-02-28)
+
+- [x] Clarify `Disp` cell for `Missing quarter in XML` results so it does not appear as dropped/missing disp data.
+- [x] Recompile to verify compile safety after display tweak.
+
+## Review (PLSR Quarter-Level Disp Display, 2026-02-28)
+
+- Updated `Missing quarter in XML` issue creation to set `DispNum = "N/A"` instead of empty string.
+- This makes it clear the row is quarter-level (no per-disposition payload available from XML), not a parser failure.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release`
+  - Result: success (0 errors, existing nullable warnings only).
+
+## Follow-up (PLSR Remaining MText Artifact Codes, 2026-02-28)
+
+- [x] Inspect latest screenshot showing residual raw control codes in PLSR review (`\pxqc;`, `\P`).
+- [x] Expand MText sanitizer to strip paragraph-style control groups in addition to prior alignment/font controls.
+- [x] Convert expired-row `Current` display from raw `MText.Contents` to flattened plain text.
+- [x] Recompile to verify compile safety after sanitation/display updates.
+
+## Review (PLSR Remaining MText Artifact Codes, 2026-02-28)
+
+- Root cause:
+  - Some labels include paragraph control groups like `\pxqc;` that were not in the original sanitizer pattern.
+  - Expired rows displayed raw `label.RawContents`, which intentionally includes markup (`\P`, etc.).
+- Fixes in `Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - `StripMTextControlCodes(...)` now strips generic semicolon-terminated control groups and remaining one-letter controls.
+  - Added `FlattenMTextForDisplay(...)` and used it for expired-row `CurrentValue`.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release`
+  - Result: success (0 errors, existing nullable warnings only).
+
+## Follow-up (PLSR Re-Tagging Already Expired Labels, 2026-02-28)
+
+- [x] Inspect latest screenshot where `Current` already contains `(Expired)` but row still proposes `Add (Expired)`.
+- [x] Gate expired issue creation so rows are only actionable when the label does not already contain an expired marker.
+- [x] Reuse the same expired-marker detector in apply path to avoid duplicate tag append variants.
+- [x] Rebuild/compile to verify safety.
+
+## Review (PLSR Re-Tagging Already Expired Labels, 2026-02-28)
+
+- Added `HasExpiredMarker(...)` in `Dispositions/Plugin.Dispositions.LabelingPlsr.cs`.
+- `Expired in PLSR` issue creation now checks `HasExpiredMarker(label.RawContents)` and skips actionable rows when marker already exists.
+- `TryApplyExpiredMarker(...)` now also uses `HasExpiredMarker(...)` (instead of only searching literal `(Expired)` in raw contents), preventing format-variant duplicates.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release` succeeded.
+  - `.\.local_dotnet\dotnet.exe build ... --no-restore` compiled but failed final copy to `build\net8.0-windows\AtsBackgroundBuilder.dll` due file lock by another process.
+
+## Follow-up (PLSR Fix Not Loaded Due Stale Build DLL, 2026-02-28)
+
+- [x] Verify whether runtime was loading stale `build\net8.0-windows` artifact instead of newly compiled `bin` artifact.
+- [x] Sync `build\net8.0-windows\AtsBackgroundBuilder.dll` to latest `bin` output after lock cleared.
+- [x] Re-run Release build and verify artifact parity.
+
+## Review (PLSR Fix Not Loaded Due Stale Build DLL, 2026-02-28)
+
+- Confirmed mismatch before sync:
+  - `bin\...\AtsBackgroundBuilder.dll` newer/larger (`23:22:33`, `863232` bytes)
+  - `build\...\AtsBackgroundBuilder.dll` older/smaller (`23:14:25`, `862720` bytes)
+- Manually copied updated DLL from `bin` to `build`.
+- Post-sync verification:
+  - both `bin` and `build` DLLs now match (`23:22:33`, `863232` bytes).
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.

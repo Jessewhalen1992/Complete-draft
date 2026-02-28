@@ -31,7 +31,7 @@ namespace AtsBackgroundBuilder.Core
         /// </summary>
         public bool IncludeDispositionLinework { get; set; } = false;
         public bool IncludeDispositionLabels { get; set; } = false;
-        public bool AllowMultiQuarterDispositions { get; set; } = true;
+        public bool AllowMultiQuarterDispositions { get; set; } = false;
         public bool IncludeQuarterSectionLabels { get; set; } = false;
         public bool UseAlignedDimensions { get; set; } = false;
 
@@ -367,7 +367,7 @@ namespace AtsBackgroundBuilder.Core
             ConfigureOptionCheckBox(_includeCompassMapping, "COMPASS MAPPING", false);
             ConfigureOptionCheckBox(_includeCrownReservations, "Crown Reservations", false);
             ConfigureOptionCheckBox(_checkPlsr, "Check PLSR", false);
-            ConfigureOptionCheckBox(_allowMultiQuarterDispositions, "1/4 Definition", config?.AllowMultiQuarterDispositions ?? true);
+            ConfigureOptionCheckBox(_allowMultiQuarterDispositions, "1/4 Definition", config?.AllowMultiQuarterDispositions ?? false);
             ConfigureOptionCheckBox(_includeQuarterSectionLabels, "1/4 SEC Labels", false);
             ConfigureOptionCheckBox(_useAlignedDimensions, "A-DIM", false);
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -11,6 +12,7 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using WinForms = System.Windows.Forms;
 
 namespace AtsBackgroundBuilder
 {
@@ -585,6 +587,44 @@ namespace AtsBackgroundBuilder
             public Point2d Location { get; set; }
         }
 
+        private enum PlsrIssueChangeType
+        {
+            None,
+            TagExpired,
+            UpdateOwner
+        }
+
+        private sealed class PlsrCheckIssue
+        {
+            public Guid Id { get; } = Guid.NewGuid();
+            public string Type { get; set; } = string.Empty;
+            public string QuarterKey { get; set; } = string.Empty;
+            public string DispNum { get; set; } = string.Empty;
+            public string CurrentValue { get; set; } = string.Empty;
+            public string ExpectedValue { get; set; } = string.Empty;
+            public string Detail { get; set; } = string.Empty;
+            public string SummaryLine { get; set; } = string.Empty;
+            public PlsrIssueChangeType ChangeType { get; set; } = PlsrIssueChangeType.None;
+            public PlsrLabelEntry? Label { get; set; }
+            public string ProposedOwner { get; set; } = string.Empty;
+
+            public bool IsActionable => ChangeType != PlsrIssueChangeType.None && Label != null;
+        }
+
+        private sealed class PlsrReviewRow
+        {
+            public Guid IssueId { get; set; }
+            public string Decision { get; set; } = "Ignore";
+            public string Type { get; set; } = string.Empty;
+            public string Quarter { get; set; } = string.Empty;
+            public string DispNum { get; set; } = string.Empty;
+            public string Current { get; set; } = string.Empty;
+            public string Expected { get; set; } = string.Empty;
+            public string Action { get; set; } = string.Empty;
+            public string Detail { get; set; } = string.Empty;
+            public bool Actionable { get; set; }
+        }
+
         private static readonly HashSet<string> PlsrDispositionPrefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "LOC","PLA","MSL","MLL","DML","EZE","PIL","RME","RML","DLO","ROE","RRD","DPI","DPL","VCE","DRS","SML","SME"
@@ -612,105 +652,205 @@ namespace AtsBackgroundBuilder
             var missingQuarterKeys = requestedQuarterKeys.Where(k => !quarterData.ContainsKey(k)).ToList();
 
             var labelByQuarter = CollectPlsrLabels(database, quarters, logger);
-
-            var summary = new StringBuilder();
-            summary.AppendLine("PLSR Check Summary");
-            summary.AppendLine("-------------------");
-
+            var issues = new List<PlsrCheckIssue>();
             int missingLabels = 0;
             int ownerMismatches = 0;
             int extraLabels = 0;
+            int expiredCandidates = 0;
+
+            foreach (var quarterKey in requestedQuarterKeys)
+            {
+                labelByQuarter.TryGetValue(quarterKey, out var labels);
+                quarterData.TryGetValue(quarterKey, out var expected);
+
+                labels ??= new List<PlsrLabelEntry>();
+                var expectedActivities = expected?.Activities ?? new List<PlsrActivity>();
+
+                var expectedByDisp = new Dictionary<string, PlsrActivity>(StringComparer.OrdinalIgnoreCase);
+                foreach (var act in expectedActivities)
+                {
+                    var normDisp = NormalizeDispNum(act.DispNum);
+                    if (string.IsNullOrWhiteSpace(normDisp))
+                        continue;
+                    if (!expectedByDisp.ContainsKey(normDisp))
+                        expectedByDisp.Add(normDisp, act);
+                }
+
+                var labelByDisp = new Dictionary<string, PlsrLabelEntry>(StringComparer.OrdinalIgnoreCase);
+                foreach (var label in labels)
+                {
+                    var normDisp = NormalizeDispNum(label.DispNum);
+                    if (string.IsNullOrWhiteSpace(normDisp))
+                        continue;
+
+                    var prefix = GetDispositionPrefix(normDisp);
+                    if (string.IsNullOrWhiteSpace(prefix))
+                        continue;
+
+                    if (!PlsrDispositionPrefixes.Contains(prefix))
+                    {
+                        notIncludedPrefixes.Add(prefix);
+                        continue;
+                    }
+
+                    if (!labelByDisp.ContainsKey(normDisp))
+                        labelByDisp.Add(normDisp, label);
+                }
+
+                foreach (var pair in expectedByDisp)
+                {
+                    var dispNum = pair.Key;
+                    var act = pair.Value;
+                    var prefix = GetDispositionPrefix(dispNum);
+                    if (string.IsNullOrWhiteSpace(prefix))
+                        continue;
+
+                    if (!PlsrDispositionPrefixes.Contains(prefix))
+                    {
+                        notIncludedPrefixes.Add(prefix);
+                        continue;
+                    }
+
+                    if (!labelByDisp.TryGetValue(dispNum, out var label))
+                    {
+                        missingLabels++;
+                        issues.Add(new PlsrCheckIssue
+                        {
+                            Type = "Missing label",
+                            QuarterKey = quarterKey,
+                            DispNum = dispNum,
+                            CurrentValue = "(none)",
+                            ExpectedValue = act.Owner ?? string.Empty,
+                            Detail = "No label found in this quarter.",
+                            SummaryLine = $"Missing label: {dispNum} in {quarterKey}",
+                            ChangeType = PlsrIssueChangeType.None,
+                            Label = null
+                        });
+                        continue;
+                    }
+
+                    var mappedOwner = MapClientNameForCompare(companyLookup, act.Owner);
+                    var labelOwner = NormalizeOwner(label.Owner);
+                    var expectedOwner = NormalizeOwner(mappedOwner);
+                    if (!string.Equals(labelOwner, expectedOwner, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ownerMismatches++;
+                        issues.Add(new PlsrCheckIssue
+                        {
+                            Type = "Owner mismatch",
+                            QuarterKey = quarterKey,
+                            DispNum = dispNum,
+                            CurrentValue = label.Owner ?? string.Empty,
+                            ExpectedValue = mappedOwner ?? string.Empty,
+                            Detail = "Label owner differs from PLSR XML owner.",
+                            SummaryLine = $"Owner mismatch: {dispNum} in {quarterKey} (label='{label.Owner}' vs xml='{act.Owner}')",
+                            ChangeType = PlsrIssueChangeType.UpdateOwner,
+                            Label = label,
+                            ProposedOwner = mappedOwner ?? string.Empty
+                        });
+                    }
+
+                    if (expected != null && act.ExpiryDate.HasValue && act.ExpiryDate.Value < expected.ReportDate)
+                    {
+                        if (!HasExpiredMarker(label.RawContents))
+                        {
+                            expiredCandidates++;
+                            issues.Add(new PlsrCheckIssue
+                            {
+                                Type = "Expired in PLSR",
+                                QuarterKey = quarterKey,
+                                DispNum = dispNum,
+                                CurrentValue = FlattenMTextForDisplay(label.RawContents ?? string.Empty),
+                                ExpectedValue = $"Expiry {act.ExpiryDate.Value:yyyy-MM-dd} < report {expected.ReportDate:yyyy-MM-dd}",
+                                Detail = "Append '(Expired)' to this label.",
+                                SummaryLine = $"Expired in PLSR: {dispNum} in {quarterKey}",
+                                ChangeType = PlsrIssueChangeType.TagExpired,
+                                Label = label
+                            });
+                        }
+                    }
+                }
+
+                foreach (var labelPair in labelByDisp)
+                {
+                    if (!expectedByDisp.ContainsKey(labelPair.Key))
+                    {
+                        extraLabels++;
+                        issues.Add(new PlsrCheckIssue
+                        {
+                            Type = "Not in PLSR",
+                            QuarterKey = quarterKey,
+                            DispNum = labelPair.Key,
+                            CurrentValue = labelPair.Value.Owner ?? string.Empty,
+                            ExpectedValue = "(none)",
+                            Detail = "Label exists in drawing but not in current PLSR data.",
+                            SummaryLine = $"Not in PLSR: {labelPair.Key} in {quarterKey}",
+                            ChangeType = PlsrIssueChangeType.None,
+                            Label = null
+                        });
+                    }
+                }
+            }
+
+            foreach (var missingQuarter in missingQuarterKeys)
+            {
+                issues.Add(new PlsrCheckIssue
+                {
+                    Type = "Missing quarter in XML",
+                    QuarterKey = missingQuarter,
+                    DispNum = "N/A",
+                    CurrentValue = string.Empty,
+                    ExpectedValue = string.Empty,
+                    Detail = "Requested quarter not found in selected PLSR XML files.",
+                    SummaryLine = $"Quarter missing in XML: {missingQuarter}",
+                    ChangeType = PlsrIssueChangeType.None,
+                    Label = null
+                });
+            }
+
+            var acceptedIssueIds = ShowPlsrReviewDialog(issues, logger);
+
+            int ownerUpdated = 0;
             int expiredTagged = 0;
+            int acceptedActionable = 0;
+            int ignoredActionable = 0;
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                foreach (var quarterKey in requestedQuarterKeys)
+                foreach (var issue in issues)
                 {
-                    labelByQuarter.TryGetValue(quarterKey, out var labels);
-                    quarterData.TryGetValue(quarterKey, out var expected);
-
-                    labels ??= new List<PlsrLabelEntry>();
-                    var expectedActivities = expected?.Activities ?? new List<PlsrActivity>();
-
-                    var expectedByDisp = new Dictionary<string, PlsrActivity>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var act in expectedActivities)
+                    if (!issue.IsActionable || issue.Label == null)
                     {
-                        var normDisp = NormalizeDispNum(act.DispNum);
-                        if (string.IsNullOrWhiteSpace(normDisp))
-                            continue;
-                        if (!expectedByDisp.ContainsKey(normDisp))
-                            expectedByDisp.Add(normDisp, act);
+                        continue;
                     }
 
-                    var labelByDisp = new Dictionary<string, PlsrLabelEntry>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var label in labels)
+                    var accepted = acceptedIssueIds.Contains(issue.Id);
+                    if (!accepted)
                     {
-                        var normDisp = NormalizeDispNum(label.DispNum);
-                        if (string.IsNullOrWhiteSpace(normDisp))
-                            continue;
-
-                        var prefix = GetDispositionPrefix(normDisp);
-                        if (string.IsNullOrWhiteSpace(prefix))
-                            continue;
-
-                        if (!PlsrDispositionPrefixes.Contains(prefix))
-                        {
-                            notIncludedPrefixes.Add(prefix);
-                            continue;
-                        }
-
-                        if (!labelByDisp.ContainsKey(normDisp))
-                            labelByDisp.Add(normDisp, label);
+                        ignoredActionable++;
+                        continue;
                     }
 
-                    foreach (var pair in expectedByDisp)
+                    acceptedActionable++;
+                    switch (issue.ChangeType)
                     {
-                        var dispNum = pair.Key;
-                        var act = pair.Value;
-                        var prefix = GetDispositionPrefix(dispNum);
-                        if (string.IsNullOrWhiteSpace(prefix))
-                            continue;
-
-                        if (!PlsrDispositionPrefixes.Contains(prefix))
+                        case PlsrIssueChangeType.UpdateOwner:
                         {
-                            notIncludedPrefixes.Add(prefix);
-                            continue;
+                            if (TryApplyOwnerUpdate(tr, issue.Label, issue.ProposedOwner, out _))
+                            {
+                                ownerUpdated++;
+                            }
+
+                            break;
                         }
-
-                        if (!labelByDisp.TryGetValue(dispNum, out var label))
+                        case PlsrIssueChangeType.TagExpired:
                         {
-                            missingLabels++;
-                            summary.AppendLine($"Missing label: {dispNum} in {quarterKey}");
-                            continue;
-                        }
-
-                        var labelOwner = NormalizeOwner(label.Owner);
-                        var expectedOwner = NormalizeOwner(MapClientNameForCompare(companyLookup, act.Owner));
-                        if (!string.Equals(labelOwner, expectedOwner, StringComparison.OrdinalIgnoreCase))
-                        {
-                            ownerMismatches++;
-                            summary.AppendLine($"Owner mismatch: {dispNum} in {quarterKey} (label='{label.Owner}' vs xml='{act.Owner}')");
-                        }
-
-                        if (expected != null && act.ExpiryDate.HasValue && act.ExpiryDate.Value < expected.ReportDate)
-                        {
-                            if (TryApplyExpiredMarker(tr, label, out var updated))
+                            if (TryApplyExpiredMarker(tr, issue.Label, out _))
                             {
                                 expiredTagged++;
-                                if (updated)
-                                {
-                                    // already tagged
-                                }
                             }
-                        }
-                    }
 
-                    foreach (var labelPair in labelByDisp)
-                    {
-                        if (!expectedByDisp.ContainsKey(labelPair.Key))
-                        {
-                            extraLabels++;
-                            summary.AppendLine($"Not in PLSR: {labelPair.Key} in {quarterKey}");
+                            break;
                         }
                     }
                 }
@@ -718,12 +858,13 @@ namespace AtsBackgroundBuilder
                 tr.Commit();
             }
 
-            if (missingQuarterKeys.Count > 0)
+            var summary = new StringBuilder();
+            summary.AppendLine("PLSR Check Summary");
+            summary.AppendLine("-------------------");
+
+            foreach (var issue in issues)
             {
-                summary.AppendLine();
-                summary.AppendLine("Quarters requested but not found in XML:");
-                foreach (var q in missingQuarterKeys)
-                    summary.AppendLine($"- {q}");
+                summary.AppendLine(issue.SummaryLine);
             }
 
             if (notIncludedPrefixes.Count > 0)
@@ -736,12 +877,16 @@ namespace AtsBackgroundBuilder
             summary.AppendLine($"Missing labels: {missingLabels}");
             summary.AppendLine($"Owner mismatches: {ownerMismatches}");
             summary.AppendLine($"Extra labels not in PLSR: {extraLabels}");
+            summary.AppendLine($"Expired candidates: {expiredCandidates}");
+            summary.AppendLine($"Owner updates applied: {ownerUpdated}");
             summary.AppendLine($"Expired tags added: {expiredTagged}");
+            summary.AppendLine($"Actionable results accepted: {acceptedActionable}");
+            summary.AppendLine($"Actionable results ignored: {ignoredActionable}");
 
             var summaryText = summary.ToString().TrimEnd();
             try
             {
-                System.Windows.Forms.MessageBox.Show(summaryText, "PLSR Check", System.Windows.Forms.MessageBoxButtons.OK, System.Windows.Forms.MessageBoxIcon.Information);
+                WinForms.MessageBox.Show(summaryText, "PLSR Check", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
             }
             catch
             {
@@ -1081,6 +1226,16 @@ namespace AtsBackgroundBuilder
                     PlsrLabelEntry? entry = null;
 
                     var dbObject = tr.GetObject(id, OpenMode.ForRead);
+                    if (!(dbObject is Entity labelEntity) || labelEntity.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!IsDispositionTextLayer(labelEntity.Layer))
+                    {
+                        continue;
+                    }
+
                     if (dbObject is MText mtext)
                     {
                         var contents = mtext.Contents ?? string.Empty;
@@ -1148,7 +1303,11 @@ namespace AtsBackgroundBuilder
                 return null;
 
             var owner = lines.FirstOrDefault() ?? string.Empty;
-            var dispNum = lines.LastOrDefault() ?? string.Empty;
+            var dispNum = ExtractDispositionNumber(lines, contents);
+            if (string.IsNullOrWhiteSpace(dispNum))
+            {
+                return null;
+            }
 
             return new PlsrLabelEntry
             {
@@ -1160,6 +1319,80 @@ namespace AtsBackgroundBuilder
                 RawContents = contents,
                 Location = location
             };
+        }
+
+        private static string ExtractDispositionNumber(IReadOnlyList<string> lines, string rawContents)
+        {
+            if (lines != null)
+            {
+                for (int i = lines.Count - 1; i >= 0; i--)
+                {
+                    if (TryParseDispositionNumberFromText(lines[i], out var parsed))
+                    {
+                        return parsed;
+                    }
+                }
+            }
+
+            if (TryParseDispositionNumberFromText(rawContents, out var fallback))
+            {
+                return fallback;
+            }
+
+            return string.Empty;
+        }
+
+        private static bool TryParseDispositionNumberFromText(string text, out string dispNum)
+        {
+            dispNum = string.Empty;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return false;
+            }
+
+            var upper = StripMTextControlCodes(text).ToUpperInvariant();
+            foreach (var prefix in PlsrDispositionPrefixes)
+            {
+                var spaced = Regex.Match(upper, $@"\b{Regex.Escape(prefix)}\s*[-]?\s*(\d{{2,}})\b", RegexOptions.IgnoreCase);
+                if (spaced.Success)
+                {
+                    dispNum = prefix + spaced.Groups[1].Value;
+                    return true;
+                }
+            }
+
+            var normalized = Regex.Replace(upper, "[^A-Z0-9]+", string.Empty);
+            if (normalized.Length < 4)
+            {
+                return false;
+            }
+
+            foreach (var prefix in PlsrDispositionPrefixes)
+            {
+                if (!normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (normalized.Length <= prefix.Length || !char.IsDigit(normalized[prefix.Length]))
+                {
+                    continue;
+                }
+
+                int end = prefix.Length;
+                while (end < normalized.Length && char.IsDigit(normalized[end]))
+                {
+                    end++;
+                }
+
+                if (end > prefix.Length)
+                {
+                    dispNum = prefix + normalized.Substring(prefix.Length, end - prefix.Length);
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static Point2d GetDimensionAnchorPoint(AlignedDimension dimension)
@@ -1417,12 +1650,78 @@ namespace AtsBackgroundBuilder
             var lines = new List<string>();
             foreach (var line in raw)
             {
-                var cleaned = line.Replace("{", string.Empty).Replace("}", string.Empty).Trim();
+                var cleaned = StripMTextControlCodes(line).Trim();
                 if (!string.IsNullOrWhiteSpace(cleaned))
                     lines.Add(cleaned);
             }
 
             return lines;
+        }
+
+        private static string StripMTextControlCodes(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            var cleaned = text
+                .Replace("{", string.Empty)
+                .Replace("}", string.Empty)
+                .Replace("\\~", " ")
+                .Replace("\\P", " ")
+                .Replace("\\X", " ");
+
+            // Strip semicolon-terminated control groups (e.g. \A1; \pxqc; \C1; \F...;).
+            cleaned = Regex.Replace(cleaned, @"\\[A-Za-z][^;\\]*;", string.Empty, RegexOptions.IgnoreCase);
+            // Strip stacked fraction/text groups.
+            cleaned = Regex.Replace(cleaned, @"\\S[^;]*;", " ", RegexOptions.IgnoreCase);
+            // Strip one-char on/off controls (e.g. \L \l \O \o \K \k).
+            cleaned = Regex.Replace(cleaned, @"\\[LOKlok]", string.Empty);
+            // Strip any remaining generic one-letter controls.
+            cleaned = Regex.Replace(cleaned, @"\\[A-Za-z]", string.Empty);
+
+            return cleaned;
+        }
+
+        private static string FlattenMTextForDisplay(string contents)
+        {
+            if (string.IsNullOrWhiteSpace(contents))
+            {
+                return string.Empty;
+            }
+
+            var lines = SplitMTextLines(contents);
+            if (lines.Count == 0)
+            {
+                return StripMTextControlCodes(contents).Trim();
+            }
+
+            return string.Join(" | ", lines);
+        }
+
+        private static bool HasExpiredMarker(string? contents)
+        {
+            if (string.IsNullOrWhiteSpace(contents))
+            {
+                return false;
+            }
+
+            var flattened = FlattenMTextForDisplay(contents);
+            return Regex.IsMatch(flattened, @"\bEXPIRED\b", RegexOptions.IgnoreCase);
+        }
+
+        private static bool IsDispositionTextLayer(string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+            {
+                return false;
+            }
+
+            // Keep this aligned with disposition layering logic:
+            // text layers are generated as C-<suffix>-T or F-<suffix>-T.
+            var normalized = layerName.Trim();
+            return Regex.IsMatch(normalized, "^[CF]-.+-T$", RegexOptions.IgnoreCase);
         }
 
         private static string NormalizeDispNum(string dispNum)
@@ -1446,7 +1745,7 @@ namespace AtsBackgroundBuilder
             if (string.IsNullOrWhiteSpace(owner))
                 return string.Empty;
 
-            var upper = owner.ToUpperInvariant();
+            var upper = StripMTextControlCodes(owner).ToUpperInvariant();
             var normalized = Regex.Replace(upper, "[^A-Z0-9]+", string.Empty);
             return normalized;
         }
@@ -1473,6 +1772,260 @@ namespace AtsBackgroundBuilder
             return rawName;
         }
 
+        private static HashSet<Guid> ShowPlsrReviewDialog(
+            List<PlsrCheckIssue> issues,
+            Logger logger)
+        {
+            var accepted = new HashSet<Guid>();
+            if (issues == null || issues.Count == 0)
+            {
+                return accepted;
+            }
+
+            try
+            {
+                var rows = new BindingList<PlsrReviewRow>(
+                    issues.Select(issue => new PlsrReviewRow
+                    {
+                        IssueId = issue.Id,
+                        Decision = "Ignore",
+                        Type = issue.Type ?? string.Empty,
+                        Quarter = issue.QuarterKey ?? string.Empty,
+                        DispNum = issue.DispNum ?? string.Empty,
+                        Current = issue.CurrentValue ?? string.Empty,
+                        Expected = issue.ExpectedValue ?? string.Empty,
+                        Action = DescribeIssueAction(issue.ChangeType),
+                        Detail = issue.Detail ?? string.Empty,
+                        Actionable = issue.IsActionable
+                    }).ToList());
+
+                using (var form = new WinForms.Form())
+                using (var grid = new WinForms.DataGridView())
+                using (var buttonPanel = new WinForms.FlowLayoutPanel())
+                using (var acceptAllButton = new WinForms.Button())
+                using (var ignoreAllButton = new WinForms.Button())
+                using (var applyButton = new WinForms.Button())
+                using (var cancelButton = new WinForms.Button())
+                using (var topLabel = new WinForms.Label())
+                {
+                    form.Text = "PLSR Review";
+                    form.StartPosition = WinForms.FormStartPosition.CenterScreen;
+                    form.Width = 1400;
+                    form.Height = 760;
+                    form.MinimizeBox = false;
+                    form.MaximizeBox = true;
+
+                    topLabel.AutoSize = false;
+                    topLabel.Dock = WinForms.DockStyle.Top;
+                    topLabel.Height = 44;
+                    topLabel.Padding = new WinForms.Padding(10, 10, 10, 10);
+                    topLabel.Text = "Review PLSR results. Set each row to Accept or Ignore. Accept applies the listed action.";
+
+                    grid.Dock = WinForms.DockStyle.Fill;
+                    grid.AutoGenerateColumns = false;
+                    grid.AllowUserToAddRows = false;
+                    grid.AllowUserToDeleteRows = false;
+                    grid.AllowUserToResizeRows = false;
+                    grid.MultiSelect = false;
+                    grid.SelectionMode = WinForms.DataGridViewSelectionMode.FullRowSelect;
+                    grid.RowHeadersVisible = false;
+                    grid.DataSource = rows;
+
+                    var decisionColumn = new WinForms.DataGridViewComboBoxColumn
+                    {
+                        DataPropertyName = nameof(PlsrReviewRow.Decision),
+                        HeaderText = "Decision",
+                        Name = "Decision",
+                        Width = 90,
+                        FlatStyle = WinForms.FlatStyle.Flat
+                    };
+                    decisionColumn.Items.Add("Accept");
+                    decisionColumn.Items.Add("Ignore");
+
+                    grid.Columns.Add(decisionColumn);
+                    grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Type), HeaderText = "Result", ReadOnly = true, Width = 130 });
+                    grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Quarter), HeaderText = "Quarter", ReadOnly = true, Width = 170 });
+                    grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.DispNum), HeaderText = "Disp", ReadOnly = true, Width = 120 });
+                    grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Action), HeaderText = "Action", ReadOnly = true, Width = 160 });
+                    grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Current), HeaderText = "Current", ReadOnly = true, Width = 230 });
+                    grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Expected), HeaderText = "Expected", ReadOnly = true, Width = 230 });
+                    grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Detail), HeaderText = "Detail", ReadOnly = true, AutoSizeMode = WinForms.DataGridViewAutoSizeColumnMode.Fill });
+
+                    grid.CellBeginEdit += (_, e) =>
+                    {
+                        if (e.RowIndex < 0 || e.ColumnIndex < 0)
+                        {
+                            return;
+                        }
+
+                        if (!string.Equals(grid.Columns[e.ColumnIndex].Name, "Decision", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return;
+                        }
+
+                        if (rows[e.RowIndex] != null && !rows[e.RowIndex].Actionable)
+                        {
+                            e.Cancel = true;
+                        }
+                    };
+
+                    buttonPanel.Dock = WinForms.DockStyle.Bottom;
+                    buttonPanel.Height = 52;
+                    buttonPanel.FlowDirection = WinForms.FlowDirection.RightToLeft;
+                    buttonPanel.Padding = new WinForms.Padding(8);
+
+                    applyButton.Text = "Apply Decisions";
+                    applyButton.Width = 130;
+                    applyButton.DialogResult = WinForms.DialogResult.OK;
+
+                    cancelButton.Text = "Cancel";
+                    cancelButton.Width = 90;
+                    cancelButton.DialogResult = WinForms.DialogResult.Cancel;
+
+                    acceptAllButton.Text = "Accept All";
+                    acceptAllButton.Width = 100;
+                    acceptAllButton.Click += (_, __) =>
+                    {
+                        foreach (var row in rows)
+                        {
+                            row.Decision = "Accept";
+                        }
+
+                        grid.Refresh();
+                    };
+
+                    ignoreAllButton.Text = "Ignore All";
+                    ignoreAllButton.Width = 100;
+                    ignoreAllButton.Click += (_, __) =>
+                    {
+                        foreach (var row in rows)
+                        {
+                            row.Decision = "Ignore";
+                        }
+
+                        grid.Refresh();
+                    };
+
+                    buttonPanel.Controls.Add(applyButton);
+                    buttonPanel.Controls.Add(cancelButton);
+                    buttonPanel.Controls.Add(ignoreAllButton);
+                    buttonPanel.Controls.Add(acceptAllButton);
+
+                    form.Controls.Add(grid);
+                    form.Controls.Add(buttonPanel);
+                    form.Controls.Add(topLabel);
+                    form.AcceptButton = applyButton;
+                    form.CancelButton = cancelButton;
+
+                    var dr = form.ShowDialog();
+                    if (dr != WinForms.DialogResult.OK)
+                    {
+                        return accepted;
+                    }
+
+                    foreach (var row in rows)
+                    {
+                        if (row == null)
+                        {
+                            continue;
+                        }
+
+                        if (string.Equals(row.Decision, "Accept", StringComparison.OrdinalIgnoreCase))
+                        {
+                            accepted.Add(row.IssueId);
+                        }
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine("PLSR review window failed: " + ex.Message);
+            }
+
+            return accepted;
+        }
+
+        private static string DescribeIssueAction(PlsrIssueChangeType changeType)
+        {
+            return changeType switch
+            {
+                PlsrIssueChangeType.UpdateOwner => "Update label owner",
+                PlsrIssueChangeType.TagExpired => "Add (Expired)",
+                _ => "No change"
+            };
+        }
+
+        private static bool TryApplyOwnerUpdate(
+            Transaction tr,
+            PlsrLabelEntry label,
+            string expectedOwner,
+            out bool alreadyMatched)
+        {
+            alreadyMatched = false;
+            if (label == null || string.IsNullOrWhiteSpace(expectedOwner))
+            {
+                return false;
+            }
+
+            var contents = label.RawContents ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(contents))
+            {
+                return false;
+            }
+
+            var delimiter = contents.IndexOf("\\X", StringComparison.OrdinalIgnoreCase) >= 0 ? "\\X" : "\\P";
+            var parts = contents.Split(new[] { delimiter }, StringSplitOptions.None);
+            if (parts.Length == 0)
+            {
+                return false;
+            }
+
+            var existingOwner = SplitMTextLines(parts[0]).FirstOrDefault() ?? parts[0];
+            if (string.Equals(NormalizeOwner(existingOwner), NormalizeOwner(expectedOwner), StringComparison.OrdinalIgnoreCase))
+            {
+                alreadyMatched = true;
+                return true;
+            }
+
+            parts[0] = expectedOwner.Trim();
+            var updated = string.Join(delimiter, parts);
+
+            if (label.IsDimension)
+            {
+                if (tr.GetObject(label.Id, OpenMode.ForWrite) is Dimension dimension)
+                {
+                    dimension.DimensionText = updated;
+                    label.RawContents = updated;
+                    label.Owner = expectedOwner.Trim();
+                    return true;
+                }
+            }
+            else if (label.IsLeader)
+            {
+                if (tr.GetObject(label.Id, OpenMode.ForWrite) is MLeader mleader)
+                {
+                    var mt = mleader.MText;
+                    mt.Contents = updated;
+                    mleader.MText = mt;
+                    label.RawContents = updated;
+                    label.Owner = expectedOwner.Trim();
+                    return true;
+                }
+            }
+            else
+            {
+                if (tr.GetObject(label.Id, OpenMode.ForWrite) is MText mtext)
+                {
+                    mtext.Contents = updated;
+                    label.RawContents = updated;
+                    label.Owner = expectedOwner.Trim();
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private static bool TryApplyExpiredMarker(Transaction tr, PlsrLabelEntry label, out bool alreadyTagged)
         {
             alreadyTagged = false;
@@ -1480,7 +2033,7 @@ namespace AtsBackgroundBuilder
                 return false;
 
             var contents = label.RawContents ?? string.Empty;
-            if (contents.IndexOf("(Expired)", StringComparison.OrdinalIgnoreCase) >= 0)
+            if (HasExpiredMarker(contents))
             {
                 alreadyTagged = true;
                 return true;
@@ -1494,6 +2047,7 @@ namespace AtsBackgroundBuilder
                 if (tr.GetObject(label.Id, OpenMode.ForWrite) is Dimension dimension)
                 {
                     dimension.DimensionText = updated;
+                    label.RawContents = updated;
                     return true;
                 }
             }
@@ -1504,6 +2058,7 @@ namespace AtsBackgroundBuilder
                     var mt = mleader.MText;
                     mt.Contents = updated;
                     mleader.MText = mt;
+                    label.RawContents = updated;
                     return true;
                 }
             }
@@ -1512,6 +2067,7 @@ namespace AtsBackgroundBuilder
                 if (tr.GetObject(label.Id, OpenMode.ForWrite) is MText mtext)
                 {
                     mtext.Contents = updated;
+                    label.RawContents = updated;
                     return true;
                 }
             }

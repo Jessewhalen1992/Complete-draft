@@ -471,7 +471,8 @@ namespace AtsBackgroundBuilder
                     var nonWidthInfo = new DispositionInfo(id, clone, labelText, lineLayer, textLayer, safePoint)
                     {
                         AllowLabelOutsideDisposition = false,
-                        AddLeader = false
+                        AddLeader = false,
+                        DispNumFormatted = dispNumFormatted
                     };
 
                         dispositions.Add(nonWidthInfo);
@@ -486,7 +487,7 @@ namespace AtsBackgroundBuilder
             }
 
             var quarters = new List<QuarterInfo>();
-            if (input.IncludeDispositionLabels)
+            if (input.IncludeDispositionLabels || input.CheckPlsr)
             {
                 using (var transaction = database.TransactionManager.StartTransaction())
                 {
@@ -520,11 +521,48 @@ namespace AtsBackgroundBuilder
                 }
             }
 
+            var existingDispNumsByQuarter = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            if (input.IncludeDispositionLabels && quarters.Count > 0)
+            {
+                var existingLabelsByQuarter = CollectPlsrLabels(database, quarters, logger);
+                var existingLabelCount = 0;
+                foreach (var pair in existingLabelsByQuarter)
+                {
+                    if (pair.Value == null || pair.Value.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    if (!existingDispNumsByQuarter.TryGetValue(pair.Key, out var dispNums))
+                    {
+                        dispNums = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        existingDispNumsByQuarter[pair.Key] = dispNums;
+                    }
+
+                    foreach (var label in pair.Value)
+                    {
+                        var normalizedDispNum = NormalizeDispNum(label.DispNum);
+                        if (string.IsNullOrWhiteSpace(normalizedDispNum))
+                        {
+                            continue;
+                        }
+
+                        if (dispNums.Add(normalizedDispNum))
+                        {
+                            existingLabelCount++;
+                        }
+                    }
+                }
+
+                logger.WriteLine(
+                    $"Disposition label reuse: indexed {existingLabelCount} existing label(s) across {existingDispNumsByQuarter.Count} quarter(s).");
+            }
+
             if (input.IncludeDispositionLabels)
             {
                 exitStage = "placing_labels";
                 var placer = new LabelPlacer(database, editor, layerManager, config, logger, input.UseAlignedDimensions);
-                var placement = placer.PlaceLabels(quarters, dispositions, currentClient);
+                var placement = placer.PlaceLabels(quarters, dispositions, currentClient, existingDispNumsByQuarter);
 
                 result.LabelsPlaced = placement.LabelsPlaced;
                 result.SkippedNoLayerMapping += placement.SkippedNoLayerMapping;
@@ -539,16 +577,8 @@ namespace AtsBackgroundBuilder
             if (input.CheckPlsr)
             {
                 exitStage = "plsr_check";
-                if (!input.IncludeDispositionLabels)
-                {
-                    editor.WriteMessage("\nPLSR check skipped: Disposition labels are disabled.");
-                    logger.WriteLine("PLSR check skipped: Disposition labels are disabled.");
-                }
-                else
-                {
-                    var plsrQuarters = BuildPlsrQuarterInfos(database, sectionDrawResult, quarters, logger);
-                    RunPlsrCheck(database, editor, logger, companyLookup, input, plsrQuarters);
-                }
+                var plsrQuarters = BuildPlsrQuarterInfos(database, sectionDrawResult, quarters, logger);
+                RunPlsrCheck(database, editor, logger, companyLookup, input, plsrQuarters);
             }
 
             if (input.IncludeQuarterSectionLabels)

@@ -27,7 +27,7 @@ namespace AtsBackgroundBuilder.Core
         public bool AllowLabelOverlap { get; set; } = false;
 
         // When true, a single disposition gets labeled in every quarter it intersects.
-        public bool AllowMultiQuarterDispositions { get; set; } = true;
+        public bool AllowMultiQuarterDispositions { get; set; } = false;
 
         // -------------------------
         // Leaders / callouts
@@ -66,7 +66,7 @@ namespace AtsBackgroundBuilder.Core
         /// <summary>
         /// Shapefiles to import dispositions from (filenames only).
         /// </summary>
-        public string[] DispositionShapefiles { get; set; } = new[] { "DAB_APPL.shp" };
+        public string[] DispositionShapefiles { get; set; } = new[] { "DAB_APPL.shp", "AB_LCON.shp" };
 
         // -------------------------
         // Lookup tables (Excel)
@@ -163,6 +163,12 @@ namespace AtsBackgroundBuilder.Core
                     (defaults.AcceptableRowWidths ?? Array.Empty<double>())
                     .Concat(baseline.AcceptableRowWidths ?? Array.Empty<double>())
                     .ToArray());
+
+                // Merge with baseline defaults so older configs inherit new default
+                // disposition shapefiles (for example AB_LCON.shp).
+                defaults.DispositionShapefiles = MergeUniqueShapeFileNames(
+                    defaults.DispositionShapefiles,
+                    baseline.DispositionShapefiles);
 
                 return defaults;
             }
@@ -354,6 +360,40 @@ namespace AtsBackgroundBuilder.Core
                 .Distinct()
                 .OrderBy(w => w)
                 .ToArray();
+        }
+
+        private static string[] MergeUniqueShapeFileNames(
+            IEnumerable<string>? current,
+            IEnumerable<string>? baseline)
+        {
+            var merged = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            void AddRange(IEnumerable<string>? values)
+            {
+                if (values == null)
+                {
+                    return;
+                }
+
+                foreach (var value in values)
+                {
+                    if (string.IsNullOrWhiteSpace(value))
+                    {
+                        continue;
+                    }
+
+                    var normalized = value.Trim();
+                    if (seen.Add(normalized))
+                    {
+                        merged.Add(normalized);
+                    }
+                }
+            }
+
+            AddRange(current);
+            AddRange(baseline);
+            return merged.ToArray();
         }
     }
 }
