@@ -650,6 +650,16 @@ namespace AtsBackgroundBuilder
             List<DispositionInfo> dispositions,
             Config config)
         {
+            var stage = "start";
+            void SetStage(string nextStage)
+            {
+                stage = nextStage;
+                logger.WriteLine("PLSR stage: " + stage);
+            }
+
+            try
+            {
+            SetStage("validate_inputs");
             if (input.PlsrXmlPaths == null || input.PlsrXmlPaths.Count == 0)
             {
                 editor.WriteMessage("\nPLSR check skipped: no XML files selected.");
@@ -657,12 +667,15 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
+            SetStage("load_xml");
             var notIncludedPrefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var quarterData = LoadPlsrQuarterData(input.PlsrXmlPaths, logger, notIncludedPrefixes);
 
+            SetStage("build_quarter_keys");
             var requestedQuarterKeys = BuildRequestedQuarterKeys(input.SectionRequests);
             var missingQuarterKeys = requestedQuarterKeys.Where(k => !quarterData.ContainsKey(k)).ToList();
 
+            SetStage("collect_labels");
             var labelByQuarter = CollectPlsrLabels(database, quarters, logger);
             var quarterByKey = BuildQuarterInfoByKey(quarters);
             var dispositionsByDispNum = IndexDispositionsByDispNum(dispositions);
@@ -741,6 +754,7 @@ namespace AtsBackgroundBuilder
                                 dispNum,
                                 dispositionsByDispNum,
                                 dispositionSourceCache,
+                                logger,
                                 out var dispositionMatch) &&
                                 dispositionMatch != null)
                             {
@@ -846,6 +860,7 @@ namespace AtsBackgroundBuilder
                 });
             }
 
+            SetStage("review_dialog");
             var acceptedIssueIds = ShowPlsrReviewDialog(issues, logger);
 
             int ownerUpdated = 0;
@@ -853,8 +868,10 @@ namespace AtsBackgroundBuilder
             int missingCreated = 0;
             int acceptedActionable = 0;
             int ignoredActionable = 0;
+            int applyErrors = 0;
             var acceptedCreateMissingIssues = new List<PlsrCheckIssue>();
 
+            SetStage("apply_actions");
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 foreach (var issue in issues)
@@ -872,37 +889,51 @@ namespace AtsBackgroundBuilder
                     }
 
                     acceptedActionable++;
-                    switch (issue.ChangeType)
+                    try
                     {
-                        case PlsrIssueChangeType.UpdateOwner:
+                        switch (issue.ChangeType)
                         {
-                            if (issue.Label != null && TryApplyOwnerUpdate(tr, issue.Label, issue.ProposedOwner, out _))
+                            case PlsrIssueChangeType.UpdateOwner:
                             {
-                                ownerUpdated++;
-                            }
+                                if (issue.Label != null && TryApplyOwnerUpdate(tr, issue.Label, issue.ProposedOwner, out _))
+                                {
+                                    ownerUpdated++;
+                                }
 
-                            break;
-                        }
-                        case PlsrIssueChangeType.TagExpired:
-                        {
-                            if (issue.Label != null && TryApplyExpiredMarker(tr, issue.Label, out _))
+                                break;
+                            }
+                            case PlsrIssueChangeType.TagExpired:
                             {
-                                expiredTagged++;
-                            }
+                                if (issue.Label != null && TryApplyExpiredMarker(tr, issue.Label, out _))
+                                {
+                                    expiredTagged++;
+                                }
 
-                            break;
+                                break;
+                            }
+                            case PlsrIssueChangeType.CreateMissingLabel:
+                            {
+                                acceptedCreateMissingIssues.Add(issue);
+                                break;
+                            }
                         }
-                        case PlsrIssueChangeType.CreateMissingLabel:
-                        {
-                            acceptedCreateMissingIssues.Add(issue);
-                            break;
-                        }
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                    {
+                        applyErrors++;
+                        logger.WriteLine($"PLSR apply skipped ({issue.ChangeType}) for {issue.DispNum} in {issue.QuarterKey}: {ex.Message}");
+                    }
+                    catch (System.Exception ex)
+                    {
+                        applyErrors++;
+                        logger.WriteLine($"PLSR apply skipped ({issue.ChangeType}) for {issue.DispNum} in {issue.QuarterKey}: {ex.Message}");
                     }
                 }
 
                 tr.Commit();
             }
 
+            SetStage("create_missing_labels");
             if (acceptedCreateMissingIssues.Count > 0)
             {
                 var existingDispNumsByQuarter = BuildExistingDispNumsByQuarter(labelByQuarter);
@@ -915,15 +946,29 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    var placement = placer.PlaceLabels(
-                        new List<QuarterInfo> { issue.Quarter },
-                        new List<DispositionInfo> { issue.Disposition },
-                        input.CurrentClient,
-                        existingDispNumsByQuarter);
-                    missingCreated += placement.LabelsPlaced;
+                    try
+                    {
+                        var placement = placer.PlaceLabels(
+                            new List<QuarterInfo> { issue.Quarter },
+                            new List<DispositionInfo> { issue.Disposition },
+                            input.CurrentClient,
+                            existingDispNumsByQuarter);
+                        missingCreated += placement.LabelsPlaced;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                    {
+                        applyErrors++;
+                        logger.WriteLine($"PLSR missing-label create failed for {issue.DispNum} in {issue.QuarterKey}: {ex.Message}");
+                    }
+                    catch (System.Exception ex)
+                    {
+                        applyErrors++;
+                        logger.WriteLine($"PLSR missing-label create failed for {issue.DispNum} in {issue.QuarterKey}: {ex.Message}");
+                    }
                 }
             }
 
+            SetStage("summary");
             var summary = new StringBuilder();
             summary.AppendLine("PLSR Check Summary");
             summary.AppendLine("-------------------");
@@ -949,8 +994,10 @@ namespace AtsBackgroundBuilder
             summary.AppendLine($"Expired tags added: {expiredTagged}");
             summary.AppendLine($"Actionable results accepted: {acceptedActionable}");
             summary.AppendLine($"Actionable results ignored: {ignoredActionable}");
+            summary.AppendLine($"Apply errors: {applyErrors}");
 
             var summaryText = summary.ToString().TrimEnd();
+            SetStage("show_summary");
             try
             {
                 WinForms.MessageBox.Show(summaryText, "PLSR Check", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
@@ -960,7 +1007,25 @@ namespace AtsBackgroundBuilder
                 editor.WriteMessage("\n" + summaryText);
             }
 
+            SetStage("write_log");
             WritePlsrLog(database, summaryText, logger);
+            }
+            catch (System.Exception ex)
+            {
+                var failureText = $"PLSR check failed at stage '{stage}': {ex.Message}";
+                logger.WriteLine(failureText);
+                logger.WriteLine(ex.ToString());
+                try
+                {
+                    editor.WriteMessage("\n" + failureText);
+                }
+                catch
+                {
+                    // best-effort message
+                }
+
+                WritePlsrLog(database, failureText, logger);
+            }
         }
 
         private static Dictionary<string, QuarterInfo> BuildQuarterInfoByKey(List<QuarterInfo> quarters)
@@ -1027,6 +1092,7 @@ namespace AtsBackgroundBuilder
             string dispNum,
             Dictionary<string, List<DispositionInfo>> dispositionsByDispNum,
             Dictionary<string, DispositionInfo?> dispositionSourceCache,
+            Logger logger,
             out DispositionInfo? matchedDisposition)
         {
             matchedDisposition = null;
@@ -1070,14 +1136,50 @@ namespace AtsBackgroundBuilder
                     continue;
                 }
 
-                if (GeometryUtils.IsPointInsidePolyline(quarter.Polyline, candidate.SafePoint))
+                bool safePointInsideQuarter;
+                try
+                {
+                    safePointInsideQuarter = GeometryUtils.IsPointInsidePolyline(quarter.Polyline, candidate.SafePoint);
+                }
+                catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                {
+                    logger.WriteLine(
+                        $"PLSR source-scan skipped candidate {normalizedDispNum} in {quarterKey} (safe-point test): {ex.Message}");
+                    continue;
+                }
+                catch (System.Exception ex)
+                {
+                    logger.WriteLine(
+                        $"PLSR source-scan skipped candidate {normalizedDispNum} in {quarterKey} (safe-point test): {ex.Message}");
+                    continue;
+                }
+
+                if (safePointInsideQuarter)
                 {
                     matchedDisposition = candidate;
                     dispositionSourceCache[cacheKey] = candidate;
                     return true;
                 }
 
-                if (!GeometryUtils.TryFindPointInsideBoth(quarter.Polyline, candidate.Polyline, out _))
+                bool overlapsQuarter;
+                try
+                {
+                    overlapsQuarter = GeometryUtils.TryFindPointInsideBoth(quarter.Polyline, candidate.Polyline, out _);
+                }
+                catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                {
+                    logger.WriteLine(
+                        $"PLSR source-scan skipped candidate {normalizedDispNum} in {quarterKey} (overlap test): {ex.Message}");
+                    continue;
+                }
+                catch (System.Exception ex)
+                {
+                    logger.WriteLine(
+                        $"PLSR source-scan skipped candidate {normalizedDispNum} in {quarterKey} (overlap test): {ex.Message}");
+                    continue;
+                }
+
+                if (!overlapsQuarter)
                 {
                     continue;
                 }
@@ -1144,57 +1246,65 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            var requestedQuarterKeys = BuildRequestedQuarterKeys(input.SectionRequests);
-            if (requestedQuarterKeys.Count == 0)
+            try
             {
-                return false;
-            }
-
-            var notIncludedPrefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var quarterData = LoadPlsrQuarterData(input.PlsrXmlPaths, logger, notIncludedPrefixes);
-            if (quarterData.Count == 0)
-            {
-                return false;
-            }
-
-            var labelByQuarter = CollectPlsrLabels(database, plsrQuarters, logger);
-            var existingDispNumsByQuarter = BuildExistingDispNumsByQuarter(labelByQuarter);
-            var emptySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var quarterKey in requestedQuarterKeys)
-            {
-                if (!quarterData.TryGetValue(quarterKey, out var expected) || expected == null)
+                var requestedQuarterKeys = BuildRequestedQuarterKeys(input.SectionRequests);
+                if (requestedQuarterKeys.Count == 0)
                 {
-                    continue;
+                    return false;
                 }
 
-                if (!existingDispNumsByQuarter.TryGetValue(quarterKey, out var existingDispNums) || existingDispNums == null)
+                var notIncludedPrefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var quarterData = LoadPlsrQuarterData(input.PlsrXmlPaths, logger, notIncludedPrefixes);
+                if (quarterData.Count == 0)
                 {
-                    existingDispNums = emptySet;
+                    return false;
                 }
 
-                foreach (var act in expected.Activities)
+                var labelByQuarter = CollectPlsrLabels(database, plsrQuarters, logger);
+                var existingDispNumsByQuarter = BuildExistingDispNumsByQuarter(labelByQuarter);
+                var emptySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var quarterKey in requestedQuarterKeys)
                 {
-                    var dispNum = NormalizeDispNum(act?.DispNum ?? string.Empty);
-                    if (string.IsNullOrWhiteSpace(dispNum))
+                    if (!quarterData.TryGetValue(quarterKey, out var expected) || expected == null)
                     {
                         continue;
                     }
 
-                    var prefix = GetDispositionPrefix(dispNum);
-                    if (!string.IsNullOrWhiteSpace(prefix) && !PlsrDispositionPrefixes.Contains(prefix))
+                    if (!existingDispNumsByQuarter.TryGetValue(quarterKey, out var existingDispNums) || existingDispNums == null)
                     {
-                        continue;
+                        existingDispNums = emptySet;
                     }
 
-                    if (!existingDispNums.Contains(dispNum))
+                    foreach (var act in expected.Activities)
                     {
-                        return true;
+                        var dispNum = NormalizeDispNum(act?.DispNum ?? string.Empty);
+                        if (string.IsNullOrWhiteSpace(dispNum))
+                        {
+                            continue;
+                        }
+
+                        var prefix = GetDispositionPrefix(dispNum);
+                        if (!string.IsNullOrWhiteSpace(prefix) && !PlsrDispositionPrefixes.Contains(prefix))
+                        {
+                            continue;
+                        }
+
+                        if (!existingDispNums.Contains(dispNum))
+                        {
+                            return true;
+                        }
                     }
                 }
-            }
 
-            return false;
+                return false;
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine("PLSR precheck failed; falling back to conservative import behavior: " + ex.Message);
+                return true;
+            }
         }
 
         private static Dictionary<string, PlsrQuarterData> LoadPlsrQuarterData(
@@ -1524,100 +1634,138 @@ namespace AtsBackgroundBuilder
                     Bounds: pair.Value.Bounds))
                 .ToList();
             var layerMatchCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            var scanErrors = 0;
+            const int maxLoggedScanErrors = 8;
 
-            using (var tr = database.TransactionManager.StartTransaction())
+            try
             {
-                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
-                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-
-                foreach (ObjectId id in ms)
+                using (var tr = database.TransactionManager.StartTransaction())
                 {
-                    PlsrLabelEntry? entry = null;
+                    var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead, false);
+                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead, false);
 
-                    var dbObject = tr.GetObject(id, OpenMode.ForRead);
-                    if (!(dbObject is Entity labelEntity) || labelEntity.IsErased)
+                    foreach (ObjectId id in ms)
                     {
-                        continue;
-                    }
-
-                    if (!(dbObject is MText || dbObject is MLeader || dbObject is AlignedDimension))
-                    {
-                        continue;
-                    }
-
-                    var layerName = labelEntity.Layer ?? string.Empty;
-                    if (!layerMatchCache.TryGetValue(layerName, out var isDispositionTextLayer))
-                    {
-                        isDispositionTextLayer = IsDispositionTextLayer(layerName);
-                        layerMatchCache[layerName] = isDispositionTextLayer;
-                    }
-
-                    if (!isDispositionTextLayer)
-                    {
-                        continue;
-                    }
-
-                    if (dbObject is MText mtext)
-                    {
-                        var contents = mtext.Contents ?? string.Empty;
-                        entry = BuildLabelEntry(id, false, contents, new Point2d(mtext.Location.X, mtext.Location.Y));
-                    }
-                    else if (dbObject is MLeader mleader)
-                    {
-                        var leaderText = mleader.MText;
-                        if (leaderText != null)
+                        try
                         {
-                            var contents = leaderText.Contents ?? string.Empty;
-                            var anchor = GetLeaderAnchorPoint(mleader, leaderText, logger);
-                            entry = BuildLabelEntry(id, true, contents, anchor);
-                        }
-                    }
-                    else if (dbObject is AlignedDimension aligned)
-                    {
-                        var contents = aligned.DimensionText ?? string.Empty;
-                        if (!string.IsNullOrWhiteSpace(contents) && !string.Equals(contents.Trim(), "<>", StringComparison.Ordinal))
-                        {
-                            var location = GetDimensionAnchorPoint(aligned);
-                            entry = BuildLabelEntry(id, false, contents, location, isDimension: true);
-                        }
-                    }
+                            PlsrLabelEntry? entry = null;
 
-                    if (entry == null)
-                        continue;
-
-                    if (string.IsNullOrWhiteSpace(entry.DispNum) || string.IsNullOrWhiteSpace(entry.Owner))
-                        continue;
-
-                    var prefix = GetDispositionPrefix(NormalizeDispNum(entry.DispNum));
-                    if (string.IsNullOrWhiteSpace(prefix) || !PlsrDispositionPrefixes.Contains(prefix))
-                        continue;
-
-                    foreach (var quarterEntry in quarterEntries)
-                    {
-                        if (entry.Location.X < quarterEntry.Bounds.MinPoint.X ||
-                            entry.Location.X > quarterEntry.Bounds.MaxPoint.X ||
-                            entry.Location.Y < quarterEntry.Bounds.MinPoint.Y ||
-                            entry.Location.Y > quarterEntry.Bounds.MaxPoint.Y)
-                        {
-                            continue;
-                        }
-
-                        if (GeometryUtils.IsPointInsidePolyline(quarterEntry.Polyline, entry.Location))
-                        {
-                            if (!byQuarter.TryGetValue(quarterEntry.Key, out var list))
+                            var dbObject = tr.GetObject(id, OpenMode.ForRead, false);
+                            if (!(dbObject is Entity labelEntity) || labelEntity.IsErased)
                             {
-                                list = new List<PlsrLabelEntry>();
-                                byQuarter[quarterEntry.Key] = list;
+                                continue;
                             }
 
-                            list.Add(entry);
-                            break;
+                            if (!(dbObject is MText || dbObject is MLeader || dbObject is AlignedDimension))
+                            {
+                                continue;
+                            }
+
+                            var layerName = labelEntity.Layer ?? string.Empty;
+                            if (!layerMatchCache.TryGetValue(layerName, out var isDispositionTextLayer))
+                            {
+                                isDispositionTextLayer = IsDispositionTextLayer(layerName);
+                                layerMatchCache[layerName] = isDispositionTextLayer;
+                            }
+
+                            if (!isDispositionTextLayer)
+                            {
+                                continue;
+                            }
+
+                            if (dbObject is MText mtext)
+                            {
+                                var contents = mtext.Contents ?? string.Empty;
+                                entry = BuildLabelEntry(id, false, contents, new Point2d(mtext.Location.X, mtext.Location.Y));
+                            }
+                            else if (dbObject is MLeader mleader)
+                            {
+                                var leaderText = mleader.MText;
+                                if (leaderText != null)
+                                {
+                                    var contents = leaderText.Contents ?? string.Empty;
+                                    var anchor = GetLeaderAnchorPoint(mleader, leaderText, logger);
+                                    entry = BuildLabelEntry(id, true, contents, anchor);
+                                }
+                            }
+                            else if (dbObject is AlignedDimension aligned)
+                            {
+                                var contents = aligned.DimensionText ?? string.Empty;
+                                if (!string.IsNullOrWhiteSpace(contents) && !string.Equals(contents.Trim(), "<>", StringComparison.Ordinal))
+                                {
+                                    var location = GetDimensionAnchorPoint(aligned);
+                                    entry = BuildLabelEntry(id, false, contents, location, isDimension: true);
+                                }
+                            }
+
+                            if (entry == null)
+                                continue;
+
+                            if (string.IsNullOrWhiteSpace(entry.DispNum) || string.IsNullOrWhiteSpace(entry.Owner))
+                                continue;
+
+                            var prefix = GetDispositionPrefix(NormalizeDispNum(entry.DispNum));
+                            if (string.IsNullOrWhiteSpace(prefix) || !PlsrDispositionPrefixes.Contains(prefix))
+                                continue;
+
+                            foreach (var quarterEntry in quarterEntries)
+                            {
+                                if (entry.Location.X < quarterEntry.Bounds.MinPoint.X ||
+                                    entry.Location.X > quarterEntry.Bounds.MaxPoint.X ||
+                                    entry.Location.Y < quarterEntry.Bounds.MinPoint.Y ||
+                                    entry.Location.Y > quarterEntry.Bounds.MaxPoint.Y)
+                                {
+                                    continue;
+                                }
+
+                                if (GeometryUtils.IsPointInsidePolyline(quarterEntry.Polyline, entry.Location))
+                                {
+                                    if (!byQuarter.TryGetValue(quarterEntry.Key, out var list))
+                                    {
+                                        list = new List<PlsrLabelEntry>();
+                                        byQuarter[quarterEntry.Key] = list;
+                                    }
+
+                                    list.Add(entry);
+                                    break;
+                                }
+                            }
+                        }
+                        catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                        {
+                            scanErrors++;
+                            if (scanErrors <= maxLoggedScanErrors)
+                            {
+                                logger.WriteLine($"PLSR label scan skipped entity {id}: {ex.Message}");
+                            }
+                        }
+                        catch (System.Exception ex)
+                        {
+                            scanErrors++;
+                            if (scanErrors <= maxLoggedScanErrors)
+                            {
+                                logger.WriteLine($"PLSR label scan skipped entity {id}: {ex.Message}");
+                            }
                         }
                     }
-                }
 
-                tr.Commit();
+                    tr.Commit();
+                }
             }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine("PLSR label scan failed: " + ex.Message);
+            }
+
+            if (scanErrors > maxLoggedScanErrors)
+            {
+                logger.WriteLine($"PLSR label scan skipped {scanErrors - maxLoggedScanErrors} additional entity error(s).");
+            }
+            if (scanErrors > 0)
+            {
+                logger.WriteLine($"PLSR label scan completed with {scanErrors} recoverable entity error(s).");
+            }
+
             return byQuarter;
         }
 

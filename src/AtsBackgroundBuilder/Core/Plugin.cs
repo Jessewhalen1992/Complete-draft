@@ -64,9 +64,11 @@ namespace AtsBackgroundBuilder
             IsAffirmativeToggle(Environment.GetEnvironmentVariable("ATSBUILD_WELLSITE_DEBUG"));
         private static readonly object SectionOutlineCacheLock = new object();
         private static readonly object BufferedDefpointsWindowLock = new object();
+        private static readonly object UnhandledExceptionHookLock = new object();
         private static readonly Dictionary<string, SectionOutline?> SectionOutlineCache = new Dictionary<string, SectionOutline?>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, bool> FolderIndexCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         private static readonly HashSet<ObjectId> BufferedDefpointsWindowIds = new HashSet<ObjectId>();
+        private static bool UnhandledExceptionHooksInstalled;
 
         private static bool IsAffirmativeToggle(string? raw)
         {
@@ -85,10 +87,113 @@ namespace AtsBackgroundBuilder
 
         public void Initialize()
         {
+            InstallUnhandledExceptionHooks();
         }
 
         public void Terminate()
         {
+        }
+
+        private static void InstallUnhandledExceptionHooks()
+        {
+            lock (UnhandledExceptionHookLock)
+            {
+                if (UnhandledExceptionHooksInstalled)
+                {
+                    return;
+                }
+
+                AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+                {
+                    var details = args?.ExceptionObject?.ToString() ?? "Unknown unhandled exception object.";
+                    WriteUnhandledExceptionCrashLog(
+                        "AppDomain.CurrentDomain.UnhandledException",
+                        details,
+                        args?.IsTerminating ?? false);
+                };
+
+                System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, args) =>
+                {
+                    try
+                    {
+                        var details = args?.Exception?.ToString() ?? "Unknown unobserved task exception.";
+                        WriteUnhandledExceptionCrashLog(
+                            "TaskScheduler.UnobservedTaskException",
+                            details,
+                            false);
+                    }
+                    finally
+                    {
+                        try { args?.SetObserved(); } catch { }
+                    }
+                };
+
+                System.Windows.Forms.Application.ThreadException += (_, args) =>
+                {
+                    var details = args?.Exception?.ToString() ?? "Unknown WinForms UI thread exception.";
+                    WriteUnhandledExceptionCrashLog(
+                        "System.Windows.Forms.Application.ThreadException",
+                        details,
+                        false);
+                };
+
+                var wpfApp = System.Windows.Application.Current;
+                if (wpfApp != null)
+                {
+                    wpfApp.DispatcherUnhandledException += (_, args) =>
+                    {
+                        try
+                        {
+                            var details = args?.Exception?.ToString() ?? "Unknown WPF dispatcher exception.";
+                            WriteUnhandledExceptionCrashLog(
+                                "System.Windows.Application.DispatcherUnhandledException",
+                                details,
+                                false);
+                        }
+                        finally
+                        {
+                            // Keep AutoCAD alive on recoverable UI faults; UI handlers should show user-facing errors.
+                            if (args != null)
+                            {
+                                args.Handled = true;
+                            }
+                        }
+                    };
+                }
+
+                UnhandledExceptionHooksInstalled = true;
+            }
+        }
+
+        private static void WriteUnhandledExceptionCrashLog(string source, string details, bool isTerminating)
+        {
+            try
+            {
+                var dllFolder = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? Environment.CurrentDirectory;
+                var crashLogPath = Path.Combine(dllFolder, "AtsBackgroundBuilder.crash.log");
+                var stampLocal = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                var stampUtc = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                var processId = Process.GetCurrentProcess().Id;
+                var threadId = Environment.CurrentManagedThreadId;
+
+                var sb = new StringBuilder();
+                sb.AppendLine("---- ATSBUILD UNHANDLED EXCEPTION ----");
+                sb.AppendLine($"source: {source}");
+                sb.AppendLine($"local: {stampLocal}");
+                sb.AppendLine($"utc: {stampUtc}");
+                sb.AppendLine($"isTerminating: {isTerminating}");
+                sb.AppendLine($"processId: {processId}");
+                sb.AppendLine($"managedThreadId: {threadId}");
+                sb.AppendLine("details:");
+                sb.AppendLine(details ?? string.Empty);
+                sb.AppendLine();
+
+                File.AppendAllText(crashLogPath, sb.ToString());
+            }
+            catch
+            {
+                // Best-effort crash logging only.
+            }
         }
 
         [CommandMethod("ATSBUILD")]
@@ -110,6 +215,13 @@ namespace AtsBackgroundBuilder
                 : DateTime.MinValue;
             logger.WriteLine($"ATSBUILD assembly: {assemblyPath} (local={assemblyLocalStamp:yyyy-MM-dd h:mm:ss tt}, utc={assemblyUtcStamp:yyyy-MM-dd HH:mm:ss})");
             var exitStage = "startup";
+            void SetExitStage(string stage)
+            {
+                exitStage = stage;
+                logger.WriteLine("ATSBUILD stage: " + exitStage);
+            }
+
+            logger.WriteLine("ATSBUILD stage: " + exitStage);
             void EmitExit(string reason)
             {
                 var msg = $"ATSBUILD exit stage: {exitStage} ({reason})";
@@ -141,22 +253,135 @@ namespace AtsBackgroundBuilder
                     clientNames = companyLookup.Values;
                 }
 
-                var window = new AtsBuildWindow(clientNames, config);
-                var dr = window.ShowDialog();
-                if (dr != true || window.Result == null)
+                AtsBuildInput? seededUiInput = null;
+                var autoCloseResumeAttempts = 0;
+                const int maxAutoCloseResumeAttempts = 3;
+                while (true)
                 {
-                    exitStage = "ui_cancelled";
-                    editor.WriteMessage("\nATSBUILD cancelled.");
-                    EmitExit("cancelled");
-                    logger.Dispose();
-                    return;
-                }
+                    var window = new AtsBuildWindow(clientNames, config, seededUiInput);
+                    seededUiInput = null;
+                    var dr = window.ShowDialog();
+                    if (window.Result == null)
+                    {
+                        var explicitCancel = window.ExplicitCancelRequested;
+                        var buildRequested = window.BuildRequested;
+                        var buildAttempted = window.BuildAttempted;
+                        logger.WriteLine($"UI returned without direct result (DialogResult={dr?.ToString() ?? "null"}, ExplicitCancel={explicitCancel}, BuildRequested={buildRequested}, BuildAttempted={buildAttempted}, BoundaryRoundTrip={window.BoundaryImportRoundTripUsed}, BuildTrace={window.BuildAttemptTrace}).");
 
-                input = window.Result;
+                        var snapshotReason = string.Empty;
+                        AtsBuildInput? snapshotInput = null;
+                        var snapshotAvailable = window.TryBuildInputSnapshot(out snapshotInput, out snapshotReason) && snapshotInput != null;
+
+                        if (!explicitCancel && !buildRequested && !buildAttempted)
+                        {
+                            if (snapshotAvailable && autoCloseResumeAttempts < maxAutoCloseResumeAttempts)
+                            {
+                                autoCloseResumeAttempts++;
+                                if (window.IsVisible)
+                                {
+                                    logger.WriteLine("UI auto-close recovery: original window still visible; closing before reopen.");
+                                    try
+                                    {
+                                        window.Close();
+                                    }
+                                    catch (System.Exception closeEx)
+                                    {
+                                        logger.WriteLine($"UI auto-close recovery: close-before-reopen failed ({closeEx.GetType().Name}: {closeEx.Message}).");
+                                    }
+                                }
+
+                                logger.WriteLine($"UI auto-close recovery: reopening dialog for explicit Build (attempt {autoCloseResumeAttempts}/{maxAutoCloseResumeAttempts}, boundaryRoundTrip={window.BoundaryImportRoundTripUsed}).");
+                                seededUiInput = snapshotInput;
+                                continue;
+                            }
+
+                            if (snapshotAvailable)
+                            {
+                                logger.WriteLine($"UI auto-close recovery exhausted after {maxAutoCloseResumeAttempts} attempts; treating as cancel.");
+                            }
+                            else
+                            {
+                                var resumePrefix = window.BoundaryImportRoundTripUsed
+                                    ? "UI boundary-import round-trip snapshot unavailable"
+                                    : "UI auto-close snapshot unavailable";
+                                logger.WriteLine($"{resumePrefix} (reason={snapshotReason}).");
+                            }
+                        }
+
+                        var recovered = false;
+                        var buildTrace = window.BuildAttemptTrace ?? string.Empty;
+                        var buildAbortedByValidation = buildTrace.StartsWith("onbuild_abort_", StringComparison.OrdinalIgnoreCase);
+                        var shouldTrySnapshot = !explicitCancel && (buildRequested || (buildAttempted && !buildAbortedByValidation));
+                        if (shouldTrySnapshot && snapshotAvailable)
+                        {
+                            recovered = true;
+                        }
+
+                        if (recovered)
+                        {
+                            autoCloseResumeAttempts = 0;
+                            logger.WriteLine("UI result fallback: recovered build input snapshot from window state.");
+                            input = snapshotInput;
+
+                            if (dr != true &&
+                                input != null &&
+                                !input.CheckPlsr &&
+                                !input.IncludeSurfaceImpact &&
+                                AtsBuildWindow.TryGetPersistedPlsrXmlPaths(out var persistedPlsrXmlPaths))
+                            {
+                                input.CheckPlsr = true;
+                                input.PlsrXmlPaths.Clear();
+                                input.PlsrXmlPaths.AddRange(persistedPlsrXmlPaths);
+                                logger.WriteLine($"UI auto-close fallback: enabled Check PLSR using {persistedPlsrXmlPaths.Count} persisted XML file(s).");
+                            }
+                        }
+                        else
+                        {
+                            if (!explicitCancel)
+                            {
+                                if (!buildRequested && !buildAttempted)
+                                {
+                                    logger.WriteLine("UI closed without build attempt; treating as cancel.");
+                                }
+                                else
+                                {
+                                    logger.WriteLine($"UI result fallback unavailable (reason={snapshotReason}).");
+                                }
+                            }
+
+                            SetExitStage("ui_cancelled");
+                            editor.WriteMessage("\nATSBUILD cancelled.");
+                            EmitExit("cancelled");
+                            logger.Dispose();
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        autoCloseResumeAttempts = 0;
+                        input = window.Result;
+                    }
+
+                    if (input == null)
+                    {
+                        SetExitStage("ui_cancelled");
+                        editor.WriteMessage("\nATSBUILD cancelled.");
+                        EmitExit("cancelled");
+                        logger.Dispose();
+                        return;
+                    }
+
+                    if (dr != true)
+                    {
+                        logger.WriteLine($"UI closed without dialog result 'true' (DialogResult={dr}); proceeding with captured UI result.");
+                    }
+
+                    break;
+                }
             }
             catch (System.Exception ex)
             {
-                exitStage = "ui_error";
+                SetExitStage("ui_error");
                 editor.WriteMessage($"\nATSBUILD UI error: {ex.Message}");
                 logger.WriteLine("ATSBUILD UI error: " + ex);
                 EmitExit("error");
@@ -166,13 +391,15 @@ namespace AtsBackgroundBuilder
 
             if (input == null)
             {
-                exitStage = "input_null";
+                SetExitStage("input_null");
                 editor.WriteMessage("\nATSBUILD cancelled.");
                 EmitExit("cancelled");
                 logger.Dispose();
                 return;
             }
 
+            try
+            {
             var showQuarterDefinitionLinework = input.AllowMultiQuarterDispositions;
             drawQuarterView = showQuarterDefinitionLinework || EnableQuarterViewByEnvironment;
             // Keep per-quarter disposition label/intersection logic enabled regardless of
@@ -189,7 +416,7 @@ namespace AtsBackgroundBuilder
 
             if (!config.UseSectionIndex)
             {
-                exitStage = "config_use_section_index_false";
+                SetExitStage("config_use_section_index_false");
                 editor.WriteMessage("\nConfig.UseSectionIndex=false. This build requires the section index workflow.");
                 EmitExit("error");
                 logger.Dispose();
@@ -198,6 +425,7 @@ namespace AtsBackgroundBuilder
 
             // Build the section geometry used to determine 1/4s.
             // NOTE: These entities are considered "temporary" unless ATS fabric is enabled (see cleanup at the end).
+            SetExitStage("sections_building");
             var sectionDrawResult = DrawSectionsFromRequests(
                 editor,
                 database,
@@ -207,11 +435,11 @@ namespace AtsBackgroundBuilder
                 input.DrawLsdSubdivisionLines,
                 drawQuarterView,
                 input.IncludeAtsFabric);
-            exitStage = "sections_built";
+            SetExitStage("sections_built");
             var quarterPolylinesForLabelling = sectionDrawResult.LabelQuarterPolylineIds;
             if (quarterPolylinesForLabelling.Count == 0)
             {
-                exitStage = "no_quarters_generated";
+                SetExitStage("no_quarters_generated");
                 editor.WriteMessage("\nNo quarter polylines generated from the section index (check your grid inputs)." );
 
                 // Ensure we don't leave temporary section outlines behind when ATS fabric is unchecked.
@@ -224,7 +452,7 @@ namespace AtsBackgroundBuilder
 
             if (input.IncludeP3Shapefiles)
             {
-                exitStage = "p3_import";
+                SetExitStage("p3_import");
                 var p3Summary = ImportP3Shapefiles(
                     database,
                     editor,
@@ -241,7 +469,7 @@ namespace AtsBackgroundBuilder
 
             if (input.IncludeCompassMapping)
             {
-                exitStage = "compass_mapping_import";
+                SetExitStage("compass_mapping_import");
                 var compassSummary = ImportCompassMappingShapefile(
                     database,
                     editor,
@@ -254,7 +482,7 @@ namespace AtsBackgroundBuilder
 
             if (input.IncludeCrownReservations)
             {
-                exitStage = "crown_reservations_import";
+                SetExitStage("crown_reservations_import");
                 var crownSummary = ImportCrownReservationsShapefile(
                     database,
                     editor,
@@ -288,7 +516,7 @@ namespace AtsBackgroundBuilder
                 !input.IncludeDispositionLabels &&
                 dispositionPolylines.Count == 0)
             {
-                exitStage = "plsr_missing_precheck";
+                SetExitStage("plsr_missing_precheck");
                 var precheckTimer = Stopwatch.StartNew();
                 var precheckQuarters = BuildPlsrQuarterInfos(database, sectionDrawResult, new List<QuarterInfo>(), logger);
                 var hasPotentialMissingLabels = HasPotentialMissingPlsrLabels(database, logger, input, precheckQuarters);
@@ -304,7 +532,7 @@ namespace AtsBackgroundBuilder
 
             if (shouldImportDispositions)
             {
-                exitStage = "disposition_import";
+                SetExitStage("disposition_import");
                 importSummary = ShapefileImporter.ImportShapefiles(
                     database,
                     editor,
@@ -326,7 +554,7 @@ namespace AtsBackgroundBuilder
             var currentClient = input.CurrentClient;
             if (string.IsNullOrWhiteSpace(currentClient))
             {
-                exitStage = "missing_current_client";
+                SetExitStage("missing_current_client");
                 editor.WriteMessage("\nCurrent client is required.");
                 EmitExit("error");
                 logger.Dispose();
@@ -343,7 +571,7 @@ namespace AtsBackgroundBuilder
 
             using (var transaction = database.TransactionManager.StartTransaction())
             {
-                exitStage = "processing_dispositions";
+                SetExitStage("processing_dispositions");
                 var lsdCells = new List<LsdCellInfo>();
                 var sectionInfos = new List<SectionSpatialInfo>();
                 if (shouldLoadSupplementalSectionInfos)
@@ -621,7 +849,7 @@ namespace AtsBackgroundBuilder
             var shouldPlaceLabelsBeforePlsr = input.IncludeDispositionLabels && !input.CheckPlsr;
             if (shouldPlaceLabelsBeforePlsr)
             {
-                exitStage = "placing_labels";
+                SetExitStage("placing_labels");
                 var placer = new LabelPlacer(database, editor, layerManager, config, logger, useAlignedDimensions: true);
                 var placement = placer.PlaceLabels(quarters, dispositions, currentClient, existingDispNumsByQuarter);
 
@@ -637,14 +865,14 @@ namespace AtsBackgroundBuilder
 
             if (input.CheckPlsr)
             {
-                exitStage = "plsr_check";
+                SetExitStage("plsr_check");
                 var plsrQuarters = BuildPlsrQuarterInfos(database, sectionDrawResult, quarters, logger);
                 RunPlsrCheck(database, editor, logger, companyLookup, input, plsrQuarters, dispositions, config);
             }
 
             if (input.IncludeQuarterSectionLabels)
             {
-                exitStage = "quarter_section_labels_final";
+                SetExitStage("quarter_section_labels_final");
                 PlaceQuarterSectionLabels(database, sectionDrawResult.LabelQuarterInfos ?? new List<QuarterLabelInfo>(), input.DrawLsdSubdivisionLines, logger);
             }
 
@@ -655,14 +883,20 @@ namespace AtsBackgroundBuilder
             //  - Quarter boxes used to determine 1/4s are ALWAYS removed.
             //  - If ATS fabric is unchecked, section outlines/labels created for calculation are removed.
             //  - If Dispositions (linework) is unchecked, imported disposition polylines are removed (labels remain).
-            exitStage = "cleanup";
+            SetExitStage("cleanup");
             CleanupAfterBuild(database, sectionDrawResult, dispositionPolylines, input, logger);
             if (EnableCadGeoJsonExport)
             {
                 TryExportCadDiagnosticGeoJson(database, input.SectionRequests, dllFolder, logger);
             }
 
-            exitStage = "summary";
+            if (input.IncludeSurfaceImpact)
+            {
+                SetExitStage("surface_impact");
+                RunSurfaceImpact(database, editor, logger, input);
+            }
+
+            SetExitStage("summary");
             editor.WriteMessage("\nATSBUILD complete.");
             editor.WriteMessage("\nTotal dispositions: " + result.TotalDispositions);
             editor.WriteMessage("\nLabels placed: " + result.LabelsPlaced);
@@ -688,9 +922,29 @@ namespace AtsBackgroundBuilder
             logger.WriteLine("Filtered out: " + result.FilteredDispositions);
             logger.WriteLine("Deduped: " + result.DedupedDispositions);
             logger.WriteLine("Import failures: " + result.ImportFailures);
-            exitStage = "completed";
+            SetExitStage("completed");
             EmitExit("ok");
             logger.Dispose();
+            }
+            catch (System.Exception ex)
+            {
+                SetExitStage("fatal_exception");
+                var failureText = $"ATSBUILD failed at stage '{exitStage}': {ex.Message}";
+                logger.WriteLine(failureText);
+                logger.WriteLine(ex.ToString());
+                try
+                {
+                    editor.WriteMessage("\n" + failureText);
+                }
+                catch
+                {
+                    // best effort
+                }
+
+                EmitExit("error");
+                logger.Dispose();
+                return;
+            }
         }
 
         private static List<ObjectId> BuildDispositionImportScopeIds(
@@ -7320,8 +7574,17 @@ namespace AtsBackgroundBuilder
             }
 
             return message.StartsWith("ATSBUILD exit stage:", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("ATSBUILD stage:", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("ATSBUILD assembly:", StringComparison.OrdinalIgnoreCase) ||
                    message.StartsWith("ATSBUILD summary", StringComparison.OrdinalIgnoreCase) ||
-                   message.StartsWith("PLSR check log written:", StringComparison.OrdinalIgnoreCase);
+                   message.StartsWith("PLSR stage:", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("PLSR precheck:", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("PLSR check log written:", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("Starting shapefile import.", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("Importer.Init begin:", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("Importer.Import begin.", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("PLSR check failed at stage", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("ATSBUILD failed at stage", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsAffirmative(string? value)
@@ -7347,6 +7610,10 @@ namespace AtsBackgroundBuilder
 }
 
 /////////////////////////////////////////////////////////////////////
+
+
+
+
 
 
 

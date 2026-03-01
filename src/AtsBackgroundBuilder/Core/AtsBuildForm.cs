@@ -46,6 +46,7 @@ namespace AtsBackgroundBuilder.Core
         /// Run PLSR XML check against disposition labels.
         /// </summary>
         public bool CheckPlsr { get; set; } = false;
+        public bool IncludeSurfaceImpact { get; set; } = false;
 
         public List<string> PlsrXmlPaths { get; } = new List<string>();
     }
@@ -69,6 +70,7 @@ namespace AtsBackgroundBuilder.Core
         private readonly CheckBox _includeCompassMapping = new CheckBox();
         private readonly CheckBox _includeCrownReservations = new CheckBox();
         private readonly CheckBox _checkPlsr = new CheckBox();
+        private readonly CheckBox _includeSurfaceImpact = new CheckBox();
         private readonly CheckBox _allowMultiQuarterDispositions = new CheckBox();
         private readonly CheckBox _includeQuarterSectionLabels = new CheckBox();
         private readonly CheckBox _autoCheckUpdateShapesAlways = new CheckBox();
@@ -76,9 +78,11 @@ namespace AtsBackgroundBuilder.Core
         private readonly Button _addGridRow = new Button();
         private readonly ComboBox _shapeTypeCombo = new ComboBox();
         private readonly Button _updateShape = new Button();
+        private readonly Button _addSectionsFromBoundary = new Button();
         private readonly Button _build = new Button();
         private readonly Button _cancel = new Button();
         private readonly ToolTip _toolTip = new ToolTip();
+        private readonly Config _config;
         private static readonly Color CanvasColor = Color.FromArgb(246, 248, 251);
         private static readonly Color CardColor = Color.White;
         private static readonly Color MutedTextColor = Color.FromArgb(98, 109, 127);
@@ -116,6 +120,7 @@ namespace AtsBackgroundBuilder.Core
 
         public AtsBuildForm(IEnumerable<string> clientNames, Config config)
         {
+            _config = config ?? new Config();
             Text = "ATS Background Builder";
             FormBorderStyle = FormBorderStyle.Sizable;
             MaximizeBox = true;
@@ -141,8 +146,8 @@ namespace AtsBackgroundBuilder.Core
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             Controls.Add(root);
 
-            root.Controls.Add(BuildTopPanel(clientNames, config), 0, 0);
-            root.Controls.Add(BuildOptionsPanel(config), 0, 1);
+            root.Controls.Add(BuildTopPanel(clientNames, _config), 0, 0);
+            root.Controls.Add(BuildOptionsPanel(_config), 0, 1);
             root.Controls.Add(BuildGridPanel(), 0, 2);
             root.Controls.Add(BuildButtonsPanel(), 0, 3);
 
@@ -366,6 +371,7 @@ namespace AtsBackgroundBuilder.Core
             ConfigureOptionCheckBox(_includeCompassMapping, "COMPASS MAPPING", false);
             ConfigureOptionCheckBox(_includeCrownReservations, "Crown Reservations", false);
             ConfigureOptionCheckBox(_checkPlsr, "Check PLSR", false);
+            ConfigureOptionCheckBox(_includeSurfaceImpact, "Surface Impact", false);
             ConfigureOptionCheckBox(_allowMultiQuarterDispositions, "1/4 Definition", config?.AllowMultiQuarterDispositions ?? false);
             ConfigureOptionCheckBox(_includeQuarterSectionLabels, "1/4 SEC Labels", false);
 
@@ -392,6 +398,7 @@ namespace AtsBackgroundBuilder.Core
             toggleColumnB.Controls.Add(_includeCompassMapping);
             toggleColumnB.Controls.Add(_includeCrownReservations);
             toggleColumnB.Controls.Add(_checkPlsr);
+            toggleColumnB.Controls.Add(_includeSurfaceImpact);
             toggleColumnB.Controls.Add(_allowMultiQuarterDispositions);
             toggleColumnB.Controls.Add(_includeQuarterSectionLabels);
 
@@ -568,6 +575,14 @@ namespace AtsBackgroundBuilder.Core
             _updateShape.Click += (_, __) => OnUpdateShape();
             ConfigureOutlineButton(_updateShape);
             leftActions.Controls.Add(_updateShape);
+
+            _addSectionsFromBoundary.Text = "ADD SECTIONS FROM BDY";
+            _addSectionsFromBoundary.Width = 190;
+            _addSectionsFromBoundary.Height = 32;
+            _addSectionsFromBoundary.Margin = new Padding(10, 0, 0, 0);
+            _addSectionsFromBoundary.Click += (_, __) => OnAddSectionsFromBoundary();
+            ConfigureOutlineButton(_addSectionsFromBoundary);
+            leftActions.Controls.Add(_addSectionsFromBoundary);
 
             ConfigureOptionCheckBox(_autoCheckUpdateShapesAlways, "CHECK/UPDATE SHAPES ALWAYS", false);
             _autoCheckUpdateShapesAlways.Margin = new Padding(10, 7, 0, 0);
@@ -1249,8 +1264,182 @@ namespace AtsBackgroundBuilder.Core
             }
         }
 
+        private void OnAddSectionsFromBoundary()
+        {
+            try
+            {
+            var importedRows = new List<BoundarySectionImportService.SectionGridEntry>();
+            var serviceMessage = string.Empty;
+            var cancelled = false;
+            var zone = _zone12Radio.Checked ? 12 : 11;
+            bool succeeded;
+            try
+            {
+                Hide();
+                succeeded = BoundarySectionImportService.TryCollectEntriesFromBoundary(
+                    _config,
+                    zone,
+                    out importedRows,
+                    out serviceMessage,
+                    out cancelled);
+            }
+            finally
+            {
+                if (!Visible)
+                {
+                    Show();
+                }
+
+                Activate();
+            }
+
+            if (!succeeded)
+            {
+                if (!cancelled && !string.IsNullOrWhiteSpace(serviceMessage))
+                {
+                    MessageBox.Show(this, serviceMessage, "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+
+                return;
+            }
+
+            // If the grid only contains placeholder empty rows, clear them before appending imported rows.
+            if (!HasAnyPopulatedGridRows())
+            {
+                for (var i = _grid.Rows.Count - 1; i >= 0; i--)
+                {
+                    var row = _grid.Rows[i];
+                    if (row == null || row.IsNewRow)
+                    {
+                        continue;
+                    }
+
+                    _grid.Rows.RemoveAt(i);
+                }
+            }
+
+            var existingKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (row == null || row.IsNewRow || !RowHasAnyValue(row))
+                {
+                    continue;
+                }
+
+                existingKeys.Add(BuildRowKey(
+                    GetCell(row, "M"),
+                    GetCell(row, "RGE"),
+                    GetCell(row, "TWP"),
+                    GetCell(row, "SEC"),
+                    GetCell(row, "HQ")));
+            }
+
+            var added = 0;
+            var duplicates = 0;
+            foreach (var entry in importedRows)
+            {
+                var key = BuildRowKey(entry.Meridian, entry.Range, entry.Township, entry.Section, entry.Quarter);
+                if (!existingKeys.Add(key))
+                {
+                    duplicates++;
+                    continue;
+                }
+
+                _grid.Rows.Add(string.Empty, entry.Meridian, entry.Range, entry.Township, entry.Section, entry.Quarter);
+                added++;
+            }
+
+            if (added > 0)
+            {
+                RefreshGridRowNumbers();
+            }
+
+            MessageBox.Show(
+                this,
+                BuildBoundaryImportResultMessage(serviceMessage, added, duplicates),
+                "ATSBUILD",
+                MessageBoxButtons.OK,
+                added > 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }
+            catch (Exception ex)
+            {
+                WriteUiException("AtsBuildForm.OnAddSectionsFromBoundary", ex);
+                MessageBox.Show(
+                    this,
+                    "Boundary import failed:\n" + ex.Message,
+                    "ATSBUILD",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+        }
+
+        private bool HasAnyPopulatedGridRows()
+        {
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (row == null || row.IsNewRow)
+                {
+                    continue;
+                }
+
+                if (RowHasAnyValue(row))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool RowHasAnyValue(DataGridViewRow row)
+        {
+            if (row == null)
+            {
+                return false;
+            }
+
+            return !string.IsNullOrWhiteSpace(row.Cells["M"]?.Value?.ToString()) ||
+                   !string.IsNullOrWhiteSpace(row.Cells["RGE"]?.Value?.ToString()) ||
+                   !string.IsNullOrWhiteSpace(row.Cells["TWP"]?.Value?.ToString()) ||
+                   !string.IsNullOrWhiteSpace(row.Cells["SEC"]?.Value?.ToString()) ||
+                   !string.IsNullOrWhiteSpace(row.Cells["HQ"]?.Value?.ToString());
+        }
+
+        private static string BuildRowKey(string m, string rge, string twp, string sec, string hq)
+        {
+            return string.Join(
+                "|",
+                NormalizeRowToken(m),
+                NormalizeRowToken(rge),
+                NormalizeRowToken(twp),
+                NormalizeRowToken(sec),
+                NormalizeRowToken(hq));
+        }
+
+        private static string NormalizeRowToken(string value)
+        {
+            return value?.Trim().ToUpperInvariant() ?? string.Empty;
+        }
+
+        private static string BuildBoundaryImportResultMessage(string serviceMessage, int added, int duplicates)
+        {
+            var prefix = string.IsNullOrWhiteSpace(serviceMessage)
+                ? string.Empty
+                : serviceMessage.Trim() + Environment.NewLine + Environment.NewLine;
+            if (added <= 0)
+            {
+                return prefix + "No new section rows were added." +
+                       (duplicates > 0 ? $" Skipped {duplicates} duplicate row(s)." : string.Empty);
+            }
+
+            return prefix + $"Added {added} row(s) to the section input list." +
+                   (duplicates > 0 ? $" Skipped {duplicates} duplicate row(s)." : string.Empty);
+        }
+
         private void OnBuild()
         {
+            try
+            {
             var client = _clientCombo.SelectedItem?.ToString()?.Trim() ?? string.Empty;
             if (string.IsNullOrWhiteSpace(client))
             {
@@ -1283,22 +1472,24 @@ namespace AtsBackgroundBuilder.Core
                 IncludeCrownReservations = _includeCrownReservations.Checked,
                 AutoCheckUpdateShapefilesAlways = _autoCheckUpdateShapesAlways.Checked,
                 CheckPlsr = _checkPlsr.Checked,
+                IncludeSurfaceImpact = _includeSurfaceImpact.Checked,
                 IncludeQuarterSectionLabels = _includeQuarterSectionLabels.Checked,
                 UseAlignedDimensions = true,
             };
             Result.SectionRequests.AddRange(requests);
 
-            if (Result.CheckPlsr)
+            var requiresPlsrXml = Result.CheckPlsr || Result.IncludeSurfaceImpact;
+            if (requiresPlsrXml)
             {
                 using (var dialog = new OpenFileDialog())
                 {
                     dialog.Filter = "PLSR XML (*.xml)|*.xml|All files (*.*)|*.*";
                     dialog.Multiselect = true;
-                    dialog.Title = "Select PLSR XML file(s)";
+                    dialog.Title = "Select PLSR/Surface XML file(s)";
                     dialog.InitialDirectory = Environment.CurrentDirectory;
                     if (dialog.ShowDialog(this) != DialogResult.OK || dialog.FileNames.Length == 0)
                     {
-                        MessageBox.Show(this, "PLSR check requires at least one XML file.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        MessageBox.Show(this, "Check PLSR / Surface Impact requires at least one XML file.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return;
                     }
 
@@ -1311,13 +1502,47 @@ namespace AtsBackgroundBuilder.Core
 
                 if (Result.PlsrXmlPaths.Count == 0)
                 {
-                    MessageBox.Show(this, "PLSR check requires at least one XML file.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(this, "Check PLSR / Surface Impact requires at least one XML file.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
             }
 
             DialogResult = DialogResult.OK;
             Close();
+            }
+            catch (Exception ex)
+            {
+                WriteUiException("AtsBuildForm.OnBuild", ex);
+                MessageBox.Show(
+                    this,
+                    "Build setup failed:\n" + ex.Message,
+                    "ATSBUILD",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+        }
+
+        private static void WriteUiException(string source, Exception ex)
+        {
+            try
+            {
+                var dllFolder = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? Environment.CurrentDirectory;
+                var crashLogPath = Path.Combine(dllFolder, "AtsBackgroundBuilder.crash.log");
+                var lines = new[]
+                {
+                    "---- ATSBUILD UI EXCEPTION ----",
+                    "source: " + (source ?? string.Empty),
+                    "local: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                    "details:",
+                    ex?.ToString() ?? "null",
+                    string.Empty
+                };
+                File.AppendAllLines(crashLogPath, lines);
+            }
+            catch
+            {
+                // best effort only
+            }
         }
 
         private List<SectionRequest> ParseSectionRequests(int zone)

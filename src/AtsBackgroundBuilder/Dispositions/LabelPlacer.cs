@@ -1521,7 +1521,9 @@ namespace AtsBackgroundBuilder.Dispositions
         public QuarterInfo(Polyline polyline, SectionKey? sectionKey = null, QuarterSelection quarter = QuarterSelection.None)
         {
             Polyline = polyline;
-            Bounds = polyline.GeometricExtents;
+            Bounds = TryGetBounds(polyline, out var bounds)
+                ? bounds
+                : new Extents3d(Point3d.Origin, Point3d.Origin);
             SectionKey = sectionKey;
             Quarter = quarter;
         }
@@ -1530,6 +1532,76 @@ namespace AtsBackgroundBuilder.Dispositions
         public Extents3d Bounds { get; }
         public SectionKey? SectionKey { get; }
         public QuarterSelection Quarter { get; }
+
+        private static bool TryGetBounds(Polyline polyline, out Extents3d bounds)
+        {
+            bounds = new Extents3d(Point3d.Origin, Point3d.Origin);
+            if (polyline == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                bounds = polyline.GeometricExtents;
+                return true;
+            }
+            catch
+            {
+                // fallback below
+            }
+
+            try
+            {
+                var count = polyline.NumberOfVertices;
+                if (count <= 0)
+                {
+                    return false;
+                }
+
+                var minX = double.PositiveInfinity;
+                var minY = double.PositiveInfinity;
+                var maxX = double.NegativeInfinity;
+                var maxY = double.NegativeInfinity;
+                var found = false;
+                for (var i = 0; i < count; i++)
+                {
+                    Point2d vertex;
+                    try
+                    {
+                        vertex = polyline.GetPoint2dAt(i);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (vertex.X < minX) minX = vertex.X;
+                    if (vertex.Y < minY) minY = vertex.Y;
+                    if (vertex.X > maxX) maxX = vertex.X;
+                    if (vertex.Y > maxY) maxY = vertex.Y;
+                    found = true;
+                }
+
+                if (!found ||
+                    double.IsNaN(minX) || double.IsInfinity(minX) ||
+                    double.IsNaN(minY) || double.IsInfinity(minY) ||
+                    double.IsNaN(maxX) || double.IsInfinity(maxX) ||
+                    double.IsNaN(maxY) || double.IsInfinity(maxY))
+                {
+                    return false;
+                }
+
+                bounds = new Extents3d(
+                    new Point3d(minX, minY, 0.0),
+                    new Point3d(maxX, maxY, 0.0));
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 
     public sealed class DispositionInfo
@@ -1538,7 +1610,9 @@ namespace AtsBackgroundBuilder.Dispositions
         {
             ObjectId = objectId;
             Polyline = polyline;
-            Bounds = polyline.GeometricExtents;
+            Bounds = TryGetBounds(polyline, out var bounds)
+                ? bounds
+                : new Extents3d(Point3d.Origin, Point3d.Origin);
             LabelText = labelText;
             LayerName = layerName;
             TextLayerName = textLayerName;
@@ -1566,6 +1640,76 @@ namespace AtsBackgroundBuilder.Dispositions
 
         // Draw leader entities (circle + line) from target to label
         public bool AddLeader { get; set; }
+
+        private static bool TryGetBounds(Polyline polyline, out Extents3d bounds)
+        {
+            bounds = new Extents3d(Point3d.Origin, Point3d.Origin);
+            if (polyline == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                bounds = polyline.GeometricExtents;
+                return true;
+            }
+            catch
+            {
+                // fallback below
+            }
+
+            try
+            {
+                var count = polyline.NumberOfVertices;
+                if (count <= 0)
+                {
+                    return false;
+                }
+
+                var minX = double.PositiveInfinity;
+                var minY = double.PositiveInfinity;
+                var maxX = double.NegativeInfinity;
+                var maxY = double.NegativeInfinity;
+                var found = false;
+                for (var i = 0; i < count; i++)
+                {
+                    Point2d vertex;
+                    try
+                    {
+                        vertex = polyline.GetPoint2dAt(i);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (vertex.X < minX) minX = vertex.X;
+                    if (vertex.Y < minY) minY = vertex.Y;
+                    if (vertex.X > maxX) maxX = vertex.X;
+                    if (vertex.Y > maxY) maxY = vertex.Y;
+                    found = true;
+                }
+
+                if (!found ||
+                    double.IsNaN(minX) || double.IsInfinity(minX) ||
+                    double.IsNaN(minY) || double.IsInfinity(minY) ||
+                    double.IsNaN(maxX) || double.IsInfinity(maxX) ||
+                    double.IsNaN(maxY) || double.IsInfinity(maxY))
+                {
+                    return false;
+                }
+
+                bounds = new Extents3d(
+                    new Point3d(minX, minY, 0.0),
+                    new Point3d(maxX, maxY, 0.0));
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 
     public sealed class PlacementResult

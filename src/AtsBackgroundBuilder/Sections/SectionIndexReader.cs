@@ -45,6 +45,18 @@ namespace AtsBackgroundBuilder.Sections
 
     public static class SectionIndexReader
     {
+        public sealed class SectionOutlineEntry
+        {
+            public SectionOutlineEntry(SectionKey key, SectionOutline outline)
+            {
+                Key = key;
+                Outline = outline;
+            }
+
+            public SectionKey Key { get; }
+            public SectionOutline Outline { get; }
+        }
+
         private sealed class FileIndexCacheEntry
         {
             public FileIndexCacheEntry(DateTime lastWriteUtc, Dictionary<string, SectionOutline> index)
@@ -94,6 +106,40 @@ namespace AtsBackgroundBuilder.Sections
             }
 
             logger.WriteLine("Section index not found or missing section entry for zone " + key.Zone + ".");
+            return false;
+        }
+
+        public static bool TryLoadSectionOutlinesForZone(
+            string baseFolder,
+            int zone,
+            Logger logger,
+            out List<SectionOutlineEntry> entries)
+        {
+            entries = new List<SectionOutlineEntry>();
+
+            var jsonlPath = GetIndexPath(baseFolder, zone, ".jsonl");
+            if (!string.IsNullOrWhiteSpace(jsonlPath) && File.Exists(jsonlPath))
+            {
+                if (TryReadAllFromJsonl(jsonlPath, zone, out entries))
+                {
+                    return true;
+                }
+
+                logger.WriteLine("Section list unavailable from JSONL index: " + jsonlPath);
+            }
+
+            var csvPath = GetIndexPath(baseFolder, zone, ".csv");
+            if (!string.IsNullOrWhiteSpace(csvPath) && File.Exists(csvPath))
+            {
+                if (TryReadAllFromCsv(csvPath, zone, out entries))
+                {
+                    return true;
+                }
+
+                logger.WriteLine("Section list unavailable from CSV index: " + csvPath);
+            }
+
+            logger.WriteLine("Section index not found or unreadable for zone " + zone + ".");
             return false;
         }
 
@@ -149,6 +195,83 @@ namespace AtsBackgroundBuilder.Sections
             }
 
             outline = CloneOutline(cached, path);
+            return true;
+        }
+
+        private static bool TryReadAllFromJsonl(string path, int zone, out List<SectionOutlineEntry> entries)
+        {
+            entries = new List<SectionOutlineEntry>();
+            var index = GetOrBuildJsonlFileIndex(path);
+            if (index == null || index.Count == 0)
+            {
+                return false;
+            }
+
+            return TryBuildSectionOutlineEntries(index, path, zone, out entries);
+        }
+
+        private static bool TryReadAllFromCsv(string path, int zone, out List<SectionOutlineEntry> entries)
+        {
+            entries = new List<SectionOutlineEntry>();
+            var index = GetOrBuildCsvFileIndex(path);
+            if (index == null || index.Count == 0)
+            {
+                return false;
+            }
+
+            return TryBuildSectionOutlineEntries(index, path, zone, out entries);
+        }
+
+        private static bool TryBuildSectionOutlineEntries(
+            IReadOnlyDictionary<string, SectionOutline> index,
+            string sourcePath,
+            int zone,
+            out List<SectionOutlineEntry> entries)
+        {
+            entries = new List<SectionOutlineEntry>();
+            if (index == null || index.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (var pair in index)
+            {
+                if (!TryParseLookupKey(pair.Key, out var key) || key.Zone != zone)
+                {
+                    continue;
+                }
+
+                entries.Add(new SectionOutlineEntry(key, CloneOutline(pair.Value, sourcePath)));
+            }
+
+            return entries.Count > 0;
+        }
+
+        private static bool TryParseLookupKey(string lookupKey, out SectionKey key)
+        {
+            key = default;
+            if (string.IsNullOrWhiteSpace(lookupKey))
+            {
+                return false;
+            }
+
+            var tokens = lookupKey.Split('|');
+            if (tokens.Length != 5)
+            {
+                return false;
+            }
+
+            if (!int.TryParse(tokens[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var zone))
+            {
+                return false;
+            }
+
+            key = new SectionKey(
+                zone,
+                NormalizeKey(tokens[1]),
+                NormalizeKey(tokens[2]),
+                NormalizeKey(tokens[3]),
+                NormalizeKey(tokens[4]));
             return true;
         }
 

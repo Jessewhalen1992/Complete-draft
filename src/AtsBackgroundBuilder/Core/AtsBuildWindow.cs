@@ -29,15 +29,28 @@ namespace AtsBackgroundBuilder.Core
         private readonly CheckBox _includeCompassMapping = new CheckBox();
         private readonly CheckBox _includeCrownReservations = new CheckBox();
         private readonly CheckBox _checkPlsr = new CheckBox();
+        private readonly CheckBox _includeSurfaceImpact = new CheckBox();
         private readonly CheckBox _allowMultiQuarterDispositions = new CheckBox();
         private readonly CheckBox _includeQuarterSectionLabels = new CheckBox();
         private readonly CheckBox _autoCheckUpdateShapesAlways = new CheckBox();
         private readonly ComboBox _shapeTypeCombo = new ComboBox();
         private readonly Button _updateShape = new Button();
+        private readonly Button _addSectionsFromBoundary = new Button();
         private readonly Button _build = new Button();
         private readonly Button _cancel = new Button();
         private readonly DataGrid _grid = new DataGrid();
         private readonly ObservableCollection<GridInputRow> _rows = new ObservableCollection<GridInputRow>();
+        private readonly Config _config;
+        private readonly List<string> _lastSelectedPlsrXmlPaths = new List<string>();
+        private bool _explicitCancelRequested;
+        private bool _buildRequested;
+        private bool _buildAttempted;
+        private bool _boundaryImportRoundTripUsed;
+        private string _buildAttemptTrace = "none";
+        private static readonly object PersistedPlsrStateLock = new object();
+        private static bool PersistedPlsrStateLoaded;
+        private static readonly List<string> PersistedPlsrXmlPaths = new List<string>();
+        private static string PersistedPlsrStateFilePath = string.Empty;
 
         private static readonly string[] DispositionShapeUpdateSourceRoots =
         {
@@ -68,8 +81,9 @@ namespace AtsBackgroundBuilder.Core
         private const string CompassMappingShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\COMPASS MAPPING";
         private const string CrownReservationsShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\CLR";
 
-        public AtsBuildWindow(IEnumerable<string> clientNames, Config config)
+        public AtsBuildWindow(IEnumerable<string> clientNames, Config config, AtsBuildInput? seedInput = null)
         {
+            _config = config ?? new Config();
             Title = "PREDRAFT BUILDER";
             Width = 1300;
             Height = 780;
@@ -78,10 +92,237 @@ namespace AtsBackgroundBuilder.Core
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             Background = new SolidColorBrush(Color.FromRgb(246, 248, 251));
 
-            BuildLayout(clientNames, config);
+            if (TryGetPersistedPlsrXmlPaths(out var persistedPlsrXmlPaths))
+            {
+                _lastSelectedPlsrXmlPaths.AddRange(persistedPlsrXmlPaths);
+            }
+
+            BuildLayout(clientNames, _config);
+
+            if (seedInput != null)
+            {
+                ApplySeedInput(seedInput);
+            }
+
+            Closing += (_, __) =>
+            {
+                if (Result == null && !_buildRequested && !_buildAttempted)
+                {
+                    _explicitCancelRequested = true;
+                }
+            };
         }
 
         public AtsBuildInput? Result { get; private set; }
+        public bool ExplicitCancelRequested => _explicitCancelRequested;
+        public bool BuildRequested => _buildRequested;
+        public bool BuildAttempted => _buildAttempted;
+        public bool BoundaryImportRoundTripUsed => _boundaryImportRoundTripUsed;
+        public string BuildAttemptTrace => _buildAttemptTrace;
+
+        private void ApplySeedInput(AtsBuildInput seedInput)
+        {
+            if (seedInput == null)
+            {
+                return;
+            }
+
+            var seedClient = seedInput.CurrentClient?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(seedClient))
+            {
+                var matched = false;
+                foreach (var item in _clientCombo.Items)
+                {
+                    if (string.Equals(item?.ToString(), seedClient, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _clientCombo.SelectedItem = item;
+                        matched = true;
+                        break;
+                    }
+                }
+
+                if (!matched)
+                {
+                    _clientCombo.Items.Add(seedClient);
+                    _clientCombo.SelectedItem = seedClient;
+                }
+            }
+
+            _zone12Radio.IsChecked = seedInput.Zone == 12;
+            _zone11Radio.IsChecked = seedInput.Zone != 12;
+            _textHeightBox.Text = seedInput.TextHeight > 0
+                ? seedInput.TextHeight.ToString("0.##", CultureInfo.InvariantCulture)
+                : "10";
+            _maxAttemptsBox.Text = Math.Max(1, seedInput.MaxOverlapAttempts).ToString(CultureInfo.InvariantCulture);
+
+            _includeDispoLinework.IsChecked = seedInput.IncludeDispositionLinework;
+            _includeDispoLabels.IsChecked = seedInput.IncludeDispositionLabels;
+            _includeAtsFabric.IsChecked = seedInput.IncludeAtsFabric;
+            _includeLsds.IsChecked = seedInput.DrawLsdSubdivisionLines;
+            _includeP3Shapes.IsChecked = seedInput.IncludeP3Shapefiles;
+            _includeCompassMapping.IsChecked = seedInput.IncludeCompassMapping;
+            _includeCrownReservations.IsChecked = seedInput.IncludeCrownReservations;
+            _autoCheckUpdateShapesAlways.IsChecked = seedInput.AutoCheckUpdateShapefilesAlways;
+            _checkPlsr.IsChecked = seedInput.CheckPlsr;
+            _includeSurfaceImpact.IsChecked = seedInput.IncludeSurfaceImpact;
+            _allowMultiQuarterDispositions.IsChecked = seedInput.AllowMultiQuarterDispositions;
+            _includeQuarterSectionLabels.IsChecked = seedInput.IncludeQuarterSectionLabels;
+
+            _rows.Clear();
+            if (seedInput.SectionRequests.Count == 0)
+            {
+                _rows.Add(new GridInputRow());
+            }
+            else
+            {
+                foreach (var request in seedInput.SectionRequests)
+                {
+                    _rows.Add(new GridInputRow
+                    {
+                        M = request.Key.Meridian ?? string.Empty,
+                        RGE = request.Key.Range ?? string.Empty,
+                        TWP = request.Key.Township ?? string.Empty,
+                        SEC = request.Key.Section ?? string.Empty,
+                        HQ = QuarterToGridToken(request.Quarter),
+                    });
+                }
+            }
+
+            _lastSelectedPlsrXmlPaths.Clear();
+            foreach (var xmlPath in seedInput.PlsrXmlPaths.Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path)))
+            {
+                _lastSelectedPlsrXmlPaths.Add(xmlPath);
+            }
+
+            if (_lastSelectedPlsrXmlPaths.Count > 0)
+            {
+                PersistPlsrXmlPaths(_lastSelectedPlsrXmlPaths);
+            }
+        }
+
+        private static string QuarterToGridToken(QuarterSelection quarter)
+        {
+            return quarter switch
+            {
+                QuarterSelection.NorthWest => "NW",
+                QuarterSelection.NorthEast => "NE",
+                QuarterSelection.SouthWest => "SW",
+                QuarterSelection.SouthEast => "SE",
+                QuarterSelection.NorthHalf => "N",
+                QuarterSelection.SouthHalf => "S",
+                QuarterSelection.EastHalf => "E",
+                QuarterSelection.WestHalf => "W",
+                QuarterSelection.All => "ALL",
+                _ => "ALL",
+            };
+        }
+
+        public static bool TryGetPersistedPlsrXmlPaths(out List<string> xmlPaths)
+        {
+            EnsurePersistedPlsrStateLoaded();
+            lock (PersistedPlsrStateLock)
+            {
+                var validPaths = PersistedPlsrXmlPaths
+                    .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (validPaths.Count != PersistedPlsrXmlPaths.Count)
+                {
+                    PersistedPlsrXmlPaths.Clear();
+                    PersistedPlsrXmlPaths.AddRange(validPaths);
+                    SavePersistedPlsrXmlPathsUnsafe();
+                }
+
+                xmlPaths = validPaths;
+                return xmlPaths.Count > 0;
+            }
+        }
+
+        private static void PersistPlsrXmlPaths(IEnumerable<string> xmlPaths)
+        {
+            EnsurePersistedPlsrStateLoaded();
+            lock (PersistedPlsrStateLock)
+            {
+                PersistedPlsrXmlPaths.Clear();
+                if (xmlPaths != null)
+                {
+                    foreach (var path in xmlPaths)
+                    {
+                        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path) && !PersistedPlsrXmlPaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+                        {
+                            PersistedPlsrXmlPaths.Add(path);
+                        }
+                    }
+                }
+
+                SavePersistedPlsrXmlPathsUnsafe();
+            }
+        }
+
+        private static void EnsurePersistedPlsrStateLoaded()
+        {
+            lock (PersistedPlsrStateLock)
+            {
+                if (PersistedPlsrStateLoaded)
+                {
+                    return;
+                }
+
+                PersistedPlsrXmlPaths.Clear();
+                PersistedPlsrStateFilePath = ResolvePersistedPlsrStateFilePath();
+                if (File.Exists(PersistedPlsrStateFilePath))
+                {
+                    try
+                    {
+                        foreach (var line in File.ReadAllLines(PersistedPlsrStateFilePath))
+                        {
+                            var candidate = line?.Trim();
+                            if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate) && !PersistedPlsrXmlPaths.Contains(candidate, StringComparer.OrdinalIgnoreCase))
+                            {
+                                PersistedPlsrXmlPaths.Add(candidate);
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // best effort only
+                    }
+                }
+
+                PersistedPlsrStateLoaded = true;
+            }
+        }
+
+        private static string ResolvePersistedPlsrStateFilePath()
+        {
+            try
+            {
+                var dllFolder = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? Environment.CurrentDirectory;
+                return Path.Combine(dllFolder, "AtsBackgroundBuilder.plsr.paths.txt");
+            }
+            catch
+            {
+                return Path.Combine(Environment.CurrentDirectory, "AtsBackgroundBuilder.plsr.paths.txt");
+            }
+        }
+
+        private static void SavePersistedPlsrXmlPathsUnsafe()
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(PersistedPlsrStateFilePath))
+                {
+                    PersistedPlsrStateFilePath = ResolvePersistedPlsrStateFilePath();
+                }
+
+                File.WriteAllLines(PersistedPlsrStateFilePath, PersistedPlsrXmlPaths);
+            }
+            catch
+            {
+                // best effort only
+            }
+        }
 
         private void BuildLayout(IEnumerable<string> clientNames, Config config)
         {
@@ -95,7 +336,7 @@ namespace AtsBackgroundBuilder.Core
             Grid.SetRow(header, 0);
             root.Children.Add(header);
 
-            var settings = BuildSettingsCard(config);
+            var settings = BuildSettingsCard(_config);
             Grid.SetRow(settings, 1);
             root.Children.Add(settings);
 
@@ -243,6 +484,7 @@ namespace AtsBackgroundBuilder.Core
             ConfigureOptionCheckBox(_includeCompassMapping, "COMPASS MAPPING", false);
             ConfigureOptionCheckBox(_includeCrownReservations, "Crown Reservations", false);
             ConfigureOptionCheckBox(_checkPlsr, "Check PLSR", false);
+            ConfigureOptionCheckBox(_includeSurfaceImpact, "Surface Impact", false);
             ConfigureOptionCheckBox(_allowMultiQuarterDispositions, "1/4 Definition", config?.AllowMultiQuarterDispositions ?? false);
             ConfigureOptionCheckBox(_includeQuarterSectionLabels, "1/4 SEC Labels", false);
 
@@ -259,6 +501,7 @@ namespace AtsBackgroundBuilder.Core
             rightToggleStack.Children.Add(_includeCompassMapping);
             rightToggleStack.Children.Add(_includeCrownReservations);
             rightToggleStack.Children.Add(_checkPlsr);
+            rightToggleStack.Children.Add(_includeSurfaceImpact);
             rightToggleStack.Children.Add(_allowMultiQuarterDispositions);
             rightToggleStack.Children.Add(_includeQuarterSectionLabels);
             Grid.SetColumn(rightToggleStack, 2);
@@ -391,6 +634,14 @@ namespace AtsBackgroundBuilder.Core
             ConfigureOutlineButton(_updateShape);
             left.Children.Add(_updateShape);
 
+            _addSectionsFromBoundary.Content = "ADD SECTIONS FROM BDY";
+            _addSectionsFromBoundary.Width = 190;
+            _addSectionsFromBoundary.Height = 32;
+            _addSectionsFromBoundary.Margin = new Thickness(10, 0, 0, 0);
+            _addSectionsFromBoundary.Click += (_, __) => OnAddSectionsFromBoundary();
+            ConfigureOutlineButton(_addSectionsFromBoundary);
+            left.Children.Add(_addSectionsFromBoundary);
+
             ConfigureOptionCheckBox(_autoCheckUpdateShapesAlways, "CHECK/UPDATE SHAPES ALWAYS", false);
             _autoCheckUpdateShapesAlways.Margin = new Thickness(10, 7, 0, 0);
             left.Children.Add(_autoCheckUpdateShapesAlways);
@@ -408,8 +659,10 @@ namespace AtsBackgroundBuilder.Core
             _cancel.IsCancel = true;
             _cancel.Click += (_, __) =>
             {
-                DialogResult = false;
-                Close();
+                _explicitCancelRequested = true;
+                _buildRequested = false;
+                _buildAttemptTrace = "cancel_button_click";
+                CloseAsDialogResultOrWindow(false);
             };
             ConfigureOutlineButton(_cancel);
 
@@ -417,7 +670,13 @@ namespace AtsBackgroundBuilder.Core
             _build.Width = 120;
             _build.Height = 32;
             _build.IsDefault = true;
-            _build.Click += (_, __) => OnBuild();
+            _build.Click += (_, __) =>
+            {
+                _buildAttemptTrace = "build_button_click";
+                _buildAttempted = true;
+                _buildRequested = true;
+                OnBuild();
+            };
             ConfigurePrimaryButton(_build);
 
             right.Children.Add(_cancel);
@@ -499,11 +758,159 @@ namespace AtsBackgroundBuilder.Core
             button.Cursor = Cursors.Hand;
         }
 
+        private void OnAddSectionsFromBoundary()
+        {
+            try
+            {
+            var importedRows = new List<BoundarySectionImportService.SectionGridEntry>();
+            var serviceMessage = string.Empty;
+            var cancelled = false;
+            var zone = _zone12Radio.IsChecked == true ? 12 : 11;
+            bool succeeded;
+            try
+            {
+                _boundaryImportRoundTripUsed = true;
+                Hide();
+                succeeded = BoundarySectionImportService.TryCollectEntriesFromBoundary(
+                    _config,
+                    zone,
+                    out importedRows,
+                    out serviceMessage,
+                    out cancelled);
+            }
+            finally
+            {
+                if (!IsVisible)
+                {
+                    Show();
+                }
+
+                Activate();
+            }
+
+            if (!succeeded)
+            {
+                if (!cancelled && !string.IsNullOrWhiteSpace(serviceMessage))
+                {
+                    MessageBox.Show(this, serviceMessage, "ATSBUILD", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+
+                return;
+            }
+
+            // If the grid only contains placeholder empty rows, clear them before appending imported rows.
+            if (!_rows.Any(RowHasAnyValue))
+            {
+                _rows.Clear();
+            }
+
+            var existingKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in _rows)
+            {
+                if (!RowHasAnyValue(row))
+                {
+                    continue;
+                }
+
+                existingKeys.Add(BuildRowKey(row.M, row.RGE, row.TWP, row.SEC, row.HQ));
+            }
+
+            var added = 0;
+            var duplicates = 0;
+            foreach (var entry in importedRows)
+            {
+                var key = BuildRowKey(entry.Meridian, entry.Range, entry.Township, entry.Section, entry.Quarter);
+                if (!existingKeys.Add(key))
+                {
+                    duplicates++;
+                    continue;
+                }
+
+                _rows.Add(new GridInputRow
+                {
+                    M = entry.Meridian,
+                    RGE = entry.Range,
+                    TWP = entry.Township,
+                    SEC = entry.Section,
+                    HQ = entry.Quarter,
+                });
+                added++;
+            }
+
+            MessageBox.Show(
+                this,
+                BuildBoundaryImportResultMessage(serviceMessage, added, duplicates),
+                "ATSBUILD",
+                MessageBoxButton.OK,
+                added > 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            }
+            catch (Exception ex)
+            {
+                WriteUiException("AtsBuildWindow.OnAddSectionsFromBoundary", ex);
+                MessageBox.Show(
+                    this,
+                    "Boundary import failed:\n" + ex.Message,
+                    "ATSBUILD",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        }
+
+        private static bool RowHasAnyValue(GridInputRow row)
+        {
+            if (row == null)
+            {
+                return false;
+            }
+
+            return !string.IsNullOrWhiteSpace(row.M) ||
+                   !string.IsNullOrWhiteSpace(row.RGE) ||
+                   !string.IsNullOrWhiteSpace(row.TWP) ||
+                   !string.IsNullOrWhiteSpace(row.SEC) ||
+                   !string.IsNullOrWhiteSpace(row.HQ);
+        }
+
+        private static string BuildRowKey(string m, string rge, string twp, string sec, string hq)
+        {
+            return string.Join(
+                "|",
+                NormalizeRowToken(m),
+                NormalizeRowToken(rge),
+                NormalizeRowToken(twp),
+                NormalizeRowToken(sec),
+                NormalizeRowToken(hq));
+        }
+
+        private static string NormalizeRowToken(string value)
+        {
+            return value?.Trim().ToUpperInvariant() ?? string.Empty;
+        }
+
+        private static string BuildBoundaryImportResultMessage(string serviceMessage, int added, int duplicates)
+        {
+            var prefix = string.IsNullOrWhiteSpace(serviceMessage)
+                ? string.Empty
+                : serviceMessage.Trim() + Environment.NewLine + Environment.NewLine;
+            if (added <= 0)
+            {
+                return prefix + "No new section rows were added." +
+                       (duplicates > 0 ? $" Skipped {duplicates} duplicate row(s)." : string.Empty);
+            }
+
+            return prefix + $"Added {added} row(s) to the section input list." +
+                   (duplicates > 0 ? $" Skipped {duplicates} duplicate row(s)." : string.Empty);
+        }
+
         private void OnBuild()
         {
+            try
+            {
+            _buildAttemptTrace = "onbuild_start";
             var client = _clientCombo.SelectedItem?.ToString()?.Trim() ?? string.Empty;
             if (string.IsNullOrWhiteSpace(client))
             {
+                _buildRequested = false;
+                _buildAttemptTrace = "onbuild_abort_client_missing";
                 MessageBox.Show(this, "Client is required.", "ATSBUILD", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -512,12 +919,16 @@ namespace AtsBackgroundBuilder.Core
 
             if (!TryParsePositiveDouble(_textHeightBox.Text, out var textHeight))
             {
+                _buildRequested = false;
+                _buildAttemptTrace = "onbuild_abort_text_height_invalid";
                 MessageBox.Show(this, "Text height must be a valid number greater than 0.", "ATSBUILD", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             if (!TryParsePositiveInt(_maxAttemptsBox.Text, out var maxOverlapAttempts))
             {
+                _buildRequested = false;
+                _buildAttemptTrace = "onbuild_abort_max_attempts_invalid";
                 MessageBox.Show(this, "Max overlap attempts must be a valid whole number greater than 0.", "ATSBUILD", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -525,6 +936,8 @@ namespace AtsBackgroundBuilder.Core
             var requests = ParseSectionRequests(zone);
             if (requests.Count == 0)
             {
+                _buildRequested = false;
+                _buildAttemptTrace = "onbuild_abort_requests_empty_or_invalid";
                 MessageBox.Show(this, "At least one section row is required.", "ATSBUILD", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -545,45 +958,179 @@ namespace AtsBackgroundBuilder.Core
                 IncludeCrownReservations = _includeCrownReservations.IsChecked == true,
                 AutoCheckUpdateShapefilesAlways = _autoCheckUpdateShapesAlways.IsChecked == true,
                 CheckPlsr = _checkPlsr.IsChecked == true,
+                IncludeSurfaceImpact = _includeSurfaceImpact.IsChecked == true,
                 IncludeQuarterSectionLabels = _includeQuarterSectionLabels.IsChecked == true,
                 UseAlignedDimensions = true,
             };
             input.SectionRequests.AddRange(requests);
 
-            if (input.CheckPlsr)
-            {
-                var dialog = new OpenFileDialog
+                var requiresPlsrXml = input.CheckPlsr || input.IncludeSurfaceImpact;
+                if (requiresPlsrXml)
+                {
+                    var dialog = new OpenFileDialog
                 {
                     Filter = "PLSR XML (*.xml)|*.xml|All files (*.*)|*.*",
                     Multiselect = true,
-                    Title = "Select PLSR XML file(s)",
+                    Title = "Select PLSR/Surface XML file(s)",
                     InitialDirectory = Environment.CurrentDirectory,
                 };
 
-                if (dialog.ShowDialog(this) != true || dialog.FileNames.Length == 0)
-                {
-                    MessageBox.Show(this, "PLSR check requires at least one XML file.", "ATSBUILD", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
-                }
-
-                foreach (var path in dialog.FileNames)
-                {
-                    if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                    if (dialog.ShowDialog(this) != true || dialog.FileNames.Length == 0)
                     {
-                        input.PlsrXmlPaths.Add(path);
+                        _buildRequested = false;
+                        _buildAttemptTrace = "onbuild_abort_plsr_xml_dialog_cancelled";
+                        MessageBox.Show(this, "Check PLSR / Surface Impact requires at least one XML file.", "ATSBUILD", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
                     }
-                }
+
+                    _lastSelectedPlsrXmlPaths.Clear();
+                    foreach (var path in dialog.FileNames)
+                    {
+                        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                        {
+                            input.PlsrXmlPaths.Add(path);
+                            _lastSelectedPlsrXmlPaths.Add(path);
+                        }
+                    }
+                    PersistPlsrXmlPaths(_lastSelectedPlsrXmlPaths);
+
 
                 if (input.PlsrXmlPaths.Count == 0)
                 {
-                    MessageBox.Show(this, "PLSR check requires at least one XML file.", "ATSBUILD", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    _buildRequested = false;
+                    _buildAttemptTrace = "onbuild_abort_plsr_xml_no_valid_paths";
+                    MessageBox.Show(this, "Check PLSR / Surface Impact requires at least one XML file.", "ATSBUILD", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
             }
 
+            _buildAttemptTrace = "onbuild_success";
             Result = input;
-            DialogResult = true;
-            Close();
+            CloseAsDialogResultOrWindow(true);
+            }
+            catch (Exception ex)
+            {
+                _buildRequested = false;
+                _buildAttemptTrace = "onbuild_exception";
+                WriteUiException("AtsBuildWindow.OnBuild", ex);
+                MessageBox.Show(
+                    this,
+                    "Build setup failed:\n" + ex.Message,
+                    "ATSBUILD",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        }
+
+        public bool TryBuildInputSnapshot(out AtsBuildInput? input, out string reason)
+        {
+            input = null;
+            reason = string.Empty;
+
+            var client = _clientCombo.SelectedItem?.ToString()?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(client))
+            {
+                reason = "client_missing";
+                return false;
+            }
+
+            var zone = _zone12Radio.IsChecked == true ? 12 : 11;
+            if (!TryParsePositiveDouble(_textHeightBox.Text, out var textHeight))
+            {
+                reason = "text_height_invalid";
+                return false;
+            }
+
+            if (!TryParsePositiveInt(_maxAttemptsBox.Text, out var maxOverlapAttempts))
+            {
+                reason = "max_overlap_attempts_invalid";
+                return false;
+            }
+
+            var requests = ParseSectionRequests(zone);
+            if (requests.Count == 0)
+            {
+                reason = "section_requests_empty";
+                return false;
+            }
+
+            var snapshot = new AtsBuildInput
+            {
+                CurrentClient = client,
+                Zone = zone,
+                TextHeight = textHeight,
+                MaxOverlapAttempts = maxOverlapAttempts,
+                IncludeDispositionLinework = _includeDispoLinework.IsChecked == true,
+                IncludeDispositionLabels = _includeDispoLabels.IsChecked == true,
+                AllowMultiQuarterDispositions = _allowMultiQuarterDispositions.IsChecked == true,
+                IncludeAtsFabric = _includeAtsFabric.IsChecked == true,
+                DrawLsdSubdivisionLines = _includeLsds.IsChecked == true,
+                IncludeP3Shapefiles = _includeP3Shapes.IsChecked == true,
+                IncludeCompassMapping = _includeCompassMapping.IsChecked == true,
+                IncludeCrownReservations = _includeCrownReservations.IsChecked == true,
+                AutoCheckUpdateShapefilesAlways = _autoCheckUpdateShapesAlways.IsChecked == true,
+                CheckPlsr = _checkPlsr.IsChecked == true,
+                IncludeSurfaceImpact = _includeSurfaceImpact.IsChecked == true,
+                IncludeQuarterSectionLabels = _includeQuarterSectionLabels.IsChecked == true,
+                UseAlignedDimensions = true,
+            };
+            snapshot.SectionRequests.AddRange(requests);
+
+            var requiresPlsrXml = snapshot.CheckPlsr || snapshot.IncludeSurfaceImpact;
+            if (requiresPlsrXml)
+            {
+                var xmlPaths = _lastSelectedPlsrXmlPaths
+                    .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (xmlPaths.Count == 0)
+                {
+                    reason = "plsr_xml_missing";
+                    return false;
+                }
+
+                snapshot.PlsrXmlPaths.AddRange(xmlPaths);
+            }
+
+            input = snapshot;
+            return true;
+        }
+
+        private void CloseAsDialogResultOrWindow(bool result)
+        {
+            try
+            {
+                DialogResult = result;
+            }
+            catch (InvalidOperationException)
+            {
+                // Window was not shown via ShowDialog(); fallback to regular close.
+                Close();
+            }
+        }
+
+        private static void WriteUiException(string source, Exception ex)
+        {
+            try
+            {
+                var dllFolder = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? Environment.CurrentDirectory;
+                var crashLogPath = Path.Combine(dllFolder, "AtsBackgroundBuilder.crash.log");
+                var lines = new[]
+                {
+                    "---- ATSBUILD UI EXCEPTION ----",
+                    "source: " + (source ?? string.Empty),
+                    "local: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                    "details:",
+                    ex?.ToString() ?? "null",
+                    string.Empty
+                };
+                File.AppendAllLines(crashLogPath, lines);
+            }
+            catch
+            {
+                // best effort only
+            }
         }
 
         private List<SectionRequest> ParseSectionRequests(int zone)
@@ -1342,3 +1889,13 @@ namespace AtsBackgroundBuilder.Core
         }
     }
 }
+
+
+
+
+
+
+
+
+
+

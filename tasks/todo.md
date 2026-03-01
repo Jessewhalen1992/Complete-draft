@@ -1,3 +1,188 @@
+# Feature (Surface Impact Build Option, 2026-03-01)
+
+- [x] Add `Surface Impact` checkbox to both ATSBUILD UIs and wire it into `AtsBuildInput` seed/snapshot flow.
+- [x] Share PLSR XML picker between `Check PLSR` and `Surface Impact` so one XML selection is reused when both are enabled.
+- [x] Port GLIMPS/Surface table parser + processor + table builder logic from `PLSR-MANAGER` into ATSBUILD.
+- [x] Filter Surface Impact records by ATSBUILD section input scope (M/RGE/TWP/SEC + quarter expansion) and remove manual checklist filtering.
+- [x] Run Surface Impact as the final ATSBUILD stage and prompt insertion point; keep cancel safe.
+- [x] Build `AtsBackgroundBuilder` Release and document verification in this file.
+
+## Review (Surface Impact Build Option, 2026-03-01)
+
+- Added `Surface Impact` option to both UIs (`AtsBuildWindow` + `AtsBuildForm`) and to shared `AtsBuildInput`.
+- XML picker now runs once for either option (`Check PLSR` or `Surface Impact`) and stores shared XML paths in `PlsrXmlPaths`.
+- Added new Surface Impact pipeline under `src/AtsBackgroundBuilder/SurfaceImpact/`:
+  - `SurfaceImpactXmlParser` (GLIMPS XML parse with required `ReportRunDate`)
+  - `SurfaceImpactProcessor` (same inclusion/ordering rules as PLSR Manager)
+  - `SurfaceImpactTableBuilder` (same full table layout: FMA/TPA/Surface)
+  - `Plugin.SurfaceImpact` runner (newest-wins by land location, builder-input scoping, final insertion-point prompt)
+- Removed manual surface checklist behavior by replacing it with ATSBUILD input scoping only.
+- Execution order: Surface Impact runs as final ATSBUILD stage before summary; canceling insertion point safely skips only the table insert.
+- Build verification:
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /p:OutputPath=bin\Release\net8.0-windows-surfaceimpact\` (success)
+- Runtime sync:
+  - copied `AtsBackgroundBuilder.dll` and `AtsBackgroundBuilder.pdb` from `bin\Release\net8.0-windows-surfaceimpact` to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows` (timestamp `2026-03-01 12:14:42 PM`).
+
+# Follow-up (Permanent-Fix-Only Cleanup, 2026-03-01)
+
+- [x] Remove temporary verbose UI payload tracing (`UI[...]`, snapshot payload summaries) added for triage.
+- [x] Keep permanent behavior fixes only (no-result seeded reopen + duplicate-window close-before-reopen guard).
+- [x] Rebuild `AtsBackgroundBuilder` Release and sync runtime DLL/PDB.
+
+## Review (Permanent-Fix-Only Cleanup, 2026-03-01)
+
+- Removed temporary high-volume UI trace plumbing from `AtsBuildWindow` and detailed payload-summary logs from `Plugin` fallback flow.
+- Retained permanent fixes:
+  - no-result recovery reopening to seeded dialog requiring explicit Build
+  - bounded reopen attempts
+  - duplicate-window guard (`Close()` still-visible original window before seeded reopen)
+  - validation-abort gate (`onbuild_abort_*`) on snapshot-run fallback.
+- Build verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - build succeeded (warnings only, no errors).
+
+# Follow-up (UI Section Payload Trace + Duplicate Reopen Guard, 2026-03-01)
+
+- [x] Add per-window ATSBUILD UI trace logging for boundary import, Build click, parsed section requests, XML selection, and snapshot payloads.
+- [x] Emit UI payload summaries in plugin fallback flow so log shows whether sections survive from click to final input.
+- [x] Prevent duplicate UI reopen by closing any still-visible original window before seeded reopen.
+- [x] Rebuild `AtsBackgroundBuilder` Release and sync runtime DLL/PDB.
+
+## Review (UI Section Payload Trace + Duplicate Reopen Guard, 2026-03-01)
+
+- Added `UI[windowId] ...` trace lines from `AtsBuildWindow` into main `AtsBackgroundBuilder.log` via constructor trace callback.
+- New traces include:
+  - boundary import before/after row snapshots
+  - Build-button click row snapshot
+  - parsed section request count/sample in `OnBuild`
+  - PLSR XML dialog start/selected counts
+  - `TryBuildInputSnapshot` success/failure with section sample and XML counts
+- Plugin UI loop now logs input summaries for snapshot probe, recovered snapshot, and direct modal result.
+- Added duplicate guard: if no-result recovery needs seeded reopen and previous window is still visible, close old window before reopening.
+
+# Follow-up (Build Click Self-Cancel Guard, 2026-03-01)
+
+- [x] Confirm UI no-intent auto-close path is still cancelling ATSBUILD after boundary/build interactions.
+- [x] Replace immediate cancel on non-explicit/no-intent close with seeded dialog reopen (explicit Build required), with bounded retry attempts.
+- [x] Prevent snapshot-run fallback from treating validation-aborted build attempts as runnable build intent.
+- [x] Rebuild `AtsBackgroundBuilder` Release and sync runtime DLL/PDB.
+
+## Review (Build Click Self-Cancel Guard, 2026-03-01)
+
+- Updated `Core/Plugin.cs` UI loop to reopen `AtsBuildWindow` (seeded with captured input) when dialog closes without explicit cancel and without build intent, rather than immediately cancelling.
+- Added bounded recovery (`3` attempts) to avoid endless reopen loops on persistent host/modal lifecycle failures.
+- Tightened snapshot execution gate to ignore validation-aborted build traces (`onbuild_abort_*`) so fallback cannot run when Build was attempted but validation intentionally failed.
+- Build + runtime sync verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - copied `AtsBackgroundBuilder.dll` and `AtsBackgroundBuilder.pdb` to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows`.
+
+# Follow-up (Boundary Dialog Round-Trip Resume, 2026-03-01)
+
+- [x] Confirm latest self-cancel runs occur with `BuildAttempted=False`/`BuildRequested=False` after boundary workflow.
+- [x] Add boundary round-trip detection and UI-state seeding so modal false-return reopens UI instead of cancelling.
+- [x] Rebuild and sync runtime DLL.
+
+## Review (Boundary Dialog Round-Trip Resume, 2026-03-01)
+
+- Root cause: `ADD SECTIONS FROM BDY` hides the WPF dialog to allow AutoCAD entity selection; that modal hide can cause `ShowDialog()` to return `false` before Build is clicked.
+- Added `BoundaryImportRoundTripUsed` tracking in `AtsBuildWindow` and seeded-window restore support (`AtsBuildWindow(..., AtsBuildInput? seedInput)` + `ApplySeedInput(...)`).
+- Updated `Plugin.cs` UI loop to detect boundary round-trip false-return and reopen the dialog with captured state, waiting for explicit Build click instead of cancelling or auto-running.
+- Build verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - build succeeded (warnings only, no errors).
+
+## Follow-up (Build Click Trace, 2026-03-01)
+
+- [x] Add explicit UI trace markers for build-click lifecycle (`build_button_click`, `onbuild_start`, abort reasons, success).
+- [x] Emit build-trace + boundary-roundtrip flags in plugin no-result log line for deterministic triage.
+- [x] Rebuild and sync runtime DLL.
+
+# Follow-up (Auto-Build Regression Guard, 2026-03-01)
+
+- [x] Reproduce user report that ATSBUILD now runs before pressing Build.
+- [x] Remove non-explicit auto-close snapshot recovery that can trigger build without a Build click.
+- [x] Rebuild and sync runtime DLL after rollback.
+
+## Review (Auto-Build Regression Guard, 2026-03-01)
+
+- User correction confirmed regression: fallback was too aggressive and allowed build execution from UI auto-close.
+- Restored strict recovery intent: snapshot recovery now requires explicit build intent (`BuildRequested || BuildAttempted`), preserving normal close-as-cancel behavior.
+- Build verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - build succeeded (warnings only, no errors).
+
+# Follow-up (Debug-Config PLSR Auto-Close Recovery, 2026-03-01)
+
+- [x] Confirm latest `/debug-config` log shows `BuildAttempted=False` / `BuildRequested=False` cancellation path.
+- [x] Extend UI fallback to recover snapshot on non-explicit auto-close when snapshot is PLSR-enabled.
+- [x] Rebuild `AtsBackgroundBuilder` and sync runtime DLL.
+
+## Review (Debug-Config PLSR Auto-Close Recovery, 2026-03-01)
+
+- Latest run (`2026-03-01 8:53:01 AM`) logged `BuildRequested=False, BuildAttempted=False` then cancelled at UI stage, so `/debug-config` was closing without firing Build.
+- Updated `Core/Plugin.cs` UI fallback gate to try snapshot recovery on non-explicit auto-close, but only continue when the recovered snapshot is PLSR-enabled (`CheckPlsr=true`) to avoid broad close-behavior regressions.
+- Added diagnostic line for this path: `UI auto-close fallback: recovered build input snapshot without explicit Build click (PLSR-enabled snapshot).`
+- Follow-up adjustment: for auto-close with valid snapshot and `CheckPlsr=false`, auto-enable PLSR using persisted XML paths (when available) instead of cancelling.
+- Build verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - build succeeded (warnings only, no errors).
+- Runtime sync:
+  - copied `AtsBackgroundBuilder.dll` and `AtsBackgroundBuilder.pdb` to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows` (timestamp `2026-03-01 8:56:47 AM`).
+
+# Follow-up (PLSR Build Attempt Recovery, 2026-03-01)
+
+- [x] Confirm latest log failure mode for `Add Sections from BDY -> Check PLSR -> Build -> Select XML`.
+- [x] Add persistent `BuildAttempted` UI state so fallback recovery can distinguish "attempted build" from "window closed".
+- [x] Update plugin UI fallback gate to use build-attempt state and keep explicit-cancel behavior intact.
+- [x] Rebuild `AtsBackgroundBuilder` to verify compile safety.
+
+## Review (PLSR Build Attempt Recovery, 2026-03-01)
+
+- Latest runtime log (`2026-03-01 8:41:54 AM`) showed: `UI returned without direct result (..., ExplicitCancel=False, BuildRequested=False)` followed by `UI closed without build request; treating as cancel.`
+- Added `BuildAttempted` state in `Core/AtsBuildWindow.cs` so fallback logic can still recover when a build was attempted but `_buildRequested` was later reset by validation/dialog paths.
+- Updated `Core/Plugin.cs` fallback gate to recover on `BuildRequested || BuildAttempted`, while preserving explicit cancel behavior.
+- Build verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - build succeeded (existing nullable warnings remain, no new errors).
+
+# Follow-up (PLSR Fatal Guardrails, 2026-03-01)
+
+- [x] Trace PLSR fatal path and identify unhandled exception vectors in the check flow.
+- [x] Add fail-safe exception guards in PLSR scan/apply paths so bad entities cannot terminate ATSBUILD.
+- [x] Add stage-aware PLSR diagnostics to isolate future failures quickly from logs.
+- [x] Rebuild `AtsBackgroundBuilder` to verify compile safety after guardrail changes.
+
+## Review (PLSR Fatal Guardrails, 2026-03-01)
+
+- Root-cause class identified as unhandled runtime exceptions in PLSR execution paths (label scan / apply writes) that could bubble out of `RunPlsrCheck(...)`.
+- Added stage-scoped top-level guard in `RunPlsrCheck(...)` and per-issue apply guards so recoverable entity/update failures are logged and skipped instead of terminating ATSBUILD.
+- Hardened `CollectPlsrLabels(...)` with per-entity exception isolation and bounded error logging.
+- Hardened `HasPotentialMissingPlsrLabels(...)` precheck with conservative fallback (`return true`) when precheck throws.
+- Build verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:RestoreIgnoreFailedSources=true`
+  - compile succeeded (existing nullable warnings remain).
+
+## Follow-up (Boundary-Imported Rows + Crash Telemetry, 2026-03-01)
+
+- [x] Ensure `ADD SECTIONS FROM BDY` removes placeholder blank grid rows before appending imported rows.
+- [x] Add immediate log flush markers for PLSR precheck and shapefile-import crash boundaries.
+- [x] Rebuild Release output to verify compile safety after UI/logging changes.
+
+## Review (Boundary-Imported Rows + Crash Telemetry, 2026-03-01)
+
+- Updated both UI paths to clear placeholder empty rows before adding boundary-imported entries:
+  - `Core/AtsBuildWindow.cs`
+  - `Core/AtsBuildForm.cs`
+- Updated logger immediate-flush rules to preserve crash-boundary lines even on hard termination:
+  - `ATSBUILD assembly:`
+  - `PLSR precheck:`
+  - `Starting shapefile import.`
+  - `Importer.Init begin:`
+  - `Importer.Import begin.`
+- Build verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - build succeeded (existing nullable warnings remain).
+
 # Correction-Line Context Shift Fix (2026-02-18)
 
 - [x] Confirm current forced correction-context mapping and mismatch with expected Section 6/1 behavior.
@@ -1143,3 +1328,139 @@
 - Verification:
   - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release` succeeded (`0` errors, existing nullable warnings).
   - Full `build` also succeeded; observed only existing warnings plus locked-output copy retries when `build\net8.0-windows\AtsBackgroundBuilder.dll` was in use.
+
+## Follow-up (UI Add Sections From Boundary, 2026-03-01)
+
+- [x] Add a shared boundary-import service that prompts for a closed boundary and resolves fully-contained `L-QUATER` polygons to SEC/TWP/RGE/MER + quarter rows.
+- [x] Add `ADD SECTIONS FROM BDY` button to WPF ATSBUILD window and append non-duplicate grid rows from boundary import results.
+- [x] Add parity `ADD SECTIONS FROM BDY` button/handler to WinForms ATSBUILD form.
+- [x] Compile `AtsBackgroundBuilder` using `/t:Compile` to verify compile safety.
+
+## Review (UI Add Sections From Boundary, 2026-03-01)
+
+- Added `Core/BoundarySectionImportService.cs`:
+  - prompts for one closed boundary polyline in CAD,
+  - filters `L-QUATER` closed polygons fully within the boundary (extents containment + interior sampling),
+  - reads section metadata from `L-SECLBL` attributes (`SEC`, `TWP`, `RGE`, `MER`),
+  - infers `NW/NE/SW/SE` by quarter interior point relative to section label center,
+  - returns normalized, sorted section-grid entries.
+- Updated `Core/AtsBuildWindow.cs`:
+  - added `ADD SECTIONS FROM BDY` action button,
+  - hides window for CAD selection, restores it after prompt,
+  - appends only non-duplicate section rows and shows summary.
+- Updated `Core/AtsBuildForm.cs` with matching behavior for WinForms path.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release /p:RestoreIgnoreFailedSources=true` succeeded (`0` errors; existing nullable warnings remain in unrelated files).
+
+## Follow-up (Boundary Import Must Work Pre-Build, 2026-03-01)
+
+- [x] Remove dependency on pre-existing `L-QUATER` drawing entities for `ADD SECTIONS FROM BDY`.
+- [x] Derive quarter definitions in-memory from section index geometry for selected zone, then filter to quarters fully inside selected boundary.
+- [x] Ensure the boundary import action does not leave temporary quarter helper entities visible in the drawing.
+- [x] Rebuild/compile after pre-build flow change.
+
+## Review (Boundary Import Must Work Pre-Build, 2026-03-01)
+
+- Updated `Sections/SectionIndexReader.cs`:
+  - Added `SectionOutlineEntry` and `TryLoadSectionOutlinesForZone(...)` to enumerate all section outlines for a zone from cached index files.
+- Added `Core/Plugin.Core.BoundaryImport.cs`:
+  - Internal wrappers to reuse existing quarter-map generation and quarter-token mapping from `Plugin` quarter utilities.
+- Reworked `Core/BoundarySectionImportService.cs`:
+  - Prompts for boundary polyline.
+  - Loads zone section outlines from section index search folders.
+  - Builds quarter polygons in-memory via existing quarter utilities.
+  - Keeps only quarter polygons fully inside selected boundary.
+  - Returns deduplicated `M/RGE/TWP/SEC/HQ` rows; draws nothing to model space.
+- Updated UI callers:
+  - `Core/AtsBuildWindow.cs` and `Core/AtsBuildForm.cs` now pass current `Config` + selected `Zone` into boundary import.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release /p:RestoreIgnoreFailedSources=true` succeeded (`0` errors; existing warnings remain unrelated).
+
+## Follow-up (PLSR Crash After Boundary Rows + XML Selection, 2026-03-01)
+
+- [x] Harden PLSR missing-label source matching so one bad candidate geometry cannot crash the run.
+- [x] Add immediate-flush stage breadcrumbs for ATSBUILD + PLSR to pinpoint any remaining hard-fail stage.
+- [x] Guard quarter/disposition cached bounds against invalid `GeometricExtents` reads.
+- [x] Rebuild and confirm output DLL artifacts are synchronized.
+
+## Review (PLSR Crash After Boundary Rows + XML Selection, 2026-03-01)
+
+- Updated `Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - Added `PLSR stage: ...` breadcrumbs via `SetStage(...)`.
+  - Hardened `TryFindDispositionSourceForQuarterDisp(...)`:
+    - added `Logger` parameter,
+    - wrapped safe-point and overlap geometry checks in per-candidate try/catch,
+    - skipped only failing candidates instead of aborting the check.
+- Updated `Dispositions/LabelPlacer.cs`:
+  - `QuarterInfo` and `DispositionInfo` now build cached bounds via guarded extents resolution:
+    - try `GeometricExtents`,
+    - fallback to vertex-derived extents,
+    - final safe default extents when neither is available.
+- Updated `Core/Plugin.cs`:
+  - Added `SetExitStage(...)` breadcrumb logging (`ATSBUILD stage: ...`) throughout command flow.
+  - Logger immediate flush gate now includes:
+    - `ATSBUILD stage:`
+    - `PLSR stage:`
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors; existing nullable warnings unchanged).
+  - Output parity confirmed:
+    - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+    - `build\net8.0-windows\AtsBackgroundBuilder.dll`
+
+## Follow-up (Unhandled E0434352 Guardrails, 2026-03-01)
+
+- [x] Add top-level ATSBUILD fatal catch with stage-aware failure logging and graceful command exit.
+- [x] Add section-build start stage marker to isolate faults before `sections_built`.
+- [x] Add UI event-handler try/catch guards for boundary import and build submission in both WPF/WinForms windows.
+- [x] Add additional unhandled exception hooks for WinForms/WPF UI threads.
+- [x] Rebuild release output to verify compile safety.
+
+## Review (Unhandled E0434352 Guardrails, 2026-03-01)
+
+- Updated `Core/Plugin.cs`:
+  - Wrapped post-UI ATSBUILD execution in a top-level `try/catch` that logs and surfaces:
+    - `ATSBUILD failed at stage '<stage>'`.
+  - Added explicit `ATSBUILD stage: sections_building` marker before section draw pipeline call.
+  - Added unhandled UI thread hooks:
+    - `System.Windows.Forms.Application.ThreadException`
+    - `System.Windows.Application.DispatcherUnhandledException` (marks handled after logging).
+  - Extended immediate log flush prefixes with:
+    - `ATSBUILD failed at stage`
+- Updated `Core/AtsBuildWindow.cs` and `Core/AtsBuildForm.cs`:
+  - Wrapped `OnAddSectionsFromBoundary()` and `OnBuild()` in defensive `try/catch`.
+  - Added best-effort UI exception append to `AtsBackgroundBuilder.crash.log` for post-mortem.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors; existing warnings unchanged).
+
+## Follow-up (WPF DialogResult Crash Guard, 2026-03-01)
+
+- [x] Fix WPF `DialogResult` assignment path so build/cancel works when window is not launched via `ShowDialog()`.
+- [x] Rebuild and sync active runtime DLL after dialog-result guard change.
+
+## Review (WPF DialogResult Crash Guard, 2026-03-01)
+
+- Updated `Core/AtsBuildWindow.cs`:
+  - Added `CloseAsDialogResultOrWindow(bool)` helper.
+  - Replaced direct `DialogResult = ...; Close();` in `Cancel` and `OnBuild()` success path with guarded helper.
+  - If window is modeless, falls back to `Close()` without throwing `InvalidOperationException`.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors; existing warnings unchanged).
+  - Synced DLL to active runtime path:
+    - `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows\AtsBackgroundBuilder.dll`
+
+## Follow-up (UI Cancel Gate Regression, 2026-03-01)
+
+- [x] Fix ATSBUILD UI acceptance logic so modeless-safe close path still executes build when UI produced valid input.
+- [x] Rebuild and sync runtime DLL so `/debug-config` runs new gate logic.
+
+## Review (UI Cancel Gate Regression, 2026-03-01)
+
+- Updated `Core/Plugin.cs`:
+  - Changed UI cancellation gate from `dr != true || window.Result == null` to `window.Result == null`.
+  - Added diagnostic log when `DialogResult` is not `true` but `window.Result` is present, then proceeds.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors; existing warnings unchanged).
+  - Synced DLL parity confirmed at:
+    - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+    - `build\net8.0-windows\AtsBackgroundBuilder.dll`
+    - `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows\AtsBackgroundBuilder.dll`
