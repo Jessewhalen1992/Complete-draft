@@ -4920,19 +4920,7 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var p0 = c0;
-                        var p1 = c1;
-                        if (p1.X < p0.X || (Math.Abs(p1.X - p0.X) <= 1e-9 && p1.Y < p0.Y))
-                        {
-                            var tmp = p0;
-                            p0 = p1;
-                            p1 = tmp;
-                        }
-
-                        var key = string.Format(
-                            CultureInfo.InvariantCulture,
-                            "{0:0.###}|{1:0.###}|{2:0.###}|{3:0.###}",
-                            p0.X, p0.Y, p1.X, p1.Y);
+                        var key = BuildClippedSegmentDedupeKey(c0, c1);
                         if (!dedupe.Add(key))
                         {
                             continue;
@@ -4970,10 +4958,7 @@ namespace AtsBackgroundBuilder
                     if (clipped.Count == 0)
                     {
                         ent.Erase();
-                        if (!contextSectionIds.IsReadOnly)
-                        {
-                            contextSectionIds.Remove(id);
-                        }
+                        RemoveContextIdIfMutable(contextSectionIds, id);
                         erased++;
                         continue;
                     }
@@ -5031,6 +5016,23 @@ namespace AtsBackgroundBuilder
             }
 
             contextSectionIds.Remove(id);
+        }
+
+        private static string BuildClippedSegmentDedupeKey(Point2d c0, Point2d c1)
+        {
+            var p0 = c0;
+            var p1 = c1;
+            if (p1.X < p0.X || (Math.Abs(p1.X - p0.X) <= 1e-9 && p1.Y < p0.Y))
+            {
+                var tmp = p0;
+                p0 = p1;
+                p1 = tmp;
+            }
+
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0:0.###}|{1:0.###}|{2:0.###}|{3:0.###}",
+                p0.X, p0.Y, p1.X, p1.Y);
         }
 
         private static bool TryWriteOpenTwoPointSegment(Entity ent, Point2d a, Point2d b)
