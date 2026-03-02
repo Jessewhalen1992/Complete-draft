@@ -8,6 +8,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using Microsoft.Win32;
 
@@ -905,26 +906,16 @@ namespace AtsBackgroundBuilder.Core
             var cancelled = false;
             var zone = _zone12Radio.IsChecked == true ? 12 : 11;
             bool succeeded;
-            try
-            {
-                _boundaryImportRoundTripUsed = true;
-                Hide();
-                succeeded = BoundarySectionImportService.TryCollectEntriesFromBoundary(
-                    _config,
-                    zone,
-                    out importedRows,
-                    out serviceMessage,
-                    out cancelled);
-            }
-            finally
-            {
-                if (!IsVisible)
-                {
-                    Show();
-                }
-
-                Activate();
-            }
+            _boundaryImportRoundTripUsed = true;
+            var handle = new WindowInteropHelper(this).Handle;
+            succeeded = BoundarySectionImportService.TryCollectEntriesFromBoundary(
+                _config,
+                zone,
+                out importedRows,
+                out serviceMessage,
+                out cancelled,
+                handle);
+            Activate();
 
             if (!succeeded)
             {

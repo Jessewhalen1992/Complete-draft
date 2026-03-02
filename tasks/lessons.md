@@ -1,5 +1,11 @@
 # Lessons
 
+- If a user screenshot shows UI text that no longer exists in source, treat it as a runtime artifact mismatch first: rebuild + redeploy and verify source/runtime DLL timestamps before further code changes.
+- When users need to inspect model space during PLSR Accept/Ignore, keep the review UI modeless and drive apply/cancel via explicit button flags; relying on modal DialogResult blocks pan/zoom and feels like command lockup.
+- For UI-driven `Editor.GetEntity` prompts inside ATSBUILD flows, always normalize the command prompt in a `finally` (`WriteMessage` + `PostCommandPrompt`) so stale boundary-pick prompts do not linger on the command bar after returning to the window.
+- For UI-initiated editor selection (for example boundary pick from ATSBUILD window), avoid hide/show round-trips; use `Editor.StartUserInteraction(windowHandle)` so AutoCAD command context and prompt lifecycle are released cleanly.
+- In ATSBUILD command flows, keep PLSR Accept/Ignore review modal by default; modeless review can leave command-context prompts lingering and invalidate apply state unless command ownership is re-architected.
+- In PLSR flows, avoid redundant modal summaries after `PLSR Review`; keep one decision UI and write detailed results to log/file instead of stacking extra popups.
 - If users rely on skip diagnostics for reconciliation, do not truncate skipped-item examples; provide the full skipped list (or explicit export) so counts and details align.
 - If PLSR missing-label fallback can only create owner/disp text without real source geometry, do not create it (even behind env toggles); skip creation and show a warning dialog with examples instead of producing floating `MText`.
 - If users report missing disposition labels with many `Skipped (not closed)`, treat trimmed/open OD polylines as recoverable candidates: attempt bounded endpoint-gap closure + area validation before excluding them.

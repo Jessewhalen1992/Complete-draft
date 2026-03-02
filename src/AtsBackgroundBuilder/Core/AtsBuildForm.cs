@@ -791,26 +791,14 @@ namespace AtsBackgroundBuilder.Core
             var serviceMessage = string.Empty;
             var cancelled = false;
             var zone = _zone12Radio.Checked ? 12 : 11;
-            bool succeeded;
-            try
-            {
-                Hide();
-                succeeded = BoundarySectionImportService.TryCollectEntriesFromBoundary(
-                    _config,
-                    zone,
-                    out importedRows,
-                    out serviceMessage,
-                    out cancelled);
-            }
-            finally
-            {
-                if (!Visible)
-                {
-                    Show();
-                }
-
-                Activate();
-            }
+            var succeeded = BoundarySectionImportService.TryCollectEntriesFromBoundary(
+                _config,
+                zone,
+                out importedRows,
+                out serviceMessage,
+                out cancelled,
+                Handle);
+            Activate();
 
             if (!succeeded)
             {

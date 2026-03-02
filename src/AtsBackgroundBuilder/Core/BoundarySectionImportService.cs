@@ -40,7 +40,8 @@ namespace AtsBackgroundBuilder.Core
             int zone,
             out List<SectionGridEntry> entries,
             out string message,
-            out bool cancelled)
+            out bool cancelled,
+            IntPtr hostWindowHandle)
         {
             entries = new List<SectionGridEntry>();
             message = string.Empty;
@@ -56,19 +57,30 @@ namespace AtsBackgroundBuilder.Core
             var editor = document.Editor;
             var database = document.Database;
 
-            var prompt = new PromptEntityOptions("\nSelect closed boundary polyline: ");
-            prompt.SetRejectMessage("\nSelected object must be a closed polyline.");
-            prompt.AddAllowedClass(typeof(Polyline), exactMatch: false);
-            var selection = editor.GetEntity(prompt);
-            if (selection.Status != PromptStatus.OK)
+            PromptEntityResult selection;
+            using (var userInteraction = StartUserInteraction(editor, hostWindowHandle))
             {
-                cancelled = selection.Status == PromptStatus.Cancel;
-                if (!cancelled)
+                try
                 {
-                    message = "Boundary selection did not complete.";
-                }
+                    var prompt = new PromptEntityOptions("\nSelect closed boundary polyline: ");
+                    prompt.SetRejectMessage("\nSelected object must be a closed polyline.");
+                    prompt.AddAllowedClass(typeof(Polyline), exactMatch: false);
+                    selection = editor.GetEntity(prompt);
+                    if (selection.Status != PromptStatus.OK)
+                    {
+                        cancelled = selection.Status == PromptStatus.Cancel;
+                        if (!cancelled)
+                        {
+                            message = "Boundary selection did not complete.";
+                        }
 
-                return false;
+                        return false;
+                    }
+                }
+                finally
+                {
+                    RefreshEditorPrompt(editor);
+                }
             }
 
             Polyline? boundaryClone = null;
@@ -102,6 +114,49 @@ namespace AtsBackgroundBuilder.Core
                         // best-effort dispose
                     }
                 }
+            }
+        }
+
+        private static IDisposable StartUserInteraction(Editor editor, IntPtr hostWindowHandle)
+        {
+            if (editor == null || hostWindowHandle == IntPtr.Zero)
+            {
+                return NullDisposable.Instance;
+            }
+
+            try
+            {
+                return editor.StartUserInteraction(hostWindowHandle);
+            }
+            catch
+            {
+                return NullDisposable.Instance;
+            }
+        }
+
+        private sealed class NullDisposable : IDisposable
+        {
+            internal static readonly NullDisposable Instance = new NullDisposable();
+            public void Dispose()
+            {
+            }
+        }
+
+        private static void RefreshEditorPrompt(Editor editor)
+        {
+            if (editor == null)
+            {
+                return;
+            }
+
+            try
+            {
+                editor.WriteMessage("\n");
+                editor.PostCommandPrompt();
+            }
+            catch
+            {
+                // best-effort prompt refresh only
             }
         }
 

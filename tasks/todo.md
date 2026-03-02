@@ -1,3 +1,150 @@
+# Follow-up (/debug-config lingering command prompt screenshot, 2026-03-02)
+
+- [x] Confirm screenshot state against current source behavior.
+- [x] Rebuild Release plugin and re-run decision tests.
+- [x] Sync latest DLL/PDB to AutoCAD runtime path and verify source/runtime parity.
+
+## Review (/debug-config lingering command prompt screenshot, 2026-03-02)
+
+- Finding:
+  - screenshot (`src/AtsBackgroundBuilder/REFERENCE ONLY/Screenshot 2026-03-01 194742.png`) shows the older modeless PLSR review variant (`Drawing changed during review. Apply is disabled; rerun PLSR Check.`).
+  - current source in `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs` is modal `ShowDialog()` flow and does not contain that modeless guard text.
+- Build/test verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+- Runtime sync:
+  - copied Release artifacts to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows\`.
+- parity confirmed:
+  - `AtsBackgroundBuilder.dll` source/runtime: `2026-03-01 19:50:32`, `977920` bytes.
+  - `AtsBackgroundBuilder.pdb` source/runtime: `2026-03-01 19:50:32`, `391544` bytes.
+
+# Follow-up (PLSR Review Must Allow Pan/Zoom During Accept/Ignore, 2026-03-02)
+
+- [x] Restore modeless PLSR review interaction so model space can be inspected while review is open.
+- [x] Keep Apply/Cancel decision flow deterministic (no stale DialogResult dependency).
+- [x] Rebuild plugin, run decision tests, and sync runtime DLL/PDB with timestamp parity.
+
+## Review (PLSR Review Must Allow Pan/Zoom During Accept/Ignore, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - `ShowPlsrReviewDialog(...)` now opens review with `Application.ShowModelessDialog(form)` again.
+  - replaced modal `ShowDialog()` return handling with explicit `applyRequested` flag:
+    - `Apply Decisions` commits grid edits, sets flag, closes form.
+    - `Cancel` clears flag and closes form.
+  - added non-blocking wait loop (`DoEvents` + short sleep) while form is visible so command flow resumes only after user closes review.
+  - updated top guidance text to explicitly state pan/zoom is allowed during review.
+- Verification:
+  - build succeeded:
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - decision tests passed:
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - runtime sync + parity:
+    - `AtsBackgroundBuilder.dll` source/runtime: `2026-03-01 19:59:45`, `978432` bytes.
+    - `AtsBackgroundBuilder.pdb` source/runtime: `2026-03-01 19:59:45`, `391616` bytes.
+
+# Follow-up (Boundary Prompt Lingers On Command Bar After Add Sections From BDY, 2026-03-02)
+
+- [x] Refresh AutoCAD editor command prompt immediately after boundary `GetEntity` selection exits.
+- [x] Rebuild plugin, run decision tests, and sync runtime DLL/PDB.
+- [x] Verify source/runtime timestamp + size parity.
+
+## Review (Boundary Prompt Lingers On Command Bar After Add Sections From BDY, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Core/BoundarySectionImportService.cs`:
+  - wrapped boundary `editor.GetEntity(...)` in `try/finally` inside `StartUserInteraction(...)` scope.
+  - added `RefreshEditorPrompt(Editor)` and call it from `finally` so prompt state is normalized whether select succeeds, fails, or cancels.
+  - refresh behavior uses:
+    - `editor.WriteMessage("\n")`
+    - `editor.PostCommandPrompt()`
+  - intent: clear stale `ATSBUILD Select closed boundary polyline` prompt residue after boundary import returns to UI.
+- Verification:
+  - build succeeded:
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - decision tests passed:
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - runtime sync + parity:
+    - `AtsBackgroundBuilder.dll` source/runtime: `2026-03-01 20:29:03`, `978432` bytes.
+    - `AtsBackgroundBuilder.pdb` source/runtime: `2026-03-01 20:29:02`, `391696` bytes.
+
+# Follow-up (Boundary Select Command Context Stuck, 2026-03-01)
+
+- [x] Replace boundary-selection hide/show round-trip with AutoCAD `StartUserInteraction` host-window integration.
+- [x] Wire host window handles from both UI shells (WPF + WinForms) into boundary selection service.
+- [x] Keep boundary import behavior unchanged while avoiding lingering prompt-command state.
+- [x] Build plugin, run decision tests, and sync runtime DLL/PDB.
+
+## Review (Boundary Select Command Context Stuck, 2026-03-01)
+
+- Root concern:
+  - command line could remain stuck on `ATSBUILD select closed polyline` after boundary import, and user interaction (pan/navigation) was constrained.
+  - hide/show round-trips were also a likely contributor to UI lifecycle churn.
+- Updated `src/AtsBackgroundBuilder/Core/BoundarySectionImportService.cs`:
+  - `TryCollectEntriesFromBoundary(...)` now accepts `hostWindowHandle`.
+  - wraps `editor.GetEntity(...)` with `editor.StartUserInteraction(hostWindowHandle)` when available.
+  - adds safe no-op fallback when interaction wrapper is unavailable.
+- Updated boundary-trigger callers:
+  - `src/AtsBackgroundBuilder/Core/AtsBuildWindow.cs`
+    - passes `new WindowInteropHelper(this).Handle`.
+    - removes hide/show round-trip around boundary import.
+  - `src/AtsBackgroundBuilder/Core/AtsBuildForm.cs`
+    - passes `Handle`.
+    - removes hide/show round-trip around boundary import.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - runtime DLL sync succeeded:
+    - source/runtime timestamp `2026-03-01 7:43:02 PM`, size `980480`.
+
+# Follow-up (PLSR Modeless Review + Drawing-Change Guard, 2026-03-01)
+
+- [x] Convert PLSR Accept/Ignore review UI to modeless so users can pan/zoom model space while reviewing.
+- [x] Track drawing changes while review is open (`ObjectModified`, `ObjectErased`, `ObjectAppended`).
+- [x] Block Apply when drawing changed during review and instruct rerun of PLSR check.
+- [x] Build plugin, run decision tests, and sync runtime DLL/PDB.
+
+## Review (PLSR Modeless Review + Drawing-Change Guard, 2026-03-01)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - changed review entry call to pass `Database` into `ShowPlsrReviewDialog(...)`.
+  - switched PLSR review form from modal `ShowDialog()` to modeless `Application.ShowModelessDialog(form)`.
+  - added runtime message loop wait so ATSBUILD pauses until review closes while still allowing drawing interaction.
+  - subscribed during review to:
+    - `database.ObjectModified`
+    - `database.ObjectErased`
+    - `database.ObjectAppended`
+  - when any drawing change is detected:
+    - disables `Apply Decisions`,
+    - updates review banner text,
+    - blocks apply and prompts user to rerun PLSR check.
+  - always detaches database event handlers in `finally`.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - runtime DLL sync succeeded:
+    - source/runtime timestamp `2026-03-01 7:30:13 PM`, size `979968`.
+
+# Follow-up (PLSR Final Summary Popup Removal, 2026-03-01)
+
+- [x] Remove the final `PLSR Check` summary popup after the review/apply flow.
+- [x] Keep `PLSR Review` (Accept/Ignore) and warning popup behavior unchanged.
+- [x] Keep PLSR summary logging/file output (`PLSR_Check.txt`) intact.
+- [x] Build plugin, run decision tests, and sync runtime DLL/PDB.
+
+## Review (PLSR Final Summary Popup Removal, 2026-03-01)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - removed the final `WinForms.MessageBox.Show(summaryText, "PLSR Check", ...)` popup.
+  - retained `PLSR Review` decision grid and `PLSR Label Warning` popup behavior.
+  - retained summary generation + `PLSR_Check.txt` write path.
+  - now writes command line confirmation: `PLSR check complete. Summary written to PLSR_Check.txt.`
+- Verification:
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - standard release output build was blocked by file lock on `bin\Release\net8.0-windows\AtsBackgroundBuilder.dll`.
+  - compiled equivalent artifact via alternate output path:
+    - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /p:OutputPath=bin\Release\net8.0-windows-plsr-no-final-popup\`
+  - runtime sync succeeded from alternate build output:
+    - source/runtime timestamp `2026-03-01 7:24:20 PM`, size `977408`.
+
 # Follow-up (PLSR Skip Warning Full List, 2026-03-01)
 
 - [x] Remove capped skipped-label examples list (`Count < 10`) in PLSR warning path.

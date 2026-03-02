@@ -1224,14 +1224,8 @@ namespace AtsBackgroundBuilder
             }
 
             SetStage("show_summary");
-            try
-            {
-                WinForms.MessageBox.Show(summaryText, "PLSR Check", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
-            }
-            catch
-            {
-                editor.WriteMessage("\n" + summaryText);
-            }
+            logger.WriteLine("PLSR summary popup suppressed; review was already shown in PLSR Review grid.");
+            editor.WriteMessage("\nPLSR check complete. Summary written to PLSR_Check.txt.");
 
             SetStage("write_log");
             WritePlsrLog(database, summaryText, logger);
@@ -2958,6 +2952,7 @@ namespace AtsBackgroundBuilder
                 using (var cancelButton = new WinForms.Button())
                 using (var topLabel = new WinForms.Label())
                 {
+                    var applyRequested = false;
                     form.Text = "PLSR Review";
                     form.StartPosition = WinForms.FormStartPosition.CenterScreen;
                     form.Width = 1400;
@@ -2969,7 +2964,7 @@ namespace AtsBackgroundBuilder
                     topLabel.Dock = WinForms.DockStyle.Top;
                     topLabel.Height = 44;
                     topLabel.Padding = new WinForms.Padding(10, 10, 10, 10);
-                    topLabel.Text = "Review PLSR results. Set each row to Accept or Ignore. Accept applies the listed action.";
+                    topLabel.Text = "Review PLSR results. Set each row to Accept or Ignore. Pan/zoom model space if needed, then click Apply Decisions.";
 
                     grid.Dock = WinForms.DockStyle.Fill;
                     grid.AutoGenerateColumns = false;
@@ -3009,7 +3004,6 @@ namespace AtsBackgroundBuilder
 
                     applyButton.Text = "Apply Decisions";
                     applyButton.Width = 130;
-                    applyButton.DialogResult = WinForms.DialogResult.OK;
                     applyButton.Click += (_, __) =>
                     {
                         grid.EndEdit();
@@ -3017,11 +3011,18 @@ namespace AtsBackgroundBuilder
                         {
                             manager.EndCurrentEdit();
                         }
+
+                        applyRequested = true;
+                        form.Close();
                     };
 
                     cancelButton.Text = "Cancel";
                     cancelButton.Width = 90;
-                    cancelButton.DialogResult = WinForms.DialogResult.Cancel;
+                    cancelButton.Click += (_, __) =>
+                    {
+                        applyRequested = false;
+                        form.Close();
+                    };
 
                     acceptAllButton.Text = "Accept All";
                     acceptAllButton.Width = 100;
@@ -3055,11 +3056,15 @@ namespace AtsBackgroundBuilder
                     form.Controls.Add(grid);
                     form.Controls.Add(buttonPanel);
                     form.Controls.Add(topLabel);
-                    form.AcceptButton = applyButton;
-                    form.CancelButton = cancelButton;
 
-                    var dr = form.ShowDialog();
-                    if (dr != WinForms.DialogResult.OK)
+                    Application.ShowModelessDialog(form);
+                    while (form.Visible)
+                    {
+                        WinForms.Application.DoEvents();
+                        System.Threading.Thread.Sleep(25);
+                    }
+
+                    if (!applyRequested)
                     {
                         return accepted;
                     }
