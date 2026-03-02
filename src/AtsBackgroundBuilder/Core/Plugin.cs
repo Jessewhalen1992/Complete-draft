@@ -4248,234 +4248,21 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IntersectsAnyWindow(Point2d a, Point2d b)
-            {
-                for (var wi = 0; wi < windows.Count; wi++)
-                {
-                    if (TryClipSegmentToWindow(a, b, windows[wi], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
             var preferEraseSet = preferEraseOnTieIds == null
                 ? new HashSet<ObjectId>()
                 : new HashSet<ObjectId>(preferEraseOnTieIds.Where(id => !id.IsNull));
-            var segments = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase)>();
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
-                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-                foreach (ObjectId id in ms)
-                {
-                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) ||
-                        ent.IsErased ||
-                        !IsSectionBuildingLayer(ent.Layer))
-                    {
-                        continue;
-                    }
+                var segments = CollectSectionOverlapCandidateSegments(database, tr, windows, preferEraseSet);
 
-                    if (!TryReadOpenLinearSegment(ent, out var a, out var b))
-                    {
-                        continue;
-                    }
+                var toErase = ResolveSectionOverlapEraseSet(
+                    segments,
+                    out var restoredNearDuplicatePairHits,
+                    out var restoredCrossLayerNearDuplicatePairHits,
+                    out var nearCoincidentDuplicatePairHits,
+                    out var restoredLongestWinsPairs);
 
-                    if (!IntersectsAnyWindow(a, b))
-                    {
-                        continue;
-                    }
-
-                    segments.Add((id, ent.Layer, a, b, a.GetDistanceTo(b), preferEraseSet.Contains(id)));
-                }
-
-                const double equalLengthTol = 0.05;
-                var toErase = new HashSet<ObjectId>();
-                var restoredNearDuplicatePairHits = 0;
-                var restoredCrossLayerNearDuplicatePairHits = 0;
-                var nearCoincidentDuplicatePairHits = 0;
-                var restoredLongestWinsPairs = 0;
-                for (var i = 0; i < segments.Count; i++)
-                {
-                    var a = segments[i];
-                    if (toErase.Contains(a.Id))
-                    {
-                        continue;
-                    }
-
-                    for (var j = i + 1; j < segments.Count; j++)
-                    {
-                        var b = segments[j];
-                        if (toErase.Contains(b.Id))
-                        {
-                            continue;
-                        }
-
-                        var strictOverlap = AreSegmentsDuplicateOrCollinearOverlap(a.A, a.B, b.A, b.B);
-                        var restoredNearDuplicate = false;
-                        var nearCoincidentDuplicate = false;
-                        if (!strictOverlap && (a.PreferErase != b.PreferErase))
-                        {
-                            var sameLayer = string.Equals(a.Layer, b.Layer, StringComparison.OrdinalIgnoreCase);
-                            var lateralTol = sameLayer ? 5.0 : 1.4;
-                            restoredNearDuplicate = AreSegmentsNearParallelRestoredDuplicate(
-                                a.A,
-                                a.B,
-                                b.A,
-                                b.B,
-                                lateralDistanceTolOverride: lateralTol);
-                            if (restoredNearDuplicate)
-                            {
-                                restoredNearDuplicatePairHits++;
-                                if (!sameLayer)
-                                {
-                                    restoredCrossLayerNearDuplicatePairHits++;
-                                }
-                            }
-                        }
-
-                        if (!strictOverlap && !restoredNearDuplicate)
-                        {
-                            nearCoincidentDuplicate = AreSegmentsNearCoincidentDuplicate(a.A, a.B, b.A, b.B);
-                            if (nearCoincidentDuplicate)
-                            {
-                                nearCoincidentDuplicatePairHits++;
-                            }
-                        }
-
-                        if (!strictOverlap && !restoredNearDuplicate && !nearCoincidentDuplicate)
-                        {
-                            continue;
-                        }
-
-                        if (!restoredNearDuplicate &&
-                            !nearCoincidentDuplicate &&
-                            DoSegmentsShareEndpoint(a.A, a.B, b.A, b.B, endpointTol: 0.20) &&
-                            !AreSegmentEndpointsNear(a.A, a.B, b.A, b.B, endpointTol: 0.20))
-                        {
-                            // Adjacent section fragments are allowed to meet at one endpoint.
-                            // Do not erase either segment solely because they touch.
-                            continue;
-                        }
-
-                        ObjectId eraseId;
-                        if ((restoredNearDuplicate || nearCoincidentDuplicate) && a.PreferErase != b.PreferErase)
-                        {
-                            eraseId = a.PreferErase ? a.Id : b.Id;
-                        }
-                        else
-                        {
-                            var lengthDiff = a.Length - b.Length;
-                            if (Math.Abs(lengthDiff) <= equalLengthTol)
-                            {
-                                if (a.PreferErase != b.PreferErase)
-                                {
-                                    eraseId = a.PreferErase ? a.Id : b.Id;
-                                }
-                                else
-                                {
-                                    eraseId = a.Id.Handle.Value > b.Id.Handle.Value ? a.Id : b.Id;
-                                }
-                            }
-                            else
-                            {
-                                eraseId = lengthDiff < 0.0 ? a.Id : b.Id;
-                            }
-                        }
-
-                        toErase.Add(eraseId);
-                    }
-                }
-
-                bool IsRestoredVsNewLongestWinsMatch(
-                    (ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase) shorter,
-                    (ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase) longer)
-                {
-                    if (longer.Length <= (shorter.Length + 0.75))
-                    {
-                        return false;
-                    }
-
-                    const double angleTol = 0.02;
-                    const double lateralTol = 1.80;
-                    const double minOverlapMeters = 12.0;
-                    const double minCoverageRatio = 0.75;
-
-                    var shortVec = shorter.B - shorter.A;
-                    var longVec = longer.B - longer.A;
-                    var shortLen = shorter.Length;
-                    var longLen = longer.Length;
-                    if (shortLen <= 1e-6 || longLen <= 1e-6)
-                    {
-                        return false;
-                    }
-
-                    var cross = Math.Abs((shortVec.X * longVec.Y) - (shortVec.Y * longVec.X)) / (shortLen * longLen);
-                    if (cross > angleTol)
-                    {
-                        return false;
-                    }
-
-                    if (DistancePointToInfiniteLine(shorter.A, longer.A, longer.B) > lateralTol ||
-                        DistancePointToInfiniteLine(shorter.B, longer.A, longer.B) > lateralTol)
-                    {
-                        return false;
-                    }
-
-                    var axis = longVec / longLen;
-                    var t0 = (shorter.A - longer.A).DotProduct(axis);
-                    var t1 = (shorter.B - longer.A).DotProduct(axis);
-                    var overlap = Math.Min(longLen, Math.Max(t0, t1)) - Math.Max(0.0, Math.Min(t0, t1));
-                    if (overlap <= 0.0)
-                    {
-                        return false;
-                    }
-
-                    var requiredOverlap = Math.Max(minOverlapMeters, shortLen * minCoverageRatio);
-                    return overlap >= requiredOverlap;
-                }
-
-                for (var i = 0; i < segments.Count; i++)
-                {
-                    var a = segments[i];
-                    if (toErase.Contains(a.Id))
-                    {
-                        continue;
-                    }
-
-                    for (var j = i + 1; j < segments.Count; j++)
-                    {
-                        var b = segments[j];
-                        if (toErase.Contains(b.Id) || (a.PreferErase == b.PreferErase))
-                        {
-                            continue;
-                        }
-
-                        var shorter = a.Length <= b.Length ? a : b;
-                        var longer = shorter.Id == a.Id ? b : a;
-                        if (!IsRestoredVsNewLongestWinsMatch(shorter, longer))
-                        {
-                            continue;
-                        }
-
-                        toErase.Add(shorter.Id);
-                        restoredLongestWinsPairs++;
-                    }
-                }
-
-                var erased = 0;
-                foreach (var id in toErase)
-                {
-                    if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity ent) || ent.IsErased)
-                    {
-                        continue;
-                    }
-
-                    ent.Erase();
-                    erased++;
-                }
+                var erased = EraseEntitiesById(tr, toErase);
 
                 tr.Commit();
                 if (erased > 0)
@@ -4488,6 +4275,264 @@ namespace AtsBackgroundBuilder
                         $"restoredLongestWinsPairs={restoredLongestWinsPairs}).");
                 }
             }
+        }
+
+        private static bool IntersectsAnyClipWindow(Point2d a, Point2d b, IReadOnlyList<Extents3d> windows)
+        {
+            if (windows == null || windows.Count == 0)
+            {
+                return false;
+            }
+
+            for (var wi = 0; wi < windows.Count; wi++)
+            {
+                if (TryClipSegmentToWindow(a, b, windows[wi], out _, out _))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase)> CollectSectionOverlapCandidateSegments(
+            Database database,
+            Transaction tr,
+            IReadOnlyList<Extents3d> windows,
+            ISet<ObjectId> preferEraseSet)
+        {
+            var segments = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase)>();
+            if (database == null || tr == null || windows == null || windows.Count == 0)
+            {
+                return segments;
+            }
+
+            var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+            var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+            foreach (ObjectId id in ms)
+            {
+                if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) ||
+                    ent.IsErased ||
+                    !IsSectionBuildingLayer(ent.Layer))
+                {
+                    continue;
+                }
+
+                if (!TryReadOpenLinearSegment(ent, out var a, out var b))
+                {
+                    continue;
+                }
+
+                if (!IntersectsAnyClipWindow(a, b, windows))
+                {
+                    continue;
+                }
+
+                segments.Add((id, ent.Layer, a, b, a.GetDistanceTo(b), preferEraseSet != null && preferEraseSet.Contains(id)));
+            }
+
+            return segments;
+        }
+
+        private static int EraseEntitiesById(Transaction tr, IEnumerable<ObjectId> ids)
+        {
+            if (tr == null || ids == null)
+            {
+                return 0;
+            }
+
+            var erased = 0;
+            foreach (var id in ids)
+            {
+                if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity ent) || ent.IsErased)
+                {
+                    continue;
+                }
+
+                ent.Erase();
+                erased++;
+            }
+
+            return erased;
+        }
+
+        private static HashSet<ObjectId> ResolveSectionOverlapEraseSet(
+            List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase)> segments,
+            out int restoredNearDuplicatePairHits,
+            out int restoredCrossLayerNearDuplicatePairHits,
+            out int nearCoincidentDuplicatePairHits,
+            out int restoredLongestWinsPairs)
+        {
+            const double equalLengthTol = 0.05;
+            var toErase = new HashSet<ObjectId>();
+            var stats = new SectionOverlapResolveStats();
+            restoredLongestWinsPairs = 0;
+
+            for (var i = 0; i < segments.Count; i++)
+            {
+                var a = segments[i];
+                if (toErase.Contains(a.Id))
+                {
+                    continue;
+                }
+
+                for (var j = i + 1; j < segments.Count; j++)
+                {
+                    var b = segments[j];
+                    if (toErase.Contains(b.Id))
+                    {
+                        continue;
+                    }
+
+                    if (!TryResolveSectionOverlapEraseCandidate(
+                            a,
+                            b,
+                            equalLengthTol,
+                            out var eraseId,
+                            ref stats))
+                    {
+                        continue;
+                    }
+
+                    toErase.Add(eraseId);
+                }
+            }
+
+            restoredLongestWinsPairs += AddRestoredLongestWinsErasures(segments, toErase);
+            restoredNearDuplicatePairHits = stats.RestoredNearDuplicatePairHits;
+            restoredCrossLayerNearDuplicatePairHits = stats.RestoredCrossLayerNearDuplicatePairHits;
+            nearCoincidentDuplicatePairHits = stats.NearCoincidentDuplicatePairHits;
+
+            return toErase;
+        }
+
+        private struct SectionOverlapResolveStats
+        {
+            public int RestoredNearDuplicatePairHits;
+            public int RestoredCrossLayerNearDuplicatePairHits;
+            public int NearCoincidentDuplicatePairHits;
+        }
+
+        private static int AddRestoredLongestWinsErasures(
+            List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase)> segments,
+            ISet<ObjectId> toErase)
+        {
+            if (segments == null || segments.Count == 0 || toErase == null)
+            {
+                return 0;
+            }
+
+            var pairHits = 0;
+            for (var i = 0; i < segments.Count; i++)
+            {
+                var a = segments[i];
+                if (toErase.Contains(a.Id))
+                {
+                    continue;
+                }
+
+                for (var j = i + 1; j < segments.Count; j++)
+                {
+                    var b = segments[j];
+                    if (toErase.Contains(b.Id) || (a.PreferErase == b.PreferErase))
+                    {
+                        continue;
+                    }
+
+                    var shorter = a.Length <= b.Length ? a : b;
+                    var longer = shorter.Id == a.Id ? b : a;
+                    if (!IsRestoredVsNewLongestWinsMatch(shorter, longer))
+                    {
+                        continue;
+                    }
+
+                    toErase.Add(shorter.Id);
+                    pairHits++;
+                }
+            }
+
+            return pairHits;
+        }
+
+        private static bool TryResolveSectionOverlapEraseCandidate(
+            (ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase) a,
+            (ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase) b,
+            double equalLengthTol,
+            out ObjectId eraseId,
+            ref SectionOverlapResolveStats stats)
+        {
+            eraseId = ObjectId.Null;
+
+            var strictOverlap = AreSegmentsDuplicateOrCollinearOverlap(a.A, a.B, b.A, b.B);
+            var restoredNearDuplicate = false;
+            var nearCoincidentDuplicate = false;
+            if (!strictOverlap && (a.PreferErase != b.PreferErase))
+            {
+                var sameLayer = string.Equals(a.Layer, b.Layer, StringComparison.OrdinalIgnoreCase);
+                var lateralTol = sameLayer ? 5.0 : 1.4;
+                restoredNearDuplicate = AreSegmentsNearParallelRestoredDuplicate(
+                    a.A,
+                    a.B,
+                    b.A,
+                    b.B,
+                    lateralDistanceTolOverride: lateralTol);
+                if (restoredNearDuplicate)
+                {
+                    stats.RestoredNearDuplicatePairHits++;
+                    if (!sameLayer)
+                    {
+                        stats.RestoredCrossLayerNearDuplicatePairHits++;
+                    }
+                }
+            }
+
+            if (!strictOverlap && !restoredNearDuplicate)
+            {
+                nearCoincidentDuplicate = AreSegmentsNearCoincidentDuplicate(a.A, a.B, b.A, b.B);
+                if (nearCoincidentDuplicate)
+                {
+                    stats.NearCoincidentDuplicatePairHits++;
+                }
+            }
+
+            if (!strictOverlap && !restoredNearDuplicate && !nearCoincidentDuplicate)
+            {
+                return false;
+            }
+
+            if (!restoredNearDuplicate &&
+                !nearCoincidentDuplicate &&
+                DoSegmentsShareEndpoint(a.A, a.B, b.A, b.B, endpointTol: 0.20) &&
+                !AreSegmentEndpointsNear(a.A, a.B, b.A, b.B, endpointTol: 0.20))
+            {
+                // Adjacent section fragments are allowed to meet at one endpoint.
+                // Do not erase either segment solely because they touch.
+                return false;
+            }
+
+            if ((restoredNearDuplicate || nearCoincidentDuplicate) && a.PreferErase != b.PreferErase)
+            {
+                eraseId = a.PreferErase ? a.Id : b.Id;
+                return !eraseId.IsNull;
+            }
+
+            var lengthDiff = a.Length - b.Length;
+            if (Math.Abs(lengthDiff) <= equalLengthTol)
+            {
+                if (a.PreferErase != b.PreferErase)
+                {
+                    eraseId = a.PreferErase ? a.Id : b.Id;
+                }
+                else
+                {
+                    eraseId = a.Id.Handle.Value > b.Id.Handle.Value ? a.Id : b.Id;
+                }
+
+                return !eraseId.IsNull;
+            }
+
+            eraseId = lengthDiff < 0.0 ? a.Id : b.Id;
+            return !eraseId.IsNull;
         }
 
         private static void CleanupContextSectionOverlaps(Database database, IReadOnlyCollection<ObjectId> contextSectionIds, Logger? logger)
@@ -7761,6 +7806,54 @@ namespace AtsBackgroundBuilder
             }
 
             var requiredOverlap = Math.Max(minOverlapMeters, otherLen * minShorterCoverageRatio);
+            return overlap >= requiredOverlap;
+        }
+
+        private static bool IsRestoredVsNewLongestWinsMatch(
+            (ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase) shorter,
+            (ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase) longer)
+        {
+            if (longer.Length <= (shorter.Length + 0.75))
+            {
+                return false;
+            }
+
+            const double angleTol = 0.02;
+            const double lateralTol = 1.80;
+            const double minOverlapMeters = 12.0;
+            const double minCoverageRatio = 0.75;
+
+            var shortVec = shorter.B - shorter.A;
+            var longVec = longer.B - longer.A;
+            var shortLen = shorter.Length;
+            var longLen = longer.Length;
+            if (shortLen <= 1e-6 || longLen <= 1e-6)
+            {
+                return false;
+            }
+
+            var cross = Math.Abs((shortVec.X * longVec.Y) - (shortVec.Y * longVec.X)) / (shortLen * longLen);
+            if (cross > angleTol)
+            {
+                return false;
+            }
+
+            if (DistancePointToInfiniteLine(shorter.A, longer.A, longer.B) > lateralTol ||
+                DistancePointToInfiniteLine(shorter.B, longer.A, longer.B) > lateralTol)
+            {
+                return false;
+            }
+
+            var axis = longVec / longLen;
+            var t0 = (shorter.A - longer.A).DotProduct(axis);
+            var t1 = (shorter.B - longer.A).DotProduct(axis);
+            var overlap = Math.Min(longLen, Math.Max(t0, t1)) - Math.Max(0.0, Math.Min(t0, t1));
+            if (overlap <= 0.0)
+            {
+                return false;
+            }
+
+            var requiredOverlap = Math.Max(minOverlapMeters, shortLen * minCoverageRatio);
             return overlap >= requiredOverlap;
         }
 
