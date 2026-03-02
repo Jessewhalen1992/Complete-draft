@@ -4929,31 +4929,7 @@ namespace AtsBackgroundBuilder
                         clipped.Add((c0, c1));
                     }
 
-                    bool merged;
-                    do
-                    {
-                        merged = false;
-                        for (var i = 0; i < clipped.Count; i++)
-                        {
-                            for (var j = i + 1; j < clipped.Count; j++)
-                            {
-                                if (!TryMergeCollinearSegments(clipped[i].A, clipped[i].B, clipped[j].A, clipped[j].B, out var mA, out var mB))
-                                {
-                                    continue;
-                                }
-
-                                clipped[i] = (mA, mB);
-                                clipped.RemoveAt(j);
-                                merged = true;
-                                break;
-                            }
-
-                            if (merged)
-                            {
-                                break;
-                            }
-                        }
-                    } while (merged);
+                    MergeCollinearSegmentSpans(clipped);
 
                     if (clipped.Count == 0)
                     {
@@ -5033,6 +5009,35 @@ namespace AtsBackgroundBuilder
                 CultureInfo.InvariantCulture,
                 "{0:0.###}|{1:0.###}|{2:0.###}|{3:0.###}",
                 p0.X, p0.Y, p1.X, p1.Y);
+        }
+
+        private static void MergeCollinearSegmentSpans(List<(Point2d A, Point2d B)> clipped)
+        {
+            bool merged;
+            do
+            {
+                merged = false;
+                for (var i = 0; i < clipped.Count; i++)
+                {
+                    for (var j = i + 1; j < clipped.Count; j++)
+                    {
+                        if (!TryMergeCollinearSegments(clipped[i].A, clipped[i].B, clipped[j].A, clipped[j].B, out var mA, out var mB))
+                        {
+                            continue;
+                        }
+
+                        clipped[i] = (mA, mB);
+                        clipped.RemoveAt(j);
+                        merged = true;
+                        break;
+                    }
+
+                    if (merged)
+                    {
+                        break;
+                    }
+                }
+            } while (merged);
         }
 
         private static bool TryWriteOpenTwoPointSegment(Entity ent, Point2d a, Point2d b)
