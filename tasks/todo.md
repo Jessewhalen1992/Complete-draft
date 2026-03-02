@@ -1,3 +1,38 @@
+# Follow-up (PLSR Missing-Label Candidate Selector Tests, 2026-03-02)
+
+- [x] Extract missing-label candidate selection ordering/dedupe into a pure helper.
+- [x] Wire disposition create-missing path to use selector output while preserving existing skip reasons/log text.
+- [x] Add decision tests for preferred-candidate ordering, dedupe behavior, and blank-candidate filtering.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Missing-Label Candidate Selector Tests, 2026-03-02)
+
+- Added `src/AtsBackgroundBuilder/Core/PlsrMissingLabelCandidateSelector.cs`:
+  - `PlsrMissingLabelCandidateSelectionInput`
+  - `PlsrMissingLabelCandidateSelectionResult`
+  - `PlsrMissingLabelCandidateSelector.Select(...)`
+  - behavior: preferred candidate first, stable indexed order for remaining candidates, case-insensitive dedupe, ignore blank IDs.
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - `CreatePlsrMissingLabelsFromDispositions(...)` now:
+    - builds indexed candidate ID map/order,
+    - routes ordering/dedupe through `PlsrMissingLabelCandidateSelector`,
+    - preserves existing skip messages:
+      - `no disposition candidates indexed`
+      - `candidate list empty after dedupe`
+    - preserves placement behavior and counters.
+- Updated decision test project wiring:
+  - `src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj`
+    - linked `..\AtsBackgroundBuilder\Core\PlsrMissingLabelCandidateSelector.cs`.
+- Added decision tests in `src/AtsBackgroundBuilder.DecisionTests/Program.cs`:
+  - `TestPlsrMissingLabelCandidateSelectorPrefersIssueCandidateAndDedupes`
+  - `TestPlsrMissingLabelCandidateSelectorPreservesIndexedOrderWithoutPreferred`
+  - `TestPlsrMissingLabelCandidateSelectorSkipsBlankCandidates`
+- Verification:
+  - build succeeded (warnings only):
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - decision tests passed:
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+
 # Follow-up (PLSR Apply Decision Engine Tests, 2026-03-02)
 
 - [x] Extract pure apply-routing logic into a testable decision engine.

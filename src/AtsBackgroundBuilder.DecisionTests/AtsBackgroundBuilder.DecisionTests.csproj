@@ -12,6 +12,7 @@
     <Compile Include="..\AtsBackgroundBuilder\Core\PromptLifecycleService.cs" Link="PromptLifecycleService.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\ReviewDecisionService.cs" Link="ReviewDecisionService.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\PlsrApplyDecisionEngine.cs" Link="PlsrApplyDecisionEngine.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\PlsrMissingLabelCandidateSelector.cs" Link="PlsrMissingLabelCandidateSelector.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\SectionRequestParser.cs" Link="SectionRequestParser.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\PlsrSummaryComposer.cs" Link="PlsrSummaryComposer.cs" />
   </ItemGroup>

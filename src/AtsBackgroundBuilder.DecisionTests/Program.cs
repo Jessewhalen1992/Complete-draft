@@ -58,6 +58,10 @@ internal static class Program
         TestPlsrApplyDecisionEnginePreservesAcceptedOrder();
         TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted();
 
+        TestPlsrMissingLabelCandidateSelectorPrefersIssueCandidateAndDedupes();
+        TestPlsrMissingLabelCandidateSelectorPreservesIndexedOrderWithoutPreferred();
+        TestPlsrMissingLabelCandidateSelectorSkipsBlankCandidates();
+
         TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes();
         TestPlsrSummaryComposerBuildsWarningWithSortedExamples();
         TestPlsrSummaryComposerSkipsWarningWhenTextFallbackAllowed();
@@ -602,6 +606,50 @@ internal static class Program
         AssertEqual(0, result.IgnoredActionable, nameof(TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted));
         AssertEqual(1, result.AcceptedRoutedIssues.Count, nameof(TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted));
         AssertEqual(idAccepted, result.AcceptedRoutedIssues[0].IssueId, nameof(TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted));
+    }
+
+    private static void TestPlsrMissingLabelCandidateSelectorPrefersIssueCandidateAndDedupes()
+    {
+        var result = PlsrMissingLabelCandidateSelector.Select(
+            new PlsrMissingLabelCandidateSelectionInput
+            {
+                PreferredCandidateId = "B",
+                IndexedCandidateIds = new[] { "A", "B", "C", "A" }
+            });
+
+        AssertEqual(true, result.HasCandidates, nameof(TestPlsrMissingLabelCandidateSelectorPrefersIssueCandidateAndDedupes));
+        AssertEqual(3, result.OrderedCandidateIds.Count, nameof(TestPlsrMissingLabelCandidateSelectorPrefersIssueCandidateAndDedupes));
+        AssertEqual("B", result.OrderedCandidateIds[0], nameof(TestPlsrMissingLabelCandidateSelectorPrefersIssueCandidateAndDedupes));
+        AssertEqual("A", result.OrderedCandidateIds[1], nameof(TestPlsrMissingLabelCandidateSelectorPrefersIssueCandidateAndDedupes));
+        AssertEqual("C", result.OrderedCandidateIds[2], nameof(TestPlsrMissingLabelCandidateSelectorPrefersIssueCandidateAndDedupes));
+    }
+
+    private static void TestPlsrMissingLabelCandidateSelectorPreservesIndexedOrderWithoutPreferred()
+    {
+        var result = PlsrMissingLabelCandidateSelector.Select(
+            new PlsrMissingLabelCandidateSelectionInput
+            {
+                PreferredCandidateId = null,
+                IndexedCandidateIds = new[] { "X", "Y", "Z" }
+            });
+
+        AssertEqual(true, result.HasCandidates, nameof(TestPlsrMissingLabelCandidateSelectorPreservesIndexedOrderWithoutPreferred));
+        AssertEqual("X", result.OrderedCandidateIds[0], nameof(TestPlsrMissingLabelCandidateSelectorPreservesIndexedOrderWithoutPreferred));
+        AssertEqual("Y", result.OrderedCandidateIds[1], nameof(TestPlsrMissingLabelCandidateSelectorPreservesIndexedOrderWithoutPreferred));
+        AssertEqual("Z", result.OrderedCandidateIds[2], nameof(TestPlsrMissingLabelCandidateSelectorPreservesIndexedOrderWithoutPreferred));
+    }
+
+    private static void TestPlsrMissingLabelCandidateSelectorSkipsBlankCandidates()
+    {
+        var result = PlsrMissingLabelCandidateSelector.Select(
+            new PlsrMissingLabelCandidateSelectionInput
+            {
+                PreferredCandidateId = " ",
+                IndexedCandidateIds = new[] { "", "  ", "\t" }
+            });
+
+        AssertEqual(false, result.HasCandidates, nameof(TestPlsrMissingLabelCandidateSelectorSkipsBlankCandidates));
+        AssertEqual(0, result.OrderedCandidateIds.Count, nameof(TestPlsrMissingLabelCandidateSelectorSkipsBlankCandidates));
     }
 
     private static void TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes()

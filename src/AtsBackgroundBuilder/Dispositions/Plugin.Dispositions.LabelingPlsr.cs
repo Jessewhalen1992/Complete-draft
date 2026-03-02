@@ -1261,13 +1261,8 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    var candidateDispositions = new List<DispositionInfo>();
-                    var seenCandidateIds = new HashSet<ObjectId>();
-                    if (issue.Disposition != null && !issue.Disposition.ObjectId.IsNull && seenCandidateIds.Add(issue.Disposition.ObjectId))
-                    {
-                        candidateDispositions.Add(issue.Disposition);
-                    }
-
+                    var indexedCandidateById = new Dictionary<string, DispositionInfo>(StringComparer.OrdinalIgnoreCase);
+                    var orderedIndexedCandidateIds = new List<string>();
                     foreach (var candidate in indexedCandidates)
                     {
                         if (candidate == null || candidate.ObjectId.IsNull)
@@ -1275,9 +1270,46 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (seenCandidateIds.Add(candidate.ObjectId))
+                        var candidateId = candidate.ObjectId.ToString();
+                        if (string.IsNullOrWhiteSpace(candidateId))
+                        {
+                            continue;
+                        }
+
+                        if (!indexedCandidateById.ContainsKey(candidateId))
+                        {
+                            indexedCandidateById[candidateId] = candidate;
+                            orderedIndexedCandidateIds.Add(candidateId);
+                        }
+                    }
+
+                    var preferredCandidateId = issue.Disposition != null && !issue.Disposition.ObjectId.IsNull
+                        ? issue.Disposition.ObjectId.ToString()
+                        : null;
+                    var selection = PlsrMissingLabelCandidateSelector.Select(
+                        new PlsrMissingLabelCandidateSelectionInput
+                        {
+                            PreferredCandidateId = preferredCandidateId,
+                            IndexedCandidateIds = orderedIndexedCandidateIds
+                        });
+                    if (!selection.HasCandidates)
+                    {
+                        logger.WriteLine(
+                            $"PLSR missing-label create skipped for {issue.DispNum} in {issue.QuarterKey}: candidate list empty after dedupe.");
+                        continue;
+                    }
+
+                    var candidateDispositions = new List<DispositionInfo>();
+                    foreach (var candidateId in selection.OrderedCandidateIds)
+                    {
+                        if (indexedCandidateById.TryGetValue(candidateId, out var candidate))
                         {
                             candidateDispositions.Add(candidate);
+                        }
+                        else if (issue.Disposition != null && !issue.Disposition.ObjectId.IsNull &&
+                                 string.Equals(candidateId, issue.Disposition.ObjectId.ToString(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            candidateDispositions.Add(issue.Disposition);
                         }
                     }
 
