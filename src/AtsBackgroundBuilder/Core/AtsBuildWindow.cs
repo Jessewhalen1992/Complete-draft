@@ -1205,68 +1205,23 @@ namespace AtsBackgroundBuilder.Core
 
         private List<SectionRequest> ParseSectionRequests(int zone)
         {
-            var requests = new List<SectionRequest>();
-
-            var lastMeridian = string.Empty;
-            var lastRange = string.Empty;
-            var lastTownship = string.Empty;
-            var lastSection = string.Empty;
-
-            for (var i = 0; i < _rows.Count; i++)
+            var parseResult = SectionRequestParser.Parse(
+                zone,
+                _rows.Select(row => new SectionRequestRowInput(row.M, row.RGE, row.TWP, row.SEC, row.HQ)));
+            if (parseResult.IsSuccess)
             {
-                var row = _rows[i];
-                var m = NormalizeCell(row.M);
-                var rge = NormalizeCell(row.RGE);
-                var twp = NormalizeCell(row.TWP);
-                var sec = NormalizeCell(row.SEC);
-                var q = NormalizeCell(row.HQ);
+                return parseResult.Requests;
+            }
 
-                var anyFilled =
-                    !string.IsNullOrWhiteSpace(m) ||
-                    !string.IsNullOrWhiteSpace(rge) ||
-                    !string.IsNullOrWhiteSpace(twp) ||
-                    !string.IsNullOrWhiteSpace(sec) ||
-                    !string.IsNullOrWhiteSpace(q);
-                if (!anyFilled)
-                {
-                    continue;
-                }
+            ShowParseSectionRequestFailure(parseResult);
+            return new List<SectionRequest>();
+        }
 
-                var hasExplicitMeridian = !string.IsNullOrWhiteSpace(m);
-                var hasExplicitRange = !string.IsNullOrWhiteSpace(rge);
-                var hasExplicitTownship = !string.IsNullOrWhiteSpace(twp);
-                var hasExplicitSection = !string.IsNullOrWhiteSpace(sec);
-
-                if (string.IsNullOrWhiteSpace(m))
-                {
-                    m = lastMeridian;
-                }
-
-                if (string.IsNullOrWhiteSpace(rge))
-                {
-                    rge = lastRange;
-                }
-
-                if (string.IsNullOrWhiteSpace(twp))
-                {
-                    twp = lastTownship;
-                }
-
-                var expandAllSections =
-                    !hasExplicitSection &&
-                    (hasExplicitMeridian || hasExplicitRange || hasExplicitTownship);
-                if (!expandAllSections && string.IsNullOrWhiteSpace(sec))
-                {
-                    sec = lastSection;
-                }
-
-                if (string.IsNullOrWhiteSpace(q))
-                {
-                    q = "ALL";
-                }
-
-                if (string.IsNullOrWhiteSpace(m) || string.IsNullOrWhiteSpace(rge) || string.IsNullOrWhiteSpace(twp))
-                {
+        private void ShowParseSectionRequestFailure(SectionRequestParseResult parseResult)
+        {
+            switch (parseResult.Failure)
+            {
+                case SectionRequestParseFailure.MissingMeridianRangeTownship:
                     MessageBox.Show(
                         this,
                         "Row is missing M/RGE/TWP and no value above to carry down.\n\n" +
@@ -1274,11 +1229,8 @@ namespace AtsBackgroundBuilder.Core
                         "ATSBUILD",
                         MessageBoxButton.OK,
                         MessageBoxImage.Warning);
-                    return new List<SectionRequest>();
-                }
-
-                if (!expandAllSections && string.IsNullOrWhiteSpace(sec))
-                {
+                    return;
+                case SectionRequestParseFailure.MissingSection:
                     MessageBox.Show(
                         this,
                         "SEC is blank and there is no section above to carry down.\n\n" +
@@ -1286,91 +1238,17 @@ namespace AtsBackgroundBuilder.Core
                         "ATSBUILD",
                         MessageBoxButton.OK,
                         MessageBoxImage.Warning);
-                    return new List<SectionRequest>();
-                }
-
-                lastMeridian = m;
-                lastRange = rge;
-                lastTownship = twp;
-
-                if (!TryParseQuarter(q, out var quarter))
-                {
+                    return;
+                case SectionRequestParseFailure.InvalidQuarter:
                     MessageBox.Show(
                         this,
-                        $"Invalid quarter value: '{q}'. Use NW, NE, SW, SE, N, S, E, W, or ALL.",
+                        $"Invalid quarter value: '{parseResult.InvalidQuarterValue}'. Use NW, NE, SW, SE, N, S, E, W, or ALL.",
                         "ATSBUILD",
                         MessageBoxButton.OK,
                         MessageBoxImage.Warning);
-                    return new List<SectionRequest>();
-                }
-
-                if (expandAllSections)
-                {
-                    for (var sectionNumber = 1; sectionNumber <= 36; sectionNumber++)
-                    {
-                        var key = new SectionKey(zone, sectionNumber.ToString(CultureInfo.InvariantCulture), twp, rge, m);
-                        requests.Add(new SectionRequest(quarter, key, "AUTO"));
-                    }
-
-                    lastSection = string.Empty;
-                }
-                else
-                {
-                    lastSection = sec;
-                    var key = new SectionKey(zone, sec, twp, rge, m);
-                    requests.Add(new SectionRequest(quarter, key, "AUTO"));
-                }
-            }
-
-            return requests;
-        }
-
-        private static string NormalizeCell(string? value)
-        {
-            return value?.Trim() ?? string.Empty;
-        }
-
-        private static bool TryParseQuarter(string raw, out QuarterSelection quarter)
-        {
-            quarter = QuarterSelection.None;
-            if (string.IsNullOrWhiteSpace(raw))
-            {
-                return false;
-            }
-
-            var s = raw.Trim().ToUpperInvariant();
-            switch (s)
-            {
-                case "NW":
-                    quarter = QuarterSelection.NorthWest;
-                    return true;
-                case "NE":
-                    quarter = QuarterSelection.NorthEast;
-                    return true;
-                case "SW":
-                    quarter = QuarterSelection.SouthWest;
-                    return true;
-                case "SE":
-                    quarter = QuarterSelection.SouthEast;
-                    return true;
-                case "N":
-                    quarter = QuarterSelection.NorthHalf;
-                    return true;
-                case "S":
-                    quarter = QuarterSelection.SouthHalf;
-                    return true;
-                case "E":
-                    quarter = QuarterSelection.EastHalf;
-                    return true;
-                case "W":
-                    quarter = QuarterSelection.WestHalf;
-                    return true;
-                case "ALL":
-                case "A":
-                    quarter = QuarterSelection.All;
-                    return true;
+                    return;
                 default:
-                    return false;
+                    return;
             }
         }
 

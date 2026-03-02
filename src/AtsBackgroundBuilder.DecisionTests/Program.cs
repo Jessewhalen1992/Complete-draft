@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using AtsBackgroundBuilder;
 using AtsBackgroundBuilder.Core;
 
 internal static class Program
@@ -28,6 +29,11 @@ internal static class Program
         TestPromptLifecycleRefreshRunsOnException();
         TestReviewDecisionResolveAcceptedIdsHonorsApplyFlag();
         TestReviewDecisionResolveAcceptedIdsIncludesOnlyAccept();
+        TestSectionRequestParserCarryDownAndQuarterDefault();
+        TestSectionRequestParserExpandAllSections();
+        TestSectionRequestParserMissingBaseFieldsFails();
+        TestSectionRequestParserMissingSectionFails();
+        TestSectionRequestParserInvalidQuarterFails();
 
         TestNoIntentSnapshotReopen();
         TestNoIntentBoundaryRoundTripReopenWithoutSnapshot();
@@ -106,6 +112,85 @@ internal static class Program
         AssertEqual(true, resolved.Contains(acceptA), nameof(TestReviewDecisionResolveAcceptedIdsIncludesOnlyAccept));
         AssertEqual(true, resolved.Contains(acceptB), nameof(TestReviewDecisionResolveAcceptedIdsIncludesOnlyAccept));
         AssertEqual(2, resolved.Count, nameof(TestReviewDecisionResolveAcceptedIdsIncludesOnlyAccept));
+    }
+
+    private static void TestSectionRequestParserCarryDownAndQuarterDefault()
+    {
+        var result = SectionRequestParser.Parse(
+            zone: 11,
+            new[]
+            {
+                new SectionRequestRowInput("4", "5", "52", "1", ""),
+                new SectionRequestRowInput("", "", "", "2", "NE")
+            });
+
+        AssertEqual(true, result.IsSuccess, nameof(TestSectionRequestParserCarryDownAndQuarterDefault));
+        AssertEqual(2, result.Requests.Count, nameof(TestSectionRequestParserCarryDownAndQuarterDefault));
+        AssertEqual(QuarterSelection.All, result.Requests[0].Quarter, nameof(TestSectionRequestParserCarryDownAndQuarterDefault));
+        AssertEqual("1", result.Requests[0].Key.Section, nameof(TestSectionRequestParserCarryDownAndQuarterDefault));
+        AssertEqual(QuarterSelection.NorthEast, result.Requests[1].Quarter, nameof(TestSectionRequestParserCarryDownAndQuarterDefault));
+        AssertEqual("2", result.Requests[1].Key.Section, nameof(TestSectionRequestParserCarryDownAndQuarterDefault));
+        AssertEqual("52", result.Requests[1].Key.Township, nameof(TestSectionRequestParserCarryDownAndQuarterDefault));
+    }
+
+    private static void TestSectionRequestParserExpandAllSections()
+    {
+        var result = SectionRequestParser.Parse(
+            zone: 12,
+            new[]
+            {
+                new SectionRequestRowInput("4", "5", "52", "", "SW")
+            });
+
+        AssertEqual(true, result.IsSuccess, nameof(TestSectionRequestParserExpandAllSections));
+        AssertEqual(36, result.Requests.Count, nameof(TestSectionRequestParserExpandAllSections));
+        AssertEqual("1", result.Requests[0].Key.Section, nameof(TestSectionRequestParserExpandAllSections));
+        AssertEqual("36", result.Requests[^1].Key.Section, nameof(TestSectionRequestParserExpandAllSections));
+        AssertEqual(QuarterSelection.SouthWest, result.Requests[0].Quarter, nameof(TestSectionRequestParserExpandAllSections));
+        AssertEqual(12, result.Requests[0].Key.Zone, nameof(TestSectionRequestParserExpandAllSections));
+    }
+
+    private static void TestSectionRequestParserMissingBaseFieldsFails()
+    {
+        var result = SectionRequestParser.Parse(
+            zone: 11,
+            new[]
+            {
+                new SectionRequestRowInput("", "", "", "1", "NW")
+            });
+
+        AssertEqual(false, result.IsSuccess, nameof(TestSectionRequestParserMissingBaseFieldsFails));
+        AssertEqual(SectionRequestParseFailure.MissingMeridianRangeTownship, result.Failure, nameof(TestSectionRequestParserMissingBaseFieldsFails));
+        AssertEqual(0, result.Requests.Count, nameof(TestSectionRequestParserMissingBaseFieldsFails));
+    }
+
+    private static void TestSectionRequestParserMissingSectionFails()
+    {
+        var result = SectionRequestParser.Parse(
+            zone: 11,
+            new[]
+            {
+                new SectionRequestRowInput("4", "5", "52", "", "ALL"),
+                new SectionRequestRowInput("", "", "", "", "NE")
+            });
+
+        AssertEqual(false, result.IsSuccess, nameof(TestSectionRequestParserMissingSectionFails));
+        AssertEqual(SectionRequestParseFailure.MissingSection, result.Failure, nameof(TestSectionRequestParserMissingSectionFails));
+        AssertEqual(0, result.Requests.Count, nameof(TestSectionRequestParserMissingSectionFails));
+    }
+
+    private static void TestSectionRequestParserInvalidQuarterFails()
+    {
+        var result = SectionRequestParser.Parse(
+            zone: 11,
+            new[]
+            {
+                new SectionRequestRowInput("4", "5", "52", "1", "BAD")
+            });
+
+        AssertEqual(false, result.IsSuccess, nameof(TestSectionRequestParserInvalidQuarterFails));
+        AssertEqual(SectionRequestParseFailure.InvalidQuarter, result.Failure, nameof(TestSectionRequestParserInvalidQuarterFails));
+        AssertEqual("BAD", result.InvalidQuarterValue, nameof(TestSectionRequestParserInvalidQuarterFails));
     }
 
     private static void TestNoIntentSnapshotReopen()

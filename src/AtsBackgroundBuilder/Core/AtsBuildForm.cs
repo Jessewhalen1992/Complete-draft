@@ -1014,109 +1014,24 @@ namespace AtsBackgroundBuilder.Core
 
         private List<SectionRequest> ParseSectionRequests(int zone)
         {
-            var requests = new List<SectionRequest>();
-
-            string lastMeridian = string.Empty;
-            string lastRange = string.Empty;
-            string lastTownship = string.Empty;
-            string lastSection = string.Empty;
-
-            foreach (DataGridViewRow row in _grid.Rows)
+            var parseResult = SectionRequestParser.Parse(
+                zone,
+                _grid.Rows
+                    .Cast<DataGridViewRow>()
+                    .Where(row => row != null && !row.IsNewRow)
+                    .Select(row => new SectionRequestRowInput(
+                        GetCell(row, "M"),
+                        GetCell(row, "RGE"),
+                        GetCell(row, "TWP"),
+                        GetCell(row, "SEC"),
+                        GetCell(row, "HQ"))));
+            if (parseResult.IsSuccess)
             {
-                if (row.IsNewRow)
-                    continue;
-
-                string m = GetCell(row, "M");
-                string rge = GetCell(row, "RGE");
-                string twp = GetCell(row, "TWP");
-                string sec = GetCell(row, "SEC");
-                string q = GetCell(row, "HQ");
-
-                bool anyFilled =
-                    !string.IsNullOrWhiteSpace(m) ||
-                    !string.IsNullOrWhiteSpace(rge) ||
-                    !string.IsNullOrWhiteSpace(twp) ||
-                    !string.IsNullOrWhiteSpace(sec) ||
-                    !string.IsNullOrWhiteSpace(q);
-
-                if (!anyFilled)
-                    continue;
-
-                var hasExplicitMeridian = !string.IsNullOrWhiteSpace(m);
-                var hasExplicitRange = !string.IsNullOrWhiteSpace(rge);
-                var hasExplicitTownship = !string.IsNullOrWhiteSpace(twp);
-                var hasExplicitSection = !string.IsNullOrWhiteSpace(sec);
-
-                // Carry-down behavior (only when row is active).
-                if (string.IsNullOrWhiteSpace(m)) m = lastMeridian;
-                if (string.IsNullOrWhiteSpace(rge)) rge = lastRange;
-                if (string.IsNullOrWhiteSpace(twp)) twp = lastTownship;
-                var expandAllSections =
-                    !hasExplicitSection &&
-                    (hasExplicitMeridian || hasExplicitRange || hasExplicitTownship);
-                if (!expandAllSections && string.IsNullOrWhiteSpace(sec))
-                {
-                    sec = lastSection;
-                }
-
-                // Quarter defaults to ALL if blank.
-                if (string.IsNullOrWhiteSpace(q)) q = "ALL";
-
-                // Validate carry-down didn't leave required values missing.
-                if (string.IsNullOrWhiteSpace(m) || string.IsNullOrWhiteSpace(rge) || string.IsNullOrWhiteSpace(twp))
-                {
-                    MessageBox.Show(
-                        this,
-                        "Row is missing M/RGE/TWP and no value above to carry down.\n\n" +
-                        "Tip: Fill the first row completely, then you can leave repeated values blank on lower rows.",
-                        "ATSBUILD",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
-                    return new List<SectionRequest>();
-                }
-
-                if (!expandAllSections && string.IsNullOrWhiteSpace(sec))
-                {
-                    MessageBox.Show(
-                        this,
-                        "SEC is blank and there is no section above to carry down.\n\n" +
-                        "Tip: Enter SEC, or provide M/RGE/TWP on that row with SEC blank to build sections 1-36.",
-                        "ATSBUILD",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
-                    return new List<SectionRequest>();
-                }
-
-                lastMeridian = m;
-                lastRange = rge;
-                lastTownship = twp;
-
-                if (!TryParseQuarter(q, out var quarter))
-                {
-                    MessageBox.Show(this, $"Invalid quarter value: '{q}'. Use NW, NE, SW, SE, N, S, E, W, or ALL.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return new List<SectionRequest>();
-                }
-
-                if (expandAllSections)
-                {
-                    for (var sectionNumber = 1; sectionNumber <= 36; sectionNumber++)
-                    {
-                        var key = new SectionKey(zone, sectionNumber.ToString(CultureInfo.InvariantCulture), twp, rge, m);
-                        requests.Add(new SectionRequest(quarter, key, "AUTO"));
-                    }
-
-                    // Keep section carry-down explicit after an all-sections expansion row.
-                    lastSection = string.Empty;
-                }
-                else
-                {
-                    lastSection = sec;
-                    var key = new SectionKey(zone, sec, twp, rge, m);
-                    requests.Add(new SectionRequest(quarter, key, "AUTO"));
-                }
+                return parseResult.Requests;
             }
 
-            return requests;
+            ShowParseSectionRequestFailure(parseResult);
+            return new List<SectionRequest>();
         }
 
         private static string GetCell(DataGridViewRow row, string columnName)
@@ -1132,45 +1047,38 @@ namespace AtsBackgroundBuilder.Core
             }
         }
 
-        private static bool TryParseQuarter(string raw, out QuarterSelection quarter)
+        private void ShowParseSectionRequestFailure(SectionRequestParseResult parseResult)
         {
-            quarter = QuarterSelection.None;
-            if (string.IsNullOrWhiteSpace(raw))
-                return false;
-
-            var s = raw.Trim().ToUpperInvariant();
-            switch (s)
+            switch (parseResult.Failure)
             {
-                case "NW":
-                    quarter = QuarterSelection.NorthWest;
-                    return true;
-                case "NE":
-                    quarter = QuarterSelection.NorthEast;
-                    return true;
-                case "SW":
-                    quarter = QuarterSelection.SouthWest;
-                    return true;
-                case "SE":
-                    quarter = QuarterSelection.SouthEast;
-                    return true;
-                case "N":
-                    quarter = QuarterSelection.NorthHalf;
-                    return true;
-                case "S":
-                    quarter = QuarterSelection.SouthHalf;
-                    return true;
-                case "E":
-                    quarter = QuarterSelection.EastHalf;
-                    return true;
-                case "W":
-                    quarter = QuarterSelection.WestHalf;
-                    return true;
-                case "ALL":
-                case "A":
-                    quarter = QuarterSelection.All;
-                    return true;
+                case SectionRequestParseFailure.MissingMeridianRangeTownship:
+                    MessageBox.Show(
+                        this,
+                        "Row is missing M/RGE/TWP and no value above to carry down.\n\n" +
+                        "Tip: Fill the first row completely, then you can leave repeated values blank on lower rows.",
+                        "ATSBUILD",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return;
+                case SectionRequestParseFailure.MissingSection:
+                    MessageBox.Show(
+                        this,
+                        "SEC is blank and there is no section above to carry down.\n\n" +
+                        "Tip: Enter SEC, or provide M/RGE/TWP on that row with SEC blank to build sections 1-36.",
+                        "ATSBUILD",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return;
+                case SectionRequestParseFailure.InvalidQuarter:
+                    MessageBox.Show(
+                        this,
+                        $"Invalid quarter value: '{parseResult.InvalidQuarterValue}'. Use NW, NE, SW, SE, N, S, E, W, or ALL.",
+                        "ATSBUILD",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return;
                 default:
-                    return false;
+                    return;
             }
         }
 

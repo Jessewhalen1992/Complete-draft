@@ -11,5 +11,6 @@
     <Compile Include="..\AtsBackgroundBuilder\Core\BuildExecutionPlan.cs" Link="BuildExecutionPlan.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\PromptLifecycleService.cs" Link="PromptLifecycleService.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\ReviewDecisionService.cs" Link="ReviewDecisionService.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\SectionRequestParser.cs" Link="SectionRequestParser.cs" />
   </ItemGroup>
 </Project>
