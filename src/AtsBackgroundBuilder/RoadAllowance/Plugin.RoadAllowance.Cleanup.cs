@@ -153,37 +153,9 @@ namespace AtsBackgroundBuilder
             var clipMinX = clipWindows.Min(w => w.MinPoint.X);
             var clipMaxX = clipWindows.Max(w => w.MaxPoint.X);
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
             bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
             {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
+                return DoesSegmentIntersectAnyClipWindow(clipWindows, a, b);
             }
 
             using (var tr = database.TransactionManager.StartTransaction())
@@ -689,37 +661,9 @@ namespace AtsBackgroundBuilder
             var clipMinX = clipWindows.Min(w => w.MinPoint.X);
             var clipMaxX = clipWindows.Max(w => w.MaxPoint.X);
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
             bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
             {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
+                return DoesSegmentIntersectAnyClipWindow(clipWindows, a, b);
             }
 
             using (var tr = database.TransactionManager.StartTransaction())
@@ -8328,6 +8272,39 @@ namespace AtsBackgroundBuilder
         {
             logger?.WriteLine(
                 $"Cleanup: deterministic section-edge relayer adjusted={adjusted}, unchanged={unchanged}, unresolved={unresolved}, skippedBlind={skippedBlind}, ownerResolved={ownerResolved}, fallbackResolved={fallbackResolved}, preserved20ByZeroCompanion={preservedTwentyByZeroCompanion}, forced20To0RangeEdge={forcedTwentyToZeroByRangeEdge}, forced20To0SecCompanion={forcedTwentyToZeroBySecCompanion}, forced20To0GeomPattern={forcedTwentyToZeroByGeomPattern}, demotedBlind30To20={demotedBlindThirty}, demotedBlind30To20ZeroAnchor={demotedBlindThirtyByZeroAnchor}, demotedBlind30To20TwentyAnchor={demotedBlindThirtyByTwentyAnchor}, demotedBlind30To20RangeEdge={demotedBlindThirtyByRangeEdge}, demotedBlind30To20SectionSide={demotedBlindThirtyBySectionSide}.");
+        }
+
+        private static bool IsPointInAnyClipWindow(IReadOnlyList<Extents3d> clipWindows, Point2d p)
+        {
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                var w = clipWindows[i];
+                if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
+                    p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool DoesSegmentIntersectAnyClipWindow(IReadOnlyList<Extents3d> clipWindows, Point2d a, Point2d b)
+        {
+            if (IsPointInAnyClipWindow(clipWindows, a) || IsPointInAnyClipWindow(clipWindows, b))
+            {
+                return true;
+            }
+
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static void NormalizeUsecCollinearComponentLayerConsistency(
