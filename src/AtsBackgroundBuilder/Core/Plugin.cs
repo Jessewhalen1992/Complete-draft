@@ -4356,6 +4356,48 @@ namespace AtsBackgroundBuilder
             return erased;
         }
 
+        private static bool TryReadOpenTwoPointSegment(Entity ent, out Point2d a, out Point2d b)
+        {
+            a = default;
+            b = default;
+            if (ent == null)
+            {
+                return false;
+            }
+
+            if (ent is Polyline pl)
+            {
+                if (pl.Closed || pl.NumberOfVertices != 2)
+                {
+                    return false;
+                }
+
+                a = pl.GetPoint2dAt(0);
+                b = pl.GetPoint2dAt(1);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            if (ent is Line ln)
+            {
+                a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            return false;
+        }
+
+        private static bool IsSegmentContainedWithinTolerance(
+            Point2d innerA,
+            Point2d innerB,
+            Point2d outerA,
+            Point2d outerB,
+            double tolerance)
+        {
+            return DistancePointToSegment(innerA, outerA, outerB) <= tolerance &&
+                   DistancePointToSegment(innerB, outerA, outerB) <= tolerance;
+        }
+
         private static HashSet<ObjectId> ResolveSectionOverlapEraseSet(
             List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase)> segments,
             out int restoredNearDuplicatePairHits,
@@ -4692,74 +4734,15 @@ namespace AtsBackgroundBuilder
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-                {
-                    a = default;
-                    b = default;
-                    if (ent == null)
-                    {
-                        return false;
-                    }
-
-                    if (ent is Polyline pl)
-                    {
-                        if (pl.Closed || pl.NumberOfVertices != 2)
-                        {
-                            return false;
-                        }
-
-                        a = pl.GetPoint2dAt(0);
-                        b = pl.GetPoint2dAt(1);
-                        return a.GetDistanceTo(b) > 1e-4;
-                    }
-
-                    if (ent is Line ln)
-                    {
-                        a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                        b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                        return a.GetDistanceTo(b) > 1e-4;
-                    }
-
-                    return false;
-                }
-
-                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
-                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-                foreach (ObjectId id in ms)
-                {
-                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent))
-                    {
-                        continue;
-                    }
-
-                    if (!string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) &&
-                        !IsUsecLayer(ent.Layer))
-                    {
-                        continue;
-                    }
-
-                    if (!TryReadOpenSegment(ent, out var a, out var b))
-                    {
-                        continue;
-                    }
-
-                    if (generatedSet.Contains(id))
-                    {
-                        generatedSegments.Add((id, a, b, a.GetDistanceTo(b)));
-                    }
-                    else
-                    {
-                        existingSegments.Add((id, a, b, ent.Layer ?? string.Empty, a.GetDistanceTo(b)));
-                    }
-                }
+                CollectGeneratedRoadAllowanceOverlapSegments(
+                    database,
+                    tr,
+                    generatedSet,
+                    generatedSegments,
+                    existingSegments);
 
                 const double containTol = 0.40;
                 const double lengthDeltaTol = 0.35;
-                bool IsSegmentContained(Point2d innerA, Point2d innerB, Point2d outerA, Point2d outerB)
-                {
-                    return DistancePointToSegment(innerA, outerA, outerB) <= containTol &&
-                           DistancePointToSegment(innerB, outerA, outerB) <= containTol;
-                }
 
                 var toEraseGenerated = new HashSet<ObjectId>();
                 var toEraseExisting = new HashSet<ObjectId>();
@@ -4784,8 +4767,8 @@ namespace AtsBackgroundBuilder
                             break;
                         }
 
-                        var existingInsideGenerated = IsSegmentContained(e.A, e.B, g.A, g.B);
-                        var generatedInsideExisting = IsSegmentContained(g.A, g.B, e.A, e.B);
+                        var existingInsideGenerated = IsSegmentContainedWithinTolerance(e.A, e.B, g.A, g.B, containTol);
+                        var generatedInsideExisting = IsSegmentContainedWithinTolerance(g.A, g.B, e.A, e.B, containTol);
                         var lengthDiff = g.Length - e.Length;
                         if (existingInsideGenerated && lengthDiff > lengthDeltaTol)
                         {
@@ -4816,35 +4799,14 @@ namespace AtsBackgroundBuilder
                 }
 
                 var erasedGenerated = 0;
-                foreach (var id in toEraseGenerated)
-                {
-                    if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity ent) || ent.IsErased)
-                    {
-                        continue;
-                    }
-
-                    ent.Erase();
-                    erasedGenerated++;
-                }
+                erasedGenerated = EraseEntitiesById(tr, toEraseGenerated);
 
                 var erasedExisting = 0;
                 if (allowEraseExisting)
                 {
-                    foreach (var id in toEraseExisting)
-                    {
-                        if (toEraseGenerated.Contains(id))
-                        {
-                            continue;
-                        }
-
-                        if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity ent) || ent.IsErased)
-                        {
-                            continue;
-                        }
-
-                        ent.Erase();
-                        erasedExisting++;
-                    }
+                    erasedExisting = EraseEntitiesById(
+                        tr,
+                        toEraseExisting.Where(id => !toEraseGenerated.Contains(id)));
                 }
 
                 tr.Commit();
@@ -4852,6 +4814,49 @@ namespace AtsBackgroundBuilder
                 {
                     logger?.WriteLine(
                         $"Cleanup: overlap resolve erased {erasedGenerated} generated RA segment(s), {erasedExisting} existing overlap segment(s); allowEraseExisting={allowEraseExisting}, protectedExisting={protectedExistingSet.Count}.");
+                }
+            }
+        }
+
+        private static void CollectGeneratedRoadAllowanceOverlapSegments(
+            Database database,
+            Transaction tr,
+            ISet<ObjectId> generatedSet,
+            ICollection<(ObjectId Id, Point2d A, Point2d B, double Length)> generatedSegments,
+            ICollection<(ObjectId Id, Point2d A, Point2d B, string Layer, double Length)> existingSegments)
+        {
+            if (database == null || tr == null || generatedSet == null || generatedSegments == null || existingSegments == null)
+            {
+                return;
+            }
+
+            var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+            var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+            foreach (ObjectId id in ms)
+            {
+                if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) &&
+                    !IsUsecLayer(ent.Layer))
+                {
+                    continue;
+                }
+
+                if (!TryReadOpenTwoPointSegment(ent, out var a, out var b))
+                {
+                    continue;
+                }
+
+                if (generatedSet.Contains(id))
+                {
+                    generatedSegments.Add((id, a, b, a.GetDistanceTo(b)));
+                }
+                else
+                {
+                    existingSegments.Add((id, a, b, ent.Layer ?? string.Empty, a.GetDistanceTo(b)));
                 }
             }
         }
