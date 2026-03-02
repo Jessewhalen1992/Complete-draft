@@ -8236,6 +8236,7 @@ namespace AtsBackgroundBuilder
                    message.StartsWith("ATSBUILD stage:", StringComparison.OrdinalIgnoreCase) ||
                    message.StartsWith("ATSBUILD assembly:", StringComparison.OrdinalIgnoreCase) ||
                    message.StartsWith("ATSBUILD summary", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("LSD-ENDPT", StringComparison.OrdinalIgnoreCase) ||
                    message.StartsWith("PLSR stage:", StringComparison.OrdinalIgnoreCase) ||
                    message.StartsWith("PLSR precheck:", StringComparison.OrdinalIgnoreCase) ||
                    message.StartsWith("PLSR check log written:", StringComparison.OrdinalIgnoreCase) ||

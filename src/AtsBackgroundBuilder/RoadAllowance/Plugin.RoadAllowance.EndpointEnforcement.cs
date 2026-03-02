@@ -2117,10 +2117,70 @@ namespace AtsBackgroundBuilder
                     const double axisTol = 20.0;
                     const double stationTol = 8.0;
                     const double minOutwardAdvance = 2.0;
-                    const double sectionScopePad = 8.0;
+                    // RA boundaries (0/20.12 and correction variants) can sit ~20-30m outside
+                    // section extents; a tight pad causes south/west LSD outer endpoints to miss
+                    // valid TWENTY/ZERO targets and fall back to anchors.
+                    var sectionScopePad = 8.0;
+                    for (var pi = 0; pi < preferredKinds.Count; pi++)
+                    {
+                        var kind = preferredKinds[pi];
+                        if (!string.Equals(kind, "SEC", StringComparison.OrdinalIgnoreCase))
+                        {
+                            sectionScopePad = 40.0;
+                            break;
+                        }
+                    }
                     const double endpointOnBoundaryTol = 0.40;
                     var found = false;
                     var bestScore = double.MaxValue;
+
+                    bool IsPointNearAnyHardBoundary(Point2d p)
+                    {
+                        bool NearAny(IReadOnlyList<(Point2d A, Point2d B, Point2d Mid)> segments)
+                        {
+                            if (segments == null || segments.Count == 0)
+                            {
+                                return false;
+                            }
+
+                            for (var i = 0; i < segments.Count; i++)
+                            {
+                                var seg = segments[i];
+                                if (DistancePointToSegment(p, seg.A, seg.B) <= endpointOnBoundaryTol)
+                                {
+                                    return true;
+                                }
+                            }
+
+                            return false;
+                        }
+
+                        return
+                            (horizontalByKind.TryGetValue("SEC", out var hSec) && NearAny(hSec)) ||
+                            (horizontalByKind.TryGetValue("ZERO", out var hZero) && NearAny(hZero)) ||
+                            (horizontalByKind.TryGetValue("TWENTY", out var hTwenty) && NearAny(hTwenty)) ||
+                            (horizontalByKind.TryGetValue("CORRZERO", out var hCorrZero) && NearAny(hCorrZero)) ||
+                            (verticalByKind.TryGetValue("SEC", out var vSec) && NearAny(vSec)) ||
+                            (verticalByKind.TryGetValue("ZERO", out var vZero) && NearAny(vZero)) ||
+                            (verticalByKind.TryGetValue("TWENTY", out var vTwenty) && NearAny(vTwenty)) ||
+                            (verticalByKind.TryGetValue("CORRZERO", out var vCorrZero) && NearAny(vCorrZero));
+                    }
+
+                    int CountHardEndpointTouches((Point2d A, Point2d B, Point2d Mid) seg)
+                    {
+                        var touches = 0;
+                        if (IsPointNearAnyHardBoundary(seg.A))
+                        {
+                            touches++;
+                        }
+
+                        if (IsPointNearAnyHardBoundary(seg.B))
+                        {
+                            touches++;
+                        }
+
+                        return touches;
+                    }
 
                     // If endpoint already lands on a preferred boundary in-scope, preserve it.
                     for (var pi = 0; pi < preferredKinds.Count; pi++)
@@ -2176,6 +2236,18 @@ namespace AtsBackgroundBuilder
                                 // (e.g., SEC) when higher-priority targets (e.g., TWENTY/ZERO)
                                 // are configured for this quarter/line orientation.
                                 continue;
+                            }
+
+                            // Blind boundaries can exist in parallel pre/post-adjustment states.
+                            // Only freeze when the candidate is strongly hard-linked at both ends;
+                            // otherwise continue scoring to allow snap onto the post-adjusted blind midpoint.
+                            if (string.Equals(kind, "BLIND", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var hardTouches = CountHardEndpointTouches(seg);
+                                if (hardTouches < 2)
+                                {
+                                    continue;
+                                }
                             }
 
                             target = endpoint;
@@ -2248,7 +2320,17 @@ namespace AtsBackgroundBuilder
 
                             // Prefer the first valid boundary encountered outward from the inner target.
                             // This prevents endpoint scoring from skipping a nearer SEC boundary and crossing to a farther one.
-                            var score = (pi * 1000000.0) + (outwardAdvance * 1000.0) + (axisGap * 100.0) + move;
+                            // For BLIND candidates, strongly prefer boundaries whose endpoints tie into
+                            // hard section boundaries (SEC/0/20/CORRZERO). This avoids locking to
+                            // pre-adjust blind geometry when a post-adjust segment is present.
+                            var hardLinkPenalty = 0.0;
+                            if (string.Equals(kind, "BLIND", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var hardTouches = CountHardEndpointTouches(seg);
+                                hardLinkPenalty = (2 - hardTouches) * 10000.0;
+                            }
+
+                            var score = (pi * 1000000.0) + hardLinkPenalty + (outwardAdvance * 1000.0) + (axisGap * 100.0) + move;
                             if (score >= bestScore)
                             {
                                 continue;
@@ -2264,6 +2346,33 @@ namespace AtsBackgroundBuilder
                 }
 
                 const double endpointMoveTol = 0.005;
+                var traceRuleFlow = logger != null;
+
+                string FormatPoint(Point2d p) => $"({p.X:0.###},{p.Y:0.###})";
+
+                string FormatLsdId(ObjectId objectId)
+                {
+                    try
+                    {
+                        return objectId.Handle.ToString();
+                    }
+                    catch
+                    {
+                        return objectId.ToString();
+                    }
+                }
+
+                if (traceRuleFlow)
+                {
+                    logger?.WriteLine(
+                        $"LSD-ENDPT rule-matrix init quarters={quarterContexts.Count} lsdLines={lsdLineIds.Count} qsecSegs={qsecSegments.Count} " +
+                        $"secH={horizontalByKind["SEC"].Count} secV={verticalByKind["SEC"].Count} " +
+                        $"zeroH={horizontalByKind["ZERO"].Count} zeroV={verticalByKind["ZERO"].Count} " +
+                        $"twentyH={horizontalByKind["TWENTY"].Count} twentyV={verticalByKind["TWENTY"].Count} " +
+                        $"blindH={horizontalByKind["BLIND"].Count} blindV={verticalByKind["BLIND"].Count} " +
+                        $"corrZeroH={horizontalByKind["CORRZERO"].Count} corrZeroV={verticalByKind["CORRZERO"].Count}.");
+                }
+
                 var matchedLines = 0;
                 var noQuarterContext = 0;
                 var noInnerTarget = 0;
@@ -2284,10 +2393,23 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
+                    var lineIdText = FormatLsdId(id);
+                    if (traceRuleFlow)
+                    {
+                        logger?.WriteLine(
+                            $"LSD-ENDPT line={lineIdText} pass=rule-matrix start p0={FormatPoint(p0)} p1={FormatPoint(p1)}.");
+                    }
+
                     var lineMid = Midpoint(p0, p1);
                     if (!TryFindQuarterContext(lineMid, out var context))
                     {
                         noQuarterContext++;
+                        if (traceRuleFlow)
+                        {
+                            logger?.WriteLine(
+                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix skip reason=no-quarter-context mid={FormatPoint(lineMid)}.");
+                        }
+
                         continue;
                     }
 
@@ -2295,6 +2417,12 @@ namespace AtsBackgroundBuilder
                     var lineIsVertical = IsVerticalLike(p0, p1, context.EastUnit, context.NorthUnit);
                     if (!lineIsHorizontal && !lineIsVertical)
                     {
+                        if (traceRuleFlow)
+                        {
+                            logger?.WriteLine(
+                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix skip reason=non-axis p0={FormatPoint(p0)} p1={FormatPoint(p1)}.");
+                        }
+
                         continue;
                     }
 
@@ -2309,18 +2437,37 @@ namespace AtsBackgroundBuilder
                             out var innerTarget))
                     {
                         noInnerTarget++;
+                        if (traceRuleFlow)
+                        {
+                            logger?.WriteLine(
+                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix skip reason=no-inner-target sec={context.SectionNumber} q={context.Quarter} orient={(lineIsHorizontal ? "H" : "V")}.");
+                        }
+
                         continue;
                     }
 
                     var startIsInner = p0.GetDistanceTo(innerTarget) <= p1.GetDistanceTo(innerTarget);
-
-                    if (TryMoveEndpoint(writable, startIsInner, innerTarget, endpointMoveTol))
+                    var innerMoved = TryMoveEndpoint(writable, startIsInner, innerTarget, endpointMoveTol);
+                    if (innerMoved)
                     {
                         innerAdjusted++;
                     }
 
+                    if (traceRuleFlow)
+                    {
+                        logger?.WriteLine(
+                            $"LSD-ENDPT line={lineIdText} pass=rule-matrix inner sec={context.SectionNumber} q={context.Quarter} orient={(lineIsHorizontal ? "H" : "V")} " +
+                            $"startIsInner={startIsInner} moved={innerMoved} target={FormatPoint(innerTarget)}.");
+                    }
+
                     if (!TryReadOpenSegment(writable, out p0, out p1))
                     {
+                        if (traceRuleFlow)
+                        {
+                            logger?.WriteLine(
+                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix skip reason=unreadable-after-inner.");
+                        }
+
                         continue;
                     }
 
@@ -2328,33 +2475,6 @@ namespace AtsBackgroundBuilder
                     var innerPoint = startIsInner ? p0 : p1;
                     var outerPoint = startIsInner ? p1 : p0;
                     var preferredKinds = new List<string>();
-
-                    if (lineIsHorizontal)
-                    {
-                        if (TryGetOuterEndpointTarget(
-                                context.Quarter,
-                                lineIsHorizontal,
-                                context.TopAnchor,
-                                context.BottomAnchor,
-                                context.LeftAnchor,
-                                context.RightAnchor,
-                                out var horizontalOuterAnchor))
-                        {
-                            if (TryMoveEndpoint(writable, !startIsInner, horizontalOuterAnchor, endpointMoveTol))
-                            {
-                                outerAdjusted++;
-                                if (context.SectionNumber == 6 || context.SectionNumber == 36)
-                                {
-                                    logger?.WriteLine(
-                                        $"VERIFY-LSD-OUTER sec={context.SectionNumber} q={context.Quarter} line=H " +
-                                        $"inner={innerPoint.X:0.###},{innerPoint.Y:0.###} outerFrom={outerPoint.X:0.###},{outerPoint.Y:0.###} " +
-                                        $"outerTo={horizontalOuterAnchor.X:0.###},{horizontalOuterAnchor.Y:0.###} kinds=ANCHOR");
-                                }
-                            }
-
-                            continue;
-                        }
-                    }
 
                     if (lineIsHorizontal)
                     {
@@ -2409,9 +2529,18 @@ namespace AtsBackgroundBuilder
                     if (preferredKinds.Count == 0)
                     {
                         noOuterTarget++;
+                        if (traceRuleFlow)
+                        {
+                            logger?.WriteLine(
+                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix skip reason=no-preferred-kinds sec={context.SectionNumber} q={context.Quarter} orient={(lineIsHorizontal ? "H" : "V")}.");
+                        }
+
                         continue;
                     }
 
+                    var movedByMidpoint = false;
+                    var movedByFallbackAnchor = false;
+                    var usedMidpointTarget = false;
                     if (!TryFindBoundaryMidpointTarget(
                             outerPoint,
                             innerPoint,
@@ -2423,7 +2552,7 @@ namespace AtsBackgroundBuilder
                             context.SectionMinV,
                             context.SectionMaxV,
                             preferredKinds,
-                            out var outerTarget))
+                                out var outerTarget))
                     {
                         if (!TryGetOuterEndpointTarget(
                                 context.Quarter,
@@ -2435,18 +2564,39 @@ namespace AtsBackgroundBuilder
                                 out outerTarget))
                         {
                             noOuterTarget++;
+                            if (traceRuleFlow)
+                            {
+                                logger?.WriteLine(
+                                    $"LSD-ENDPT line={lineIdText} pass=rule-matrix skip reason=no-outer-target sec={context.SectionNumber} q={context.Quarter} orient={(lineIsHorizontal ? "H" : "V")} kinds={string.Join("/", preferredKinds)}.");
+                            }
+
                             continue;
                         }
 
-                        if (TryMoveEndpoint(writable, !startIsInner, outerTarget, endpointMoveTol))
+                        movedByFallbackAnchor = TryMoveEndpoint(writable, !startIsInner, outerTarget, endpointMoveTol);
+                        if (movedByFallbackAnchor)
                         {
                             outerAdjusted++;
+                        }
+
+                        if (traceRuleFlow)
+                        {
+                            logger?.WriteLine(
+                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix outer source=fallback-anchor moved={movedByFallbackAnchor} target={FormatPoint(outerTarget)} kinds={string.Join("/", preferredKinds)}.");
+                        }
+
+                        if (traceRuleFlow && TryReadOpenSegment(writable, out var fallbackP0, out var fallbackP1))
+                        {
+                            logger?.WriteLine(
+                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix final p0={FormatPoint(fallbackP0)} p1={FormatPoint(fallbackP1)}.");
                         }
 
                         continue;
                     }
 
-                    if (TryMoveEndpoint(writable, !startIsInner, outerTarget, endpointMoveTol))
+                    usedMidpointTarget = true;
+                    movedByMidpoint = TryMoveEndpoint(writable, !startIsInner, outerTarget, endpointMoveTol);
+                    if (movedByMidpoint)
                     {
                         outerAdjusted++;
                         if (context.SectionNumber == 6 || context.SectionNumber == 36)
@@ -2456,6 +2606,18 @@ namespace AtsBackgroundBuilder
                                 $"inner={innerPoint.X:0.###},{innerPoint.Y:0.###} outerFrom={outerPoint.X:0.###},{outerPoint.Y:0.###} " +
                                 $"outerTo={outerTarget.X:0.###},{outerTarget.Y:0.###} kinds={string.Join("/", preferredKinds)}");
                         }
+                    }
+
+                    if (traceRuleFlow)
+                    {
+                        logger?.WriteLine(
+                            $"LSD-ENDPT line={lineIdText} pass=rule-matrix outer source={(usedMidpointTarget ? "midpoint-kind" : "unknown")} moved={movedByMidpoint} target={FormatPoint(outerTarget)} kinds={string.Join("/", preferredKinds)}.");
+                    }
+
+                    if (traceRuleFlow && TryReadOpenSegment(writable, out var finalP0, out var finalP1))
+                    {
+                        logger?.WriteLine(
+                            $"LSD-ENDPT line={lineIdText} pass=rule-matrix final p0={FormatPoint(finalP0)} p1={FormatPoint(finalP1)}.");
                     }
                 }
 
@@ -2729,7 +2891,48 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(ent, out var a, out var b))
+                    var hasPrimarySegment = TryReadOpenSegment(ent, out var primaryA, out var primaryB);
+                    var entitySegments = new List<(Point2d A, Point2d B)>();
+                    if (ent is Line line)
+                    {
+                        var la = new Point2d(line.StartPoint.X, line.StartPoint.Y);
+                        var lb = new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                        if (la.GetDistanceTo(lb) > 1e-4)
+                        {
+                            entitySegments.Add((la, lb));
+                        }
+                    }
+                    else if (ent is Polyline polyline && polyline.NumberOfVertices >= 2)
+                    {
+                        for (var vi = 0; vi < polyline.NumberOfVertices - 1; vi++)
+                        {
+                            var sa = polyline.GetPoint2dAt(vi);
+                            var sb = polyline.GetPoint2dAt(vi + 1);
+                            if (sa.GetDistanceTo(sb) <= 1e-4)
+                            {
+                                continue;
+                            }
+
+                            entitySegments.Add((sa, sb));
+                        }
+
+                        if (polyline.Closed)
+                        {
+                            var sa = polyline.GetPoint2dAt(polyline.NumberOfVertices - 1);
+                            var sb = polyline.GetPoint2dAt(0);
+                            if (sa.GetDistanceTo(sb) > 1e-4)
+                            {
+                                entitySegments.Add((sa, sb));
+                            }
+                        }
+                    }
+
+                    if (entitySegments.Count == 0 && hasPrimarySegment)
+                    {
+                        entitySegments.Add((primaryA, primaryB));
+                    }
+
+                    if (entitySegments.Count == 0)
                     {
                         continue;
                     }
@@ -2738,103 +2941,125 @@ namespace AtsBackgroundBuilder
                     var isCorrectionLayer =
                         string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase);
-                    // Keep correction boundaries available even if they sit just outside the
-                    // clipped request window; LSD correction snap can require adjacent seam rows.
-                    if (!DoesSegmentIntersectAnyWindow(a, b) && !isCorrectionLayer)
+                    var scopedSegments = new List<(Point2d A, Point2d B)>(entitySegments.Count);
+                    for (var si = 0; si < entitySegments.Count; si++)
+                    {
+                        var seg = entitySegments[si];
+                        // Keep correction boundaries available even if they sit just outside the
+                        // clipped request window; LSD correction snap can require adjacent seam rows.
+                        if (isCorrectionLayer || DoesSegmentIntersectAnyWindow(seg.A, seg.B))
+                        {
+                            scopedSegments.Add(seg);
+                        }
+                    }
+
+                    if (scopedSegments.Count == 0 && !isCorrectionLayer)
                     {
                         continue;
                     }
 
-                    if (IsUsecZeroBoundaryLayer(layer))
+                    if (scopedSegments.Count == 0)
                     {
-                        hardBoundarySegments.Add((a, b, IsZero: true));
-                        if (string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+                        scopedSegments.AddRange(entitySegments);
+                    }
+
+                    for (var si = 0; si < scopedSegments.Count; si++)
+                    {
+                        var a = scopedSegments[si].A;
+                        var b = scopedSegments[si].B;
+
+                        if (IsUsecZeroBoundaryLayer(layer))
                         {
-                            correctionBoundarySegments.Add((a, b));
+                            hardBoundarySegments.Add((a, b, IsZero: true));
+                            if (string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+                            {
+                                correctionBoundarySegments.Add((a, b));
+                            }
+
+                            if (IsHorizontalLike(a, b))
+                            {
+                                horizontalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 2));
+                            }
+                            else if (IsVerticalLike(a, b))
+                            {
+                                verticalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 2));
+                            }
+
+                            continue;
                         }
 
+                        if (IsUsecTwentyBoundaryLayer(layer))
+                        {
+                            hardBoundarySegments.Add((a, b, IsZero: false));
+                            if (IsHorizontalLike(a, b))
+                            {
+                                horizontalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 1));
+                            }
+                            else if (IsVerticalLike(a, b))
+                            {
+                                verticalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 1));
+                            }
+
+                            continue;
+                        }
+
+                        if (string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase))
+                        {
+                            correctionOuterBoundarySegments.Add((a, b));
+                            continue;
+                        }
+
+                        if (IsThirtyEighteenLayer(layer))
+                        {
+                            thirtyBoundarySegments.Add((a, b));
+                            continue;
+                        }
+
+                        // Midpoint targets for LSD endpoints:
+                        // 1) quarter lines (preferred), 2) blind lines, 3) section lines.
                         if (IsHorizontalLike(a, b))
                         {
-                            horizontalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 2));
-                        }
-                        else if (IsVerticalLike(a, b))
-                        {
-                            verticalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 2));
-                        }
-
-                        continue;
-                    }
-
-                    if (IsUsecTwentyBoundaryLayer(layer))
-                    {
-                        hardBoundarySegments.Add((a, b, IsZero: false));
-                        if (IsHorizontalLike(a, b))
-                        {
-                            horizontalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 1));
-                        }
-                        else if (IsVerticalLike(a, b))
-                        {
-                            verticalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 1));
+                            if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
+                            {
+                                qsecHorizontalSegments.Add((a, b));
+                            }
+                            else if (string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase))
+                            {
+                                horizontalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 1));
+                            }
+                            else if (string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
+                            {
+                                horizontalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 2));
+                            }
                         }
 
-                        continue;
-                    }
-
-                    if (string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase))
-                    {
-                        correctionOuterBoundarySegments.Add((a, b));
-                        continue;
-                    }
-
-                    if (IsThirtyEighteenLayer(layer))
-                    {
-                        thirtyBoundarySegments.Add((a, b));
-                        continue;
-                    }
-
-                    // Midpoint targets for LSD endpoints:
-                    // 1) quarter lines (preferred), 2) blind lines, 3) section lines.
-                    if (IsHorizontalLike(a, b))
-                    {
-                        if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
+                        if (IsVerticalLike(a, b))
                         {
-                            qsecHorizontalSegments.Add((a, b));
-                        }
-                        else if (string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
-                                 string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase))
-                        {
-                            horizontalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 1));
-                        }
-                        else if (string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                                 string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
-                                 string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
-                        {
-                            horizontalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 2));
-                        }
-                    }
-
-                    if (IsVerticalLike(a, b))
-                    {
-                        if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
-                        {
-                            qsecVerticalSegments.Add((a, b));
-                        }
-                        else if (string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
-                                 string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase))
-                        {
-                            verticalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 1));
-                        }
-                        else if (string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                                 string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
-                                 string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
-                        {
-                            verticalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 2));
+                            if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
+                            {
+                                qsecVerticalSegments.Add((a, b));
+                            }
+                            else if (string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase))
+                            {
+                                verticalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 1));
+                            }
+                            else if (string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
+                            {
+                                verticalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 2));
+                            }
                         }
                     }
 
                     if (string.Equals(layer, "L-SECTION-LSD", StringComparison.OrdinalIgnoreCase) &&
-                        IsAdjustableLsdLineSegment(a, b) &&
-                        DoesSegmentIntersectAnyCoreWindow(a, b))
+                        hasPrimarySegment &&
+                        IsAdjustableLsdLineSegment(primaryA, primaryB) &&
+                        DoesSegmentIntersectAnyCoreWindow(primaryA, primaryB))
                     {
                         lsdLineIds.Add(id);
                     }
@@ -3032,6 +3257,8 @@ namespace AtsBackgroundBuilder
                 const double outerBoundaryTol = 0.40;
                 const double midpointAxisTol = 12.0;
                 const double correctionAdjTol = 60.0;
+                const double thirtyEscapeLateralTol = 90.0;
+                const double thirtyEscapeMaxMove = 140.0;
 
                 var scannedEndpoints = 0;
                 var alreadyOnHardBoundary = 0;
@@ -3044,6 +3271,7 @@ namespace AtsBackgroundBuilder
                 var midpointAdjustedEndpoints = 0;
                 var qsecComponentClampLines = 0;
                 var qsecComponentClampEndpoints = 0;
+                var traceLsdEndpointFlow = logger != null;
 
                 bool IsHorizontalLike(Point2d a, Point2d b)
                 {
@@ -3055,6 +3283,41 @@ namespace AtsBackgroundBuilder
                 {
                     var d = b - a;
                     return Math.Abs(d.Y) > Math.Abs(d.X);
+                }
+
+                string FormatPoint(Point2d p) => $"({p.X:0.###},{p.Y:0.###})";
+
+                string FormatLsdId(ObjectId objectId)
+                {
+                    try
+                    {
+                        return objectId.Handle.ToString();
+                    }
+                    catch
+                    {
+                        return objectId.ToString();
+                    }
+                }
+
+                string ClassifyOrientation(Point2d a, Point2d b)
+                {
+                    if (IsHorizontalLike(a, b))
+                    {
+                        return "H";
+                    }
+
+                    if (IsVerticalLike(a, b))
+                    {
+                        return "V";
+                    }
+
+                    return "D";
+                }
+
+                if (traceLsdEndpointFlow)
+                {
+                    logger?.WriteLine(
+                        $"LSD-ENDPT init lsdLines={lsdLineIds.Count} hardSegs={hardBoundarySegments.Count} thirtySegs={thirtyBoundarySegments.Count} qsecH={qsecHorizontalSegments.Count} qsecV={qsecVerticalSegments.Count}.");
                 }
 
                 bool IsEndpointNearCorrectionBoundary(Point2d endpoint)
@@ -5879,7 +6142,8 @@ namespace AtsBackgroundBuilder
                     Point2d endpoint,
                     Point2d other,
                     bool? preferZero,
-                    out Point2d target)
+                    out Point2d target,
+                    double? maxMoveOverride = null)
                 {
                     target = endpoint;
                     var outward = endpoint - other;
@@ -5904,6 +6168,7 @@ namespace AtsBackgroundBuilder
                     var foundFallback = false;
                     var bestFallbackScore = double.MaxValue;
                     var bestFallbackTarget = endpoint;
+                    var maxCandidateMove = maxMoveOverride ?? maxMove;
 
                     for (var i = 0; i < hardBoundarySegments.Count; i++)
                     {
@@ -5923,7 +6188,7 @@ namespace AtsBackgroundBuilder
                         var midpoint = Midpoint(seg.A, seg.B);
                         var delta = midpoint - endpoint;
                         var move = delta.Length;
-                        if (move <= minMove || move > maxMove)
+                        if (move <= minMove || move > maxCandidateMove)
                         {
                             continue;
                         }
@@ -6001,7 +6266,8 @@ namespace AtsBackgroundBuilder
                     Point2d endpoint,
                     Point2d other,
                     bool? preferZero,
-                    out Point2d target)
+                    out Point2d target,
+                    double? maxMoveOverride = null)
                 {
                     target = endpoint;
                     var sourceHorizontal = IsHorizontalLike(other, endpoint);
@@ -6018,6 +6284,7 @@ namespace AtsBackgroundBuilder
                     var bestFallbackScore = double.MaxValue;
                     var bestFallbackTarget = endpoint;
                     const double relaxedAxisTol = 80.0;
+                    var maxCandidateMove = maxMoveOverride ?? maxMove;
 
                     for (var i = 0; i < hardBoundarySegments.Count; i++)
                     {
@@ -6038,7 +6305,7 @@ namespace AtsBackgroundBuilder
                         var dx = midpoint.X - endpoint.X;
                         var dy = midpoint.Y - endpoint.Y;
                         var move = Math.Sqrt((dx * dx) + (dy * dy));
-                        if (move <= minMove || move > maxMove)
+                        if (move <= minMove || move > maxCandidateMove)
                         {
                             continue;
                         }
@@ -6090,7 +6357,14 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
-                bool TryFindNearestHardBoundaryPoint(Point2d endpoint, Point2d other, bool? preferZero, out Point2d target)
+                bool TryFindNearestHardBoundaryPoint(
+                    Point2d endpoint,
+                    Point2d other,
+                    bool? preferZero,
+                    out Point2d target,
+                    double? lateralTolOverride = null,
+                    double? maxMoveOverride = null,
+                    bool allowBacktrack = false)
                 {
                     target = endpoint;
                     var outward = endpoint - other;
@@ -6115,6 +6389,8 @@ namespace AtsBackgroundBuilder
                     var foundFallback = false;
                     var bestFallbackScore = double.MaxValue;
                     var bestFallbackTarget = endpoint;
+                    var lateralTol = lateralTolOverride ?? midpointAxisTol;
+                    var maxCandidateMove = maxMoveOverride ?? maxMove;
 
                     Point2d ClosestPointOnSegment(Point2d p, Point2d a, Point2d b)
                     {
@@ -6150,19 +6426,19 @@ namespace AtsBackgroundBuilder
                         var candidate = ClosestPointOnSegment(endpoint, seg.A, seg.B);
                         var delta = candidate - endpoint;
                         var move = delta.Length;
-                        if (move <= minMove || move > maxMove)
+                        if (move <= minMove || move > maxCandidateMove)
                         {
                             continue;
                         }
 
                         var lateral = Math.Abs(delta.DotProduct(perpDir));
-                        if (lateral > midpointAxisTol)
+                        if (lateral > lateralTol)
                         {
                             continue;
                         }
 
                         var projectedFromOther = (candidate - other).DotProduct(outwardDir);
-                        if (projectedFromOther < minRemainingLength)
+                        if (!allowBacktrack && projectedFromOther < minRemainingLength)
                         {
                             continue;
                         }
@@ -6318,6 +6594,17 @@ namespace AtsBackgroundBuilder
                     var targetEnd = p1;
                     var midpointLockedStart = false;
                     var midpointLockedEnd = false;
+                    var lineIdText = FormatLsdId(id);
+                    var startDecision = "none";
+                    var endDecision = "none";
+                    var startSource = "none";
+                    var endSource = "none";
+
+                    if (traceLsdEndpointFlow)
+                    {
+                        logger?.WriteLine(
+                            $"LSD-ENDPT line={lineIdText} pass=main start p0={FormatPoint(p0)} p1={FormatPoint(p1)} orient={ClassifyOrientation(p0, p1)}.");
+                    }
 
                     // Midpoint special case:
                     // anchor LSD endpoints to the midpoint of the line they terminate on
@@ -6737,6 +7024,14 @@ namespace AtsBackgroundBuilder
 
                     if (midpointLockedStart && midpointLockedEnd)
                     {
+                        startDecision = "midpoint-locked";
+                        endDecision = "midpoint-locked";
+                        if (traceLsdEndpointFlow)
+                        {
+                            logger?.WriteLine(
+                                $"LSD-ENDPT line={lineIdText} pass=main skip reason=both-midpoint-locked p0={FormatPoint(p0)} p1={FormatPoint(p1)}.");
+                        }
+
                         continue;
                     }
 
@@ -6759,6 +7054,8 @@ namespace AtsBackgroundBuilder
                         if (IsPointOnAnyWindowBoundary(p0, outerBoundaryTol) && !p0OnThirty)
                         {
                             boundarySkipped++;
+                            startDecision = "boundary-skip";
+                            startSource = "window-boundary";
                         }
                         else
                         {
@@ -6779,6 +7076,7 @@ namespace AtsBackgroundBuilder
                             {
                                 foundStartTarget = true;
                                 snappedStart = currentBoundaryMidStart;
+                                startSource = "current-hard-midpoint";
                             }
 
                             if (!foundStartTarget && p0CorrectionSnapEligible)
@@ -6788,28 +7086,45 @@ namespace AtsBackgroundBuilder
                                     p1,
                                     p0OnCorrectionOuter,
                                     out snappedStart);
+                                if (foundStartTarget)
+                                {
+                                    startSource = "correction-adjacent";
+                                }
                             }
 
                             if (!foundStartTarget && p0OnThirty)
                             {
                                 bool? preferZero = null;
                                 var sourceIsHorizontalLsd = IsHorizontalLike(p0, p1);
+                                var sourceIsVerticalLsd = IsVerticalLike(p0, p1);
                                 if (!foundStartTarget && sourceIsHorizontalLsd)
                                 {
                                     // Horizontal LSD side rule: right endpoint -> 0, left endpoint -> 20.12.
                                     preferZero = p0.X > p1.X;
                                 }
+                                else if (!foundStartTarget && sourceIsVerticalLsd)
+                                {
+                                    // Vertical LSD side rule: north endpoint -> 0, south endpoint -> 20.12.
+                                    preferZero = p0.Y > p1.Y;
+                                }
 
                                 if (!foundStartTarget)
                                 {
-                                    if (sourceIsHorizontalLsd)
+                                    if (sourceIsHorizontalLsd || sourceIsVerticalLsd)
                                     {
                                         foundStartTarget = TryFindPreferredHardBoundaryMidpoint(
                                             p0,
                                             p1,
                                             preferZero,
-                                            out snappedStart) ||
+                                            out snappedStart,
+                                            maxMoveOverride: thirtyEscapeMaxMove) ||
                                             TryFindPreferredHardBoundaryMidpointRelaxed(
+                                                p0,
+                                                p1,
+                                                preferZero,
+                                                out snappedStart,
+                                                maxMoveOverride: thirtyEscapeMaxMove) ||
+                                            TryFindNearestHardBoundaryPoint(
                                                 p0,
                                                 p1,
                                                 preferZero,
@@ -6818,47 +7133,94 @@ namespace AtsBackgroundBuilder
                                                 p0,
                                                 p1,
                                                 preferZero,
-                                                out snappedStart);
+                                                out snappedStart,
+                                                lateralTolOverride: thirtyEscapeLateralTol,
+                                                maxMoveOverride: thirtyEscapeMaxMove,
+                                                allowBacktrack: true);
+                                        if (foundStartTarget)
+                                        {
+                                            startSource = "thirty-fallback-chain-axis";
+                                        }
                                     }
                                     else
                                     {
                                         foundStartTarget =
-                                            // For non-horizontal 30.16 endpoints, keep midpoint-first
-                                            // behavior with closest-point fallback.
+                                            // Generic fallback for non-axis LSD segments.
                                             TryFindNearestUsecMidpoint(p0, preferZero, out snappedStart) ||
-                                            TryFindNearestHardBoundaryPoint(p0, p1, preferZero, out snappedStart);
+                                            TryFindNearestHardBoundaryPoint(p0, p1, preferZero, out snappedStart) ||
+                                            TryFindNearestHardBoundaryPoint(
+                                                p0,
+                                                p1,
+                                                preferZero,
+                                                out snappedStart,
+                                                lateralTolOverride: thirtyEscapeLateralTol,
+                                                maxMoveOverride: thirtyEscapeMaxMove,
+                                                allowBacktrack: true);
+                                        if (foundStartTarget)
+                                        {
+                                            startSource = "thirty-fallback-chain-generic";
+                                        }
+                                    }
+
+                                    if (!foundStartTarget)
+                                    {
+                                        foundStartTarget = TryFindSnapTarget(p0, p1, out snappedStart);
+                                        if (foundStartTarget)
+                                        {
+                                            startSource = "generic-snaptarget";
+                                        }
                                     }
                                 }
                             }
                             else if (!foundStartTarget)
                             {
                                 foundStartTarget = TryFindSnapTarget(p0, p1, out snappedStart);
+                                if (foundStartTarget)
+                                {
+                                    startSource = "generic-snaptarget";
+                                }
                             }
                             if (foundStartTarget)
                             {
                                 if (p0.GetDistanceTo(snappedStart) <= endpointTouchTol)
                                 {
                                     alreadyOnHardBoundary++;
+                                    startDecision = "already-on-target";
+                                    if (string.Equals(startSource, "none", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        startSource = "resolved-target";
+                                    }
                                 }
                                 else
                                 {
                                     moveStart = true;
                                     targetStart = snappedStart;
+                                    startDecision = "move-to-target";
                                 }
                             }
                             else if (p0OnZero || p0OnTwenty || IsEndpointOnUsecTwentyBoundary(p0))
                             {
                                 alreadyOnHardBoundary++;
+                                startDecision = "already-on-hard";
+                                startSource = "existing-hard";
                             }
                             else if (IsEndpointOnHardBoundary(p0))
                             {
                                 alreadyOnHardBoundary++;
+                                startDecision = "already-on-hard";
+                                startSource = "existing-hard";
                             }
                             else
                             {
                                 noTarget++;
+                                startDecision = "no-target";
                             }
                         }
+                    }
+                    else
+                    {
+                        startDecision = "midpoint-locked";
+                        startSource = "midpoint-lock";
                     }
 
                     if (!midpointLockedEnd)
@@ -6878,6 +7240,8 @@ namespace AtsBackgroundBuilder
                         if (IsPointOnAnyWindowBoundary(p1, outerBoundaryTol) && !p1OnThirty)
                         {
                             boundarySkipped++;
+                            endDecision = "boundary-skip";
+                            endSource = "window-boundary";
                         }
                         else
                         {
@@ -6898,6 +7262,7 @@ namespace AtsBackgroundBuilder
                             {
                                 foundEndTarget = true;
                                 snappedEnd = currentBoundaryMidEnd;
+                                endSource = "current-hard-midpoint";
                             }
 
                             if (!foundEndTarget && p1CorrectionSnapEligible)
@@ -6907,28 +7272,45 @@ namespace AtsBackgroundBuilder
                                     p0,
                                     p1OnCorrectionOuter,
                                     out snappedEnd);
+                                if (foundEndTarget)
+                                {
+                                    endSource = "correction-adjacent";
+                                }
                             }
 
                             if (!foundEndTarget && p1OnThirty)
                             {
                                 bool? preferZero = null;
                                 var sourceIsHorizontalLsd = IsHorizontalLike(p0, p1);
+                                var sourceIsVerticalLsd = IsVerticalLike(p0, p1);
                                 if (!foundEndTarget && sourceIsHorizontalLsd)
                                 {
                                     // Horizontal LSD side rule: right endpoint -> 0, left endpoint -> 20.12.
                                     preferZero = p1.X > p0.X;
                                 }
+                                else if (!foundEndTarget && sourceIsVerticalLsd)
+                                {
+                                    // Vertical LSD side rule: north endpoint -> 0, south endpoint -> 20.12.
+                                    preferZero = p1.Y > p0.Y;
+                                }
 
                                 if (!foundEndTarget)
                                 {
-                                    if (sourceIsHorizontalLsd)
+                                    if (sourceIsHorizontalLsd || sourceIsVerticalLsd)
                                     {
                                         foundEndTarget = TryFindPreferredHardBoundaryMidpoint(
                                             p1,
                                             p0,
                                             preferZero,
-                                            out snappedEnd) ||
+                                            out snappedEnd,
+                                            maxMoveOverride: thirtyEscapeMaxMove) ||
                                             TryFindPreferredHardBoundaryMidpointRelaxed(
+                                                p1,
+                                                p0,
+                                                preferZero,
+                                                out snappedEnd,
+                                                maxMoveOverride: thirtyEscapeMaxMove) ||
+                                            TryFindNearestHardBoundaryPoint(
                                                 p1,
                                                 p0,
                                                 preferZero,
@@ -6937,46 +7319,94 @@ namespace AtsBackgroundBuilder
                                                 p1,
                                                 p0,
                                                 preferZero,
-                                                out snappedEnd);
+                                                out snappedEnd,
+                                                lateralTolOverride: thirtyEscapeLateralTol,
+                                                maxMoveOverride: thirtyEscapeMaxMove,
+                                                allowBacktrack: true);
+                                        if (foundEndTarget)
+                                        {
+                                            endSource = "thirty-fallback-chain-axis";
+                                        }
                                     }
                                     else
                                     {
                                         foundEndTarget =
-                                            // Symmetric midpoint-first behavior for non-horizontal 30.16 endpoints.
+                                            // Generic fallback for non-axis LSD segments.
                                             TryFindNearestUsecMidpoint(p1, preferZero, out snappedEnd) ||
-                                            TryFindNearestHardBoundaryPoint(p1, p0, preferZero, out snappedEnd);
+                                            TryFindNearestHardBoundaryPoint(p1, p0, preferZero, out snappedEnd) ||
+                                            TryFindNearestHardBoundaryPoint(
+                                                p1,
+                                                p0,
+                                                preferZero,
+                                                out snappedEnd,
+                                                lateralTolOverride: thirtyEscapeLateralTol,
+                                                maxMoveOverride: thirtyEscapeMaxMove,
+                                                allowBacktrack: true);
+                                        if (foundEndTarget)
+                                        {
+                                            endSource = "thirty-fallback-chain-generic";
+                                        }
+                                    }
+
+                                    if (!foundEndTarget)
+                                    {
+                                        foundEndTarget = TryFindSnapTarget(p1, p0, out snappedEnd);
+                                        if (foundEndTarget)
+                                        {
+                                            endSource = "generic-snaptarget";
+                                        }
                                     }
                                 }
                             }
                             else if (!foundEndTarget)
                             {
                                 foundEndTarget = TryFindSnapTarget(p1, p0, out snappedEnd);
+                                if (foundEndTarget)
+                                {
+                                    endSource = "generic-snaptarget";
+                                }
                             }
                             if (foundEndTarget)
                             {
                                 if (p1.GetDistanceTo(snappedEnd) <= endpointTouchTol)
                                 {
                                     alreadyOnHardBoundary++;
+                                    endDecision = "already-on-target";
+                                    if (string.Equals(endSource, "none", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        endSource = "resolved-target";
+                                    }
                                 }
                                 else
                                 {
                                     moveEnd = true;
                                     targetEnd = snappedEnd;
+                                    endDecision = "move-to-target";
                                 }
                             }
                             else if (p1OnZero || p1OnTwenty || IsEndpointOnUsecTwentyBoundary(p1))
                             {
                                 alreadyOnHardBoundary++;
+                                endDecision = "already-on-hard";
+                                endSource = "existing-hard";
                             }
                             else if (IsEndpointOnHardBoundary(p1))
                             {
                                 alreadyOnHardBoundary++;
+                                endDecision = "already-on-hard";
+                                endSource = "existing-hard";
                             }
                             else
                             {
                                 noTarget++;
+                                endDecision = "no-target";
                             }
                         }
+                    }
+                    else
+                    {
+                        endDecision = "midpoint-locked";
+                        endSource = "midpoint-lock";
                     }
 
                     if (moveStart && moveEnd && targetStart.GetDistanceTo(targetEnd) < minRemainingLength)
@@ -6986,34 +7416,68 @@ namespace AtsBackgroundBuilder
                         if (startMoveDist >= endMoveDist)
                         {
                             moveEnd = false;
+                            endDecision = "move-cancelled-minlength";
                         }
                         else
                         {
                             moveStart = false;
+                            startDecision = "move-cancelled-minlength";
                         }
                     }
 
                     if (!moveStart && !moveEnd)
                     {
+                        if (traceLsdEndpointFlow)
+                        {
+                            logger?.WriteLine(
+                                $"LSD-ENDPT line={lineIdText} pass=main no-move start={startDecision}({startSource}) end={endDecision}({endSource}) p0={FormatPoint(p0)} p1={FormatPoint(p1)}.");
+                        }
+
                         continue;
                     }
 
                     var movedLine = false;
+                    var movedStart = false;
+                    var movedEnd = false;
                     if (moveStart && TryMoveEndpoint(writable, moveStart: true, targetStart, endpointMoveTol))
                     {
                         adjustedEndpoints++;
                         movedLine = true;
+                        movedStart = true;
+                    }
+                    else if (moveStart)
+                    {
+                        startDecision = "move-attempt-failed";
                     }
 
                     if (moveEnd && TryMoveEndpoint(writable, moveStart: false, targetEnd, endpointMoveTol))
                     {
                         adjustedEndpoints++;
                         movedLine = true;
+                        movedEnd = true;
+                    }
+                    else if (moveEnd)
+                    {
+                        endDecision = "move-attempt-failed";
                     }
 
                     if (movedLine)
                     {
                         adjustedLines++;
+                    }
+
+                    if (traceLsdEndpointFlow)
+                    {
+                        if (!TryReadOpenSegment(writable, out var postP0, out var postP1))
+                        {
+                            postP0 = p0;
+                            postP1 = p1;
+                        }
+
+                        logger?.WriteLine(
+                            $"LSD-ENDPT line={lineIdText} pass=main moved={movedLine} movedStart={movedStart} movedEnd={movedEnd} " +
+                            $"start={startDecision}({startSource}) end={endDecision}({endSource}) targetStart={FormatPoint(targetStart)} targetEnd={FormatPoint(targetEnd)} " +
+                            $"postP0={FormatPoint(postP0)} postP1={FormatPoint(postP1)}.");
                     }
                 }
 
@@ -7221,7 +7685,7 @@ namespace AtsBackgroundBuilder
                 }
 
                 // Final invariant:
-                // horizontal LSD endpoints must not terminate on/near 30.18. Force them to the
+                // LSD endpoints must not terminate on/near 30.18. Force them to the
                 // preferred 0/20 hard-boundary midpoint (or projected hard-boundary fallback).
                 if (lsdLineIds.Count > 0 && hardBoundarySegments.Count > 0 && thirtyBoundarySegments.Count > 0)
                 {
@@ -7239,7 +7703,13 @@ namespace AtsBackgroundBuilder
                         return false;
                     }
 
-                    const double nearThirtyTol = 1.25;
+                    const double nearThirtyTol = 3.00;
+                    if (traceLsdEndpointFlow)
+                    {
+                        logger?.WriteLine(
+                            $"LSD-ENDPT final-invariant start lsdLines={lsdLineIds.Count} thirtySegs={thirtyBoundarySegments.Count} nearTol={nearThirtyTol:0.###}.");
+                    }
+
                     for (var i = 0; i < lsdLineIds.Count; i++)
                     {
                         var id = lsdLineIds[i];
@@ -7248,19 +7718,183 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
+                        var finalLineIdText = FormatLsdId(id);
+
                         if (!TryReadOpenSegment(writable, out var p0, out var p1) || !IsHorizontalLike(p0, p1))
                         {
+                            if (!TryReadOpenSegment(writable, out p0, out p1) || !IsVerticalLike(p0, p1))
+                            {
+                                if (traceLsdEndpointFlow)
+                                {
+                                    logger?.WriteLine(
+                                        $"LSD-ENDPT line={finalLineIdText} pass=final-invariant skip reason=non-axis-or-unreadable.");
+                                }
+
+                                continue;
+                            }
+
+                            var movedVertical = false;
+                            var p0NearThirty = IsEndpointNearThirtyBoundary(p0, nearThirtyTol);
+                            var p1NearThirty = IsEndpointNearThirtyBoundary(p1, nearThirtyTol);
+                            if (traceLsdEndpointFlow)
+                            {
+                                logger?.WriteLine(
+                                    $"LSD-ENDPT line={finalLineIdText} pass=final-invariant orient=V p0={FormatPoint(p0)} p1={FormatPoint(p1)} p0Near30={p0NearThirty} p1Near30={p1NearThirty}.");
+                            }
+
+                            if (p0NearThirty)
+                            {
+                                var preferZero = p0.Y > p1.Y;
+                                if (TryFindPreferredHardBoundaryMidpoint(
+                                        p0,
+                                        p1,
+                                        preferZero,
+                                        out var target0,
+                                        maxMoveOverride: thirtyEscapeMaxMove) ||
+                                    TryFindPreferredHardBoundaryMidpointRelaxed(
+                                        p0,
+                                        p1,
+                                        preferZero,
+                                        out target0,
+                                        maxMoveOverride: thirtyEscapeMaxMove) ||
+                                    TryFindNearestHardBoundaryPoint(p0, p1, preferZero, out target0) ||
+                                    TryFindNearestHardBoundaryPoint(
+                                        p0,
+                                        p1,
+                                        preferZero,
+                                        out target0,
+                                        lateralTolOverride: thirtyEscapeLateralTol,
+                                        maxMoveOverride: thirtyEscapeMaxMove,
+                                        allowBacktrack: true) ||
+                                    TryFindNearestHardBoundaryPoint(
+                                        p0,
+                                        p1,
+                                        preferZero: null,
+                                        out target0,
+                                        lateralTolOverride: thirtyEscapeLateralTol,
+                                        maxMoveOverride: thirtyEscapeMaxMove,
+                                        allowBacktrack: true))
+                                {
+                                    if (TryMoveEndpoint(writable, moveStart: true, target0, midpointEndpointMoveTol))
+                                    {
+                                        adjustedEndpoints++;
+                                        movedVertical = true;
+                                    }
+                                }
+                            }
+
+                            if (!TryReadOpenSegment(writable, out p0, out p1))
+                            {
+                                if (movedVertical)
+                                {
+                                    adjustedLines++;
+                                }
+
+                                continue;
+                            }
+
+                            if (IsVerticalLike(p0, p1) && IsEndpointNearThirtyBoundary(p1, nearThirtyTol))
+                            {
+                                var preferZero = p1.Y > p0.Y;
+                                if (TryFindPreferredHardBoundaryMidpoint(
+                                        p1,
+                                        p0,
+                                        preferZero,
+                                        out var target1,
+                                        maxMoveOverride: thirtyEscapeMaxMove) ||
+                                    TryFindPreferredHardBoundaryMidpointRelaxed(
+                                        p1,
+                                        p0,
+                                        preferZero,
+                                        out target1,
+                                        maxMoveOverride: thirtyEscapeMaxMove) ||
+                                    TryFindNearestHardBoundaryPoint(p1, p0, preferZero, out target1) ||
+                                    TryFindNearestHardBoundaryPoint(
+                                        p1,
+                                        p0,
+                                        preferZero,
+                                        out target1,
+                                        lateralTolOverride: thirtyEscapeLateralTol,
+                                        maxMoveOverride: thirtyEscapeMaxMove,
+                                        allowBacktrack: true) ||
+                                    TryFindNearestHardBoundaryPoint(
+                                        p1,
+                                        p0,
+                                        preferZero: null,
+                                        out target1,
+                                        lateralTolOverride: thirtyEscapeLateralTol,
+                                        maxMoveOverride: thirtyEscapeMaxMove,
+                                        allowBacktrack: true))
+                                {
+                                    if (TryMoveEndpoint(writable, moveStart: false, target1, midpointEndpointMoveTol))
+                                    {
+                                        adjustedEndpoints++;
+                                        movedVertical = true;
+                                    }
+                                }
+                            }
+
+                            if (movedVertical)
+                            {
+                                adjustedLines++;
+                            }
+
+                            if (traceLsdEndpointFlow)
+                            {
+                                if (!TryReadOpenSegment(writable, out var postV0, out var postV1))
+                                {
+                                    postV0 = p0;
+                                    postV1 = p1;
+                                }
+
+                                logger?.WriteLine(
+                                    $"LSD-ENDPT line={finalLineIdText} pass=final-invariant orient=V moved={movedVertical} postP0={FormatPoint(postV0)} postP1={FormatPoint(postV1)}.");
+                            }
+
                             continue;
                         }
 
                         var movedAny = false;
+                        var p0NearThirtyH = IsEndpointNearThirtyBoundary(p0, nearThirtyTol);
+                        var p1NearThirtyH = IsEndpointNearThirtyBoundary(p1, nearThirtyTol);
+                        if (traceLsdEndpointFlow)
+                        {
+                            logger?.WriteLine(
+                                $"LSD-ENDPT line={finalLineIdText} pass=final-invariant orient=H p0={FormatPoint(p0)} p1={FormatPoint(p1)} p0Near30={p0NearThirtyH} p1Near30={p1NearThirtyH}.");
+                        }
 
-                        if (IsEndpointNearThirtyBoundary(p0, nearThirtyTol))
+                        if (p0NearThirtyH)
                         {
                             var preferZero = p0.X > p1.X;
-                            if (TryFindPreferredHardBoundaryMidpoint(p0, p1, preferZero, out var target0) ||
-                                TryFindPreferredHardBoundaryMidpointRelaxed(p0, p1, preferZero, out target0) ||
-                                TryFindNearestHardBoundaryPoint(p0, p1, preferZero, out target0))
+                            if (TryFindPreferredHardBoundaryMidpoint(
+                                    p0,
+                                    p1,
+                                    preferZero,
+                                    out var target0,
+                                    maxMoveOverride: thirtyEscapeMaxMove) ||
+                                TryFindPreferredHardBoundaryMidpointRelaxed(
+                                    p0,
+                                    p1,
+                                    preferZero,
+                                    out target0,
+                                    maxMoveOverride: thirtyEscapeMaxMove) ||
+                                TryFindNearestHardBoundaryPoint(p0, p1, preferZero, out target0) ||
+                                TryFindNearestHardBoundaryPoint(
+                                    p0,
+                                    p1,
+                                    preferZero,
+                                    out target0,
+                                    lateralTolOverride: thirtyEscapeLateralTol,
+                                    maxMoveOverride: thirtyEscapeMaxMove,
+                                    allowBacktrack: true) ||
+                                TryFindNearestHardBoundaryPoint(
+                                    p0,
+                                    p1,
+                                    preferZero: null,
+                                    out target0,
+                                    lateralTolOverride: thirtyEscapeLateralTol,
+                                    maxMoveOverride: thirtyEscapeMaxMove,
+                                    allowBacktrack: true))
                             {
                                 if (TryMoveEndpoint(writable, moveStart: true, target0, midpointEndpointMoveTol))
                                 {
@@ -7280,12 +7914,38 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (IsHorizontalLike(p0, p1) && IsEndpointNearThirtyBoundary(p1, nearThirtyTol))
+                        if (IsHorizontalLike(p0, p1) && p1NearThirtyH)
                         {
                             var preferZero = p1.X > p0.X;
-                            if (TryFindPreferredHardBoundaryMidpoint(p1, p0, preferZero, out var target1) ||
-                                TryFindPreferredHardBoundaryMidpointRelaxed(p1, p0, preferZero, out target1) ||
-                                TryFindNearestHardBoundaryPoint(p1, p0, preferZero, out target1))
+                            if (TryFindPreferredHardBoundaryMidpoint(
+                                    p1,
+                                    p0,
+                                    preferZero,
+                                    out var target1,
+                                    maxMoveOverride: thirtyEscapeMaxMove) ||
+                                TryFindPreferredHardBoundaryMidpointRelaxed(
+                                    p1,
+                                    p0,
+                                    preferZero,
+                                    out target1,
+                                    maxMoveOverride: thirtyEscapeMaxMove) ||
+                                TryFindNearestHardBoundaryPoint(p1, p0, preferZero, out target1) ||
+                                TryFindNearestHardBoundaryPoint(
+                                    p1,
+                                    p0,
+                                    preferZero,
+                                    out target1,
+                                    lateralTolOverride: thirtyEscapeLateralTol,
+                                    maxMoveOverride: thirtyEscapeMaxMove,
+                                    allowBacktrack: true) ||
+                                TryFindNearestHardBoundaryPoint(
+                                    p1,
+                                    p0,
+                                    preferZero: null,
+                                    out target1,
+                                    lateralTolOverride: thirtyEscapeLateralTol,
+                                    maxMoveOverride: thirtyEscapeMaxMove,
+                                    allowBacktrack: true))
                             {
                                 if (TryMoveEndpoint(writable, moveStart: false, target1, midpointEndpointMoveTol))
                                 {
@@ -7298,6 +7958,18 @@ namespace AtsBackgroundBuilder
                         if (movedAny)
                         {
                             adjustedLines++;
+                        }
+
+                        if (traceLsdEndpointFlow)
+                        {
+                            if (!TryReadOpenSegment(writable, out var postH0, out var postH1))
+                            {
+                                postH0 = p0;
+                                postH1 = p1;
+                            }
+
+                            logger?.WriteLine(
+                                $"LSD-ENDPT line={finalLineIdText} pass=final-invariant orient=H moved={movedAny} postP0={FormatPoint(postH0)} postP1={FormatPoint(postH1)}.");
                         }
                     }
                 }

@@ -1457,6 +1457,75 @@ namespace AtsBackgroundBuilder
                         hasWestBoundarySegment = true;
                     }
 
+                    bool TryResolvePreferredWestBoundary(
+                        IReadOnlyList<(Point2d A, Point2d B, string Layer)> candidates,
+                        out double resolvedU,
+                        out string resolvedLayer,
+                        out Point2d resolvedA,
+                        out Point2d resolvedB)
+                    {
+                        resolvedU = default;
+                        resolvedLayer = string.Empty;
+                        resolvedA = default;
+                        resolvedB = default;
+                        if (candidates == null || candidates.Count == 0)
+                        {
+                            return false;
+                        }
+
+                        // First pass: keep prior expected inset behavior.
+                        if (TryResolveQuarterViewWestBoundaryU(
+                                frame,
+                                candidates,
+                                westExpectedOffset,
+                                dividerPreferredU,
+                                out resolvedU,
+                                out resolvedLayer,
+                                out resolvedA,
+                                out resolvedB))
+                        {
+                            return true;
+                        }
+
+                        // Regression guard: if geometry has already shifted section edge inward,
+                        // a zero expected offset still selects the intended 20.12-class boundary.
+                        return TryResolveQuarterViewWestBoundaryU(
+                            frame,
+                            candidates,
+                            0.0,
+                            dividerPreferredU,
+                            out resolvedU,
+                            out resolvedLayer,
+                            out resolvedA,
+                            out resolvedB);
+                    }
+
+                    if (hasWestBoundarySegment &&
+                        string.Equals(westSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var preferredWestSegments = boundarySegments
+                            .Where(s =>
+                                string.Equals(s.Layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(s.Layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(s.Layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(s.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(s.Layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+                        if (TryResolvePreferredWestBoundary(
+                                preferredWestSegments,
+                                out var preferredWestU,
+                                out var preferredWestLayer,
+                                out var preferredWestA,
+                                out var preferredWestB))
+                        {
+                            westBoundaryU = preferredWestU;
+                            westSource = preferredWestLayer;
+                            westBoundarySegmentA = preferredWestA;
+                            westBoundarySegmentB = preferredWestB;
+                            hasWestBoundarySegment = true;
+                        }
+                    }
+
                     bool TryResolvePreferredEastBoundarySegment(
                         out Point2d resolvedEastA,
                         out Point2d resolvedEastB,
@@ -1558,6 +1627,53 @@ namespace AtsBackgroundBuilder
                         hasSouthBoundarySegment &&
                         string.Equals(southSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
                     {
+                        bool TryResolvePreferredSouthBoundary(
+                            IReadOnlyList<(Point2d A, Point2d B, string Layer)> candidates,
+                            out double resolvedV,
+                            out string resolvedLayer,
+                            out Point2d resolvedA,
+                            out Point2d resolvedB)
+                        {
+                            resolvedV = default;
+                            resolvedLayer = string.Empty;
+                            resolvedA = default;
+                            resolvedB = default;
+                            if (candidates == null || candidates.Count == 0)
+                            {
+                                return false;
+                            }
+
+                            // First pass: keep prior expected inset behavior.
+                            if (TryResolveQuarterViewSouthBoundaryV(
+                                    frame,
+                                    candidates,
+                                    quarterDirectionInset,
+                                    dividerPreferredU,
+                                    dividerLineA,
+                                    dividerLineB,
+                                    out resolvedV,
+                                    out resolvedLayer,
+                                    out resolvedA,
+                                    out resolvedB))
+                            {
+                                return true;
+                            }
+
+                            // Regression guard: allow 20.12-class fallback even when section-edge
+                            // normalization already consumed the expected inset.
+                            return TryResolveQuarterViewSouthBoundaryV(
+                                frame,
+                                candidates,
+                                0.0,
+                                dividerPreferredU,
+                                dividerLineA,
+                                dividerLineB,
+                                out resolvedV,
+                                out resolvedLayer,
+                                out resolvedA,
+                                out resolvedB);
+                        }
+
                         var preferredSouthSegments = boundarySegments
                             .Where(s =>
                                 string.Equals(s.Layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
@@ -1566,29 +1682,18 @@ namespace AtsBackgroundBuilder
                                 string.Equals(s.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
                                 string.Equals(s.Layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
                             .ToList();
-                        if (preferredSouthSegments.Count > 0 &&
-                            TryResolveQuarterViewSouthBoundaryV(
-                                frame,
+                        if (TryResolvePreferredSouthBoundary(
                                 preferredSouthSegments,
-                                quarterDirectionInset,
-                                dividerPreferredU,
-                                dividerLineA,
-                                dividerLineB,
                                 out var preferredSouthV,
                                 out var preferredSouthLayer,
                                 out var preferredSouthA,
                                 out var preferredSouthB))
                         {
-                            var currentError = Math.Abs((frame.SouthEdgeV - southBoundaryV) - quarterDirectionInset);
-                            var preferredError = Math.Abs((frame.SouthEdgeV - preferredSouthV) - quarterDirectionInset);
-                            if (preferredError + 0.05 < currentError)
-                            {
-                                southBoundaryV = preferredSouthV;
-                                southSource = preferredSouthLayer;
-                                southBoundarySegmentA = preferredSouthA;
-                                southBoundarySegmentB = preferredSouthB;
-                                hasSouthBoundarySegment = true;
-                            }
+                            southBoundaryV = preferredSouthV;
+                            southSource = preferredSouthLayer;
+                            southBoundarySegmentA = preferredSouthA;
+                            southBoundarySegmentB = preferredSouthB;
+                            hasSouthBoundarySegment = true;
                         }
                     }
 
