@@ -5098,10 +5098,7 @@ namespace AtsBackgroundBuilder
                         sectionNumber = ParseSectionNumber(sectionKeyForFilter.Section);
                     }
 
-                    var preferWestMostSeRaBoundary =
-                        (sectionNumber >= 1 && sectionNumber <= 6) ||
-                        (sectionNumber >= 13 && sectionNumber <= 18) ||
-                        (sectionNumber >= 25 && sectionNumber <= 30);
+                    var preferWestMostSeRaBoundary = IsWestMostSectionForSeRaBoundary(sectionNumber);
                     var trimHorizontalToBoundaryInSpecialSe = preferWestMostSeRaBoundary;
 
                     var eastRoadAllowanceWestBand = preferWestMostSeRaBoundary ? 75.0 : 45.0;
@@ -5723,6 +5720,13 @@ namespace AtsBackgroundBuilder
 
             // SE specific duplicate cleanup: equal-length blind-line twins can remain after SE connect.
             CleanupDuplicateBlindLineSegments(database, targetSectionIds, logger);
+        }
+
+        private static bool IsWestMostSectionForSeRaBoundary(int sectionNumber)
+        {
+            return (sectionNumber >= 1 && sectionNumber <= 6) ||
+                   (sectionNumber >= 13 && sectionNumber <= 18) ||
+                   (sectionNumber >= 25 && sectionNumber <= 30);
         }
     }
 }
