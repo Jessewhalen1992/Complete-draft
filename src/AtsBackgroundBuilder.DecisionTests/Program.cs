@@ -24,6 +24,11 @@ internal static class Program
 
     private static void RunAll()
     {
+        TestPromptLifecycleRefreshRunsOnSuccess();
+        TestPromptLifecycleRefreshRunsOnException();
+        TestReviewDecisionResolveAcceptedIdsHonorsApplyFlag();
+        TestReviewDecisionResolveAcceptedIdsIncludesOnlyAccept();
+
         TestNoIntentSnapshotReopen();
         TestNoIntentBoundaryRoundTripReopenWithoutSnapshot();
         TestNoIntentRecoveryExhaustedCancels();
@@ -42,6 +47,65 @@ internal static class Program
         TestBuildExecutionPlanPlsrMissingLabelPrecheckGate();
         TestBuildExecutionPlanSupplementalSectionInfoGate();
         TestBuildExecutionPlanPassThroughFlags();
+    }
+
+    private static void TestPromptLifecycleRefreshRunsOnSuccess()
+    {
+        var refreshCount = 0;
+        var result = PromptLifecycleService.ExecuteWithPromptRefresh(
+            () => 42,
+            () => refreshCount++);
+
+        AssertEqual(42, result, nameof(TestPromptLifecycleRefreshRunsOnSuccess));
+        AssertEqual(1, refreshCount, nameof(TestPromptLifecycleRefreshRunsOnSuccess));
+    }
+
+    private static void TestPromptLifecycleRefreshRunsOnException()
+    {
+        var refreshCount = 0;
+        var threw = false;
+        try
+        {
+            _ = PromptLifecycleService.ExecuteWithPromptRefresh<int>(
+                () => throw new InvalidOperationException("boom"),
+                () => refreshCount++);
+        }
+        catch (InvalidOperationException)
+        {
+            threw = true;
+        }
+
+        AssertEqual(true, threw, nameof(TestPromptLifecycleRefreshRunsOnException));
+        AssertEqual(1, refreshCount, nameof(TestPromptLifecycleRefreshRunsOnException));
+    }
+
+    private static void TestReviewDecisionResolveAcceptedIdsHonorsApplyFlag()
+    {
+        var issueId = Guid.NewGuid();
+        var resolved = ReviewDecisionService.ResolveAcceptedIssueIds(
+            applyRequested: false,
+            new[] { new ReviewDecisionEntry(issueId, "Accept") });
+
+        AssertEqual(0, resolved.Count, nameof(TestReviewDecisionResolveAcceptedIdsHonorsApplyFlag));
+    }
+
+    private static void TestReviewDecisionResolveAcceptedIdsIncludesOnlyAccept()
+    {
+        var acceptA = Guid.NewGuid();
+        var acceptB = Guid.NewGuid();
+        var resolved = ReviewDecisionService.ResolveAcceptedIssueIds(
+            applyRequested: true,
+            new[]
+            {
+                new ReviewDecisionEntry(acceptA, "Accept"),
+                new ReviewDecisionEntry(acceptA, "accept"),
+                new ReviewDecisionEntry(acceptB, "ACCEPT"),
+                new ReviewDecisionEntry(Guid.NewGuid(), "Ignore")
+            });
+
+        AssertEqual(true, resolved.Contains(acceptA), nameof(TestReviewDecisionResolveAcceptedIdsIncludesOnlyAccept));
+        AssertEqual(true, resolved.Contains(acceptB), nameof(TestReviewDecisionResolveAcceptedIdsIncludesOnlyAccept));
+        AssertEqual(2, resolved.Count, nameof(TestReviewDecisionResolveAcceptedIdsIncludesOnlyAccept));
     }
 
     private static void TestNoIntentSnapshotReopen()

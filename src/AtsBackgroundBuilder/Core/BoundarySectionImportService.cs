@@ -60,26 +60,24 @@ namespace AtsBackgroundBuilder.Core
             PromptEntityResult selection;
             using (var userInteraction = StartUserInteraction(editor, hostWindowHandle))
             {
-                try
-                {
-                    var prompt = new PromptEntityOptions("\nSelect closed boundary polyline: ");
-                    prompt.SetRejectMessage("\nSelected object must be a closed polyline.");
-                    prompt.AddAllowedClass(typeof(Polyline), exactMatch: false);
-                    selection = editor.GetEntity(prompt);
-                    if (selection.Status != PromptStatus.OK)
+                selection = PromptLifecycleService.ExecuteWithPromptRefresh(
+                    () =>
                     {
-                        cancelled = selection.Status == PromptStatus.Cancel;
-                        if (!cancelled)
-                        {
-                            message = "Boundary selection did not complete.";
-                        }
-
-                        return false;
-                    }
-                }
-                finally
+                        var prompt = new PromptEntityOptions("\nSelect closed boundary polyline: ");
+                        prompt.SetRejectMessage("\nSelected object must be a closed polyline.");
+                        prompt.AddAllowedClass(typeof(Polyline), exactMatch: false);
+                        return editor.GetEntity(prompt);
+                    },
+                    () => RefreshEditorPrompt(editor));
+                if (selection.Status != PromptStatus.OK)
                 {
-                    RefreshEditorPrompt(editor);
+                    cancelled = selection.Status == PromptStatus.Cancel;
+                    if (!cancelled)
+                    {
+                        message = "Boundary selection did not complete.";
+                    }
+
+                    return false;
                 }
             }
 

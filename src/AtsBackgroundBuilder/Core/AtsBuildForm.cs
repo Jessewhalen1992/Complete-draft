@@ -825,48 +825,35 @@ namespace AtsBackgroundBuilder.Core
                 }
             }
 
-            var existingKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (DataGridViewRow row in _grid.Rows)
-            {
-                if (row == null || row.IsNewRow || !RowHasAnyValue(row))
-                {
-                    continue;
-                }
+            var existingKeys = BoundaryImportRowMergeService.BuildExistingKeySet(
+                _grid.Rows
+                    .Cast<DataGridViewRow>()
+                    .Where(row => row != null && !row.IsNewRow && RowHasAnyValue(row))
+                    .Select(row => (
+                        GetCell(row, "M"),
+                        GetCell(row, "RGE"),
+                        GetCell(row, "TWP"),
+                        GetCell(row, "SEC"),
+                        GetCell(row, "HQ"))));
+            var mergeResult = BoundaryImportRowMergeService.MergeImportedRows(
+                importedRows,
+                existingKeys,
+                entry => _grid.Rows.Add(string.Empty, entry.Meridian, entry.Range, entry.Township, entry.Section, entry.Quarter));
 
-                existingKeys.Add(BuildRowKey(
-                    GetCell(row, "M"),
-                    GetCell(row, "RGE"),
-                    GetCell(row, "TWP"),
-                    GetCell(row, "SEC"),
-                    GetCell(row, "HQ")));
-            }
-
-            var added = 0;
-            var duplicates = 0;
-            foreach (var entry in importedRows)
-            {
-                var key = BuildRowKey(entry.Meridian, entry.Range, entry.Township, entry.Section, entry.Quarter);
-                if (!existingKeys.Add(key))
-                {
-                    duplicates++;
-                    continue;
-                }
-
-                _grid.Rows.Add(string.Empty, entry.Meridian, entry.Range, entry.Township, entry.Section, entry.Quarter);
-                added++;
-            }
-
-            if (added > 0)
+            if (mergeResult.Added > 0)
             {
                 RefreshGridRowNumbers();
             }
 
             MessageBox.Show(
                 this,
-                BuildBoundaryImportResultMessage(serviceMessage, added, duplicates),
+                BoundaryImportRowMergeService.BuildBoundaryImportResultMessage(
+                    serviceMessage,
+                    mergeResult.Added,
+                    mergeResult.Duplicates),
                 "ATSBUILD",
                 MessageBoxButtons.OK,
-                added > 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                mergeResult.Added > 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             }
             catch (Exception ex)
             {
@@ -912,37 +899,6 @@ namespace AtsBackgroundBuilder.Core
                    !string.IsNullOrWhiteSpace(row.Cells["HQ"]?.Value?.ToString());
         }
 
-        private static string BuildRowKey(string m, string rge, string twp, string sec, string hq)
-        {
-            return string.Join(
-                "|",
-                NormalizeRowToken(m),
-                NormalizeRowToken(rge),
-                NormalizeRowToken(twp),
-                NormalizeRowToken(sec),
-                NormalizeRowToken(hq));
-        }
-
-        private static string NormalizeRowToken(string value)
-        {
-            return value?.Trim().ToUpperInvariant() ?? string.Empty;
-        }
-
-        private static string BuildBoundaryImportResultMessage(string serviceMessage, int added, int duplicates)
-        {
-            var prefix = string.IsNullOrWhiteSpace(serviceMessage)
-                ? string.Empty
-                : serviceMessage.Trim() + Environment.NewLine + Environment.NewLine;
-            if (added <= 0)
-            {
-                return prefix + "No new section rows were added." +
-                       (duplicates > 0 ? $" Skipped {duplicates} duplicate row(s)." : string.Empty);
-            }
-
-            return prefix + $"Added {added} row(s) to the section input list." +
-                   (duplicates > 0 ? $" Skipped {duplicates} duplicate row(s)." : string.Empty);
-        }
-
         private void OnBuild()
         {
             try
@@ -963,27 +919,13 @@ namespace AtsBackgroundBuilder.Core
                 return;
             }
 
-            Result = new AtsBuildInput
-            {
-                CurrentClient = client,
-                Zone = zone,
-                TextHeight = (double)_textHeight.Value,
-                MaxOverlapAttempts = (int)_maxAttempts.Value,
-                IncludeDispositionLinework = _includeDispoLinework.Checked,
-                IncludeDispositionLabels = _includeDispoLabels.Checked,
-                AllowMultiQuarterDispositions = _allowMultiQuarterDispositions.Checked,
-                IncludeAtsFabric = _includeAtsFabric.Checked,
-                DrawLsdSubdivisionLines = _includeLsds.Checked,
-                IncludeP3Shapefiles = _includeP3Shapes.Checked,
-                IncludeCompassMapping = _includeCompassMapping.Checked,
-                IncludeCrownReservations = _includeCrownReservations.Checked,
-                AutoCheckUpdateShapefilesAlways = _autoCheckUpdateShapesAlways.Checked,
-                CheckPlsr = _checkPlsr.Checked,
-                IncludeSurfaceImpact = _includeSurfaceImpact.Checked,
-                IncludeQuarterSectionLabels = _includeQuarterSectionLabels.Checked,
-                UseAlignedDimensions = true,
-            };
-            Result.SectionRequests.AddRange(requests);
+            Result = AtsBuildInputFactory.Create(
+                client,
+                zone,
+                (double)_textHeight.Value,
+                (int)_maxAttempts.Value,
+                requests,
+                CaptureOptionSelection());
 
             if (PlsrXmlSelectionService.RequiresXml(Result))
             {
@@ -1026,6 +968,25 @@ namespace AtsBackgroundBuilder.Core
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }
+        }
+
+        private AtsBuildOptionSelection CaptureOptionSelection()
+        {
+            return new AtsBuildOptionSelection
+            {
+                IncludeDispositionLinework = _includeDispoLinework.Checked,
+                IncludeDispositionLabels = _includeDispoLabels.Checked,
+                AllowMultiQuarterDispositions = _allowMultiQuarterDispositions.Checked,
+                IncludeAtsFabric = _includeAtsFabric.Checked,
+                DrawLsdSubdivisionLines = _includeLsds.Checked,
+                IncludeP3Shapefiles = _includeP3Shapes.Checked,
+                IncludeCompassMapping = _includeCompassMapping.Checked,
+                IncludeCrownReservations = _includeCrownReservations.Checked,
+                AutoCheckUpdateShapefilesAlways = _autoCheckUpdateShapesAlways.Checked,
+                CheckPlsr = _checkPlsr.Checked,
+                IncludeSurfaceImpact = _includeSurfaceImpact.Checked,
+                IncludeQuarterSectionLabels = _includeQuarterSectionLabels.Checked,
+            };
         }
 
         private static void WriteUiException(string source, Exception ex)

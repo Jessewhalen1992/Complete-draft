@@ -9,5 +9,7 @@
   <ItemGroup>
     <Compile Include="..\AtsBackgroundBuilder\Core\UiSessionRecoveryDecisionEngine.cs" Link="UiSessionRecoveryDecisionEngine.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\BuildExecutionPlan.cs" Link="BuildExecutionPlan.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\PromptLifecycleService.cs" Link="PromptLifecycleService.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\ReviewDecisionService.cs" Link="ReviewDecisionService.cs" />
   </ItemGroup>
 </Project>

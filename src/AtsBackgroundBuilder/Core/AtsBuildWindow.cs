@@ -933,45 +933,34 @@ namespace AtsBackgroundBuilder.Core
                 _rows.Clear();
             }
 
-            var existingKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var row in _rows)
-            {
-                if (!RowHasAnyValue(row))
+            var existingKeys = BoundaryImportRowMergeService.BuildExistingKeySet(
+                _rows
+                    .Where(RowHasAnyValue)
+                    .Select(row => (row.M, row.RGE, row.TWP, row.SEC, row.HQ)));
+            var mergeResult = BoundaryImportRowMergeService.MergeImportedRows(
+                importedRows,
+                existingKeys,
+                entry =>
                 {
-                    continue;
-                }
-
-                existingKeys.Add(BuildRowKey(row.M, row.RGE, row.TWP, row.SEC, row.HQ));
-            }
-
-            var added = 0;
-            var duplicates = 0;
-            foreach (var entry in importedRows)
-            {
-                var key = BuildRowKey(entry.Meridian, entry.Range, entry.Township, entry.Section, entry.Quarter);
-                if (!existingKeys.Add(key))
-                {
-                    duplicates++;
-                    continue;
-                }
-
-                _rows.Add(new GridInputRow
-                {
-                    M = entry.Meridian,
-                    RGE = entry.Range,
-                    TWP = entry.Township,
-                    SEC = entry.Section,
-                    HQ = entry.Quarter,
+                    _rows.Add(new GridInputRow
+                    {
+                        M = entry.Meridian,
+                        RGE = entry.Range,
+                        TWP = entry.Township,
+                        SEC = entry.Section,
+                        HQ = entry.Quarter,
+                    });
                 });
-                added++;
-            }
 
             MessageBox.Show(
                 this,
-                BuildBoundaryImportResultMessage(serviceMessage, added, duplicates),
+                BoundaryImportRowMergeService.BuildBoundaryImportResultMessage(
+                    serviceMessage,
+                    mergeResult.Added,
+                    mergeResult.Duplicates),
                 "ATSBUILD",
                 MessageBoxButton.OK,
-                added > 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                mergeResult.Added > 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
             }
             catch (Exception ex)
             {
@@ -997,37 +986,6 @@ namespace AtsBackgroundBuilder.Core
                    !string.IsNullOrWhiteSpace(row.TWP) ||
                    !string.IsNullOrWhiteSpace(row.SEC) ||
                    !string.IsNullOrWhiteSpace(row.HQ);
-        }
-
-        private static string BuildRowKey(string m, string rge, string twp, string sec, string hq)
-        {
-            return string.Join(
-                "|",
-                NormalizeRowToken(m),
-                NormalizeRowToken(rge),
-                NormalizeRowToken(twp),
-                NormalizeRowToken(sec),
-                NormalizeRowToken(hq));
-        }
-
-        private static string NormalizeRowToken(string value)
-        {
-            return value?.Trim().ToUpperInvariant() ?? string.Empty;
-        }
-
-        private static string BuildBoundaryImportResultMessage(string serviceMessage, int added, int duplicates)
-        {
-            var prefix = string.IsNullOrWhiteSpace(serviceMessage)
-                ? string.Empty
-                : serviceMessage.Trim() + Environment.NewLine + Environment.NewLine;
-            if (added <= 0)
-            {
-                return prefix + "No new section rows were added." +
-                       (duplicates > 0 ? $" Skipped {duplicates} duplicate row(s)." : string.Empty);
-            }
-
-            return prefix + $"Added {added} row(s) to the section input list." +
-                   (duplicates > 0 ? $" Skipped {duplicates} duplicate row(s)." : string.Empty);
         }
 
         private void OnBuild()
@@ -1071,27 +1029,13 @@ namespace AtsBackgroundBuilder.Core
                 return;
             }
 
-            var input = new AtsBuildInput
-            {
-                CurrentClient = client,
-                Zone = zone,
-                TextHeight = textHeight,
-                MaxOverlapAttempts = maxOverlapAttempts,
-                IncludeDispositionLinework = _includeDispoLinework.IsChecked == true,
-                IncludeDispositionLabels = _includeDispoLabels.IsChecked == true,
-                AllowMultiQuarterDispositions = _allowMultiQuarterDispositions.IsChecked == true,
-                IncludeAtsFabric = _includeAtsFabric.IsChecked == true,
-                DrawLsdSubdivisionLines = _includeLsds.IsChecked == true,
-                IncludeP3Shapefiles = _includeP3Shapes.IsChecked == true,
-                IncludeCompassMapping = _includeCompassMapping.IsChecked == true,
-                IncludeCrownReservations = _includeCrownReservations.IsChecked == true,
-                AutoCheckUpdateShapefilesAlways = _autoCheckUpdateShapesAlways.IsChecked == true,
-                CheckPlsr = _checkPlsr.IsChecked == true,
-                IncludeSurfaceImpact = _includeSurfaceImpact.IsChecked == true,
-                IncludeQuarterSectionLabels = _includeQuarterSectionLabels.IsChecked == true,
-                UseAlignedDimensions = true,
-            };
-            input.SectionRequests.AddRange(requests);
+            var input = AtsBuildInputFactory.Create(
+                client,
+                zone,
+                textHeight,
+                maxOverlapAttempts,
+                requests,
+                CaptureOptionSelection());
 
                 if (PlsrXmlSelectionService.RequiresXml(input))
                 {
@@ -1178,27 +1122,13 @@ namespace AtsBackgroundBuilder.Core
                 return false;
             }
 
-            var snapshot = new AtsBuildInput
-            {
-                CurrentClient = client,
-                Zone = zone,
-                TextHeight = textHeight,
-                MaxOverlapAttempts = maxOverlapAttempts,
-                IncludeDispositionLinework = _includeDispoLinework.IsChecked == true,
-                IncludeDispositionLabels = _includeDispoLabels.IsChecked == true,
-                AllowMultiQuarterDispositions = _allowMultiQuarterDispositions.IsChecked == true,
-                IncludeAtsFabric = _includeAtsFabric.IsChecked == true,
-                DrawLsdSubdivisionLines = _includeLsds.IsChecked == true,
-                IncludeP3Shapefiles = _includeP3Shapes.IsChecked == true,
-                IncludeCompassMapping = _includeCompassMapping.IsChecked == true,
-                IncludeCrownReservations = _includeCrownReservations.IsChecked == true,
-                AutoCheckUpdateShapefilesAlways = _autoCheckUpdateShapesAlways.IsChecked == true,
-                CheckPlsr = _checkPlsr.IsChecked == true,
-                IncludeSurfaceImpact = _includeSurfaceImpact.IsChecked == true,
-                IncludeQuarterSectionLabels = _includeQuarterSectionLabels.IsChecked == true,
-                UseAlignedDimensions = true,
-            };
-            snapshot.SectionRequests.AddRange(requests);
+            var snapshot = AtsBuildInputFactory.Create(
+                client,
+                zone,
+                textHeight,
+                maxOverlapAttempts,
+                requests,
+                CaptureOptionSelection());
 
             if (PlsrXmlSelectionService.RequiresXml(snapshot))
             {
@@ -1216,6 +1146,25 @@ namespace AtsBackgroundBuilder.Core
 
             input = snapshot;
             return true;
+        }
+
+        private AtsBuildOptionSelection CaptureOptionSelection()
+        {
+            return new AtsBuildOptionSelection
+            {
+                IncludeDispositionLinework = _includeDispoLinework.IsChecked == true,
+                IncludeDispositionLabels = _includeDispoLabels.IsChecked == true,
+                AllowMultiQuarterDispositions = _allowMultiQuarterDispositions.IsChecked == true,
+                IncludeAtsFabric = _includeAtsFabric.IsChecked == true,
+                DrawLsdSubdivisionLines = _includeLsds.IsChecked == true,
+                IncludeP3Shapefiles = _includeP3Shapes.IsChecked == true,
+                IncludeCompassMapping = _includeCompassMapping.IsChecked == true,
+                IncludeCrownReservations = _includeCrownReservations.IsChecked == true,
+                AutoCheckUpdateShapefilesAlways = _autoCheckUpdateShapesAlways.IsChecked == true,
+                CheckPlsr = _checkPlsr.IsChecked == true,
+                IncludeSurfaceImpact = _includeSurfaceImpact.IsChecked == true,
+                IncludeQuarterSectionLabels = _includeQuarterSectionLabels.IsChecked == true,
+            };
         }
 
         private void CloseAsDialogResultOrWindow(bool result)
