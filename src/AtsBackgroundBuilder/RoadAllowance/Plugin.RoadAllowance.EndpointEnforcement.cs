@@ -2182,7 +2182,10 @@ namespace AtsBackgroundBuilder
                         return touches;
                     }
 
-                    // If endpoint already lands on a preferred boundary in-scope, preserve it.
+                    // If endpoint already lands on the primary preferred boundary, mark it as
+                    // preservable but keep scanning midpoint candidates first. This avoids
+                    // freezing on stale pre-adjust rows when a post-adjust candidate exists.
+                    var preserveOnPrimaryBoundary = false;
                     for (var pi = 0; pi < preferredKinds.Count; pi++)
                     {
                         var kind = preferredKinds[pi];
@@ -2250,8 +2253,8 @@ namespace AtsBackgroundBuilder
                                 }
                             }
 
-                            target = endpoint;
-                            return true;
+                            preserveOnPrimaryBoundary = true;
+                            continue;
                         }
                     }
 
@@ -2342,7 +2345,18 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
-                    return found;
+                    if (found)
+                    {
+                        return true;
+                    }
+
+                    if (preserveOnPrimaryBoundary)
+                    {
+                        target = endpoint;
+                        return true;
+                    }
+
+                    return false;
                 }
 
                 const double endpointMoveTol = 0.005;
