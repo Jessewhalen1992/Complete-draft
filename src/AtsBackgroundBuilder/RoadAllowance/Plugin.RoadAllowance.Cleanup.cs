@@ -5216,14 +5216,12 @@ namespace AtsBackgroundBuilder
 
             bool IsHorizontalLike(Point2d a, Point2d b)
             {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
+                return IsHorizontalLikeSegment(a, b);
             }
 
             bool IsVerticalLike(Point2d a, Point2d b)
             {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
+                return IsVerticalLikeSegment(a, b);
             }
 
             using (var tr = database.TransactionManager.StartTransaction())
@@ -5541,14 +5539,12 @@ namespace AtsBackgroundBuilder
 
             bool IsHorizontalLike(Point2d a, Point2d b)
             {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
+                return IsHorizontalLikeSegment(a, b);
             }
 
             bool IsVerticalLike(Point2d a, Point2d b)
             {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
+                return IsVerticalLikeSegment(a, b);
             }
 
             bool IsBlindSouthBoundarySection(int sectionNumber)
@@ -8284,6 +8280,18 @@ namespace AtsBackgroundBuilder
             }
 
             return false;
+        }
+
+        private static bool IsHorizontalLikeSegment(Point2d a, Point2d b)
+        {
+            var d = b - a;
+            return Math.Abs(d.X) >= Math.Abs(d.Y);
+        }
+
+        private static bool IsVerticalLikeSegment(Point2d a, Point2d b)
+        {
+            var d = b - a;
+            return Math.Abs(d.Y) > Math.Abs(d.X);
         }
 
         private static void NormalizeUsecCollinearComponentLayerConsistency(

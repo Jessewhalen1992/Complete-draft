@@ -1390,6 +1390,35 @@ namespace AtsBackgroundBuilder
                 }
             }
 
+            bool TryGetOuterEndpointTarget(
+                QuarterSelection quarter,
+                bool lineIsHorizontal,
+                Point2d topAnchor,
+                Point2d bottomAnchor,
+                Point2d leftAnchor,
+                Point2d rightAnchor,
+                out Point2d target)
+            {
+                target = default;
+                switch (quarter)
+                {
+                    case QuarterSelection.SouthWest:
+                        target = lineIsHorizontal ? leftAnchor : bottomAnchor;
+                        return true;
+                    case QuarterSelection.SouthEast:
+                        target = lineIsHorizontal ? rightAnchor : bottomAnchor;
+                        return true;
+                    case QuarterSelection.NorthWest:
+                        target = lineIsHorizontal ? leftAnchor : topAnchor;
+                        return true;
+                    case QuarterSelection.NorthEast:
+                        target = lineIsHorizontal ? rightAnchor : topAnchor;
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+
             bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
             {
                 intersection = default;
@@ -2141,6 +2170,14 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
 
+                            if (pi > 0)
+                            {
+                                // Do not freeze endpoint on a lower-priority fallback boundary
+                                // (e.g., SEC) when higher-priority targets (e.g., TWENTY/ZERO)
+                                // are configured for this quarter/line orientation.
+                                continue;
+                            }
+
                             target = endpoint;
                             return true;
                         }
@@ -2294,15 +2331,42 @@ namespace AtsBackgroundBuilder
 
                     if (lineIsHorizontal)
                     {
+                        if (TryGetOuterEndpointTarget(
+                                context.Quarter,
+                                lineIsHorizontal,
+                                context.TopAnchor,
+                                context.BottomAnchor,
+                                context.LeftAnchor,
+                                context.RightAnchor,
+                                out var horizontalOuterAnchor))
+                        {
+                            if (TryMoveEndpoint(writable, !startIsInner, horizontalOuterAnchor, endpointMoveTol))
+                            {
+                                outerAdjusted++;
+                                if (context.SectionNumber == 6 || context.SectionNumber == 36)
+                                {
+                                    logger?.WriteLine(
+                                        $"VERIFY-LSD-OUTER sec={context.SectionNumber} q={context.Quarter} line=H " +
+                                        $"inner={innerPoint.X:0.###},{innerPoint.Y:0.###} outerFrom={outerPoint.X:0.###},{outerPoint.Y:0.###} " +
+                                        $"outerTo={horizontalOuterAnchor.X:0.###},{horizontalOuterAnchor.Y:0.###} kinds=ANCHOR");
+                                }
+                            }
+
+                            continue;
+                        }
+                    }
+
+                    if (lineIsHorizontal)
+                    {
                         if (IsWestQuarter(context.Quarter))
                         {
-                            preferredKinds.Add("SEC");
                             preferredKinds.Add("TWENTY");
+                            preferredKinds.Add("SEC");
                         }
                         else if (IsEastQuarter(context.Quarter))
                         {
-                            preferredKinds.Add("SEC");
                             preferredKinds.Add("ZERO");
+                            preferredKinds.Add("SEC");
                         }
                     }
                     else
@@ -2361,7 +2425,24 @@ namespace AtsBackgroundBuilder
                             preferredKinds,
                             out var outerTarget))
                     {
-                        noOuterTarget++;
+                        if (!TryGetOuterEndpointTarget(
+                                context.Quarter,
+                                lineIsHorizontal,
+                                context.TopAnchor,
+                                context.BottomAnchor,
+                                context.LeftAnchor,
+                                context.RightAnchor,
+                                out outerTarget))
+                        {
+                            noOuterTarget++;
+                            continue;
+                        }
+
+                        if (TryMoveEndpoint(writable, !startIsInner, outerTarget, endpointMoveTol))
+                        {
+                            outerAdjusted++;
+                        }
+
                         continue;
                     }
 

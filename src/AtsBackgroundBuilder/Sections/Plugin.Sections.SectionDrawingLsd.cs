@@ -1040,7 +1040,7 @@ namespace AtsBackgroundBuilder
 
                         var eastInset = frame.EastEdgeU - u;
                         var northInset = frame.NorthEdgeV - v;
-                        var insetTarget = RoadAllowanceSecWidthMeters;
+                        var insetTarget = RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters;
                         var insetScore = Math.Abs(eastInset - insetTarget) + Math.Abs(northInset - insetTarget);
                         var endpointPenalty = hasEndpointNode ? endpointDistance * 8.0 : 120.0;
                         var score =
@@ -1412,14 +1412,15 @@ namespace AtsBackgroundBuilder
                             dividerRelB.DotProduct(frame.EastUnit));
                     }
 
-                    var westExpectedOffset = RoadAllowanceUsecWidthMeters;
+                    var quarterDirectionInset = RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters;
+                    var westExpectedOffset = quarterDirectionInset;
                     var westBoundaryU = frame.WestEdgeU - westExpectedOffset;
                     var southFallbackOffset = IsBlindSouthBoundarySectionForQuarterView(frame.SectionNumber)
                         ? 0.0
-                        : RoadAllowanceUsecWidthMeters;
+                        : quarterDirectionInset;
                     var southBoundaryV = frame.SouthEdgeV - southFallbackOffset;
-                    var westSource = "fallback-30.16";
-                    var southSource = southFallbackOffset > 0.0 ? "fallback-30.16" : "fallback-blind";
+                    var westSource = "fallback-20.12";
+                    var southSource = southFallbackOffset > 0.0 ? "fallback-20.12" : "fallback-blind";
                     var hasResolvedWest = false;
                     var hasWestBoundarySegment = false;
                     var westBoundarySegmentA = default(Point2d);
@@ -1468,12 +1469,12 @@ namespace AtsBackgroundBuilder
                         // Prefer explicit quarter/section hard boundaries before broad fallback.
                         var preferredEastLayers = new[]
                         {
-                            LayerUsecZero,
+                            LayerUsecTwenty,
+                            "L-USEC-2012",
                             LayerUsecBase,
                             "L-SEC",
                             "L-SEC-2012",
-                            LayerUsecTwenty,
-                            "L-USEC-2012"
+                            LayerUsecZero
                         };
                         for (var li = 0; li < preferredEastLayers.Length; li++)
                         {
@@ -1551,6 +1552,44 @@ namespace AtsBackgroundBuilder
                         southBoundarySegmentA = resolvedSouthA;
                         southBoundarySegmentB = resolvedSouthB;
                         hasSouthBoundarySegment = true;
+                    }
+
+                    if (!IsBlindSouthBoundarySectionForQuarterView(frame.SectionNumber) &&
+                        hasSouthBoundarySegment &&
+                        string.Equals(southSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var preferredSouthSegments = boundarySegments
+                            .Where(s =>
+                                string.Equals(s.Layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(s.Layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(s.Layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(s.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(s.Layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+                        if (preferredSouthSegments.Count > 0 &&
+                            TryResolveQuarterViewSouthBoundaryV(
+                                frame,
+                                preferredSouthSegments,
+                                quarterDirectionInset,
+                                dividerPreferredU,
+                                dividerLineA,
+                                dividerLineB,
+                                out var preferredSouthV,
+                                out var preferredSouthLayer,
+                                out var preferredSouthA,
+                                out var preferredSouthB))
+                        {
+                            var currentError = Math.Abs((frame.SouthEdgeV - southBoundaryV) - quarterDirectionInset);
+                            var preferredError = Math.Abs((frame.SouthEdgeV - preferredSouthV) - quarterDirectionInset);
+                            if (preferredError + 0.05 < currentError)
+                            {
+                                southBoundaryV = preferredSouthV;
+                                southSource = preferredSouthLayer;
+                                southBoundarySegmentA = preferredSouthA;
+                                southBoundarySegmentB = preferredSouthB;
+                                hasSouthBoundarySegment = true;
+                            }
+                        }
                     }
 
                     if (TryResolveQuarterViewNorthCorrectionBoundaryV(
@@ -1753,8 +1792,8 @@ namespace AtsBackgroundBuilder
                         var currentOutwardDistance = hasSouthBoundarySegment
                             ? ResolveOutwardDistanceAtMidU(southBoundarySegmentA, southBoundarySegmentB, southBoundaryV)
                             : (frame.SouthEdgeV - southBoundaryV);
-                        var candidateError = Math.Abs(candidateOutwardDistance - RoadAllowanceSecWidthMeters);
-                        var currentError = Math.Abs(currentOutwardDistance - RoadAllowanceSecWidthMeters);
+                        var candidateError = Math.Abs(candidateOutwardDistance - quarterDirectionInset);
+                        var currentError = Math.Abs(currentOutwardDistance - quarterDirectionInset);
                         if (candidateError + minPromotionImprovement < currentError)
                         {
                             promotedCorrectionSouthBoundary = true;
@@ -3324,6 +3363,7 @@ namespace AtsBackgroundBuilder
             const double minProjectedOverlap = 20.0;
             const double maxOffset = 40.0;
             const double minRoadAllowanceOffset = 5.0;
+            const double maxTargetOffsetError = 6.0;
             const double minDividerSeparation = 5.0;
 
             var bestPriority = int.MaxValue;
@@ -3393,6 +3433,13 @@ namespace AtsBackgroundBuilder
                     continue;
                 }
 
+                if (!isCorrectionBoundary &&
+                    targetOffset >= minRoadAllowanceOffset &&
+                    Math.Abs(outwardDistance - targetOffset) > maxTargetOffsetError)
+                {
+                    continue;
+                }
+
                 var segmentMinV = Math.Min(vA, vB);
                 var segmentMaxV = Math.Max(vA, vB);
                 var centerGap = DistanceToClosedInterval(frame.MidV, segmentMinV, segmentMaxV);
@@ -3447,6 +3494,7 @@ namespace AtsBackgroundBuilder
             const double minProjectedOverlap = 20.0;
             const double maxOffset = 40.0;
             const double minRoadAllowanceOffset = 5.0;
+            const double maxTargetOffsetError = 6.0;
             const double maxDividerIntersectionExtension = 80.0;
             var requireDividerLinkedCandidate = expectedOffsetMeters <= 0.5 &&
                                                 dividerLineA.GetDistanceTo(dividerLineB) > 1e-6;
@@ -3524,6 +3572,13 @@ namespace AtsBackgroundBuilder
                 if (!isCorrectionBoundary &&
                     targetOffset >= minRoadAllowanceOffset &&
                     outwardDistance < minRoadAllowanceOffset)
+                {
+                    continue;
+                }
+
+                if (!isCorrectionBoundary &&
+                    targetOffset >= minRoadAllowanceOffset &&
+                    Math.Abs(outwardDistance - targetOffset) > maxTargetOffsetError)
                 {
                     continue;
                 }
