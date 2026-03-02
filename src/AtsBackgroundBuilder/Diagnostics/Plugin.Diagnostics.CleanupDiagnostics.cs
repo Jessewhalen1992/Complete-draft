@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Diagnostics.CodeAnalysis;
+using AtsBackgroundBuilder.Core;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
@@ -28,12 +29,14 @@ namespace AtsBackgroundBuilder
 
             try
             {
-                var showQuarterDefinitionByToggleOrEnv =
-                    input.AllowMultiQuarterDispositions || EnableQuarterViewByEnvironment;
+                var quarterVisibility = QuarterVisibilityPolicy.Create(
+                    input.IncludeAtsFabric,
+                    input.AllowMultiQuarterDispositions,
+                    EnableQuarterViewByEnvironment);
 
                 // L-QUATER display should follow 1/4 Definitions toggle (or env override),
                 // regardless of ATS fabric.
-                if (!showQuarterDefinitionByToggleOrEnv)
+                if (!quarterVisibility.ShowQuarterDefinitionView)
                 {
                     EraseEntitiesOnLayerWithinSectionWindows(
                         database,
@@ -45,7 +48,7 @@ namespace AtsBackgroundBuilder
 
                 // Keep internal quarter helper lines when ATS fabric is requested; otherwise
                 // remove visible helper lines if 1/4 definition display is off.
-                if (!input.IncludeAtsFabric && !showQuarterDefinitionByToggleOrEnv)
+                if (!quarterVisibility.KeepQuarterHelperLinework)
                 {
                     EraseEntitiesByLayer(
                         database,

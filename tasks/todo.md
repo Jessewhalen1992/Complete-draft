@@ -2478,3 +2478,31 @@
 - Verification:
   - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
   - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (Quarter Visibility Policy Refactor, 2026-03-02)
+
+- [x] Extract shared quarter visibility decision policy for toggle/env/ATS combinations.
+- [x] Use shared policy in `BuildExecutionPlan` and cleanup path to remove duplicated condition logic.
+- [x] Add decision tests for full policy matrix and update build-plan visibility expectation.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Quarter Visibility Policy Refactor, 2026-03-02)
+
+- Added `src/AtsBackgroundBuilder/Core/QuarterVisibilityPolicy.cs`:
+  - `ShowQuarterDefinitionView` (controls `L-QUATER` visibility)
+  - `KeepQuarterHelperLinework` (controls `L-QSEC` helper cleanup retention)
+  - `Create(includeAtsFabric, allowMultiQuarterDispositions, enableQuarterViewByEnvironment)` for single-source decision logic.
+- Updated `src/AtsBackgroundBuilder/Core/BuildExecutionPlan.cs`:
+  - now uses `QuarterVisibilityPolicy` for `ShowQuarterDefinitionLinework` instead of ad-hoc condition logic.
+- Updated `src/AtsBackgroundBuilder/Diagnostics/Plugin.Diagnostics.CleanupDiagnostics.cs`:
+  - now uses `QuarterVisibilityPolicy` for both:
+    - `L-QUATER` cleanup gate
+    - `L-QSEC` helper-line cleanup gate
+- Updated decision tests:
+  - `src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj` now links `QuarterVisibilityPolicy.cs`.
+  - `src/AtsBackgroundBuilder.DecisionTests/Program.cs`:
+    - added `TestQuarterVisibilityPolicyMatrix()` covering OFF/OFF, toggle-only, ATS-only, env-only.
+    - updated `TestBuildExecutionPlanQuarterVisibility()` ATS-only expectation to `ShowQuarterDefinitionLinework == false` (matches `L-QUATER` display semantics).
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).

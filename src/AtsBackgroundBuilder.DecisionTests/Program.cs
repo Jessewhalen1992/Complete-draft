@@ -46,6 +46,7 @@ internal static class Program
         TestBuildRequestedWithoutSnapshotCancels();
         TestNoIntentSnapshotUnavailableUsesAutoClosePrefix();
 
+        TestQuarterVisibilityPolicyMatrix();
         TestBuildExecutionPlanDefaults();
         TestBuildExecutionPlanQuarterVisibility();
         TestBuildExecutionPlanPlsrDrivesScopeAndImport();
@@ -384,6 +385,37 @@ internal static class Program
         AssertEqual(false, plan.ShouldImportDispositions(existingDispositionPolylineCount: 0), nameof(TestBuildExecutionPlanDefaults));
     }
 
+    private static void TestQuarterVisibilityPolicyMatrix()
+    {
+        var offOff = QuarterVisibilityPolicy.Create(
+            includeAtsFabric: false,
+            allowMultiQuarterDispositions: false,
+            enableQuarterViewByEnvironment: false);
+        AssertEqual(false, offOff.ShowQuarterDefinitionView, nameof(TestQuarterVisibilityPolicyMatrix));
+        AssertEqual(false, offOff.KeepQuarterHelperLinework, nameof(TestQuarterVisibilityPolicyMatrix));
+
+        var toggleOnly = QuarterVisibilityPolicy.Create(
+            includeAtsFabric: false,
+            allowMultiQuarterDispositions: true,
+            enableQuarterViewByEnvironment: false);
+        AssertEqual(true, toggleOnly.ShowQuarterDefinitionView, nameof(TestQuarterVisibilityPolicyMatrix));
+        AssertEqual(true, toggleOnly.KeepQuarterHelperLinework, nameof(TestQuarterVisibilityPolicyMatrix));
+
+        var atsOnly = QuarterVisibilityPolicy.Create(
+            includeAtsFabric: true,
+            allowMultiQuarterDispositions: false,
+            enableQuarterViewByEnvironment: false);
+        AssertEqual(false, atsOnly.ShowQuarterDefinitionView, nameof(TestQuarterVisibilityPolicyMatrix));
+        AssertEqual(true, atsOnly.KeepQuarterHelperLinework, nameof(TestQuarterVisibilityPolicyMatrix));
+
+        var envOnly = QuarterVisibilityPolicy.Create(
+            includeAtsFabric: false,
+            allowMultiQuarterDispositions: false,
+            enableQuarterViewByEnvironment: true);
+        AssertEqual(true, envOnly.ShowQuarterDefinitionView, nameof(TestQuarterVisibilityPolicyMatrix));
+        AssertEqual(true, envOnly.KeepQuarterHelperLinework, nameof(TestQuarterVisibilityPolicyMatrix));
+    }
+
     private static void TestBuildExecutionPlanQuarterVisibility()
     {
         var uiEnabledInput = new AtsBuildInput
@@ -406,7 +438,7 @@ internal static class Program
             AllowMultiQuarterDispositions = false,
         };
         var atsEnabledPlan = BuildExecutionPlan.Create(atsEnabledInput, enableQuarterViewByEnvironment: false);
-        AssertEqual(true, atsEnabledPlan.ShowQuarterDefinitionLinework, nameof(TestBuildExecutionPlanQuarterVisibility));
+        AssertEqual(false, atsEnabledPlan.ShowQuarterDefinitionLinework, nameof(TestBuildExecutionPlanQuarterVisibility));
     }
 
     private static void TestBuildExecutionPlanPlsrDrivesScopeAndImport()
