@@ -1511,7 +1511,39 @@ namespace AtsBackgroundBuilder.Dispositions
                 return string.Empty;
             }
 
-            return Regex.Replace(dispNum, "\\s+", string.Empty).ToUpperInvariant();
+            var compact = Regex.Replace(dispNum.ToUpperInvariant(), "\\s+", string.Empty);
+            compact = Regex.Replace(compact, "[^A-Z0-9]", string.Empty);
+            if (string.IsNullOrWhiteSpace(compact))
+            {
+                return string.Empty;
+            }
+
+            var prefixMatch = Regex.Match(compact, "^[A-Z]{3}");
+            if (!prefixMatch.Success)
+            {
+                return compact;
+            }
+
+            var prefix = prefixMatch.Value;
+            var suffix = compact.Substring(prefix.Length);
+            if (string.IsNullOrWhiteSpace(suffix))
+            {
+                return prefix;
+            }
+
+            var digits = new string(suffix.Where(char.IsDigit).ToArray());
+            if (digits.Length > 0)
+            {
+                var trimmedDigits = digits.TrimStart('0');
+                if (trimmedDigits.Length == 0)
+                {
+                    trimmedDigits = "0";
+                }
+
+                return prefix + trimmedDigits;
+            }
+
+            return prefix + suffix;
         }
 
     }

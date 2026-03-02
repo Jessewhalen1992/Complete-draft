@@ -4,6 +4,8 @@ VisualStudioVersion = 17.8.34330.188
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AtsBackgroundBuilder", "AtsBackgroundBuilder.csproj", "{0A85B8E8-0E7F-4E5F-9E0A-624152A0E15C}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AtsBackgroundBuilder.DecisionTests", "..\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj", "{B7B7AF87-D5E1-46CF-9BF7-8A07D82F0B2B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -14,6 +16,10 @@ Global
 		{0A85B8E8-0E7F-4E5F-9E0A-624152A0E15C}.Debug|x64.Build.0 = Debug|x64
 		{0A85B8E8-0E7F-4E5F-9E0A-624152A0E15C}.Release|x64.ActiveCfg = Release|x64
 		{0A85B8E8-0E7F-4E5F-9E0A-624152A0E15C}.Release|x64.Build.0 = Release|x64
+		{B7B7AF87-D5E1-46CF-9BF7-8A07D82F0B2B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B7B7AF87-D5E1-46CF-9BF7-8A07D82F0B2B}.Debug|x64.Build.0 = Debug|Any CPU
+		{B7B7AF87-D5E1-46CF-9BF7-8A07D82F0B2B}.Release|x64.ActiveCfg = Release|Any CPU
+		{B7B7AF87-D5E1-46CF-9BF7-8A07D82F0B2B}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

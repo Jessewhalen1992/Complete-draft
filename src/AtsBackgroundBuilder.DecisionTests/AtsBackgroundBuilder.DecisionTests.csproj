@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\AtsBackgroundBuilder\Core\UiSessionRecoveryDecisionEngine.cs" Link="UiSessionRecoveryDecisionEngine.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\BuildExecutionPlan.cs" Link="BuildExecutionPlan.cs" />
+  </ItemGroup>
+</Project>

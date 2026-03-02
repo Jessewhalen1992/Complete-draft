@@ -593,7 +593,9 @@ namespace AtsBackgroundBuilder
             None,
             TagExpired,
             UpdateOwner,
-            CreateMissingLabel
+            CreateMissingLabel,
+            CreateMissingLabelFromTemplate,
+            CreateMissingLabelFromXml
         }
 
         private sealed class PlsrCheckIssue
@@ -617,6 +619,8 @@ namespace AtsBackgroundBuilder
                 PlsrIssueChangeType.UpdateOwner => Label != null,
                 PlsrIssueChangeType.TagExpired => Label != null,
                 PlsrIssueChangeType.CreateMissingLabel => Disposition != null && Quarter != null,
+                PlsrIssueChangeType.CreateMissingLabelFromTemplate => Label != null && Quarter != null,
+                PlsrIssueChangeType.CreateMissingLabelFromXml => Quarter != null,
                 _ => false
             };
         }
@@ -677,6 +681,9 @@ namespace AtsBackgroundBuilder
 
             SetStage("collect_labels");
             var labelByQuarter = CollectPlsrLabels(database, quarters, logger);
+            var labelTemplatesByDispNum = BuildLabelTemplatesByDispNum(labelByQuarter);
+            var defaultTemplateLabel = labelTemplatesByDispNum.Values.FirstOrDefault();
+            var allowTextOnlyFallbackLabels = IsPlsrTextOnlyFallbackLabelsEnabled();
             var quarterByKey = BuildQuarterInfoByKey(quarters);
             var dispositionsByDispNum = IndexDispositionsByDispNum(dispositions);
             var dispositionSourceCache = new Dictionary<string, DispositionInfo?>(StringComparer.OrdinalIgnoreCase);
@@ -685,6 +692,8 @@ namespace AtsBackgroundBuilder
             int ownerMismatches = 0;
             int extraLabels = 0;
             int expiredCandidates = 0;
+            int skippedTextOnlyFallbackLabels = 0;
+            var skippedTextOnlyFallbackExamples = new List<string>();
 
             foreach (var quarterKey in requestedQuarterKeys)
             {
@@ -742,9 +751,24 @@ namespace AtsBackgroundBuilder
                     if (!labelByDisp.TryGetValue(dispNum, out var label))
                     {
                         missingLabels++;
+                        var mappedOwnerForMissing = MapClientNameForCompare(companyLookup, act.Owner);
                         DispositionInfo? sourceDisposition = null;
                         QuarterInfo? sourceQuarter = null;
                         var hasDispositionSource = false;
+                        var usedFallbackDispositionCandidate = false;
+                        var hasTemplateSource = false;
+                        var hasXmlFallbackSource = false;
+                        var hasTextOnlyFallbackCandidate = false;
+                        PlsrLabelEntry? templateLabel = null;
+                        PlsrLabelEntry? xmlFallbackTemplateLabel = null;
+                        DispositionInfo? fallbackDispositionCandidate = null;
+                        if (dispositionsByDispNum.TryGetValue(dispNum, out var fallbackCandidates) &&
+                            fallbackCandidates != null &&
+                            fallbackCandidates.Count > 0)
+                        {
+                            fallbackDispositionCandidate = fallbackCandidates[0];
+                        }
+
                         if (quarterByKey.TryGetValue(quarterKey, out var quarterMatch) && quarterMatch != null)
                         {
                             sourceQuarter = quarterMatch;
@@ -761,22 +785,83 @@ namespace AtsBackgroundBuilder
                                 sourceDisposition = dispositionMatch;
                                 hasDispositionSource = true;
                             }
+                            else if (fallbackDispositionCandidate != null)
+                            {
+                                sourceDisposition = fallbackDispositionCandidate;
+                                hasDispositionSource = true;
+                                usedFallbackDispositionCandidate = true;
+                            }
                         }
+
+                        if (!hasDispositionSource &&
+                            allowTextOnlyFallbackLabels &&
+                            labelTemplatesByDispNum.TryGetValue(dispNum, out var templateCandidate) &&
+                            templateCandidate != null)
+                        {
+                            templateLabel = templateCandidate;
+                            hasTemplateSource = sourceQuarter != null;
+                        }
+
+                        if (!hasDispositionSource && !hasTemplateSource && sourceQuarter != null)
+                        {
+                            if (allowTextOnlyFallbackLabels)
+                            {
+                                xmlFallbackTemplateLabel = labels.FirstOrDefault(l => l != null && !l.Id.IsNull && !l.Id.IsErased) ??
+                                                           defaultTemplateLabel;
+                                hasXmlFallbackSource = true;
+                            }
+                            else
+                            {
+                                hasTextOnlyFallbackCandidate =
+                                    (labelTemplatesByDispNum.TryGetValue(dispNum, out var textTemplate) && textTemplate != null) ||
+                                    defaultTemplateLabel != null ||
+                                    (labels != null && labels.Any(l => l != null && !l.Id.IsNull && !l.Id.IsErased));
+                            }
+                        }
+
+                        if (!hasDispositionSource && !allowTextOnlyFallbackLabels && hasTextOnlyFallbackCandidate)
+                        {
+                            skippedTextOnlyFallbackLabels++;
+                            skippedTextOnlyFallbackExamples.Add($"{dispNum} in {quarterKey}");
+                        }
+
+                        var changeType = PlsrIssueChangeType.None;
+                        if (hasDispositionSource)
+                        {
+                            changeType = PlsrIssueChangeType.CreateMissingLabel;
+                        }
+                        else if (hasTemplateSource)
+                        {
+                            changeType = PlsrIssueChangeType.CreateMissingLabelFromTemplate;
+                        }
+                        else if (hasXmlFallbackSource)
+                        {
+                            changeType = PlsrIssueChangeType.CreateMissingLabelFromXml;
+                        }
+
                         issues.Add(new PlsrCheckIssue
                         {
                             Type = "Missing label",
                             QuarterKey = quarterKey,
                             DispNum = dispNum,
                             CurrentValue = "(none)",
-                            ExpectedValue = act.Owner ?? string.Empty,
+                            ExpectedValue = mappedOwnerForMissing ?? string.Empty,
                             Detail = hasDispositionSource
-                                ? "No label found in this quarter. Create missing label if accepted."
-                                : "No label found in this quarter and no source disposition geometry was found.",
+                                ? (usedFallbackDispositionCandidate
+                                    ? "No label found in this quarter. Create missing label if accepted (using fallback source candidate)."
+                                    : "No label found in this quarter. Create missing label if accepted.")
+                                : (hasTemplateSource
+                                    ? "No matching source disposition geometry in this quarter. Create missing label from an existing disposition label template."
+                                    : (hasXmlFallbackSource
+                                        ? "No source disposition geometry was found. Create missing XML-based label in this quarter."
+                                        : (!allowTextOnlyFallbackLabels && hasTextOnlyFallbackCandidate
+                                            ? "No source disposition geometry was found. Text-only fallback label creation is disabled to prevent floating MText labels."
+                                            : "No label found in this quarter and no source disposition geometry was found."))),
                             SummaryLine = $"Missing label: {dispNum} in {quarterKey}",
-                            ChangeType = hasDispositionSource ? PlsrIssueChangeType.CreateMissingLabel : PlsrIssueChangeType.None,
-                            Label = null,
+                            ChangeType = changeType,
+                            Label = hasTemplateSource ? templateLabel : (hasXmlFallbackSource ? xmlFallbackTemplateLabel : null),
                             Disposition = hasDispositionSource ? sourceDisposition : null,
-                            Quarter = hasDispositionSource ? sourceQuarter : null
+                            Quarter = (hasDispositionSource || hasTemplateSource || hasXmlFallbackSource) ? sourceQuarter : null
                         });
                         continue;
                     }
@@ -870,6 +955,8 @@ namespace AtsBackgroundBuilder
             int ignoredActionable = 0;
             int applyErrors = 0;
             var acceptedCreateMissingIssues = new List<PlsrCheckIssue>();
+            var acceptedCreateMissingTemplateIssues = new List<PlsrCheckIssue>();
+            var acceptedCreateMissingXmlIssues = new List<PlsrCheckIssue>();
 
             SetStage("apply_actions");
             using (var tr = database.TransactionManager.StartTransaction())
@@ -916,6 +1003,16 @@ namespace AtsBackgroundBuilder
                                 acceptedCreateMissingIssues.Add(issue);
                                 break;
                             }
+                            case PlsrIssueChangeType.CreateMissingLabelFromTemplate:
+                            {
+                                acceptedCreateMissingTemplateIssues.Add(issue);
+                                break;
+                            }
+                            case PlsrIssueChangeType.CreateMissingLabelFromXml:
+                            {
+                                acceptedCreateMissingXmlIssues.Add(issue);
+                                break;
+                            }
                         }
                     }
                     catch (Autodesk.AutoCAD.Runtime.Exception ex)
@@ -934,26 +1031,71 @@ namespace AtsBackgroundBuilder
             }
 
             SetStage("create_missing_labels");
-            if (acceptedCreateMissingIssues.Count > 0)
+            if (acceptedCreateMissingIssues.Count > 0 ||
+                acceptedCreateMissingTemplateIssues.Count > 0 ||
+                acceptedCreateMissingXmlIssues.Count > 0)
             {
                 var existingDispNumsByQuarter = BuildExistingDispNumsByQuarter(labelByQuarter);
                 var layerManager = new LayerManager(database);
                 var placer = new LabelPlacer(database, editor, layerManager, config, logger, useAlignedDimensions: true);
                 foreach (var issue in acceptedCreateMissingIssues)
                 {
-                    if (issue.Disposition == null || issue.Quarter == null)
+                    if (issue.Quarter == null)
                     {
                         continue;
                     }
 
                     try
                     {
+                        var normalizedIssueDispNum = NormalizeDispNum(issue.DispNum);
+                        if (string.IsNullOrWhiteSpace(normalizedIssueDispNum) ||
+                            !dispositionsByDispNum.TryGetValue(normalizedIssueDispNum, out var indexedCandidates) ||
+                            indexedCandidates == null ||
+                            indexedCandidates.Count == 0)
+                        {
+                            logger.WriteLine(
+                                $"PLSR missing-label create skipped for {issue.DispNum} in {issue.QuarterKey}: no disposition candidates indexed.");
+                            continue;
+                        }
+
+                        var candidateDispositions = new List<DispositionInfo>();
+                        var seenCandidateIds = new HashSet<ObjectId>();
+                        if (issue.Disposition != null && !issue.Disposition.ObjectId.IsNull && seenCandidateIds.Add(issue.Disposition.ObjectId))
+                        {
+                            candidateDispositions.Add(issue.Disposition);
+                        }
+
+                        foreach (var candidate in indexedCandidates)
+                        {
+                            if (candidate == null || candidate.ObjectId.IsNull)
+                            {
+                                continue;
+                            }
+
+                            if (seenCandidateIds.Add(candidate.ObjectId))
+                            {
+                                candidateDispositions.Add(candidate);
+                            }
+                        }
+
+                        if (candidateDispositions.Count == 0)
+                        {
+                            logger.WriteLine(
+                                $"PLSR missing-label create skipped for {issue.DispNum} in {issue.QuarterKey}: candidate list empty after dedupe.");
+                            continue;
+                        }
+
                         var placement = placer.PlaceLabels(
                             new List<QuarterInfo> { issue.Quarter },
-                            new List<DispositionInfo> { issue.Disposition },
+                            candidateDispositions,
                             input.CurrentClient,
                             existingDispNumsByQuarter);
                         missingCreated += placement.LabelsPlaced;
+                        if (placement.LabelsPlaced == 0)
+                        {
+                            logger.WriteLine(
+                                $"PLSR missing-label create produced no label for {issue.DispNum} in {issue.QuarterKey} after trying {candidateDispositions.Count} candidate(s).");
+                        }
                     }
                     catch (Autodesk.AutoCAD.Runtime.Exception ex)
                     {
@@ -964,6 +1106,58 @@ namespace AtsBackgroundBuilder
                     {
                         applyErrors++;
                         logger.WriteLine($"PLSR missing-label create failed for {issue.DispNum} in {issue.QuarterKey}: {ex.Message}");
+                    }
+                }
+
+                foreach (var issue in acceptedCreateMissingTemplateIssues)
+                {
+                    try
+                    {
+                        if (TryCreateMissingLabelFromTemplate(database, issue, existingDispNumsByQuarter, out var templateReason))
+                        {
+                            missingCreated++;
+                        }
+                        else if (!string.IsNullOrWhiteSpace(templateReason))
+                        {
+                            logger.WriteLine(
+                                $"PLSR missing-label template create skipped for {issue.DispNum} in {issue.QuarterKey}: {templateReason}");
+                        }
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                    {
+                        applyErrors++;
+                        logger.WriteLine($"PLSR missing-label template create failed for {issue.DispNum} in {issue.QuarterKey}: {ex.Message}");
+                    }
+                    catch (System.Exception ex)
+                    {
+                        applyErrors++;
+                        logger.WriteLine($"PLSR missing-label template create failed for {issue.DispNum} in {issue.QuarterKey}: {ex.Message}");
+                    }
+                }
+
+                foreach (var issue in acceptedCreateMissingXmlIssues)
+                {
+                    try
+                    {
+                        if (TryCreateMissingLabelFromXml(database, issue, existingDispNumsByQuarter, out var xmlReason))
+                        {
+                            missingCreated++;
+                        }
+                        else if (!string.IsNullOrWhiteSpace(xmlReason))
+                        {
+                            logger.WriteLine(
+                                $"PLSR missing-label XML create skipped for {issue.DispNum} in {issue.QuarterKey}: {xmlReason}");
+                        }
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                    {
+                        applyErrors++;
+                        logger.WriteLine($"PLSR missing-label XML create failed for {issue.DispNum} in {issue.QuarterKey}: {ex.Message}");
+                    }
+                    catch (System.Exception ex)
+                    {
+                        applyErrors++;
+                        logger.WriteLine($"PLSR missing-label XML create failed for {issue.DispNum} in {issue.QuarterKey}: {ex.Message}");
                     }
                 }
             }
@@ -990,6 +1184,7 @@ namespace AtsBackgroundBuilder
             summary.AppendLine($"Extra labels not in PLSR: {extraLabels}");
             summary.AppendLine($"Expired candidates: {expiredCandidates}");
             summary.AppendLine($"Missing labels created: {missingCreated}");
+            summary.AppendLine($"Skipped text-only fallback labels: {skippedTextOnlyFallbackLabels}");
             summary.AppendLine($"Owner updates applied: {ownerUpdated}");
             summary.AppendLine($"Expired tags added: {expiredTagged}");
             summary.AppendLine($"Actionable results accepted: {acceptedActionable}");
@@ -997,6 +1192,37 @@ namespace AtsBackgroundBuilder
             summary.AppendLine($"Apply errors: {applyErrors}");
 
             var summaryText = summary.ToString().TrimEnd();
+            if (skippedTextOnlyFallbackLabels > 0 && !allowTextOnlyFallbackLabels)
+            {
+                var warning = new StringBuilder();
+                warning.AppendLine(
+                    $"Skipped {skippedTextOnlyFallbackLabels} label(s) where only text-only fallback was available (no source disposition geometry).");
+                warning.AppendLine("These were intentionally not created to avoid floating MText labels.");
+                if (skippedTextOnlyFallbackExamples.Count > 0)
+                {
+                    warning.AppendLine();
+                    warning.AppendLine("Skipped labels:");
+                    foreach (var example in skippedTextOnlyFallbackExamples.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                    {
+                        warning.AppendLine(" - " + example);
+                    }
+                }
+
+                var warningText = warning.ToString().TrimEnd();
+                try
+                {
+                    WinForms.MessageBox.Show(
+                        warningText,
+                        "PLSR Label Warning",
+                        WinForms.MessageBoxButtons.OK,
+                        WinForms.MessageBoxIcon.Warning);
+                }
+                catch
+                {
+                    editor.WriteMessage("\n" + warningText);
+                }
+            }
+
             SetStage("show_summary");
             try
             {
@@ -1226,6 +1452,411 @@ namespace AtsBackgroundBuilder
             }
 
             return indexed;
+        }
+
+        private static Dictionary<string, PlsrLabelEntry> BuildLabelTemplatesByDispNum(
+            Dictionary<string, List<PlsrLabelEntry>> labelByQuarter)
+        {
+            var templates = new Dictionary<string, PlsrLabelEntry>(StringComparer.OrdinalIgnoreCase);
+            if (labelByQuarter == null || labelByQuarter.Count == 0)
+            {
+                return templates;
+            }
+
+            foreach (var pair in labelByQuarter)
+            {
+                if (pair.Value == null || pair.Value.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var label in pair.Value)
+                {
+                    if (label == null || label.Id.IsNull || label.Id.IsErased)
+                    {
+                        continue;
+                    }
+
+                    var normalizedDispNum = NormalizeDispNum(label.DispNum);
+                    if (string.IsNullOrWhiteSpace(normalizedDispNum) || templates.ContainsKey(normalizedDispNum))
+                    {
+                        continue;
+                    }
+
+                    templates[normalizedDispNum] = label;
+                }
+            }
+
+            return templates;
+        }
+
+        private static bool TryCreateMissingLabelFromTemplate(
+            Database database,
+            PlsrCheckIssue issue,
+            Dictionary<string, HashSet<string>> existingDispNumsByQuarter,
+            out string reason)
+        {
+            reason = string.Empty;
+
+            if (database == null || issue == null || issue.Quarter == null || issue.Label == null)
+            {
+                reason = "required template or quarter data missing";
+                return false;
+            }
+
+            var quarter = issue.Quarter;
+            if (quarter.Polyline == null)
+            {
+                reason = "quarter geometry unavailable";
+                return false;
+            }
+
+            var normalizedDispNum = NormalizeDispNum(issue.DispNum);
+            var quarterKey = issue.QuarterKey;
+            if (string.IsNullOrWhiteSpace(quarterKey) && quarter.SectionKey.HasValue && quarter.Quarter != QuarterSelection.None)
+            {
+                quarterKey = BuildQuarterKey(quarter.SectionKey.Value, quarter.Quarter);
+            }
+
+            if (!string.IsNullOrWhiteSpace(quarterKey) &&
+                !string.IsNullOrWhiteSpace(normalizedDispNum) &&
+                existingDispNumsByQuarter.TryGetValue(quarterKey, out var existingDispNums) &&
+                existingDispNums != null &&
+                existingDispNums.Contains(normalizedDispNum))
+            {
+                reason = "label already exists in quarter";
+                return false;
+            }
+
+            var baseContents = issue.Label.RawContents ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(baseContents))
+            {
+                reason = "template label contents empty";
+                return false;
+            }
+
+            var contents = ReplaceLabelOwnerInContents(baseContents, issue.ExpectedValue);
+            if (string.IsNullOrWhiteSpace(contents))
+            {
+                reason = "template label contents invalid";
+                return false;
+            }
+
+            Point2d anchor;
+            try
+            {
+                anchor = GeometryUtils.GetSafeInteriorPoint(quarter.Polyline);
+            }
+            catch
+            {
+                reason = "could not resolve quarter interior point";
+                return false;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead, false);
+                var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite, false);
+                if (!(tr.GetObject(issue.Label.Id, OpenMode.ForRead, false) is Entity templateEntity) || templateEntity.IsErased)
+                {
+                    reason = "template entity not found";
+                    tr.Commit();
+                    return false;
+                }
+
+                var mtext = new MText();
+                mtext.SetDatabaseDefaults(database);
+                mtext.Contents = contents;
+                mtext.Location = new Point3d(anchor.X, anchor.Y, 0.0);
+                mtext.Layer = templateEntity.Layer;
+                mtext.ColorIndex = templateEntity.ColorIndex > 0 ? templateEntity.ColorIndex : 256;
+
+                ApplyTemplateTextFormatting(templateEntity, mtext);
+                if (mtext.TextHeight <= 0.0)
+                {
+                    mtext.TextHeight = 7.0;
+                }
+
+                modelSpace.AppendEntity(mtext);
+                tr.AddNewlyCreatedDBObject(mtext, true);
+                tr.Commit();
+            }
+
+            if (!string.IsNullOrWhiteSpace(quarterKey) && !string.IsNullOrWhiteSpace(normalizedDispNum))
+            {
+                if (!existingDispNumsByQuarter.TryGetValue(quarterKey, out var dispNums) || dispNums == null)
+                {
+                    dispNums = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    existingDispNumsByQuarter[quarterKey] = dispNums;
+                }
+
+                dispNums.Add(normalizedDispNum);
+            }
+
+            return true;
+        }
+
+        private static bool IsPlsrTextOnlyFallbackLabelsEnabled()
+        {
+            // Intentionally hard-disabled: text-only fallback labels create floating MText
+            // (owner/disp only, no geometry/dimension anchor), which users have rejected.
+            // Missing-label rows without source geometry should stay skipped and be warned.
+            return false;
+        }
+
+        private static bool TryCreateMissingLabelFromXml(
+            Database database,
+            PlsrCheckIssue issue,
+            Dictionary<string, HashSet<string>> existingDispNumsByQuarter,
+            out string reason)
+        {
+            reason = string.Empty;
+
+            if (database == null || issue == null || issue.Quarter == null)
+            {
+                reason = "required quarter data missing";
+                return false;
+            }
+
+            var quarter = issue.Quarter;
+            if (quarter.Polyline == null)
+            {
+                reason = "quarter geometry unavailable";
+                return false;
+            }
+
+            var normalizedDispNum = NormalizeDispNum(issue.DispNum);
+            var quarterKey = issue.QuarterKey;
+            if (string.IsNullOrWhiteSpace(quarterKey) && quarter.SectionKey.HasValue && quarter.Quarter != QuarterSelection.None)
+            {
+                quarterKey = BuildQuarterKey(quarter.SectionKey.Value, quarter.Quarter);
+            }
+
+            if (!string.IsNullOrWhiteSpace(quarterKey) &&
+                !string.IsNullOrWhiteSpace(normalizedDispNum) &&
+                existingDispNumsByQuarter.TryGetValue(quarterKey, out var existingDispNums) &&
+                existingDispNums != null &&
+                existingDispNums.Contains(normalizedDispNum))
+            {
+                reason = "label already exists in quarter";
+                return false;
+            }
+
+            var owner = issue.ExpectedValue?.Trim();
+            if (string.IsNullOrWhiteSpace(owner))
+            {
+                owner = "UNKNOWN";
+            }
+
+            var dispLine = string.IsNullOrWhiteSpace(issue.DispNum) ? normalizedDispNum : issue.DispNum.Trim();
+            if (string.IsNullOrWhiteSpace(dispLine))
+            {
+                reason = "disposition number missing";
+                return false;
+            }
+
+            var contents = owner + "\\P" + dispLine;
+            Point2d anchor;
+            try
+            {
+                anchor = ResolveMissingLabelAnchor(quarter.Polyline, dispLine);
+            }
+            catch
+            {
+                reason = "could not resolve quarter interior point";
+                return false;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead, false);
+                var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite, false);
+
+                Entity? templateEntity = null;
+                if (issue.Label != null && !issue.Label.Id.IsNull)
+                {
+                    templateEntity = tr.GetObject(issue.Label.Id, OpenMode.ForRead, false) as Entity;
+                    if (templateEntity != null && templateEntity.IsErased)
+                    {
+                        templateEntity = null;
+                    }
+                }
+
+                var layerName = (templateEntity?.Layer ?? string.Empty).Trim();
+                if (!IsDispositionTextLayer(layerName))
+                {
+                    layerName = "C-PLSR-T";
+                }
+
+                EnsureLayer(database, tr, layerName);
+
+                var mtext = new MText();
+                mtext.SetDatabaseDefaults(database);
+                mtext.Contents = contents;
+                mtext.Location = new Point3d(anchor.X, anchor.Y, 0.0);
+                mtext.Layer = layerName;
+                mtext.ColorIndex = templateEntity != null && templateEntity.ColorIndex > 0
+                    ? templateEntity.ColorIndex
+                    : 256;
+
+                if (templateEntity != null)
+                {
+                    ApplyTemplateTextFormatting(templateEntity, mtext);
+                }
+
+                if (mtext.TextHeight <= 0.0)
+                {
+                    mtext.TextHeight = 7.0;
+                }
+
+                modelSpace.AppendEntity(mtext);
+                tr.AddNewlyCreatedDBObject(mtext, true);
+                tr.Commit();
+            }
+
+            if (!string.IsNullOrWhiteSpace(quarterKey) && !string.IsNullOrWhiteSpace(normalizedDispNum))
+            {
+                if (!existingDispNumsByQuarter.TryGetValue(quarterKey, out var dispNums) || dispNums == null)
+                {
+                    dispNums = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    existingDispNumsByQuarter[quarterKey] = dispNums;
+                }
+
+                dispNums.Add(normalizedDispNum);
+            }
+
+            return true;
+        }
+
+        private static Point2d ResolveMissingLabelAnchor(Polyline quarterPolyline, string dispNum)
+        {
+            var center = GeometryUtils.GetSafeInteriorPoint(quarterPolyline);
+            var hash = GetStableDispHash(dispNum);
+            for (var i = 0; i < 40; i++)
+            {
+                var angleDegrees = (hash + (i * 59)) % 360;
+                var angle = angleDegrees * Math.PI / 180.0;
+                var radius = 5.0 + (((hash / 37) + i) % 10) * 4.5;
+                var candidate = new Point2d(
+                    center.X + (Math.Cos(angle) * radius),
+                    center.Y + (Math.Sin(angle) * radius));
+                if (GeometryUtils.IsPointInsidePolyline(quarterPolyline, candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return center;
+        }
+
+        private static int GetStableDispHash(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return 0;
+            }
+
+            unchecked
+            {
+                var hash = 17;
+                foreach (var ch in text.ToUpperInvariant())
+                {
+                    hash = (hash * 31) + ch;
+                }
+
+                return hash & int.MaxValue;
+            }
+        }
+
+        private static string ReplaceLabelOwnerInContents(string contents, string expectedOwner)
+        {
+            if (string.IsNullOrWhiteSpace(contents))
+            {
+                return string.Empty;
+            }
+
+            if (string.IsNullOrWhiteSpace(expectedOwner))
+            {
+                return contents;
+            }
+
+            var delimiter = contents.IndexOf("\\X", StringComparison.OrdinalIgnoreCase) >= 0 ? "\\X" : "\\P";
+            var parts = contents.Split(new[] { delimiter }, StringSplitOptions.None);
+            if (parts.Length == 0)
+            {
+                return contents;
+            }
+
+            parts[0] = expectedOwner.Trim();
+            return string.Join(delimiter, parts);
+        }
+
+        private static void ApplyTemplateTextFormatting(Entity templateEntity, MText target)
+        {
+            if (templateEntity == null || target == null)
+            {
+                return;
+            }
+
+            if (templateEntity is MText templateMText)
+            {
+                if (!templateMText.TextStyleId.IsNull)
+                {
+                    target.TextStyleId = templateMText.TextStyleId;
+                }
+
+                if (templateMText.TextHeight > 0.0)
+                {
+                    target.TextHeight = templateMText.TextHeight;
+                }
+
+                target.Attachment = templateMText.Attachment;
+                target.Rotation = templateMText.Rotation;
+                if (templateMText.Width > 0.0)
+                {
+                    target.Width = templateMText.Width;
+                }
+
+                return;
+            }
+
+            if (templateEntity is MLeader templateLeader)
+            {
+                try
+                {
+                    var leaderText = templateLeader.MText;
+                    if (leaderText != null)
+                    {
+                        if (!leaderText.TextStyleId.IsNull)
+                        {
+                            target.TextStyleId = leaderText.TextStyleId;
+                        }
+
+                        if (leaderText.TextHeight > 0.0)
+                        {
+                            target.TextHeight = leaderText.TextHeight;
+                        }
+
+                        target.Attachment = leaderText.Attachment;
+                        target.Rotation = leaderText.Rotation;
+                        if (leaderText.Width > 0.0)
+                        {
+                            target.Width = leaderText.Width;
+                        }
+                    }
+                }
+                catch
+                {
+                    // Best-effort fallback.
+                }
+
+                return;
+            }
+
+            if (templateEntity is AlignedDimension templateDimension && templateDimension.Dimtxt > 0.0)
+            {
+                target.TextHeight = templateDimension.Dimtxt;
+            }
         }
 
         private static bool HasPotentialMissingPlsrLabels(
@@ -2211,8 +2842,43 @@ namespace AtsBackgroundBuilder
         private static string NormalizeDispNum(string dispNum)
         {
             if (string.IsNullOrWhiteSpace(dispNum))
+            {
                 return string.Empty;
-            return Regex.Replace(dispNum, "\\s+", string.Empty).ToUpperInvariant();
+            }
+
+            var compact = Regex.Replace(dispNum.ToUpperInvariant(), "\\s+", string.Empty);
+            compact = Regex.Replace(compact, "[^A-Z0-9]", string.Empty);
+            if (string.IsNullOrWhiteSpace(compact))
+            {
+                return string.Empty;
+            }
+
+            var prefixMatch = Regex.Match(compact, "^[A-Z]{3}");
+            if (!prefixMatch.Success)
+            {
+                return compact;
+            }
+
+            var prefix = prefixMatch.Value;
+            var suffix = compact.Substring(prefix.Length);
+            if (string.IsNullOrWhiteSpace(suffix))
+            {
+                return prefix;
+            }
+
+            var digits = new string(suffix.Where(char.IsDigit).ToArray());
+            if (digits.Length > 0)
+            {
+                var trimmedDigits = digits.TrimStart('0');
+                if (trimmedDigits.Length == 0)
+                {
+                    trimmedDigits = "0";
+                }
+
+                return prefix + trimmedDigits;
+            }
+
+            return prefix + suffix;
         }
 
         private static string GetDispositionPrefix(string dispNum)
@@ -2427,6 +3093,8 @@ namespace AtsBackgroundBuilder
                 PlsrIssueChangeType.UpdateOwner => "Update label owner",
                 PlsrIssueChangeType.TagExpired => "Add (Expired)",
                 PlsrIssueChangeType.CreateMissingLabel => "Create missing label",
+                PlsrIssueChangeType.CreateMissingLabelFromTemplate => "Create missing label (template)",
+                PlsrIssueChangeType.CreateMissingLabelFromXml => "Create missing label (XML fallback)",
                 _ => "No change"
             };
         }

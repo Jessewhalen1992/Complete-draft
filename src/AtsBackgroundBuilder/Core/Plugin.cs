@@ -271,82 +271,82 @@ namespace AtsBackgroundBuilder
                         var snapshotReason = string.Empty;
                         AtsBuildInput? snapshotInput = null;
                         var snapshotAvailable = window.TryBuildInputSnapshot(out snapshotInput, out snapshotReason) && snapshotInput != null;
+                        var noResultDecision = UiSessionRecoveryService.EvaluateNoResult(
+                            explicitCancel,
+                            buildRequested,
+                            buildAttempted,
+                            window.BoundaryImportRoundTripUsed,
+                            snapshotAvailable,
+                            window.BuildAttemptTrace,
+                            autoCloseResumeAttempts,
+                            maxAutoCloseResumeAttempts);
 
-                        if (!explicitCancel && !buildRequested && !buildAttempted)
+                        if (noResultDecision.Action == UiNoResultAction.ReopenWithSnapshot ||
+                            noResultDecision.Action == UiNoResultAction.ReopenWithoutSnapshot)
                         {
-                            if (snapshotAvailable && autoCloseResumeAttempts < maxAutoCloseResumeAttempts)
+                            autoCloseResumeAttempts = noResultDecision.NextAutoCloseResumeAttempts;
+                            if (window.IsVisible)
                             {
-                                autoCloseResumeAttempts++;
-                                if (window.IsVisible)
+                                var closeLogPrefix = noResultDecision.Action == UiNoResultAction.ReopenWithSnapshot
+                                    ? "UI auto-close recovery"
+                                    : "UI boundary round-trip recovery";
+                                logger.WriteLine(closeLogPrefix + ": original window still visible; closing before reopen.");
+                                try
                                 {
-                                    logger.WriteLine("UI auto-close recovery: original window still visible; closing before reopen.");
-                                    try
-                                    {
-                                        window.Close();
-                                    }
-                                    catch (System.Exception closeEx)
-                                    {
-                                        logger.WriteLine($"UI auto-close recovery: close-before-reopen failed ({closeEx.GetType().Name}: {closeEx.Message}).");
-                                    }
+                                    window.Close();
                                 }
-
-                                logger.WriteLine($"UI auto-close recovery: reopening dialog for explicit Build (attempt {autoCloseResumeAttempts}/{maxAutoCloseResumeAttempts}, boundaryRoundTrip={window.BoundaryImportRoundTripUsed}).");
-                                seededUiInput = snapshotInput;
-                                continue;
+                                catch (System.Exception closeEx)
+                                {
+                                    logger.WriteLine($"{closeLogPrefix}: close-before-reopen failed ({closeEx.GetType().Name}: {closeEx.Message}).");
+                                }
                             }
 
-                            if (snapshotAvailable)
+                            if (noResultDecision.Action == UiNoResultAction.ReopenWithSnapshot)
                             {
-                                logger.WriteLine($"UI auto-close recovery exhausted after {maxAutoCloseResumeAttempts} attempts; treating as cancel.");
+                                logger.WriteLine($"UI auto-close recovery: reopening dialog for explicit Build (attempt {autoCloseResumeAttempts}/{maxAutoCloseResumeAttempts}, boundaryRoundTrip={window.BoundaryImportRoundTripUsed}).");
+                                seededUiInput = snapshotInput;
                             }
                             else
                             {
-                                var resumePrefix = window.BoundaryImportRoundTripUsed
-                                    ? "UI boundary-import round-trip snapshot unavailable"
-                                    : "UI auto-close snapshot unavailable";
-                                logger.WriteLine($"{resumePrefix} (reason={snapshotReason}).");
+                                logger.WriteLine($"UI boundary round-trip recovery: reopening dialog without snapshot (attempt {autoCloseResumeAttempts}/{maxAutoCloseResumeAttempts}, reason={snapshotReason}).");
+                                seededUiInput = null;
                             }
+
+                            continue;
                         }
 
-                        var recovered = false;
-                        var buildTrace = window.BuildAttemptTrace ?? string.Empty;
-                        var buildAbortedByValidation = buildTrace.StartsWith("onbuild_abort_", StringComparison.OrdinalIgnoreCase);
-                        var shouldTrySnapshot = !explicitCancel && (buildRequested || (buildAttempted && !buildAbortedByValidation));
-                        if (shouldTrySnapshot && snapshotAvailable)
+                        if (noResultDecision.ShouldLogRecoveryExhausted)
                         {
-                            recovered = true;
+                            logger.WriteLine($"UI auto-close recovery exhausted after {maxAutoCloseResumeAttempts} attempts; treating as cancel.");
+                        }
+                        else if (noResultDecision.ShouldLogSnapshotUnavailable)
+                        {
+                            logger.WriteLine($"{noResultDecision.SnapshotUnavailablePrefix} (reason={snapshotReason}).");
                         }
 
-                        if (recovered)
+                        if (noResultDecision.Action == UiNoResultAction.RecoverSnapshot)
                         {
                             autoCloseResumeAttempts = 0;
                             logger.WriteLine("UI result fallback: recovered build input snapshot from window state.");
                             input = snapshotInput;
 
-                            if (dr != true &&
-                                input != null &&
-                                !input.CheckPlsr &&
-                                !input.IncludeSurfaceImpact &&
-                                AtsBuildWindow.TryGetPersistedPlsrXmlPaths(out var persistedPlsrXmlPaths))
+                            if (UiSessionRecoveryService.TryRestorePersistedPlsrSelectionFromAutoCloseFallback(
+                                    dialogAccepted: dr == true,
+                                    input,
+                                    out var persistedRestoreLog))
                             {
-                                input.CheckPlsr = true;
-                                input.PlsrXmlPaths.Clear();
-                                input.PlsrXmlPaths.AddRange(persistedPlsrXmlPaths);
-                                logger.WriteLine($"UI auto-close fallback: enabled Check PLSR using {persistedPlsrXmlPaths.Count} persisted XML file(s).");
+                                logger.WriteLine(persistedRestoreLog);
                             }
                         }
                         else
                         {
-                            if (!explicitCancel)
+                            if (noResultDecision.ShouldLogClosedWithoutBuildAttempt)
                             {
-                                if (!buildRequested && !buildAttempted)
-                                {
-                                    logger.WriteLine("UI closed without build attempt; treating as cancel.");
-                                }
-                                else
-                                {
-                                    logger.WriteLine($"UI result fallback unavailable (reason={snapshotReason}).");
-                                }
+                                logger.WriteLine("UI closed without build attempt; treating as cancel.");
+                            }
+                            else if (noResultDecision.ShouldLogFallbackUnavailable)
+                            {
+                                logger.WriteLine($"UI result fallback unavailable (reason={snapshotReason}).");
                             }
 
                             SetExitStage("ui_cancelled");
@@ -398,18 +398,29 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
+            var selectedXmlCount = input.PlsrXmlPaths?.Count ?? 0;
+            logger.WriteLine(
+                "UI options: CheckPLSR=" +
+                (input.CheckPlsr ? "ON" : "OFF") +
+                ", SurfaceImpact=" +
+                (input.IncludeSurfaceImpact ? "ON" : "OFF") +
+                ", XML files=" +
+                selectedXmlCount +
+                ".");
+
             try
             {
-            var showQuarterDefinitionLinework = input.AllowMultiQuarterDispositions;
-            drawQuarterView = showQuarterDefinitionLinework || EnableQuarterViewByEnvironment;
+            var executionPlan = BuildExecutionPlan.Create(input, EnableQuarterViewByEnvironment);
+            var showQuarterDefinitionLinework = executionPlan.ShowQuarterDefinitionLinework;
+            drawQuarterView = executionPlan.DrawQuarterViewForBuild;
             // Keep per-quarter disposition label/intersection logic enabled regardless of
             // whether quarter-definition linework is shown.
-            config.AllowMultiQuarterDispositions = true;
+            config.AllowMultiQuarterDispositions = executionPlan.EnableInternalQuarterDefinitionProcessing;
             config.TextHeight = input.TextHeight;
             config.MaxOverlapAttempts = input.MaxOverlapAttempts;
-            logger.WriteLine($"Quarter view (UI): {(drawQuarterView ? "ON" : "OFF")} (UI 1/4 Definition linework={(showQuarterDefinitionLinework ? "ON" : "OFF")}, envOverride={(EnableQuarterViewByEnvironment ? "ON" : "OFF")}).");
+            logger.WriteLine($"Quarter view (UI): {(showQuarterDefinitionLinework ? "ON" : "OFF")} (UI 1/4 Definition linework={(input.AllowMultiQuarterDispositions ? "ON" : "OFF")}, envOverride={(EnableQuarterViewByEnvironment ? "ON" : "OFF")}, internalBuild=ON).");
             logger.WriteLine("Disposition 1/4 definition mode: ON (always enabled for per-quarter label logic).");
-            if (input.AutoCheckUpdateShapefilesAlways)
+            if (executionPlan.ShouldAutoUpdateShapes)
             {
                 AutoUpdateSelectedShapeSetsIfNeeded(input, config, logger);
             }
@@ -432,9 +443,9 @@ namespace AtsBackgroundBuilder
                 input.SectionRequests,
                 config,
                 logger,
-                input.DrawLsdSubdivisionLines,
+                executionPlan.DrawLsdSubdivisionLines,
                 drawQuarterView,
-                input.IncludeAtsFabric);
+                executionPlan.IncludeAtsFabric);
             SetExitStage("sections_built");
             var quarterPolylinesForLabelling = sectionDrawResult.LabelQuarterPolylineIds;
             if (quarterPolylinesForLabelling.Count == 0)
@@ -450,9 +461,112 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            if (input.IncludeP3Shapefiles)
+            var dispositionPreparation = PrepareDispositionInputs(
+                database,
+                editor,
+                logger,
+                config,
+                input,
+                executionPlan,
+                sectionDrawResult,
+                SetExitStage);
+            var shouldGenerateDispositionLabels = dispositionPreparation.ShouldGenerateDispositionLabels;
+            var dispositionPolylines = dispositionPreparation.DispositionPolylines;
+            var importedDispositionPolylines = dispositionPreparation.ImportedDispositionPolylines;
+            var importSummary = dispositionPreparation.ImportSummary;
+
+            var currentClient = input.CurrentClient;
+            if (string.IsNullOrWhiteSpace(currentClient))
             {
-                SetExitStage("p3_import");
+                SetExitStage("missing_current_client");
+                editor.WriteMessage("\nCurrent client is required.");
+                EmitExit("error");
+                logger.Dispose();
+                return;
+            }
+
+            var layerManager = new LayerManager(database);
+            var result = new SummaryResult();
+            var dispositions = ProcessDispositionPolylines(
+                database,
+                editor,
+                logger,
+                companyLookup,
+                purposeLookup,
+                config,
+                input,
+                executionPlan,
+                sectionDrawResult,
+                dispositionPolylines,
+                shouldGenerateDispositionLabels,
+                currentClient,
+                layerManager,
+                SetExitStage,
+                result);
+
+            var quarterLabelContext = BuildQuarterLabelContext(
+                database,
+                logger,
+                sectionDrawResult,
+                quarterPolylinesForLabelling,
+                executionPlan.ShouldLoadQuartersForLabeling,
+                shouldGenerateDispositionLabels);
+            ExecutePostQuarterPipeline(
+                database,
+                editor,
+                logger,
+                companyLookup,
+                config,
+                dllFolder,
+                input,
+                executionPlan,
+                sectionDrawResult,
+                importedDispositionPolylines,
+                importSummary,
+                currentClient,
+                layerManager,
+                dispositions,
+                quarterLabelContext,
+                SetExitStage,
+                result);
+            SetExitStage("completed");
+            EmitExit("ok");
+            logger.Dispose();
+            }
+            catch (System.Exception ex)
+            {
+                SetExitStage("fatal_exception");
+                var failureText = $"ATSBUILD failed at stage '{exitStage}': {ex.Message}";
+                logger.WriteLine(failureText);
+                logger.WriteLine(ex.ToString());
+                try
+                {
+                    editor.WriteMessage("\n" + failureText);
+                }
+                catch
+                {
+                    // best effort
+                }
+
+                EmitExit("error");
+                logger.Dispose();
+                return;
+            }
+        }
+
+        private DispositionPreparationResult PrepareDispositionInputs(
+            Database database,
+            Editor editor,
+            Logger logger,
+            Config config,
+            AtsBuildInput input,
+            BuildExecutionPlan executionPlan,
+            SectionDrawResult sectionDrawResult,
+            Action<string> setExitStage)
+        {
+            if (executionPlan.ShouldImportP3Shapefiles)
+            {
+                setExitStage("p3_import");
                 var p3Summary = ImportP3Shapefiles(
                     database,
                     editor,
@@ -462,14 +576,14 @@ namespace AtsBackgroundBuilder
                 logger.WriteLine($"P3 import summary: imported={p3Summary.ImportedEntities}, filtered={p3Summary.FilteredEntities}, failures={p3Summary.ImportFailures}");
             }
 
-            var shouldGenerateDispositionLabels = input.IncludeDispositionLabels || input.CheckPlsr;
-            var dispositionImportScopeIds = (input.IncludeDispositionLinework || shouldGenerateDispositionLabels)
+            var shouldGenerateDispositionLabels = executionPlan.ShouldGenerateDispositionLabels;
+            var dispositionImportScopeIds = executionPlan.ShouldBuildDispositionImportScope
                 ? BuildDispositionImportScopeIds(database, sectionDrawResult, logger)
                 : new List<ObjectId>();
 
-            if (input.IncludeCompassMapping)
+            if (executionPlan.ShouldImportCompassMapping)
             {
-                SetExitStage("compass_mapping_import");
+                setExitStage("compass_mapping_import");
                 var compassSummary = ImportCompassMappingShapefile(
                     database,
                     editor,
@@ -480,9 +594,9 @@ namespace AtsBackgroundBuilder
                 logger.WriteLine($"Compass Mapping import summary: imported={compassSummary.ImportedEntities}, filtered={compassSummary.FilteredEntities}, failures={compassSummary.ImportFailures}");
             }
 
-            if (input.IncludeCrownReservations)
+            if (executionPlan.ShouldImportCrownReservations)
             {
-                SetExitStage("crown_reservations_import");
+                setExitStage("crown_reservations_import");
                 var crownSummary = ImportCrownReservationsShapefile(
                     database,
                     editor,
@@ -493,9 +607,8 @@ namespace AtsBackgroundBuilder
             }
 
             var dispositionPolylines = new List<ObjectId>();
-            if (input.CheckPlsr &&
-                !input.IncludeDispositionLabels &&
-                dispositionImportScopeIds.Count > 0)
+            var importedDispositionPolylines = new List<ObjectId>();
+            if (executionPlan.ShouldScanExistingDispositionPolylinesForPlsrFallback(dispositionImportScopeIds.Count))
             {
                 dispositionPolylines.AddRange(
                     FindExistingDispositionPolylinesWithObjectData(
@@ -505,18 +618,22 @@ namespace AtsBackgroundBuilder
             }
 
             ShapefileImportSummary importSummary;
-            var shouldImportDispositions =
-                input.IncludeDispositionLinework ||
-                input.IncludeDispositionLabels ||
-                (input.CheckPlsr && dispositionPolylines.Count == 0);
-
-            if (shouldImportDispositions &&
-                input.CheckPlsr &&
-                !input.IncludeDispositionLinework &&
-                !input.IncludeDispositionLabels &&
-                dispositionPolylines.Count == 0)
+            var shouldImportDispositions = executionPlan.ShouldImportDispositions(dispositionPolylines.Count);
+            var allowPlsrSupplementalImport = IsPlsrSupplementalImportEnabled();
+            if (executionPlan.ShouldRunPlsrCheck &&
+                !executionPlan.IncludeDispositionLinework &&
+                !executionPlan.IncludeDispositionLabels &&
+                dispositionPolylines.Count > 0 &&
+                !allowPlsrSupplementalImport)
             {
-                SetExitStage("plsr_missing_precheck");
+                shouldImportDispositions = false;
+                logger.WriteLine(
+                    "PLSR supplemental import skipped: existing disposition source geometry found and ATSBUILD_PLSR_SUPPLEMENT_IMPORT is OFF.");
+            }
+
+            if (executionPlan.ShouldRunPlsrMissingLabelPrecheck(shouldImportDispositions, dispositionPolylines.Count))
+            {
+                setExitStage("plsr_missing_precheck");
                 var precheckTimer = Stopwatch.StartNew();
                 var precheckQuarters = BuildPlsrQuarterInfos(database, sectionDrawResult, new List<QuarterInfo>(), logger);
                 var hasPotentialMissingLabels = HasPotentialMissingPlsrLabels(database, logger, input, precheckQuarters);
@@ -532,18 +649,22 @@ namespace AtsBackgroundBuilder
 
             if (shouldImportDispositions)
             {
-                SetExitStage("disposition_import");
+                setExitStage("disposition_import");
                 importSummary = ShapefileImporter.ImportShapefiles(
                     database,
                     editor,
                     logger,
                     config,
                     dispositionImportScopeIds,
-                    dispositionPolylines);
-                if (dispositionPolylines.Count == 0)
+                    importedDispositionPolylines);
+                if (importedDispositionPolylines.Count == 0)
                 {
                     editor.WriteMessage("\nNo disposition polylines imported from shapefiles.");
                     // Continue so ATS fabric / cleanup behavior still runs.
+                }
+                else
+                {
+                    dispositionPolylines.AddRange(importedDispositionPolylines);
                 }
             }
             else
@@ -551,27 +672,53 @@ namespace AtsBackgroundBuilder
                 importSummary = new ShapefileImportSummary();
             }
 
-            var currentClient = input.CurrentClient;
-            if (string.IsNullOrWhiteSpace(currentClient))
+            return new DispositionPreparationResult(
+                shouldGenerateDispositionLabels,
+                dispositionPolylines,
+                importedDispositionPolylines,
+                importSummary);
+        }
+
+        private static bool IsPlsrSupplementalImportEnabled()
+        {
+            var value = Environment.GetEnvironmentVariable("ATSBUILD_PLSR_SUPPLEMENT_IMPORT");
+            if (string.IsNullOrWhiteSpace(value))
             {
-                SetExitStage("missing_current_client");
-                editor.WriteMessage("\nCurrent client is required.");
-                EmitExit("error");
-                logger.Dispose();
-                return;
+                return false;
             }
 
-            var layerManager = new LayerManager(database);
+            return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private List<DispositionInfo> ProcessDispositionPolylines(
+            Database database,
+            Editor editor,
+            Logger logger,
+            ExcelLookup companyLookup,
+            ExcelLookup purposeLookup,
+            Config config,
+            AtsBuildInput input,
+            BuildExecutionPlan executionPlan,
+            SectionDrawResult sectionDrawResult,
+            List<ObjectId> dispositionPolylines,
+            bool shouldGenerateDispositionLabels,
+            string currentClient,
+            LayerManager layerManager,
+            Action<string> setExitStage,
+            SummaryResult result)
+        {
             var dispositions = new List<DispositionInfo>();
-            var result = new SummaryResult();
-            var shouldLoadSupplementalSectionInfos = shouldGenerateDispositionLabels && dispositionPolylines.Count > 0;
+            var shouldLoadSupplementalSectionInfos = executionPlan.ShouldLoadSupplementalSectionInfos(dispositionPolylines.Count);
             var supplementalSectionInfos = shouldLoadSupplementalSectionInfos
                 ? LoadSupplementalSectionSpatialInfos(input.SectionRequests, config, logger)
                 : new List<SectionSpatialInfo>();
 
             using (var transaction = database.TransactionManager.StartTransaction())
             {
-                SetExitStage("processing_dispositions");
+                setExitStage("processing_dispositions");
                 var lsdCells = new List<LsdCellInfo>();
                 var sectionInfos = new List<SectionSpatialInfo>();
                 if (shouldLoadSupplementalSectionInfos)
@@ -579,6 +726,7 @@ namespace AtsBackgroundBuilder
                     lsdCells = BuildSectionLsdCells(transaction, sectionDrawResult.SectionNumberByPolylineId);
                     sectionInfos = BuildSectionSpatialInfos(transaction, sectionDrawResult.SectionNumberByPolylineId);
                 }
+
                 try
                 {
                     foreach (var info in supplementalSectionInfos)
@@ -590,10 +738,15 @@ namespace AtsBackgroundBuilder
                     foreach (var id in dispositionPolylines)
                     {
                         var ent = transaction.GetObject(id, OpenMode.ForRead) as Entity;
-                        if (ent == null || !GeometryUtils.TryGetClosedBoundaryClone(ent, out var clone))
+                        if (ent == null || !GeometryUtils.TryGetClosedBoundaryClone(ent, out var clone, out var recoveredBoundaryFromOpen))
                         {
                             result.SkippedNotClosed++;
                             continue;
+                        }
+
+                        if (recoveredBoundaryFromOpen)
+                        {
+                            logger.WriteLine($"Disposition boundary recovery: closed trimmed/open boundary for entity {id}.");
                         }
 
                         // Work with an in-memory clone after the transaction ends.
@@ -607,162 +760,169 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                    var dispNum = od.TryGetValue("DISP_NUM", out var dispRaw) ? dispRaw : string.Empty;
-                    var company = od.TryGetValue("COMPANY", out var companyRaw) ? companyRaw : string.Empty;
-                    var purpose = od.TryGetValue("PURPCD", out var purposeRaw) ? purposeRaw : string.Empty;
-                    var odDimension = od.TryGetValue("DIMENSION", out var dimensionRaw) ? dimensionRaw : string.Empty;
+                        var dispNum = od.TryGetValue("DISP_NUM", out var dispRaw) ? dispRaw : string.Empty;
+                        var company = od.TryGetValue("COMPANY", out var companyRaw) ? companyRaw : string.Empty;
+                        var purpose = od.TryGetValue("PURPCD", out var purposeRaw) ? purposeRaw : string.Empty;
+                        var odDimension = od.TryGetValue("DIMENSION", out var dimensionRaw) ? dimensionRaw : string.Empty;
 
                         var mappedCompany = MapValue(companyLookup, company, company);
                         var mappedPurpose = MapValue(purposeLookup, purpose, purpose);
                         var purposeExtra = purposeLookup.Lookup(purpose)?.Extra ?? string.Empty;
 
-                    var dispNumFormatted = FormatDispNum(dispNum);
+                        var dispNumFormatted = FormatDispNum(dispNum);
 
-                    var isSurfaceLabel = (mappedPurpose ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0;
-                    if (shouldGenerateDispositionLabels && (IsWellSitePurpose(purpose) || isSurfaceLabel))
-                    {
-                        var normalizedPurpose = NormalizePurposeCode(purpose);
-                        if (EnableWellsiteDebug)
+                        var isSurfaceLabel = (mappedPurpose ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0;
+                        if (shouldGenerateDispositionLabels && (IsWellSitePurpose(purpose) || isSurfaceLabel))
                         {
-                            editor.WriteMessage($"\nWELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}' surface={isSurfaceLabel}");
-                            logger.WriteLine($"WELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}' surface={isSurfaceLabel}");
-                        }
-
-                        var lsdSecToken = GetDominantLsdSectionToken(clone, lsdCells);
-                        if (EnableWellsiteDebug)
-                        {
-                            editor.WriteMessage($"\nWELLSITE DEBUG: primary-token='{lsdSecToken}' lsd-cells={lsdCells.Count}");
-                            logger.WriteLine($"WELLSITE DEBUG: primary-token='{lsdSecToken}' lsd-cells={lsdCells.Count}");
-                        }
-                        if (string.IsNullOrWhiteSpace(lsdSecToken))
-                        {
-                            lsdSecToken = GetDominantLsdSectionTokenBySection(clone, sectionInfos);
+                            var normalizedPurpose = NormalizePurposeCode(purpose);
                             if (EnableWellsiteDebug)
                             {
-                                editor.WriteMessage($"\nWELLSITE DEBUG: fallback-token='{lsdSecToken}' section-infos={sectionInfos.Count}");
-                                logger.WriteLine($"WELLSITE DEBUG: fallback-token='{lsdSecToken}' section-infos={sectionInfos.Count}");
+                                editor.WriteMessage($"\nWELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}' surface={isSurfaceLabel}");
+                                logger.WriteLine($"WELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}' surface={isSurfaceLabel}");
                             }
-                            if (string.IsNullOrWhiteSpace(lsdSecToken))
-                            {
-                                lsdSecToken = GetPointBasedLsdSectionToken(clone, sectionInfos, out var pointDebug);
-                                if (EnableWellsiteDebug)
-                                {
-                                    editor.WriteMessage($"\nWELLSITE DEBUG: point-token='{lsdSecToken}' detail={pointDebug}");
-                                    logger.WriteLine($"WELLSITE DEBUG: point-token='{lsdSecToken}' detail={pointDebug}");
-                                }
-                            }
-                            if (string.IsNullOrWhiteSpace(lsdSecToken))
-                            {
-                                var overlapDebug = GetSectionOverlapDebugString(clone, sectionInfos);
-                                if (EnableWellsiteDebug)
-                                {
-                                    editor.WriteMessage($"\nWELLSITE DEBUG: overlaps {overlapDebug}");
-                                    logger.WriteLine($"WELLSITE DEBUG: overlaps {overlapDebug}");
-                                }
-                            }
-                        }
-                        if (!string.IsNullOrWhiteSpace(lsdSecToken))
-                        {
-                            mappedPurpose = lsdSecToken + " " + mappedPurpose;
+
+                            var lsdSecToken = GetDominantLsdSectionToken(clone, lsdCells);
                             if (EnableWellsiteDebug)
                             {
-                                editor.WriteMessage($"\nWELLSITE DEBUG: final surface line='{mappedPurpose}'");
-                                logger.WriteLine($"WELLSITE DEBUG: final surface line='{mappedPurpose}'");
+                                editor.WriteMessage($"\nWELLSITE DEBUG: primary-token='{lsdSecToken}' lsd-cells={lsdCells.Count}");
+                                logger.WriteLine($"WELLSITE DEBUG: primary-token='{lsdSecToken}' lsd-cells={lsdCells.Count}");
+                            }
+
+                            if (string.IsNullOrWhiteSpace(lsdSecToken))
+                            {
+                                lsdSecToken = GetDominantLsdSectionTokenBySection(clone, sectionInfos);
+                                if (EnableWellsiteDebug)
+                                {
+                                    editor.WriteMessage($"\nWELLSITE DEBUG: fallback-token='{lsdSecToken}' section-infos={sectionInfos.Count}");
+                                    logger.WriteLine($"WELLSITE DEBUG: fallback-token='{lsdSecToken}' section-infos={sectionInfos.Count}");
+                                }
+
+                                if (string.IsNullOrWhiteSpace(lsdSecToken))
+                                {
+                                    lsdSecToken = GetPointBasedLsdSectionToken(clone, sectionInfos, out var pointDebug);
+                                    if (EnableWellsiteDebug)
+                                    {
+                                        editor.WriteMessage($"\nWELLSITE DEBUG: point-token='{lsdSecToken}' detail={pointDebug}");
+                                        logger.WriteLine($"WELLSITE DEBUG: point-token='{lsdSecToken}' detail={pointDebug}");
+                                    }
+                                }
+
+                                if (string.IsNullOrWhiteSpace(lsdSecToken))
+                                {
+                                    var overlapDebug = GetSectionOverlapDebugString(clone, sectionInfos);
+                                    if (EnableWellsiteDebug)
+                                    {
+                                        editor.WriteMessage($"\nWELLSITE DEBUG: overlaps {overlapDebug}");
+                                        logger.WriteLine($"WELLSITE DEBUG: overlaps {overlapDebug}");
+                                    }
+                                }
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(lsdSecToken))
+                            {
+                                mappedPurpose = lsdSecToken + " " + mappedPurpose;
+                                if (EnableWellsiteDebug)
+                                {
+                                    editor.WriteMessage($"\nWELLSITE DEBUG: final surface line='{mappedPurpose}'");
+                                    logger.WriteLine($"WELLSITE DEBUG: final surface line='{mappedPurpose}'");
+                                }
                             }
                         }
-                    }
-                    else if (shouldGenerateDispositionLabels && (mappedPurpose ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        var normalizedPurpose = NormalizePurposeCode(purpose);
-                        if (EnableWellsiteDebug)
+                        else if (shouldGenerateDispositionLabels && (mappedPurpose ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0)
                         {
-                            editor.WriteMessage($"\nWELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}'");
-                            logger.WriteLine($"WELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}'");
+                            var normalizedPurpose = NormalizePurposeCode(purpose);
+                            if (EnableWellsiteDebug)
+                            {
+                                editor.WriteMessage($"\nWELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}'");
+                                logger.WriteLine($"WELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}'");
+                            }
                         }
-                    }
 
                         // Default output layers; will be overridden when mapping succeeds.
                         string lineLayer = ent.Layer;
                         string textLayer = ent.Layer;
 
-                    // Determine client/foreign layer names based on company and purpose.
-                    // Purpose extra column supplies the layer suffix (e.g. ROW, PIPE, etc.).
-                    string? lineLayerName = null;
-                    string? textLayerName = null;
-                    try
-                    {
-                        var purposeEntry = purposeLookup.Lookup(purpose);
-                        var suffix = purposeEntry?.Extra?.Trim() ?? string.Empty;
-                        if (suffix.StartsWith("-", StringComparison.InvariantCulture))
-                            suffix = suffix.Substring(1);
-                        if (!string.IsNullOrEmpty(suffix))
+                        // Determine client/foreign layer names based on company and purpose.
+                        // Purpose extra column supplies the layer suffix (e.g. ROW, PIPE, etc.).
+                        string? lineLayerName = null;
+                        string? textLayerName = null;
+                        try
                         {
-                            // OD COMPANY is often a code (lookup key), while the UI client list comes from
-                            // the lookup VALUE column. Compare against the mapped company first.
-                            bool isClient = string.Equals(currentClient, mappedCompany, StringComparison.InvariantCultureIgnoreCase)
-                                            || string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase);
+                            var purposeEntry = purposeLookup.Lookup(purpose);
+                            var suffix = purposeEntry?.Extra?.Trim() ?? string.Empty;
+                            if (suffix.StartsWith("-", StringComparison.InvariantCulture))
+                            {
+                                suffix = suffix.Substring(1);
+                            }
 
-                            var prefix = isClient ? "C" : "F";
-                            lineLayerName = $"{prefix}-{suffix}";
-                            textLayerName = $"{lineLayerName}-T";
+                            if (!string.IsNullOrEmpty(suffix))
+                            {
+                                // OD COMPANY is often a code (lookup key), while the UI client list comes from
+                                // the lookup VALUE column. Compare against the mapped company first.
+                                var isClient = string.Equals(currentClient, mappedCompany, StringComparison.InvariantCultureIgnoreCase)
+                                               || string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase);
+
+                                var prefix = isClient ? "C" : "F";
+                                lineLayerName = $"{prefix}-{suffix}";
+                                textLayerName = $"{lineLayerName}-T";
+                            }
                         }
-                    }
-                    catch
-                    {
-                        // ignore lookup failures; fall back to original layer
-                    }
-
-                    if (!string.IsNullOrEmpty(lineLayerName))
-                        lineLayer = lineLayerName;
-                    if (!string.IsNullOrEmpty(textLayerName))
-                        textLayer = textLayerName;
-
-                    // Ensure the layer exists before assigning
-                    layerManager.EnsureLayer(lineLayer);
-                    var lineEntity = transaction.GetObject(id, OpenMode.ForWrite) as Entity;
-                    if (lineEntity != null && lineEntity.Layer != lineLayer)
-                    {
-                        lineEntity.Layer = lineLayer;
-                        lineEntity.ColorIndex = 256;  // ensure ByLayer colour
-                    }
-
-                    if (!shouldGenerateDispositionLabels)
-                    {
-                        clone.Dispose();
-                        continue;
-                    }
-
-                    var safePoint = GeometryUtils.GetSafeInteriorPoint(clone);
-
-                    var requiresWidth = PurposeRequiresWidth(purpose, config);
-                    string labelText;
-
-                    if (requiresWidth)
-                    {
-                        var info = new DispositionInfo(id, clone, string.Empty, lineLayer, textLayer, safePoint)
+                        catch
                         {
-                            AllowLabelOutsideDisposition = config.AllowOutsideDispositionForWidthPurposes,
-                            AddLeader = true,
-                            RequiresWidth = true,
-                            MappedCompany = mappedCompany ?? string.Empty,
-                            MappedPurpose = mappedPurpose ?? string.Empty,
-                            PurposeTitleCase = ToTitleCaseWords(purpose),
-                            DispNumFormatted = dispNumFormatted,
-                            OdDimension = odDimension ?? string.Empty
+                            // ignore lookup failures; fall back to original layer
+                        }
+
+                        if (!string.IsNullOrEmpty(lineLayerName))
+                        {
+                            lineLayer = lineLayerName;
+                        }
+
+                        if (!string.IsNullOrEmpty(textLayerName))
+                        {
+                            textLayer = textLayerName;
+                        }
+
+                        // Ensure the layer exists before assigning
+                        layerManager.EnsureLayer(lineLayer);
+                        var lineEntity = transaction.GetObject(id, OpenMode.ForWrite) as Entity;
+                        if (lineEntity != null && lineEntity.Layer != lineLayer)
+                        {
+                            lineEntity.Layer = lineLayer;
+                            lineEntity.ColorIndex = 256; // ensure ByLayer colour
+                        }
+
+                        if (!shouldGenerateDispositionLabels)
+                        {
+                            clone.Dispose();
+                            continue;
+                        }
+
+                        var safePoint = GeometryUtils.GetSafeInteriorPoint(clone);
+                        var requiresWidth = PurposeRequiresWidth(purpose, config);
+                        if (requiresWidth)
+                        {
+                            var info = new DispositionInfo(id, clone, string.Empty, lineLayer, textLayer, safePoint)
+                            {
+                                AllowLabelOutsideDisposition = config.AllowOutsideDispositionForWidthPurposes,
+                                AddLeader = true,
+                                RequiresWidth = true,
+                                MappedCompany = mappedCompany ?? string.Empty,
+                                MappedPurpose = mappedPurpose ?? string.Empty,
+                                PurposeTitleCase = ToTitleCaseWords(purpose),
+                                DispNumFormatted = dispNumFormatted,
+                                OdDimension = odDimension ?? string.Empty
+                            };
+                            dispositions.Add(info);
+                            continue;
+                        }
+
+                        var labelText = mappedCompany + "\\P" + mappedPurpose + "\\P" + dispNumFormatted;
+                        var nonWidthInfo = new DispositionInfo(id, clone, labelText, lineLayer, textLayer, safePoint)
+                        {
+                            AllowLabelOutsideDisposition = false,
+                            AddLeader = false,
+                            DispNumFormatted = dispNumFormatted
                         };
-                        dispositions.Add(info);
-                        continue;
-                    }
-
-                    labelText = mappedCompany + "\\P" + mappedPurpose + "\\P" + dispNumFormatted;
-
-                    var nonWidthInfo = new DispositionInfo(id, clone, labelText, lineLayer, textLayer, safePoint)
-                    {
-                        AllowLabelOutsideDisposition = false,
-                        AddLeader = false,
-                        DispNumFormatted = dispNumFormatted
-                    };
-
                         dispositions.Add(nonWidthInfo);
                     }
                 }
@@ -771,11 +931,52 @@ namespace AtsBackgroundBuilder
                     DisposeLsdCells(lsdCells);
                     DisposeSectionInfos(sectionInfos);
                 }
+
                 transaction.Commit();
             }
 
+            return dispositions;
+        }
+
+        private static void EmitBuildSummary(Editor editor, Logger logger, SummaryResult result)
+        {
+            editor.WriteMessage("\nATSBUILD complete.");
+            editor.WriteMessage("\nTotal dispositions: " + result.TotalDispositions);
+            editor.WriteMessage("\nLabels placed: " + result.LabelsPlaced);
+            editor.WriteMessage("\nSkipped (no OD): " + result.SkippedNoOd);
+            editor.WriteMessage("\nSkipped (not closed): " + result.SkippedNotClosed);
+            editor.WriteMessage("\nNo layer mapping: " + result.SkippedNoLayerMapping);
+            editor.WriteMessage("\nOverlap forced: " + result.OverlapForced);
+            editor.WriteMessage("\nMulti-quarter processed: " + result.MultiQuarterProcessed);
+            editor.WriteMessage("\nImported dispositions: " + result.ImportedDispositions);
+            editor.WriteMessage("\nFiltered out: " + result.FilteredDispositions);
+            editor.WriteMessage("\nDeduped: " + result.DedupedDispositions);
+            editor.WriteMessage("\nImport failures: " + result.ImportFailures);
+
+            logger.WriteLine("ATSBUILD summary");
+            logger.WriteLine("Total dispositions: " + result.TotalDispositions);
+            logger.WriteLine("Labels placed: " + result.LabelsPlaced);
+            logger.WriteLine("Skipped (no OD): " + result.SkippedNoOd);
+            logger.WriteLine("Skipped (not closed): " + result.SkippedNotClosed);
+            logger.WriteLine("No layer mapping: " + result.SkippedNoLayerMapping);
+            logger.WriteLine("Overlap forced: " + result.OverlapForced);
+            logger.WriteLine("Multi-quarter processed: " + result.MultiQuarterProcessed);
+            logger.WriteLine("Imported dispositions: " + result.ImportedDispositions);
+            logger.WriteLine("Filtered out: " + result.FilteredDispositions);
+            logger.WriteLine("Deduped: " + result.DedupedDispositions);
+            logger.WriteLine("Import failures: " + result.ImportFailures);
+        }
+
+        private QuarterLabelContext BuildQuarterLabelContext(
+            Database database,
+            Logger logger,
+            SectionDrawResult sectionDrawResult,
+            List<ObjectId> quarterPolylinesForLabelling,
+            bool shouldLoadQuartersForLabeling,
+            bool shouldGenerateDispositionLabels)
+        {
             var quarters = new List<QuarterInfo>();
-            if (input.IncludeDispositionLabels || input.CheckPlsr)
+            if (shouldLoadQuartersForLabeling)
             {
                 using (var transaction = database.TransactionManager.StartTransaction())
                 {
@@ -805,6 +1006,7 @@ namespace AtsBackgroundBuilder
                             quarters.Add(new QuarterInfo((Polyline)polyline.Clone()));
                         }
                     }
+
                     transaction.Commit();
                 }
             }
@@ -846,10 +1048,34 @@ namespace AtsBackgroundBuilder
                     $"Disposition label reuse: indexed {existingLabelCount} existing label(s) across {existingDispNumsByQuarter.Count} quarter(s).");
             }
 
-            var shouldPlaceLabelsBeforePlsr = input.IncludeDispositionLabels && !input.CheckPlsr;
-            if (shouldPlaceLabelsBeforePlsr)
+            return new QuarterLabelContext(quarters, existingDispNumsByQuarter);
+        }
+
+        private void ExecutePostQuarterPipeline(
+            Database database,
+            Editor editor,
+            Logger logger,
+            ExcelLookup companyLookup,
+            Config config,
+            string dllFolder,
+            AtsBuildInput input,
+            BuildExecutionPlan executionPlan,
+            SectionDrawResult sectionDrawResult,
+            List<ObjectId> importedDispositionPolylines,
+            ShapefileImportSummary importSummary,
+            string currentClient,
+            LayerManager layerManager,
+            List<DispositionInfo> dispositions,
+            QuarterLabelContext quarterLabelContext,
+            Action<string> setExitStage,
+            SummaryResult result)
+        {
+            var quarters = quarterLabelContext.Quarters;
+            var existingDispNumsByQuarter = quarterLabelContext.ExistingDispNumsByQuarter;
+
+            if (executionPlan.ShouldPlaceLabelsBeforePlsr)
             {
-                SetExitStage("placing_labels");
+                setExitStage("placing_labels");
                 var placer = new LabelPlacer(database, editor, layerManager, config, logger, useAlignedDimensions: true);
                 var placement = placer.PlaceLabels(quarters, dispositions, currentClient, existingDispNumsByQuarter);
 
@@ -858,22 +1084,23 @@ namespace AtsBackgroundBuilder
                 result.OverlapForced = placement.OverlapForced;
                 result.MultiQuarterProcessed = placement.MultiQuarterProcessed;
             }
+
             result.ImportedDispositions = importSummary.ImportedDispositions;
             result.DedupedDispositions = importSummary.DedupedDispositions;
             result.FilteredDispositions = importSummary.FilteredDispositions;
             result.ImportFailures = importSummary.ImportFailures;
 
-            if (input.CheckPlsr)
+            if (executionPlan.ShouldRunPlsrCheck)
             {
-                SetExitStage("plsr_check");
+                setExitStage("plsr_check");
                 var plsrQuarters = BuildPlsrQuarterInfos(database, sectionDrawResult, quarters, logger);
                 RunPlsrCheck(database, editor, logger, companyLookup, input, plsrQuarters, dispositions, config);
             }
 
-            if (input.IncludeQuarterSectionLabels)
+            if (executionPlan.ShouldPlaceQuarterSectionLabels)
             {
-                SetExitStage("quarter_section_labels_final");
-                PlaceQuarterSectionLabels(database, sectionDrawResult.LabelQuarterInfos ?? new List<QuarterLabelInfo>(), input.DrawLsdSubdivisionLines, logger);
+                setExitStage("quarter_section_labels_final");
+                PlaceQuarterSectionLabels(database, sectionDrawResult.LabelQuarterInfos ?? new List<QuarterLabelInfo>(), executionPlan.DrawLsdSubdivisionLines, logger);
             }
 
             // ------------------------------------------------------------------
@@ -883,68 +1110,56 @@ namespace AtsBackgroundBuilder
             //  - Quarter boxes used to determine 1/4s are ALWAYS removed.
             //  - If ATS fabric is unchecked, section outlines/labels created for calculation are removed.
             //  - If Dispositions (linework) is unchecked, imported disposition polylines are removed (labels remain).
-            SetExitStage("cleanup");
-            CleanupAfterBuild(database, sectionDrawResult, dispositionPolylines, input, logger);
+            setExitStage("cleanup");
+            CleanupAfterBuild(database, sectionDrawResult, importedDispositionPolylines, input, logger);
             if (EnableCadGeoJsonExport)
             {
                 TryExportCadDiagnosticGeoJson(database, input.SectionRequests, dllFolder, logger);
             }
 
-            if (input.IncludeSurfaceImpact)
+            if (executionPlan.ShouldRunSurfaceImpact)
             {
-                SetExitStage("surface_impact");
+                setExitStage("surface_impact");
                 RunSurfaceImpact(database, editor, logger, input);
             }
 
-            SetExitStage("summary");
-            editor.WriteMessage("\nATSBUILD complete.");
-            editor.WriteMessage("\nTotal dispositions: " + result.TotalDispositions);
-            editor.WriteMessage("\nLabels placed: " + result.LabelsPlaced);
-            editor.WriteMessage("\nSkipped (no OD): " + result.SkippedNoOd);
-            editor.WriteMessage("\nSkipped (not closed): " + result.SkippedNotClosed);
-            editor.WriteMessage("\nNo layer mapping: " + result.SkippedNoLayerMapping);
-            editor.WriteMessage("\nOverlap forced: " + result.OverlapForced);
-            editor.WriteMessage("\nMulti-quarter processed: " + result.MultiQuarterProcessed);
-            editor.WriteMessage("\nImported dispositions: " + result.ImportedDispositions);
-            editor.WriteMessage("\nFiltered out: " + result.FilteredDispositions);
-            editor.WriteMessage("\nDeduped: " + result.DedupedDispositions);
-            editor.WriteMessage("\nImport failures: " + result.ImportFailures);
+            setExitStage("summary");
+            EmitBuildSummary(editor, logger, result);
+        }
 
-            logger.WriteLine("ATSBUILD summary");
-            logger.WriteLine("Total dispositions: " + result.TotalDispositions);
-            logger.WriteLine("Labels placed: " + result.LabelsPlaced);
-            logger.WriteLine("Skipped (no OD): " + result.SkippedNoOd);
-            logger.WriteLine("Skipped (not closed): " + result.SkippedNotClosed);
-            logger.WriteLine("No layer mapping: " + result.SkippedNoLayerMapping);
-            logger.WriteLine("Overlap forced: " + result.OverlapForced);
-            logger.WriteLine("Multi-quarter processed: " + result.MultiQuarterProcessed);
-            logger.WriteLine("Imported dispositions: " + result.ImportedDispositions);
-            logger.WriteLine("Filtered out: " + result.FilteredDispositions);
-            logger.WriteLine("Deduped: " + result.DedupedDispositions);
-            logger.WriteLine("Import failures: " + result.ImportFailures);
-            SetExitStage("completed");
-            EmitExit("ok");
-            logger.Dispose();
-            }
-            catch (System.Exception ex)
+        private sealed class DispositionPreparationResult
+        {
+            public DispositionPreparationResult(
+                bool shouldGenerateDispositionLabels,
+                List<ObjectId> dispositionPolylines,
+                List<ObjectId> importedDispositionPolylines,
+                ShapefileImportSummary importSummary)
             {
-                SetExitStage("fatal_exception");
-                var failureText = $"ATSBUILD failed at stage '{exitStage}': {ex.Message}";
-                logger.WriteLine(failureText);
-                logger.WriteLine(ex.ToString());
-                try
-                {
-                    editor.WriteMessage("\n" + failureText);
-                }
-                catch
-                {
-                    // best effort
-                }
-
-                EmitExit("error");
-                logger.Dispose();
-                return;
+                ShouldGenerateDispositionLabels = shouldGenerateDispositionLabels;
+                DispositionPolylines = dispositionPolylines ?? new List<ObjectId>();
+                ImportedDispositionPolylines = importedDispositionPolylines ?? new List<ObjectId>();
+                ImportSummary = importSummary ?? new ShapefileImportSummary();
             }
+
+            public bool ShouldGenerateDispositionLabels { get; }
+            public List<ObjectId> DispositionPolylines { get; }
+            public List<ObjectId> ImportedDispositionPolylines { get; }
+            public ShapefileImportSummary ImportSummary { get; }
+        }
+
+        private sealed class QuarterLabelContext
+        {
+            public QuarterLabelContext(
+                List<QuarterInfo> quarters,
+                Dictionary<string, HashSet<string>> existingDispNumsByQuarter)
+            {
+                Quarters = quarters ?? new List<QuarterInfo>();
+                ExistingDispNumsByQuarter = existingDispNumsByQuarter
+                    ?? new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            public List<QuarterInfo> Quarters { get; }
+            public Dictionary<string, HashSet<string>> ExistingDispNumsByQuarter { get; }
         }
 
         private static List<ObjectId> BuildDispositionImportScopeIds(
@@ -1153,8 +1368,14 @@ namespace AtsBackgroundBuilder
                         }
 
                         if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity entity) ||
-                            entity.IsErased ||
-                            !IsLikelyDispositionLineLayer(entity.Layer))
+                            entity.IsErased)
+                        {
+                            continue;
+                        }
+
+                        // Existing OD disposition geometry may be on project-specific layers,
+                        // so do not restrict by C-/F- layer naming here.
+                        if (!(entity is Polyline || entity is Polyline2d || entity is Polyline3d))
                         {
                             continue;
                         }

@@ -6,7 +6,6 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 namespace AtsBackgroundBuilder.Core
@@ -90,33 +89,6 @@ namespace AtsBackgroundBuilder.Core
         private static readonly Color HeaderBackColor = Color.FromArgb(243, 244, 246);
         private static readonly Color InfoBackColor = Color.FromArgb(239, 246, 255);
         private static readonly Color InfoTextColor = Color.FromArgb(30, 64, 175);
-        private static readonly string[] DispositionShapeUpdateSourceRoots =
-        {
-            @"N:\Mapping\FTP Updates\AltaLIS",
-            @"O:\Mapping\FTP Updates\AltaLIS",
-        };
-        private static readonly string[] CompassMappingShapeUpdateSourceRoots =
-        {
-            @"N:\Mapping\Mapping\COMPASS_SURVEYED\SHP",
-            @"O:\Mapping\Mapping\COMPASS_SURVEYED\SHP",
-        };
-        private static readonly string[] CrownReservationsShapeUpdateSourceRoots =
-        {
-            @"N:\Mapping\FTP Updates\GoA",
-            @"O:\Mapping\FTP Updates\GoA",
-        };
-        private static readonly string[] CompassMappingShapeBaseNames =
-        {
-            "SURVEYED_POLYGON_N83UTMZ11",
-            "SURVEYED_POLYGON_N83UTMZ12",
-        };
-        private static readonly string[] CrownReservationsShapeBaseNames =
-        {
-            "CrownLandReservations",
-        };
-        private const string DispositionShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\DISPOS";
-        private const string CompassMappingShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\COMPASS MAPPING";
-        private const string CrownReservationsShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\CLR";
 
         public AtsBuildForm(IEnumerable<string> clientNames, Config config)
         {
@@ -331,11 +303,10 @@ namespace AtsBackgroundBuilder.Core
             {
                 Dock = DockStyle.Top,
                 AutoSize = true,
-                ColumnCount = 3,
+                ColumnCount = 2,
                 RowCount = 1,
                 Margin = new Padding(0, 0, 0, 0),
             };
-            settingsGrid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             settingsGrid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             settingsGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
@@ -363,48 +334,43 @@ namespace AtsBackgroundBuilder.Core
             numericStack.Controls.Add(CreateFieldLabel("Max Overlap Attempts"), 0, 2);
             numericStack.Controls.Add(_maxAttempts, 0, 3);
 
-            ConfigureOptionCheckBox(_includeDispoLinework, "Disposition linework", false);
-            ConfigureOptionCheckBox(_includeDispoLabels, "Disposition labels", false);
-            ConfigureOptionCheckBox(_includeAtsFabric, "ATS fabric", false);
-            ConfigureOptionCheckBox(_includeLsds, "LSDs", false);
-            ConfigureOptionCheckBox(_includeP3Shapes, "Include P3 Shapes", false);
-            ConfigureOptionCheckBox(_includeCompassMapping, "COMPASS MAPPING", false);
-            ConfigureOptionCheckBox(_includeCrownReservations, "Crown Reservations", false);
-            ConfigureOptionCheckBox(_checkPlsr, "Check PLSR", false);
-            ConfigureOptionCheckBox(_includeSurfaceImpact, "Surface Impact", false);
-            ConfigureOptionCheckBox(_allowMultiQuarterDispositions, "1/4 Definition", config?.AllowMultiQuarterDispositions ?? false);
-            ConfigureOptionCheckBox(_includeQuarterSectionLabels, "1/4 SEC Labels", false);
-
-            var toggleColumnA = new FlowLayoutPanel
+            var optionCheckBoxes = CreateOptionCheckBoxMap();
+            foreach (var option in AtsBuildOptionCatalog.Options)
             {
-                AutoSize = true,
-                FlowDirection = FlowDirection.TopDown,
-                WrapContents = false,
-                Margin = new Padding(0, 0, 24, 0),
-            };
-            toggleColumnA.Controls.Add(_includeDispoLinework);
-            toggleColumnA.Controls.Add(_includeDispoLabels);
-            toggleColumnA.Controls.Add(_includeAtsFabric);
-            toggleColumnA.Controls.Add(_includeLsds);
+                if (!optionCheckBoxes.TryGetValue(option.Key, out var checkBox))
+                {
+                    continue;
+                }
 
-            var toggleColumnB = new FlowLayoutPanel
+                ConfigureOptionCheckBox(checkBox, option.Label, option.ResolveDefaultChecked(config));
+            }
+
+            var groupedOptions = new TableLayoutPanel
             {
+                Dock = DockStyle.Fill,
                 AutoSize = true,
-                FlowDirection = FlowDirection.TopDown,
-                WrapContents = false,
-                Margin = new Padding(0, 0, 0, 0),
+                ColumnCount = AtsBuildOptionCatalog.Groups.Count,
+                RowCount = 1,
             };
-            toggleColumnB.Controls.Add(_includeP3Shapes);
-            toggleColumnB.Controls.Add(_includeCompassMapping);
-            toggleColumnB.Controls.Add(_includeCrownReservations);
-            toggleColumnB.Controls.Add(_checkPlsr);
-            toggleColumnB.Controls.Add(_includeSurfaceImpact);
-            toggleColumnB.Controls.Add(_allowMultiQuarterDispositions);
-            toggleColumnB.Controls.Add(_includeQuarterSectionLabels);
+            for (var i = 0; i < AtsBuildOptionCatalog.Groups.Count; i++)
+            {
+                groupedOptions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / AtsBuildOptionCatalog.Groups.Count));
+            }
 
             settingsGrid.Controls.Add(numericStack, 0, 0);
-            settingsGrid.Controls.Add(toggleColumnA, 1, 0);
-            settingsGrid.Controls.Add(toggleColumnB, 2, 0);
+            for (var i = 0; i < AtsBuildOptionCatalog.Groups.Count; i++)
+            {
+                var group = AtsBuildOptionCatalog.Groups[i];
+                var groupCheckBoxes = AtsBuildOptionCatalog.Options
+                    .Where(option => option.Group == group)
+                    .Select(option => optionCheckBoxes[option.Key])
+                    .ToArray();
+                var groupCard = CreateOptionGroupPanel(
+                    AtsBuildOptionCatalog.GetGroupTitle(group),
+                    groupCheckBoxes);
+                groupedOptions.Controls.Add(groupCard, i, 0);
+            }
+            settingsGrid.Controls.Add(groupedOptions, 1, 0);
 
             content.Controls.Add(settingsGrid, 0, 1);
             return card;
@@ -562,9 +528,10 @@ namespace AtsBackgroundBuilder.Core
             _shapeTypeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
             _shapeTypeCombo.Width = 180;
             _shapeTypeCombo.Margin = new Padding(0, 2, 10, 0);
-            _shapeTypeCombo.Items.Add("Disposition");
-            _shapeTypeCombo.Items.Add("Compass Mapping");
-            _shapeTypeCombo.Items.Add("Crown Reservations");
+            foreach (var supportedType in ShapeUpdateService.SupportedShapeTypes)
+            {
+                _shapeTypeCombo.Items.Add(supportedType);
+            }
             _shapeTypeCombo.SelectedIndex = 0;
             leftActions.Controls.Add(_shapeTypeCombo);
 
@@ -654,6 +621,61 @@ namespace AtsBackgroundBuilder.Core
             };
         }
 
+        private Dictionary<AtsBuildOptionKey, CheckBox> CreateOptionCheckBoxMap()
+        {
+            return new Dictionary<AtsBuildOptionKey, CheckBox>
+            {
+                [AtsBuildOptionKey.IncludeAtsFabric] = _includeAtsFabric,
+                [AtsBuildOptionKey.IncludeLsds] = _includeLsds,
+                [AtsBuildOptionKey.AllowMultiQuarterDispositions] = _allowMultiQuarterDispositions,
+                [AtsBuildOptionKey.IncludeQuarterSectionLabels] = _includeQuarterSectionLabels,
+                [AtsBuildOptionKey.IncludeDispoLinework] = _includeDispoLinework,
+                [AtsBuildOptionKey.IncludeDispoLabels] = _includeDispoLabels,
+                [AtsBuildOptionKey.IncludeCrownReservations] = _includeCrownReservations,
+                [AtsBuildOptionKey.IncludeP3Shapes] = _includeP3Shapes,
+                [AtsBuildOptionKey.IncludeCompassMapping] = _includeCompassMapping,
+                [AtsBuildOptionKey.CheckPlsr] = _checkPlsr,
+                [AtsBuildOptionKey.IncludeSurfaceImpact] = _includeSurfaceImpact,
+            };
+        }
+
+        private static Control CreateOptionGroupPanel(string title, params CheckBox[] checkBoxes)
+        {
+            var panel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                BorderStyle = BorderStyle.FixedSingle,
+                Padding = new Padding(10, 8, 10, 4),
+                Margin = new Padding(0, 0, 10, 0),
+            };
+
+            var stack = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                Margin = new Padding(0),
+            };
+            stack.Controls.Add(new Label
+            {
+                AutoSize = true,
+                Text = title,
+                Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold, GraphicsUnit.Point),
+                ForeColor = Color.FromArgb(55, 65, 81),
+                Margin = new Padding(0, 0, 0, 8),
+            });
+
+            foreach (var checkBox in checkBoxes)
+            {
+                stack.Controls.Add(checkBox);
+            }
+
+            panel.Controls.Add(stack);
+            return panel;
+        }
+
         private static void ConfigureOptionCheckBox(CheckBox checkBox, string text, bool isChecked)
         {
             checkBox.Text = text;
@@ -705,562 +727,59 @@ namespace AtsBackgroundBuilder.Core
         private void OnUpdateShape()
         {
             var shapeType = _shapeTypeCombo.SelectedItem?.ToString()?.Trim() ?? string.Empty;
-            if (string.Equals(shapeType, "Disposition", StringComparison.OrdinalIgnoreCase))
+            if (!ShapeUpdateService.TryPreparePlan(shapeType, out var plan, out var planError))
             {
-                if (!TryResolveNewestDidsFolderAcrossRoots(
-                        out var sourceRoot,
-                        out var newestFolder,
-                        out var newestDate,
-                        out var newestFolderError))
-                {
-                    MessageBox.Show(this, newestFolderError, "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
+                MessageBox.Show(this, planError, "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
 
-                var confirm = MessageBox.Show(
+            if (plan == null)
+            {
+                MessageBox.Show(this, "Shape update plan was not created.", "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var confirm = MessageBox.Show(
+                this,
+                plan.ConfirmationMessage,
+                "Update Shape",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+            if (confirm != DialogResult.Yes)
+            {
+                return;
+            }
+
+            _updateShape.Enabled = false;
+            var previousCursor = Cursor.Current;
+            Cursor.Current = Cursors.WaitCursor;
+            try
+            {
+                var copiedCount = ShapeUpdateService.ExecutePlan(plan);
+                MessageBox.Show(
                     this,
-                    "Copy latest Disposition shape files?\n\n" +
-                    $"Source root: {sourceRoot}\n" +
-                    $"Latest folder: {newestFolder}\n" +
-                    $"Detected date: {newestDate:yyyy-MM-dd}\n\n" +
-                    $"Destination: {DispositionShapeDestinationFolder}\n\n" +
-                    "This will replace current destination contents.",
+                    $"Shape update complete.\n\nCopied {copiedCount} file(s) from:\n{plan.SourceDisplayPath}\n\nto:\n{plan.DestinationPath}",
                     "Update Shape",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning,
-                    MessageBoxDefaultButton.Button2);
-                if (confirm != DialogResult.Yes)
-                {
-                    return;
-                }
-
-                _updateShape.Enabled = false;
-                var previousCursor = Cursor.Current;
-                Cursor.Current = Cursors.WaitCursor;
-                try
-                {
-                    var copiedCount = ReplaceDirectoryContents(newestFolder, DispositionShapeDestinationFolder);
-                    MessageBox.Show(
-                        this,
-                        $"Shape update complete.\n\nCopied {copiedCount} file(s) from:\n{newestFolder}\n\nto:\n{DispositionShapeDestinationFolder}",
-                        "Update Shape",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(
-                        this,
-                        "Shape update failed:\n" + ex.Message,
-                        "Update Shape",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Error);
-                }
-                finally
-                {
-                    if (previousCursor != null)
-                    {
-                        Cursor.Current = previousCursor;
-                    }
-                    _updateShape.Enabled = true;
-                }
-                return;
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
             }
-
-            if (string.Equals(shapeType, "Compass Mapping", StringComparison.OrdinalIgnoreCase))
+            catch (Exception ex)
             {
-                if (!TryResolveFirstExistingRootAcrossRoots(
-                        CompassMappingShapeUpdateSourceRoots,
-                        "COMPASS MAPPING update folder",
-                        out var sourceRoot,
-                        out var rootError))
-                {
-                    MessageBox.Show(this, rootError, "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                var confirm = MessageBox.Show(
+                MessageBox.Show(
                     this,
-                    "Copy COMPASS MAPPING shape files?\n\n" +
-                    $"Source: {sourceRoot}\n\n" +
-                    $"Shape sets: {string.Join(", ", CompassMappingShapeBaseNames)}\n\n" +
-                    $"Destination: {CompassMappingShapeDestinationFolder}\n\n" +
-                    "This will replace current destination contents.",
+                    "Shape update failed:\n" + ex.Message,
                     "Update Shape",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning,
-                    MessageBoxDefaultButton.Button2);
-                if (confirm != DialogResult.Yes)
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+            finally
+            {
+                if (previousCursor != null)
                 {
-                    return;
+                    Cursor.Current = previousCursor;
                 }
-
-                _updateShape.Enabled = false;
-                var previousCursor = Cursor.Current;
-                Cursor.Current = Cursors.WaitCursor;
-                try
-                {
-                    var copiedCount = ReplaceDirectoryContentsWithSelectedShapeSets(
-                        sourceRoot,
-                        CompassMappingShapeDestinationFolder,
-                        CompassMappingShapeBaseNames);
-                    MessageBox.Show(
-                        this,
-                        $"Shape update complete.\n\nCopied {copiedCount} file(s) from:\n{sourceRoot}\n\nto:\n{CompassMappingShapeDestinationFolder}",
-                        "Update Shape",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(
-                        this,
-                        "Shape update failed:\n" + ex.Message,
-                        "Update Shape",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Error);
-                }
-                finally
-                {
-                    if (previousCursor != null)
-                    {
-                        Cursor.Current = previousCursor;
-                    }
-                    _updateShape.Enabled = true;
-                }
-                return;
-            }
-
-            if (string.Equals(shapeType, "Crown Reservations", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!TryResolveNewestDatedFolderAcrossRoots(
-                        CrownReservationsShapeUpdateSourceRoots,
-                        "Crown Reservations update folder",
-                        out var sourceRoot,
-                        out var newestFolder,
-                        out var newestDate,
-                        out var rootError))
-                {
-                    MessageBox.Show(this, rootError, "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                var confirm = MessageBox.Show(
-                    this,
-                    "Copy Crown Reservations shape files?\n\n" +
-                    $"Source root: {sourceRoot}\n" +
-                    $"Latest folder: {newestFolder}\n" +
-                    $"Detected date: {newestDate:yyyy-MM-dd}\n\n" +
-                    $"Shape sets: {string.Join(", ", CrownReservationsShapeBaseNames)}\n\n" +
-                    $"Destination: {CrownReservationsShapeDestinationFolder}\n\n" +
-                    "This will replace current destination contents.",
-                    "Update Shape",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning,
-                    MessageBoxDefaultButton.Button2);
-                if (confirm != DialogResult.Yes)
-                {
-                    return;
-                }
-
-                _updateShape.Enabled = false;
-                var previousCursor = Cursor.Current;
-                Cursor.Current = Cursors.WaitCursor;
-                try
-                {
-                    var copiedCount = ReplaceDirectoryContentsWithSelectedShapeSets(
-                        newestFolder,
-                        CrownReservationsShapeDestinationFolder,
-                        CrownReservationsShapeBaseNames);
-                    MessageBox.Show(
-                        this,
-                        $"Shape update complete.\n\nCopied {copiedCount} file(s) from:\n{newestFolder}\n\nto:\n{CrownReservationsShapeDestinationFolder}",
-                        "Update Shape",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(
-                        this,
-                        "Shape update failed:\n" + ex.Message,
-                        "Update Shape",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Error);
-                }
-                finally
-                {
-                    if (previousCursor != null)
-                    {
-                        Cursor.Current = previousCursor;
-                    }
-                    _updateShape.Enabled = true;
-                }
-                return;
-            }
-
-            MessageBox.Show(this, $"Unsupported shape type: {shapeType}", "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
-
-        private static bool TryFindNewestDidsFolder(string sourceRoot, out string newestFolder, out DateTime newestDate, out string error)
-        {
-            newestFolder = string.Empty;
-            newestDate = default;
-            error = string.Empty;
-            if (string.IsNullOrWhiteSpace(sourceRoot) || !Directory.Exists(sourceRoot))
-            {
-                error = $"Source root not found: {sourceRoot}";
-                return false;
-            }
-
-            var candidates = new List<(string FolderPath, DateTime Date)>();
-            foreach (var folder in Directory.GetDirectories(sourceRoot, "dids_*", SearchOption.TopDirectoryOnly))
-            {
-                var name = Path.GetFileName(folder) ?? string.Empty;
-                if (TryParseDateFromFolderName(name, out var parsedDate))
-                {
-                    candidates.Add((folder, parsedDate));
-                }
-            }
-
-            if (candidates.Count == 0)
-            {
-                error = $"No dated dids_* folders found under:\n{sourceRoot}";
-                return false;
-            }
-
-            var selected = candidates
-                .OrderByDescending(c => c.Date)
-                .ThenByDescending(c => Path.GetFileName(c.FolderPath), StringComparer.OrdinalIgnoreCase)
-                .First();
-
-            newestFolder = selected.FolderPath;
-            newestDate = selected.Date;
-            return true;
-        }
-
-        private static bool TryResolveNewestDidsFolderAcrossRoots(
-            out string selectedSourceRoot,
-            out string newestFolder,
-            out DateTime newestDate,
-            out string error)
-        {
-            selectedSourceRoot = string.Empty;
-            newestFolder = string.Empty;
-            newestDate = default;
-            error = string.Empty;
-
-            var existingRoots = DispositionShapeUpdateSourceRoots
-                .Where(Directory.Exists)
-                .ToList();
-            if (existingRoots.Count == 0)
-            {
-                error = "Unable to find AltaLIS FTP update folder.\nChecked:\n" + string.Join("\n", DispositionShapeUpdateSourceRoots);
-                return false;
-            }
-
-            var foundAny = false;
-            var bestDate = DateTime.MinValue;
-            var bestFolder = string.Empty;
-            var bestRoot = string.Empty;
-            var diagnostics = new List<string>();
-
-            foreach (var root in existingRoots)
-            {
-                if (!TryFindNewestDidsFolder(root, out var candidateFolder, out var candidateDate, out var rootError))
-                {
-                    diagnostics.Add(rootError);
-                    continue;
-                }
-
-                if (!foundAny || candidateDate > bestDate)
-                {
-                    foundAny = true;
-                    bestDate = candidateDate;
-                    bestFolder = candidateFolder;
-                    bestRoot = root;
-                }
-            }
-
-            if (!foundAny)
-            {
-                error = "No dated dids_* folders were found in available AltaLIS roots.\n" + string.Join("\n", diagnostics);
-                return false;
-            }
-
-            selectedSourceRoot = bestRoot;
-            newestFolder = bestFolder;
-            newestDate = bestDate;
-            return true;
-        }
-
-        private static bool TryResolveFirstExistingRootAcrossRoots(
-            IReadOnlyList<string> roots,
-            string sourceDescription,
-            out string selectedRoot,
-            out string error)
-        {
-            selectedRoot = string.Empty;
-            error = string.Empty;
-            if (roots == null || roots.Count == 0)
-            {
-                error = $"No candidate roots configured for {sourceDescription}.";
-                return false;
-            }
-
-            foreach (var root in roots)
-            {
-                if (!string.IsNullOrWhiteSpace(root) && Directory.Exists(root))
-                {
-                    selectedRoot = root;
-                    return true;
-                }
-            }
-
-            error = $"Unable to find {sourceDescription}.\nChecked:\n" + string.Join("\n", roots);
-            return false;
-        }
-
-        private static bool TryResolveNewestDatedFolderAcrossRoots(
-            IReadOnlyList<string> roots,
-            string sourceDescription,
-            out string selectedSourceRoot,
-            out string newestFolder,
-            out DateTime newestDate,
-            out string error)
-        {
-            selectedSourceRoot = string.Empty;
-            newestFolder = string.Empty;
-            newestDate = default;
-            error = string.Empty;
-
-            var existingRoots = roots
-                .Where(Directory.Exists)
-                .ToList();
-            if (existingRoots.Count == 0)
-            {
-                error = $"Unable to find {sourceDescription}.\nChecked:\n" + string.Join("\n", roots);
-                return false;
-            }
-
-            var foundAny = false;
-            var bestDate = DateTime.MinValue;
-            var bestFolder = string.Empty;
-            var bestRoot = string.Empty;
-            var diagnostics = new List<string>();
-            foreach (var root in existingRoots)
-            {
-                if (!TryFindNewestDatedSubfolder(root, out var candidateFolder, out var candidateDate, out var rootError))
-                {
-                    diagnostics.Add(rootError);
-                    continue;
-                }
-
-                if (!foundAny || candidateDate > bestDate)
-                {
-                    foundAny = true;
-                    bestDate = candidateDate;
-                    bestFolder = candidateFolder;
-                    bestRoot = root;
-                }
-            }
-
-            if (!foundAny)
-            {
-                error = $"No dated folders were found in available roots for {sourceDescription}.\n" + string.Join("\n", diagnostics);
-                return false;
-            }
-
-            selectedSourceRoot = bestRoot;
-            newestFolder = bestFolder;
-            newestDate = bestDate;
-            return true;
-        }
-
-        private static bool TryFindNewestDatedSubfolder(string sourceRoot, out string newestFolder, out DateTime newestDate, out string error)
-        {
-            newestFolder = string.Empty;
-            newestDate = default;
-            error = string.Empty;
-            if (string.IsNullOrWhiteSpace(sourceRoot) || !Directory.Exists(sourceRoot))
-            {
-                error = $"Source root not found: {sourceRoot}";
-                return false;
-            }
-
-            var candidates = new List<(string FolderPath, DateTime Date)>();
-            foreach (var folder in Directory.GetDirectories(sourceRoot, "*", SearchOption.TopDirectoryOnly))
-            {
-                var name = Path.GetFileName(folder) ?? string.Empty;
-                if (TryParseDateFromFolderName(name, out var parsedDate))
-                {
-                    candidates.Add((folder, parsedDate));
-                }
-            }
-
-            if (candidates.Count == 0)
-            {
-                error = $"No dated folders found under:\n{sourceRoot}";
-                return false;
-            }
-
-            var selected = candidates
-                .OrderByDescending(c => c.Date)
-                .ThenByDescending(c => Path.GetFileName(c.FolderPath), StringComparer.OrdinalIgnoreCase)
-                .First();
-
-            newestFolder = selected.FolderPath;
-            newestDate = selected.Date;
-            return true;
-        }
-
-        private static bool TryParseDateFromFolderName(string folderName, out DateTime date)
-        {
-            date = default;
-            if (string.IsNullOrWhiteSpace(folderName))
-            {
-                return false;
-            }
-
-            var match = Regex.Match(folderName, @"(?<a>\d{1,2})-(?<b>\d{1,2})-(?<y>\d{2,4})");
-            if (!match.Success)
-            {
-                return false;
-            }
-
-            if (!int.TryParse(match.Groups["a"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var first) ||
-                !int.TryParse(match.Groups["b"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var second) ||
-                !int.TryParse(match.Groups["y"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var year))
-            {
-                return false;
-            }
-
-            if (year < 100)
-            {
-                year += 2000;
-            }
-
-            int month;
-            int day;
-            if (first > 12 && second <= 12)
-            {
-                // Unambiguous: dd-MM-yyyy
-                day = first;
-                month = second;
-            }
-            else if (second > 12 && first <= 12)
-            {
-                // Unambiguous: MM-dd-yyyy
-                month = first;
-                day = second;
-            }
-            else
-            {
-                // Ambiguous (both <= 12): default to dd-MM-yyyy to match FTP folder naming.
-                day = first;
-                month = second;
-            }
-
-            if (month < 1 || month > 12 || day < 1)
-            {
-                return false;
-            }
-
-            var maxDay = DateTime.DaysInMonth(year, month);
-            if (day > maxDay)
-            {
-                return false;
-            }
-
-            date = new DateTime(year, month, day);
-            return true;
-        }
-
-        private static int ReplaceDirectoryContents(string sourceDirectory, string destinationDirectory)
-        {
-            if (!Directory.Exists(sourceDirectory))
-            {
-                throw new DirectoryNotFoundException("Source folder not found: " + sourceDirectory);
-            }
-
-            Directory.CreateDirectory(destinationDirectory);
-            ClearDirectoryContents(destinationDirectory);
-
-            var copiedCount = 0;
-            foreach (var sourcePath in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
-            {
-                var relativePath = Path.GetRelativePath(sourceDirectory, sourcePath);
-                var destinationPath = Path.Combine(destinationDirectory, relativePath);
-                var destinationFolder = Path.GetDirectoryName(destinationPath);
-                if (!string.IsNullOrWhiteSpace(destinationFolder))
-                {
-                    Directory.CreateDirectory(destinationFolder);
-                }
-
-                File.Copy(sourcePath, destinationPath, overwrite: true);
-                copiedCount++;
-            }
-
-            return copiedCount;
-        }
-
-        private static int ReplaceDirectoryContentsWithSelectedShapeSets(
-            string sourceDirectory,
-            string destinationDirectory,
-            IReadOnlyList<string> shapeBaseNames)
-        {
-            if (!Directory.Exists(sourceDirectory))
-            {
-                throw new DirectoryNotFoundException("Source folder not found: " + sourceDirectory);
-            }
-
-            Directory.CreateDirectory(destinationDirectory);
-            ClearDirectoryContents(destinationDirectory);
-
-            var selectedBaseNames = new HashSet<string>(
-                shapeBaseNames?.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()) ?? Enumerable.Empty<string>(),
-                StringComparer.OrdinalIgnoreCase);
-            var copiedCount = 0;
-            foreach (var sourcePath in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
-            {
-                var baseName = Path.GetFileNameWithoutExtension(sourcePath);
-                if (string.IsNullOrWhiteSpace(baseName) || !selectedBaseNames.Contains(baseName))
-                {
-                    continue;
-                }
-
-                var relativePath = Path.GetRelativePath(sourceDirectory, sourcePath);
-                var destinationPath = Path.Combine(destinationDirectory, relativePath);
-                var destinationFolder = Path.GetDirectoryName(destinationPath);
-                if (!string.IsNullOrWhiteSpace(destinationFolder))
-                {
-                    Directory.CreateDirectory(destinationFolder);
-                }
-
-                File.Copy(sourcePath, destinationPath, overwrite: true);
-                copiedCount++;
-            }
-
-            return copiedCount;
-        }
-
-        private static void ClearDirectoryContents(string directoryPath)
-        {
-            if (!Directory.Exists(directoryPath))
-            {
-                return;
-            }
-
-            var directory = new DirectoryInfo(directoryPath);
-            foreach (var file in directory.GetFiles("*", SearchOption.TopDirectoryOnly))
-            {
-                file.IsReadOnly = false;
-                file.Delete();
-            }
-
-            foreach (var childDirectory in directory.GetDirectories("*", SearchOption.TopDirectoryOnly))
-            {
-                childDirectory.Delete(recursive: true);
+                _updateShape.Enabled = true;
             }
         }
 
@@ -1478,33 +997,32 @@ namespace AtsBackgroundBuilder.Core
             };
             Result.SectionRequests.AddRange(requests);
 
-            var requiresPlsrXml = Result.CheckPlsr || Result.IncludeSurfaceImpact;
-            if (requiresPlsrXml)
+            if (PlsrXmlSelectionService.RequiresXml(Result))
             {
+                var candidatePaths = Array.Empty<string>();
                 using (var dialog = new OpenFileDialog())
                 {
-                    dialog.Filter = "PLSR XML (*.xml)|*.xml|All files (*.*)|*.*";
+                    dialog.Filter = PlsrXmlSelectionService.DialogFilter;
                     dialog.Multiselect = true;
-                    dialog.Title = "Select PLSR/Surface XML file(s)";
+                    dialog.Title = PlsrXmlSelectionService.DialogTitle;
                     dialog.InitialDirectory = Environment.CurrentDirectory;
-                    if (dialog.ShowDialog(this) != DialogResult.OK || dialog.FileNames.Length == 0)
+                    var dialogResult = dialog.ShowDialog(this);
+                    if (dialogResult == DialogResult.OK)
                     {
-                        MessageBox.Show(this, "Check PLSR / Surface Impact requires at least one XML file.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        return;
-                    }
-
-                    foreach (var path in dialog.FileNames)
-                    {
-                        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
-                            Result.PlsrXmlPaths.Add(path);
+                        candidatePaths = dialog.FileNames;
                     }
                 }
 
-                if (Result.PlsrXmlPaths.Count == 0)
+                if (!PlsrXmlSelectionService.TryGetValidPaths(
+                        candidatePaths,
+                        out var validXmlPaths,
+                        out _))
                 {
-                    MessageBox.Show(this, "Check PLSR / Surface Impact requires at least one XML file.", "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(this, PlsrXmlSelectionService.RequiredSelectionMessage, "ATSBUILD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
+
+                Result.PlsrXmlPaths.AddRange(validXmlPaths);
             }
 
             DialogResult = DialogResult.OK;

@@ -1,3 +1,420 @@
+# Follow-up (PLSR Skip Warning Full List, 2026-03-01)
+
+- [x] Remove capped skipped-label examples list (`Count < 10`) in PLSR warning path.
+- [x] Show all skipped text-only fallback labels in warning dialog output.
+- [x] Rebuild plugin, run decision tests, and sync runtime DLL/PDB.
+
+## Review (PLSR Skip Warning Full List, 2026-03-01)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - removed the 10-item cap when collecting skipped text-only fallback labels.
+  - warning dialog now lists every skipped label entry and orders them alphabetically for readability.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - runtime DLL/PDB synced to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows`.
+
+# Follow-up (PLSR Floating Text Fallback Guard, 2026-03-01)
+
+- [x] Confirm floating `MText` labels are coming from text-only fallback creation paths.
+- [x] Disable text-only fallback label creation for PLSR missing-label apply (no env override).
+- [x] Ensure skipped no-geometry/text-only cases are surfaced in warning dialog + summary.
+- [x] Build plugin, run decision tests, and sync runtime DLL/PDB.
+
+## Review (PLSR Floating Text Fallback Guard, 2026-03-01)
+
+- Root cause:
+  - floating labels were produced by text-only fallback creation paths in `RunPlsrCheck(...)`:
+    - `CreateMissingLabelFromTemplate`
+    - `CreateMissingLabelFromXml`
+  - those paths create `MText` without source disposition geometry (no aligned-dimension anchor/width line).
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - hard-disabled text-only fallback feature flag by changing:
+    - `IsPlsrTextOnlyFallbackLabelsEnabled()` -> always returns `false`.
+  - this prevents fallback creation regardless of `ATSBUILD_PLSR_TEXT_FALLBACK` env state.
+  - existing skip + warning dialog path remains active:
+    - skipped text-only candidates are counted,
+    - warning dialog lists skipped count and examples.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - runtime sync succeeded:
+    - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+    - `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows\AtsBackgroundBuilder.dll`
+    - timestamp `2026-03-01 6:39:00 PM`, size `976896`.
+
+# Follow-up (Open/Trimmed Disposition Boundary Recovery, 2026-03-01)
+
+- [x] Validate user hypothesis that open/trimmed OD polylines are hard-skipped as `not closed`.
+- [x] Add safe open-boundary recovery so recoverable trimmed polygons are converted to temporary closed boundaries.
+- [x] Wire processing log when boundary recovery path is used.
+- [x] Build plugin, run decision tests, and sync runtime DLL/PDB.
+
+## Review (Open/Trimmed Disposition Boundary Recovery, 2026-03-01)
+
+- Root cause confirmed:
+  - `ProcessDispositionPolylines(...)` only accepted `GeometryUtils.TryGetClosedBoundaryClone(...)`.
+  - open polylines were counted as `Skipped (not closed)` and never available for source matching/label workflows.
+- Updated `src/AtsBackgroundBuilder/Geometry/GeometryUtils.cs`:
+  - added overload `TryGetClosedBoundaryClone(..., out bool recoveredFromOpen)`.
+  - added open-polyline recovery path:
+    - clones open polyline,
+    - closes it only when endpoint gap is within a bounded proportion of retained path length,
+    - validates finite non-trivial area before accepting.
+  - extended explode-based boundary selection to also recover open exploded polylines and select best candidate by area/extent score.
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - uses new overload and logs:
+    - `Disposition boundary recovery: closed trimmed/open boundary for entity ...`
+  - keeps original `SkippedNotClosed` behavior only for unrecoverable cases.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - runtime DLL synced:
+    - source + runtime `AtsBackgroundBuilder.dll` timestamp `2026-03-01 6:26:16 PM`, size `975360`.
+
+# Follow-up (PLSR Missing Rows Still Non-Actionable, 2026-03-01)
+
+- [x] Diagnose latest `/debug-config` run where `Missing labels` remained high (`140`) and `Missing labels created` stayed low (`41`).
+- [x] Add XML fallback actionable path for missing-label rows that have no source geometry and no same-DISP template.
+- [x] Ensure XML fallback writes labels onto a recognized disposition text layer for future scan parity.
+- [x] Build plugin, run decision tests, and sync runtime DLL/PDB.
+
+## Review (PLSR Missing Rows Still Non-Actionable, 2026-03-01)
+
+- Root cause from latest logs:
+  - `PLSR_Check.txt` showed `Missing labels: 140`, `Missing labels created: 41`, `Actionable results accepted: 42`.
+  - gap indicated most missing rows were still non-actionable (no source geometry / no template path).
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - added new action type `CreateMissingLabelFromXml`.
+  - missing-label issue generation now marks no-source/no-template rows as actionable (when quarter context exists).
+  - apply stage now processes this path and creates fallback `MText` labels using:
+    - owner from mapped expected owner,
+    - disposition number line,
+    - template styling when available,
+    - fallback recognized layer `C-PLSR-T` (created if missing),
+    - deterministic in-quarter placement offsets to avoid full stacking.
+  - review action text now includes `Create missing label (XML fallback)`.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - synced runtime plugin:
+    - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+    - `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows\AtsBackgroundBuilder.dll`
+    - both timestamp `2026-03-01 6:15:36 PM`.
+
+# Follow-up (PLSR Missing Labels Skip Coverage Expansion, 2026-03-01)
+
+- [x] Diagnose why `/debug-config` still reports many missing labels as effectively skipped.
+- [x] Add a no-source fallback path that creates missing labels from an existing label template for the same DISP number.
+- [x] Broaden existing OD source scan to include polyline-based disposition geometry outside strict `C-/F-` layer naming.
+- [x] Build plugin and rerun decision tests.
+
+## Review (PLSR Missing Labels Skip Coverage Expansion, 2026-03-01)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - added `CreateMissingLabelFromTemplate` action type for missing-label rows with no quarter-matching source geometry but with an existing same-DISP label elsewhere.
+  - missing-label issue generation now marks those rows actionable with clear detail text.
+  - apply stage now supports accepted template-create actions.
+  - added `BuildLabelTemplatesByDispNum(...)` to index reusable labels.
+  - added `TryCreateMissingLabelFromTemplate(...)`:
+    - creates an `MText` in target quarter interior using template contents/layer/style cues.
+    - updates owner line to expected XML owner.
+    - updates per-quarter existing-disp tracking to prevent duplicates.
+  - review action text now includes `Create missing label (template)`.
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - relaxed fallback existing-source scan to include `Polyline`/`Polyline2d`/`Polyline3d` entities with OD DISP data regardless of layer naming.
+  - this avoids missing valid source candidates that are not on strict `C-/F-` layers.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+
+# Follow-up (PLSR Disp Number Canonicalization For Actionable Coverage, 2026-03-01)
+
+- [x] Diagnose low actionable missing-label counts after crash-guard run (`Missing labels` high but `Actionable results accepted` low).
+- [x] Canonicalize disposition number normalization across PLSR check + label placer matching/dedupe.
+- [x] Build plugin and re-run decision tests.
+
+## Review (PLSR Disp Number Canonicalization For Actionable Coverage, 2026-03-01)
+
+- Context from latest `/debug-config` outputs:
+  - `Missing labels: 115`
+  - `Missing labels created: 25`
+  - `Actionable results accepted: 25`
+  - indicates many missing rows were non-actionable (source matching failed before placement).
+- Updated normalization in:
+  - `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`
+  - `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`
+- New canonical DISP_NUM normalization behavior:
+  - uppercase
+  - remove whitespace + non-alphanumeric characters
+  - preserve 3-letter prefix when present
+  - normalize numeric suffix by trimming leading zeros (keeping at least one zero)
+  - fall back to cleaned alphanumeric token when no 3-letter prefix exists.
+- Expected impact:
+  - better matching between XML DISP numbers, existing label DISP numbers, and OD/source DISP numbers (for example zero-padded variants).
+  - more missing-label rows become actionable without requiring risky supplemental import.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+
+# Follow-up (PLSR Import Crash Guard For Partial Existing Coverage, 2026-03-01)
+
+- [x] Diagnose AutoCAD crash after latest PLSR supplemental-import change.
+- [x] Confirm crash boundary from ATSBUILD log stage markers.
+- [x] Add default-off guard for PLSR supplemental shapefile import when existing disposition source geometry is already present.
+- [x] Keep an explicit env override for power users who want to force supplemental import.
+- [x] Build + run decision tests.
+
+## Review (PLSR Import Crash Guard For Partial Existing Coverage, 2026-03-01)
+
+- Crash boundary confirmed from `src/AtsBackgroundBuilder/bin/Release/net8.0-windows/AtsBackgroundBuilder.log`:
+  - reached `ATSBUILD stage: disposition_import`
+  - reached `Importer.Import begin.`
+  - no subsequent `Importer.Import completed.` / no ATSBUILD completion marker in that run section
+  - consistent with native Map import hard-termination in this path.
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - added `IsPlsrSupplementalImportEnabled()` env gate (`ATSBUILD_PLSR_SUPPLEMENT_IMPORT`).
+  - in PLSR-only mode (`Check PLSR` ON, disposition linework/labels OFF):
+    - if existing disposition source geometry is already present and env override is OFF, supplemental shapefile import is skipped by default.
+    - new log line:
+      - `PLSR supplemental import skipped: existing disposition source geometry found and ATSBUILD_PLSR_SUPPLEMENT_IMPORT is OFF.`
+- Safety intent:
+  - prevents default path from entering known crash-prone native importer call for partial-coverage runs.
+  - still allows explicit opt-in supplemental import via env var when needed.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+
+# Follow-up (PLSR Supplemental Import Gate For Missing Labels, 2026-03-01)
+
+- [x] Analyze `/debug-config` PLSR logs where many missing labels were not created.
+- [x] Update PLSR import gating to allow supplemental disposition import when missing-label precheck indicates gaps, even if some existing disposition polylines are already present.
+- [x] Update decision tests for new BuildExecutionPlan behavior.
+- [x] Build + run decision tests.
+
+## Review (PLSR Supplemental Import Gate For Missing Labels, 2026-03-01)
+
+- Log findings from `AtsBackgroundBuilder.log` + `PLSR_Check.txt`:
+  - `Missing labels: 98`, `Missing labels created: 28`, `Actionable results accepted: 29`, `Apply errors: 0`.
+  - Existing disposition scan found partial coverage (`Disposition source scan: found 65 existing OD polyline(s)`), so PLSR missing-label creation had limited source geometry.
+  - Previous gate only imported fallback shapefiles when existing disposition count was `0`, which blocked supplemental import for partial-coverage scenarios.
+- Updated `src/AtsBackgroundBuilder/Core/BuildExecutionPlan.cs`:
+  - `ShouldImportDispositions(...)` now returns `true` for PLSR runs regardless of existing-disposition count (still gated by precheck in PLSR-only mode).
+  - `ShouldRunPlsrMissingLabelPrecheck(...)` now applies to all PLSR-only runs (`CheckPlsr=ON`, linework/labels OFF), not just when existing count is `0`.
+  - Net effect: PLSR-only runs can now import supplemental disposition sources when missing labels are detected, even with partial existing disposition coverage.
+- Updated `src/AtsBackgroundBuilder.DecisionTests/Program.cs` expectations for the new plan behavior.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+
+# Follow-up (PLSR Cleanup Scope Guard, 2026-03-01)
+
+- [x] Confirm PLSR fallback path mixes existing disposition IDs with cleanup erase candidates.
+- [x] Separate imported disposition IDs from disposition processing IDs.
+- [x] Restrict cleanup erase scope to imported disposition IDs only.
+- [x] Verify compile after refactor.
+
+## Review (PLSR Cleanup Scope Guard, 2026-03-01)
+
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - `PrepareDispositionInputs(...)` now maintains two lists:
+    - `DispositionPolylines` (all polylines used for processing/checks: existing + imported)
+    - `ImportedDispositionPolylines` (imported-only cleanup candidates)
+  - shapefile import writes into `importedDispositionPolylines`, then merges into processing list.
+  - `ExecutePostQuarterPipeline(...)` now passes imported-only IDs to `CleanupAfterBuild(...)`.
+  - `DispositionPreparationResult` now carries `ImportedDispositionPolylines`.
+- Verification:
+  - default Release build path is currently locked by another process (`bin\\Release\\net8.0-windows\\AtsBackgroundBuilder.dll`).
+  - compile verified successfully to alternate output path:
+    - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /p:OutputPath=bin\Release\net8.0-windows-plsr-cleanup-fix\`
+
+# Follow-up (1/4 Definitions UI Default Off, 2026-03-01)
+
+- [x] Remove config-driven default for `1/4 Definitions` in shared ATSBUILD option catalog.
+- [x] Rebuild release and sync runtime artifacts.
+
+## Review (1/4 Definitions UI Default Off, 2026-03-01)
+
+- Updated `Core/AtsBuildOptionCatalog.cs`:
+  - removed `config => config.AllowMultiQuarterDispositions` default resolver from `AllowMultiQuarterDispositions`
+  - `1/4 Definitions` now defaults unchecked in UI unless explicitly set by seeded state during recovery flows
+- Build and artifact sync:
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only, no errors)
+  - DLL/PDB parity synced to:
+    - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows`
+    - `build\net8.0-windows`
+    - `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows`
+
+# Follow-up (Boundary Round-Trip Empty Snapshot Reopen Guard, 2026-03-01)
+
+- [x] Diagnose latest `ui_cancelled` runs where boundary round-trip path had `section_requests_empty`.
+- [x] Prevent immediate cancellation when boundary round-trip snapshot is unavailable.
+- [x] Reopen dialog without snapshot (bounded retries) so user can continue to explicit Build.
+- [x] Build and sync release artifacts.
+
+## Review (Boundary Round-Trip Empty Snapshot Reopen Guard, 2026-03-01)
+
+- Root cause from runtime logs:
+  - `BoundaryRoundTrip=True` + `snapshot unavailable (reason=section_requests_empty)` dropped directly to `ui_cancelled`.
+  - This could happen before user got a stable explicit Build submission path.
+- Updated `Core/Plugin.cs` UI recovery loop:
+  - added boundary-roundtrip-specific reopen fallback when snapshot is unavailable:
+    - closes visible stale window if needed
+    - reopens dialog without seed input
+    - bounded by existing retry limit
+  - new log line:
+    - `UI boundary round-trip recovery: reopening dialog without snapshot (...)`
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only, no errors)
+  - synced DLL/PDB parity at:
+    - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows`
+    - `build\net8.0-windows`
+    - `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows`
+
+# Follow-up (1/4 Definition Visibility Decoupled From Processing, 2026-03-01)
+
+- [x] Confirm quarter-dependent logic reliability can be preserved independently of `1/4 Definitions` display toggle.
+- [x] Decouple quarter-definition processing from final visible output in the ATSBUILD execution flow.
+- [x] Remove quarter-definition linework output when `1/4 Definitions` is off (unless env quarter-view override is enabled).
+- [x] Build Release and sync `build` + runtime plugin artifacts.
+
+## Review (1/4 Definition Visibility Decoupled From Processing, 2026-03-01)
+
+- Updated `Core/Plugin.cs`:
+  - internal quarter-view build is now always enabled for processing reliability (`drawQuarterView = true`)
+  - final visibility intent remains driven by UI + env override:
+    - `showQuarterDefinitionLinework = input.AllowMultiQuarterDispositions || EnableQuarterViewByEnvironment`
+  - updated runtime log line to make this explicit:
+    - `internalBuild=ON` with separate UI/env visibility state
+- Updated `Diagnostics/Plugin.Diagnostics.CleanupDiagnostics.cs`:
+  - when `1/4 Definitions` is off and no env quarter-view override is active:
+    - erase generated `L-QSEC` quarter-definition lines from the current build ID set
+    - erase `L-QUATER` quarter-view output within requested-section windows
+  - this keeps quarter-dependent processing available while removing visible 1/4 definition output when user disables it
+- Build and sync verification:
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only, no errors)
+  - DLL/PDB synced with parity:
+    - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows`
+    - `build\net8.0-windows`
+    - `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows`
+
+# Follow-up (Surface Impact Recovery Option Persistence, 2026-03-01)
+
+- [x] Diagnose why some recovered UI runs execute PLSR but skip Surface Impact.
+- [x] Persist last PLSR option selection (`Check PLSR`, `Surface Impact`) in the WPF ATSBUILD window.
+- [x] Use persisted PLSR option selection during UI auto-close recovery instead of forcing `Check PLSR` only.
+- [x] Build `AtsBackgroundBuilder` Release and sync `build` artifacts.
+
+## Review (Surface Impact Recovery Option Persistence, 2026-03-01)
+
+- Updated `Core/AtsBuildWindow.cs`:
+  - added persisted option-state storage (`AtsBackgroundBuilder.plsr.options.txt`) for:
+    - `CheckPlsr`
+    - `IncludeSurfaceImpact`
+  - restored persisted PLSR option selection on window open when no seed input is provided
+  - persisted option selection on successful Build submit (`OnBuild` success path)
+  - exposed `TryGetPersistedPlsrOptionSelection(...)` for recovery flows
+- Updated `Core/Plugin.cs` auto-close recovery:
+  - when recovering from no-result UI and loading persisted XML paths, it now restores persisted PLSR options (including `Surface Impact`) instead of always forcing PLSR-only
+  - fallback still guarantees at least one option is enabled when persisted XML-driven recovery is used
+  - retained existing `UI options: CheckPLSR=..., SurfaceImpact=..., XML files=...` runtime log line for direct verification
+- Build verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - build succeeded (warnings only, no errors)
+- Artifact sync:
+  - copied updated `AtsBackgroundBuilder.dll/.pdb` to `build\net8.0-windows` (source/build parity confirmed)
+  - runtime copy to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows` is currently blocked by file lock (`AtsBackgroundBuilder.dll` and `.pdb` in use)
+
+# Follow-up (ATSBUILD Shared PLSR XML Helper Refactor, 2026-03-01)
+
+- [x] Add a shared Core helper for PLSR/Surface XML picker constants and XML path validation.
+- [x] Refactor `AtsBuildWindow` build/snapshot XML flows to use the shared helper.
+- [x] Refactor `AtsBuildForm` build XML flow to use the shared helper.
+- [x] Build `AtsBackgroundBuilder` Release and document verification in this file.
+
+## Review (ATSBUILD Shared PLSR XML Helper Refactor, 2026-03-01)
+
+- Added shared helper at `src/AtsBackgroundBuilder/Core/PlsrXmlSelectionService.cs`:
+  - dialog constants (`DialogFilter`, `DialogTitle`, `RequiredSelectionMessage`)
+  - `RequiresXml(...)` gate for `CheckPlsr`/`IncludeSurfaceImpact`
+  - centralized path validation/normalization with failure classification (`EmptySelection`, `NoValidFiles`)
+- Updated `AtsBuildWindow`:
+  - `OnBuild` now uses shared constants + shared validation for selected XML files
+  - preserves existing abort trace behavior (`onbuild_abort_plsr_xml_dialog_cancelled` vs `onbuild_abort_plsr_xml_no_valid_paths`)
+  - `TryBuildInputSnapshot` now uses shared path validation for persisted XML reuse
+- Updated `AtsBuildForm`:
+  - `OnBuild` now uses shared constants and shared validation logic for XML selection
+- Build verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - build succeeded (warnings only, no errors).
+
+# Follow-up (ATSBUILD Shared Shape-Update Service Refactor, 2026-03-01)
+
+- [x] Add a shared Core service for shape update sources/destinations, date-folder resolution, and copy execution.
+- [x] Refactor `AtsBuildWindow` to call shared shape-update service (remove local duplicate helpers/constants).
+- [x] Refactor `AtsBuildForm` to call shared shape-update service (remove local duplicate helpers/constants).
+- [x] Build `AtsBackgroundBuilder` Release and document verification in this file.
+
+## Review (ATSBUILD Shared Shape-Update Service Refactor, 2026-03-01)
+
+- Added shared service at `src/AtsBackgroundBuilder/Core/ShapeUpdateService.cs` with:
+  - supported shape types (`Disposition`, `Compass Mapping`, `Crown Reservations`)
+  - source-root selection rules
+  - latest-date folder discovery rules (`dids_*` and dated folders)
+  - destination copy execution (full copy vs selected shape-set copy)
+- Refactored `AtsBuildWindow`:
+  - removed local shape-update roots/base-name constants + helper methods
+  - now populates shape-type combo from `ShapeUpdateService.SupportedShapeTypes`
+  - now prepares/executes updates via `ShapeUpdateService.TryPreparePlan(...)` and `ExecutePlan(...)`
+- Refactored `AtsBuildForm` with the same shared service path and removed duplicated local helpers/constants.
+- Build verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - build succeeded (warnings only, no errors).
+
+# Follow-up (ATSBUILD Shared Option Catalog Refactor, 2026-03-01)
+
+- [x] Add a shared ATSBUILD option catalog for grouped Build Settings metadata (group, label, order, defaults).
+- [x] Refactor `AtsBuildWindow` to render option groups from the shared catalog.
+- [x] Refactor `AtsBuildForm` to render option groups from the shared catalog.
+- [x] Build `AtsBackgroundBuilder` Release and document verification in this file.
+
+## Review (ATSBUILD Shared Option Catalog Refactor, 2026-03-01)
+
+- Added shared metadata source at `src/AtsBackgroundBuilder/Core/AtsBuildOptionCatalog.cs`:
+  - option keys
+  - group definitions/order
+  - display labels
+  - default resolver support (`AllowMultiQuarterDispositions` from config)
+- Updated `AtsBuildWindow` to configure and render grouped options by iterating the shared catalog instead of hardcoded label/group lists.
+- Updated `AtsBuildForm` to do the same, preserving the same grouped output and order as WPF.
+- Build verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - build succeeded (warnings only, no errors).
+
+# Follow-up (ATSBUILD Option Grouping by Section, 2026-03-01)
+
+- [x] Group ATSBUILD Build Settings checkboxes into `SECTIONS`, `SHAPE FILES`, and `PLSR`.
+- [x] Update option labels/order to match requested grouping:
+  - `SECTIONS`: `ATS Fabric`, `LSDs`, `1/4 Definitions`, `1/4 SEC. Labels`
+  - `SHAPE FILES`: `Dispositions`, `Disposition Labels`, `CLRs`, `P3 Water`, `Compass Mapping`
+  - `PLSR`: `PLSR Check`, `Surface Impact`
+- [x] Apply the same grouping model in both UI surfaces (`AtsBuildWindow` and `AtsBuildForm`).
+- [x] Build `AtsBackgroundBuilder` and document verification in this file.
+
+## Review (ATSBUILD Option Grouping by Section, 2026-03-01)
+
+- Updated both ATSBUILD UIs to group option checkboxes into titled groups: `SECTIONS`, `SHAPE FILES`, and `PLSR`.
+- Updated labels/order to match requested naming:
+  - `SECTIONS`: `ATS Fabric`, `LSDs`, `1/4 Definitions`, `1/4 SEC. Labels`
+  - `SHAPE FILES`: `Dispositions`, `Disposition Labels`, `CLRs`, `P3 Water`, `Compass Mapping`
+  - `PLSR`: `PLSR Check`, `Surface Impact`
+- Implemented the grouping in:
+  - `src/AtsBackgroundBuilder/Core/AtsBuildWindow.cs`
+  - `src/AtsBackgroundBuilder/Core/AtsBuildForm.cs`
+- Build verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - build succeeded (warnings only, no errors).
+
 # Feature (Surface Impact Build Option, 2026-03-01)
 
 - [x] Add `Surface Impact` checkbox to both ATSBUILD UIs and wire it into `AtsBuildInput` seed/snapshot flow.
@@ -1464,3 +1881,186 @@
     - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll`
     - `build\net8.0-windows\AtsBackgroundBuilder.dll`
     - `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows\AtsBackgroundBuilder.dll`
+
+## Follow-up (UI Recovery Refactor, 2026-03-01)
+
+- [x] Extract no-result UI recovery decision logic from `Core/Plugin.cs` into `Core/UiSessionRecoveryService.cs`.
+- [x] Preserve ATSBUILD behavior and log strings for auto-close recovery, boundary round-trip reopen, snapshot fallback, and cancel path.
+- [x] Keep persisted PLSR option/path restore logic in the refactored service path.
+- [x] Rebuild with Release settings to verify compile safety.
+
+## Review (UI Recovery Refactor, 2026-03-01)
+
+- Updated `Core/Plugin.cs`:
+  - Replaced inline no-result decision branches with `UiSessionRecoveryService.EvaluateNoResult(...)`.
+  - Preserved existing observable logs and side effects for:
+    - auto-close reopen with snapshot,
+    - boundary round-trip reopen without snapshot,
+    - snapshot-based build fallback,
+    - cancel path handling.
+  - Switched persisted PLSR option/path fallback restoration to `UiSessionRecoveryService.TryRestorePersistedPlsrSelectionFromAutoCloseFallback(...)`.
+- Verified compile safety:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors; existing warnings unchanged).
+
+## Follow-up (Boundary Reopen Should Not Auto-Enable PLSR Toggles, 2026-03-01)
+
+- [x] Diagnose why `PLSR Check` and `Surface Impact` can appear ON by default after boundary round-trip reopen.
+- [x] Stop applying persisted PLSR option state as constructor-time UI defaults in WPF window.
+- [x] Keep persisted-option restore logic only in backend recovery fallback path.
+- [x] Rebuild Release to verify compile safety.
+
+## Review (Boundary Reopen Should Not Auto-Enable PLSR Toggles, 2026-03-01)
+
+- Updated `Core/AtsBuildWindow.cs`:
+  - removed constructor block that auto-applied `TryGetPersistedPlsrOptionSelection(...)` when `seedInput == null`.
+  - result: boundary round-trip reopen without a seed no longer turns `PLSR Check`/`Surface Impact` on from persisted state.
+- Preserved existing fallback behavior:
+  - persisted PLSR options are still restored only through `UiSessionRecoveryService.TryRestorePersistedPlsrSelectionFromAutoCloseFallback(...)` in recovery scenarios.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors; existing warnings unchanged).
+
+## Follow-up (Build Plan + Recovery Decision Tests Refactor, 2026-03-01)
+
+- [x] Extract a `BuildExecutionPlan` in `Core` to centralize ATSBUILD option-to-pipeline decision logic.
+- [x] Refactor `Core/Plugin.cs` to consume the execution plan for import/label/PLSR/surface-impact gates.
+- [x] Extract pure no-result UI decision logic into a testable decision engine independent of UI persistence paths.
+- [x] Add automated decision-matrix tests for no-result UI recovery behavior.
+- [x] Build/re-run verification for main project plus decision tests.
+
+## Review (Build Plan + Recovery Decision Tests Refactor, 2026-03-01)
+
+- Added `Core/BuildExecutionPlan.cs`:
+  - centralizes ATSBUILD option-derived pipeline decisions (imports, labels, PLSR, quarter behavior, surface impact).
+  - exposes focused helper gates used by plugin flow (`ShouldImportDispositions`, PLSR precheck gate, supplemental-section-info gate).
+- Updated `Core/Plugin.cs`:
+  - replaced direct option branching with `BuildExecutionPlan` usage for:
+    - quarter draw/processing setup,
+    - shape auto-update gate,
+    - P3/Compass/CLR import gates,
+    - disposition import and PLSR-only precheck decisions,
+    - quarter load, label placement ordering, PLSR check, quarter section labels, and surface impact gates.
+- Added pure decision engine `Core/UiSessionRecoveryDecisionEngine.cs` and updated `Core/UiSessionRecoveryService.cs`:
+  - no-result UI recovery decision logic now lives in a pure, testable unit.
+  - persisted PLSR fallback restore remains in service path.
+- Added automated decision-matrix tests:
+  - project: `src/AtsBackgroundBuilder.DecisionTests`
+  - runner: `Program.cs`
+  - covers reopen/cancel/recover matrix and log-flag expectations for no-intent closes, boundary round-trip resumes, build-attempt traces, and explicit cancel cases.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors; existing warnings unchanged).
+  - `.\.local_dotnet\dotnet.exe restore src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj --configfile src/AtsBackgroundBuilder.DecisionTests/NuGet.Config` succeeded.
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded.
+  - `.\.local_dotnet\dotnet.exe run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed (`UiSessionRecoveryDecisionEngine tests passed.`).
+
+## Follow-up (BuildExecutionPlan Decision Tests, 2026-03-01)
+
+- [x] Extend the decision test project to compile `Core/BuildExecutionPlan.cs` without AutoCAD/UI dependencies.
+- [x] Add focused tests for BuildExecutionPlan gates (quarter visibility, disposition scope/import, label ordering, precheck/supplemental gates, pass-through flags).
+- [x] Re-run decision test restore/build/run verification.
+
+## Review (BuildExecutionPlan Decision Tests, 2026-03-01)
+
+- Updated test project `src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj`:
+  - linked `Core/BuildExecutionPlan.cs` into the test runner.
+  - retained pure runner setup with no external test packages.
+- Added stub input model `src/AtsBackgroundBuilder.DecisionTests/TestStubs/AtsBuildInputStub.cs`:
+  - minimal `AtsBuildInput` surface needed by `BuildExecutionPlan.Create(...)`.
+- Extended `src/AtsBackgroundBuilder.DecisionTests/Program.cs` with BuildExecutionPlan coverage:
+  - default plan behavior
+  - quarter visibility (`UI 1/4` toggle vs env override)
+  - PLSR-driven scope/import behavior
+  - label placement ordering gate
+  - PLSR missing-label precheck gate
+  - supplemental section-info gate
+  - pass-through flag mapping
+- Verification:
+  - `.\.local_dotnet\dotnet.exe restore src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj --configfile src/AtsBackgroundBuilder.DecisionTests/NuGet.Config` succeeded.
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded.
+  - `.\.local_dotnet\dotnet.exe run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed (`Decision tests passed.`).
+
+## Follow-up (Plugin Execution Flow Method Split, 2026-03-01)
+
+- [x] Extract disposition/import preparation block from `AtsBuild()` into a dedicated helper method.
+- [x] Extract summary emission block from `AtsBuild()` into a dedicated helper method.
+- [x] Keep stage transitions, logs, and behavior unchanged.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Plugin Execution Flow Method Split, 2026-03-01)
+
+- Updated `Core/Plugin.cs`:
+  - Added `PrepareDispositionInputs(...)` to isolate:
+    - optional P3/Compass/Crown import stages,
+    - disposition scope build,
+    - PLSR fallback scan,
+    - PLSR missing-label precheck gate,
+    - shapefile import selection and result capture.
+  - Added `EmitBuildSummary(...)` to isolate command-line + log summary output.
+  - Added `DispositionPreparationResult` carrier type for the extracted preparation stage.
+  - `AtsBuild()` now orchestrates via helper calls while preserving existing stage labels and side effects.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors; existing warnings unchanged).
+  - `.\.local_dotnet\dotnet.exe run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed (`Decision tests passed.`).
+
+## Follow-up (Disposition Transaction Block Extraction, 2026-03-01)
+
+- [x] Extract the large in-method disposition transaction processing block from `AtsBuild()` into a dedicated helper.
+- [x] Preserve stage label progression, log output, and disposition/label preparation behavior.
+- [x] Rebuild plugin and rerun decision tests after extraction.
+
+## Review (Disposition Transaction Block Extraction, 2026-03-01)
+
+- Updated `Core/Plugin.cs`:
+  - Added `ProcessDispositionPolylines(...)` helper that encapsulates:
+    - supplemental section-info load gate,
+    - transaction scope for disposition entities,
+    - OD mapping/layer assignment,
+    - wellsite/surface-purpose enrichment,
+    - disposition label payload preparation.
+  - Replaced the former inline transaction body in `AtsBuild()` with a single call to this helper.
+  - Kept `SetExitStage("processing_dispositions")` and existing log messages within the extracted path.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors; existing warnings unchanged).
+  - `.\.local_dotnet\dotnet.exe run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed (`Decision tests passed.`).
+
+## Follow-up (Quarter Context + Existing Label Index Extraction, 2026-03-01)
+
+- [x] Extract quarter cloning/loading and existing label index build from `AtsBuild()` into a dedicated helper.
+- [x] Preserve quarter-source precedence (`LabelQuarterInfos` first, fallback to quarter polyline ids).
+- [x] Preserve existing label reuse logging and dictionary semantics.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Quarter Context + Existing Label Index Extraction, 2026-03-01)
+
+- Updated `Core/Plugin.cs`:
+  - Added `BuildQuarterLabelContext(...)` helper to encapsulate:
+    - quarter clone loading from transaction,
+    - fallback loading from `quarterPolylinesForLabelling`,
+    - existing label reuse index build (`existingDispNumsByQuarter`) and log line.
+  - Added `QuarterLabelContext` carrier type.
+  - Replaced former inline quarter/index block in `AtsBuild()` with a single helper call.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors; existing warnings unchanged).
+  - `.\.local_dotnet\dotnet.exe run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed (`Decision tests passed.`).
+
+## Follow-up (Post-Quarter Orchestration Extraction, 2026-03-01)
+
+- [x] Extract remaining post-quarter orchestration from `AtsBuild()` into a dedicated helper.
+- [x] Preserve stage sequencing for label placement, PLSR, quarter labels, cleanup, surface impact, and summary.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Post-Quarter Orchestration Extraction, 2026-03-01)
+
+- Updated `Core/Plugin.cs`:
+  - Added `ExecutePostQuarterPipeline(...)` helper to encapsulate:
+    - pre-PLSR label placement,
+    - result import counters assignment,
+    - PLSR check dispatch,
+    - quarter section labels placement,
+    - cleanup + optional GeoJSON export,
+    - surface impact run,
+    - summary emission.
+  - Replaced inline orchestration block in `AtsBuild()` with single helper invocation.
+  - Preserved outer completion stages (`completed`, `EmitExit("ok")`) and command finalization.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors; existing warnings unchanged).
+  - `.\.local_dotnet\dotnet.exe run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed (`Decision tests passed.`).

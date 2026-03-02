@@ -946,24 +946,42 @@ namespace AtsBackgroundBuilder.Geometry
         /// </summary>
         public static bool TryGetClosedBoundaryClone(Entity ent, [NotNullWhen(true)] out Polyline? boundaryClone)
         {
+            return TryGetClosedBoundaryClone(ent, out boundaryClone, out _);
+        }
+
+        public static bool TryGetClosedBoundaryClone(
+            Entity ent,
+            [NotNullWhen(true)] out Polyline? boundaryClone,
+            out bool recoveredFromOpen)
+        {
             boundaryClone = null;
+            recoveredFromOpen = false;
 
             if (ent == null)
                 return false;
 
             if (ent is Polyline pl)
             {
-                if (!pl.Closed || pl.NumberOfVertices < 3)
+                if (pl.NumberOfVertices < 3)
                     return false;
 
-                boundaryClone = (Polyline)pl.Clone();
+                if (pl.Closed)
+                {
+                    boundaryClone = (Polyline)pl.Clone();
+                    return true;
+                }
+
+                if (!TryRecoverClosedCloneFromOpenPolyline(pl, out boundaryClone))
+                    return false;
+
+                recoveredFromOpen = true;
                 return true;
             }
 
             // Map-imported polygons often arrive as MPOLYGON or old-style POLYLINE* entities.
             if (ent is Polyline2d || ent is Polyline3d || string.Equals(ent.GetType().Name, "MPolygon", StringComparison.OrdinalIgnoreCase))
             {
-                var exploded = ExplodeToBestClosedPolyline(ent);
+                var exploded = ExplodeToBestClosedPolyline(ent, out recoveredFromOpen);
                 if (exploded == null)
                     return false;
 
@@ -974,8 +992,9 @@ namespace AtsBackgroundBuilder.Geometry
             return false;
         }
 
-        private static Polyline? ExplodeToBestClosedPolyline(Entity ent)
+        private static Polyline? ExplodeToBestClosedPolyline(Entity ent, out bool recoveredFromOpen)
         {
+            recoveredFromOpen = false;
             var col = new DBObjectCollection();
             try
             {
@@ -987,47 +1006,171 @@ namespace AtsBackgroundBuilder.Geometry
                 return null;
             }
 
-            Polyline? best = null;
+            Polyline? bestClone = null;
             double bestScore = -1.0;
+            var bestRecovered = false;
 
             foreach (DBObject obj in col)
             {
-                if (obj is Polyline p && p.Closed && p.NumberOfVertices >= 3)
-                {
-                    double score = 0.0;
-                    try
-                    {
-                        var ext = p.GeometricExtents;
-                        score = Math.Abs((ext.MaxPoint.X - ext.MinPoint.X) * (ext.MaxPoint.Y - ext.MinPoint.Y));
-                    }
-                    catch
-                    {
-                        score = 0.0;
-                    }
-
-                    if (best == null || score > bestScore)
-                    {
-                        best?.Dispose();
-                        best = p;
-                        bestScore = score;
-                    }
-                    else
-                    {
-                        p.Dispose();
-                    }
-                }
-                else
+                if (obj is not Polyline p)
                 {
                     obj.Dispose();
+                    continue;
                 }
+
+                Polyline? candidateClone = null;
+                var recoveredCandidate = false;
+                if (p.Closed && p.NumberOfVertices >= 3)
+                {
+                    candidateClone = (Polyline)p.Clone();
+                }
+                else if (TryRecoverClosedCloneFromOpenPolyline(p, out candidateClone))
+                {
+                    recoveredCandidate = true;
+                }
+
+                p.Dispose();
+
+                if (candidateClone == null)
+                {
+                    continue;
+                }
+
+                var score = ComputeBoundaryScore(candidateClone);
+                if (bestClone == null || score > bestScore)
+                {
+                    bestClone?.Dispose();
+                    bestClone = candidateClone;
+                    bestScore = score;
+                    bestRecovered = recoveredCandidate;
+                    continue;
+                }
+
+                candidateClone.Dispose();
             }
 
-            if (best == null)
+            if (bestClone == null)
                 return null;
 
-            var clone = (Polyline)best.Clone();
-            best.Dispose();
-            return clone;
+            recoveredFromOpen = bestRecovered;
+            return bestClone;
+        }
+
+        private static bool TryRecoverClosedCloneFromOpenPolyline(
+            Polyline source,
+            [NotNullWhen(true)] out Polyline? recoveredClone)
+        {
+            recoveredClone = null;
+            if (source == null || source.NumberOfVertices < 3)
+            {
+                return false;
+            }
+
+            var clone = (Polyline)source.Clone();
+            if (clone.Closed)
+            {
+                recoveredClone = clone;
+                return true;
+            }
+
+            double endpointGap;
+            try
+            {
+                var start = clone.GetPoint2dAt(0);
+                var end = clone.GetPoint2dAt(clone.NumberOfVertices - 1);
+                endpointGap = start.GetDistanceTo(end);
+            }
+            catch
+            {
+                clone.Dispose();
+                return false;
+            }
+
+            double pathLength;
+            try
+            {
+                pathLength = Math.Abs(clone.Length);
+            }
+            catch
+            {
+                pathLength = 0.0;
+            }
+
+            // Allow recovery for trimmed polygons where the open gap is a modest fraction
+            // of the retained boundary length; reject very large gaps that are likely linework.
+            var allowedGap = Math.Max(25.0, Math.Min(400.0, pathLength * 0.42));
+            if (endpointGap > allowedGap)
+            {
+                clone.Dispose();
+                return false;
+            }
+
+            try
+            {
+                clone.Closed = true;
+            }
+            catch
+            {
+                clone.Dispose();
+                return false;
+            }
+
+            try
+            {
+                var area = Math.Abs(clone.Area);
+                if (!double.IsFinite(area) || area < 1e-3)
+                {
+                    clone.Dispose();
+                    return false;
+                }
+            }
+            catch
+            {
+                clone.Dispose();
+                return false;
+            }
+
+            recoveredClone = clone;
+            return true;
+        }
+
+        private static double ComputeBoundaryScore(Polyline polyline)
+        {
+            if (polyline == null)
+            {
+                return 0.0;
+            }
+
+            try
+            {
+                var area = Math.Abs(polyline.Area);
+                if (double.IsFinite(area) && area > 0.0)
+                {
+                    return area;
+                }
+            }
+            catch
+            {
+                // fallback to extents score
+            }
+
+            try
+            {
+                var ext = polyline.GeometricExtents;
+                var width = Math.Abs(ext.MaxPoint.X - ext.MinPoint.X);
+                var height = Math.Abs(ext.MaxPoint.Y - ext.MinPoint.Y);
+                var score = width * height;
+                if (double.IsFinite(score))
+                {
+                    return score;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            return 0.0;
         }
 
     }

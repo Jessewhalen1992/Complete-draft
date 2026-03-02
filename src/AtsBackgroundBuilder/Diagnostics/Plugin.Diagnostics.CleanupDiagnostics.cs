@@ -28,6 +28,24 @@ namespace AtsBackgroundBuilder
 
             try
             {
+                // Quarter definitions may be built internally for processing even when
+                // the UI option is off. Remove visible quarter definition output in that case.
+                if (!input.AllowMultiQuarterDispositions && !EnableQuarterViewByEnvironment)
+                {
+                    EraseEntitiesByLayer(
+                        database,
+                        sectionDrawResult.QuarterHelperEntityIds,
+                        "L-QSEC",
+                        logger,
+                        "1/4 definition lines");
+                    EraseEntitiesOnLayerWithinSectionWindows(
+                        database,
+                        sectionDrawResult.SectionPolylineIds,
+                        LayerQuarterView,
+                        logger,
+                        "1/4 definition quarter view");
+                }
+
                 if (!input.IncludeAtsFabric)
                 {
                     // If ATS fabric is not requested, remove all temporary section geometry.
@@ -95,6 +113,186 @@ namespace AtsBackgroundBuilder
                     logger?.WriteLine($"Cleanup: erased {erased} {label} entities");
                 }
             }
+        }
+
+        private static void EraseEntitiesByLayer(
+            Database database,
+            IEnumerable<ObjectId> ids,
+            string layerName,
+            Logger logger,
+            string label)
+        {
+            if (database == null || ids == null || string.IsNullOrWhiteSpace(layerName))
+            {
+                return;
+            }
+
+            var unique = ids.Where(id => !id.IsNull).Distinct().ToList();
+            if (unique.Count == 0)
+            {
+                return;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var erased = 0;
+                foreach (var id in unique)
+                {
+                    try
+                    {
+                        var entity = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
+                        if (entity == null || entity.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!string.Equals(entity.Layer, layerName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        entity.Erase(true);
+                        erased++;
+                    }
+                    catch
+                    {
+                        // Ignore failures (object may already be erased, on locked layer, etc.)
+                    }
+                }
+
+                tr.Commit();
+                if (erased > 0)
+                {
+                    logger?.WriteLine($"Cleanup: erased {erased} {label} entities");
+                }
+            }
+        }
+
+        private static void EraseEntitiesOnLayerWithinSectionWindows(
+            Database database,
+            IEnumerable<ObjectId> sectionIds,
+            string layerName,
+            Logger logger,
+            string label)
+        {
+            if (database == null || sectionIds == null || string.IsNullOrWhiteSpace(layerName))
+            {
+                return;
+            }
+
+            var uniqueSectionIds = sectionIds.Where(id => !id.IsNull).Distinct().ToList();
+            if (uniqueSectionIds.Count == 0)
+            {
+                return;
+            }
+
+            const double cleanupWindowPadding = 80.0;
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var windows = new List<Extents3d>();
+                foreach (var sectionId in uniqueSectionIds)
+                {
+                    try
+                    {
+                        var section = tr.GetObject(sectionId, OpenMode.ForRead, false) as Entity;
+                        if (section == null || section.IsErased)
+                        {
+                            continue;
+                        }
+
+                        var extents = section.GeometricExtents;
+                        windows.Add(new Extents3d(
+                            new Point3d(extents.MinPoint.X - cleanupWindowPadding, extents.MinPoint.Y - cleanupWindowPadding, extents.MinPoint.Z),
+                            new Point3d(extents.MaxPoint.X + cleanupWindowPadding, extents.MaxPoint.Y + cleanupWindowPadding, extents.MaxPoint.Z)));
+                    }
+                    catch
+                    {
+                        // best effort only
+                    }
+                }
+
+                if (windows.Count == 0)
+                {
+                    tr.Commit();
+                    return;
+                }
+
+                var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                var erased = 0;
+
+                foreach (ObjectId id in modelSpace)
+                {
+                    Entity? entity;
+                    try
+                    {
+                        entity = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (entity == null || entity.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(entity.Layer, layerName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    Extents3d entityExtents;
+                    try
+                    {
+                        entityExtents = entity.GeometricExtents;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    var inScope = false;
+                    for (var i = 0; i < windows.Count; i++)
+                    {
+                        if (DoExtentsOverlapOrTouchForCleanup(entityExtents, windows[i], 0.01))
+                        {
+                            inScope = true;
+                            break;
+                        }
+                    }
+
+                    if (!inScope)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        entity.Erase(true);
+                        erased++;
+                    }
+                    catch
+                    {
+                        // Ignore failures (object may already be erased, on locked layer, etc.)
+                    }
+                }
+
+                tr.Commit();
+                if (erased > 0)
+                {
+                    logger?.WriteLine($"Cleanup: erased {erased} {label} entities in requested section scope");
+                }
+            }
+        }
+
+        private static bool DoExtentsOverlapOrTouchForCleanup(Extents3d a, Extents3d b, double tolerance)
+        {
+            return a.MinPoint.X <= (b.MaxPoint.X + tolerance) &&
+                   a.MaxPoint.X >= (b.MinPoint.X - tolerance) &&
+                   a.MinPoint.Y <= (b.MaxPoint.Y + tolerance) &&
+                   a.MaxPoint.Y >= (b.MinPoint.Y - tolerance);
         }
 
         private static void EraseEntitiesOnLayer(Database database, string layerName, Logger logger, string label)
