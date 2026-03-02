@@ -28,9 +28,24 @@ namespace AtsBackgroundBuilder
 
             try
             {
-                // Quarter definitions may be built internally for processing even when
-                // the UI option is off. Remove visible quarter definition output in that case.
-                if (!input.AllowMultiQuarterDispositions && !EnableQuarterViewByEnvironment)
+                var showQuarterDefinitionByToggleOrEnv =
+                    input.AllowMultiQuarterDispositions || EnableQuarterViewByEnvironment;
+
+                // L-QUATER display should follow 1/4 Definitions toggle (or env override),
+                // regardless of ATS fabric.
+                if (!showQuarterDefinitionByToggleOrEnv)
+                {
+                    EraseEntitiesOnLayerWithinSectionWindows(
+                        database,
+                        sectionDrawResult.SectionPolylineIds,
+                        LayerQuarterView,
+                        logger,
+                        "1/4 definition quarter view");
+                }
+
+                // Keep internal quarter helper lines when ATS fabric is requested; otherwise
+                // remove visible helper lines if 1/4 definition display is off.
+                if (!input.IncludeAtsFabric && !showQuarterDefinitionByToggleOrEnv)
                 {
                     EraseEntitiesByLayer(
                         database,
@@ -38,12 +53,6 @@ namespace AtsBackgroundBuilder
                         "L-QSEC",
                         logger,
                         "1/4 definition lines");
-                    EraseEntitiesOnLayerWithinSectionWindows(
-                        database,
-                        sectionDrawResult.SectionPolylineIds,
-                        LayerQuarterView,
-                        logger,
-                        "1/4 definition quarter view");
                 }
 
                 if (!input.IncludeAtsFabric)

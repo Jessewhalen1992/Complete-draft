@@ -399,6 +399,14 @@ internal static class Program
         };
         var envEnabledPlan = BuildExecutionPlan.Create(envEnabledInput, enableQuarterViewByEnvironment: true);
         AssertEqual(true, envEnabledPlan.ShowQuarterDefinitionLinework, nameof(TestBuildExecutionPlanQuarterVisibility));
+
+        var atsEnabledInput = new AtsBuildInput
+        {
+            IncludeAtsFabric = true,
+            AllowMultiQuarterDispositions = false,
+        };
+        var atsEnabledPlan = BuildExecutionPlan.Create(atsEnabledInput, enableQuarterViewByEnvironment: false);
+        AssertEqual(true, atsEnabledPlan.ShowQuarterDefinitionLinework, nameof(TestBuildExecutionPlanQuarterVisibility));
     }
 
     private static void TestBuildExecutionPlanPlsrDrivesScopeAndImport()

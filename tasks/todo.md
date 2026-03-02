@@ -2433,3 +2433,48 @@
 - Verification:
   - `.\.local_dotnet\dotnet.exe build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (`0` errors; existing warnings unchanged).
   - `.\.local_dotnet\dotnet.exe run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed (`Decision tests passed.`).
+
+# Follow-up (ATS Fabric Should Keep 1/4 Linework, 2026-03-02)
+
+- [x] Confirm quarter linework visibility/cleanup gates in build plan and cleanup pipeline.
+- [x] Update quarter-visibility decision so ATS Fabric implies visible 1/4 linework.
+- [x] Update cleanup gate so ATS-on does not erase quarter helper/view linework when 1/4 Definitions is off.
+- [x] Add decision test coverage for ATS-driven quarter visibility.
+- [x] Build plugin and run decision tests.
+
+## Review (ATS Fabric Should Keep 1/4 Linework, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Core/BuildExecutionPlan.cs`:
+  - `ShowQuarterDefinitionLinework` now enables when any of these are true:
+    - `IncludeAtsFabric`
+    - `AllowMultiQuarterDispositions`
+    - `enableQuarterViewByEnvironment`
+- Updated `src/AtsBackgroundBuilder/Diagnostics/Plugin.Diagnostics.CleanupDiagnostics.cs`:
+  - quarter helper/view erase now runs only when all are false:
+    - `IncludeAtsFabric`
+    - `AllowMultiQuarterDispositions`
+    - `EnableQuarterViewByEnvironment`
+  - effect: ATS sections ON keeps 1/4 linework visible even if UI `1/4 Definitions` is OFF.
+- Updated `src/AtsBackgroundBuilder.DecisionTests/Program.cs`:
+  - extended `TestBuildExecutionPlanQuarterVisibility()` with an ATS-enabled case to assert `ShowQuarterDefinitionLinework == true`.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (ATS On Should Keep 1/4 Lines But Hide L-QUATER When 1/4 Definitions Off, 2026-03-02)
+
+- [x] Reproduce behavior split: ATS-on preserved desired 1/4 lines but also kept `L-QUATER` display when `1/4 Definitions` was off.
+- [x] Split cleanup gating so `L-QUATER` follows `1/4 Definitions`/env only, while ATS can still preserve internal 1/4 helper lines.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (ATS On Should Keep 1/4 Lines But Hide L-QUATER When 1/4 Definitions Off, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Diagnostics/Plugin.Diagnostics.CleanupDiagnostics.cs`:
+  - Introduced `showQuarterDefinitionByToggleOrEnv = input.AllowMultiQuarterDispositions || EnableQuarterViewByEnvironment`.
+  - `L-QUATER` cleanup now keys only off that value:
+    - if `showQuarterDefinitionByToggleOrEnv` is false, erase `LayerQuarterView` entities in section scope.
+  - `L-QSEC` helper-line cleanup remains ATS-aware:
+    - erase only when ATS fabric is off and quarter-definition display is off.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).

@@ -68,7 +68,7 @@ namespace AtsBackgroundBuilder.Core
             var shouldRunPlsrCheck = input.CheckPlsr;
             var shouldGenerateDispositionLabels = input.IncludeDispositionLabels || shouldRunPlsrCheck;
             return new BuildExecutionPlan(
-                showQuarterDefinitionLinework: input.AllowMultiQuarterDispositions || enableQuarterViewByEnvironment,
+                showQuarterDefinitionLinework: input.IncludeAtsFabric || input.AllowMultiQuarterDispositions || enableQuarterViewByEnvironment,
                 // Keep quarter derivation on for stable per-quarter build behavior even when UI visibility is off.
                 drawQuarterViewForBuild: true,
                 enableInternalQuarterDefinitionProcessing: true,
