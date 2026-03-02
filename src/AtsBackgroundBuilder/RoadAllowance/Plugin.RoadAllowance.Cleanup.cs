@@ -5536,33 +5536,7 @@ namespace AtsBackgroundBuilder
 
             bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
             {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
+                return TryReadOpenRoadSegment(ent, out a, out b);
             }
 
             bool IsHorizontalLike(Point2d a, Point2d b)
@@ -6540,33 +6514,7 @@ namespace AtsBackgroundBuilder
 
             bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
             {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
+                return TryReadOpenRoadSegment(ent, out a, out b);
             }
 
             using (var tr = database.TransactionManager.StartTransaction())
@@ -8302,6 +8250,37 @@ namespace AtsBackgroundBuilder
                 {
                     return true;
                 }
+            }
+
+            return false;
+        }
+
+        private static bool TryReadOpenRoadSegment(Entity ent, out Point2d a, out Point2d b)
+        {
+            a = default;
+            b = default;
+            if (ent == null)
+            {
+                return false;
+            }
+
+            if (ent is Line ln)
+            {
+                a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            if (ent is Polyline pl)
+            {
+                if (pl.Closed || pl.NumberOfVertices < 2)
+                {
+                    return false;
+                }
+
+                a = pl.GetPoint2dAt(0);
+                b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
+                return a.GetDistanceTo(b) > 1e-4;
             }
 
             return false;
