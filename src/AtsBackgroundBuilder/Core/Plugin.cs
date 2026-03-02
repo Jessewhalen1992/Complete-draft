@@ -46,12 +46,16 @@ namespace AtsBackgroundBuilder
         // stash existing section linework in this envelope, build request in isolation,
         // then restore and run shortest-wins overlap cleanup.
         private const double BuildIsolationBufferMeters = 2200.0;
+        private const double PostRestoreOverlapCleanupExpansionMeters = 120.0;
         // Heavy road-allowance tracing is off by default; enable with ATSBUILD_RA_DIAG=1 when needed.
         private static readonly bool EnableRoadAllowanceDiagnostics =
             string.Equals(Environment.GetEnvironmentVariable("ATSBUILD_RA_DIAG"), "1", StringComparison.OrdinalIgnoreCase);
         // 100m DEFPOINTS buffer windows are off by default for performance testing.
         private static readonly bool EnableBufferedQuarterWindowDrawing =
             string.Equals(Environment.GetEnvironmentVariable("ATSBUILD_DRAW_100M_BUFFER"), "1", StringComparison.OrdinalIgnoreCase);
+        // Range-edge relayer cleanup is WIP and remains off unless explicitly enabled.
+        private static readonly bool EnableRangeEdgeRelayer =
+            IsAffirmativeToggle(Environment.GetEnvironmentVariable("ATSBUILD_ENABLE_RANGE_EDGE_RELAYER"));
         // Export final CAD diagnostic layers (L-SEC/L-USEC/L-QSEC/L-SECTION-LSD) as GeoJSON for py viewer parity.
         private static readonly bool EnableCadGeoJsonExport =
             string.Equals(Environment.GetEnvironmentVariable("ATSBUILD_EXPORT_GEOJSON"), "1", StringComparison.OrdinalIgnoreCase);
@@ -196,6 +200,26 @@ namespace AtsBackgroundBuilder
             }
         }
 
+        private static void ClearBufferedDefpointsWindowsBeforeBuild(Database database, Logger? logger)
+        {
+            if (database == null)
+            {
+                return;
+            }
+
+            try
+            {
+                using var tr = database.TransactionManager.StartTransaction();
+                ClearPreviousBufferedDefpointsWindows(tr);
+                tr.Commit();
+                logger?.WriteLine("DEFPOINTS 100m buffer cleanup: cleared tracked windows before ATSBUILD.");
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine($"DEFPOINTS 100m buffer cleanup skipped before build ({ex.Message}).");
+            }
+        }
+
         [CommandMethod("ATSBUILD")]
         public void AtsBuild()
         {
@@ -214,6 +238,10 @@ namespace AtsBackgroundBuilder
                 ? File.GetLastWriteTimeUtc(assemblyPath)
                 : DateTime.MinValue;
             logger.WriteLine($"ATSBUILD assembly: {assemblyPath} (local={assemblyLocalStamp:yyyy-MM-dd h:mm:ss tt}, utc={assemblyUtcStamp:yyyy-MM-dd HH:mm:ss})");
+            var rangeEdgeRelayerEnv = Environment.GetEnvironmentVariable("ATSBUILD_ENABLE_RANGE_EDGE_RELAYER");
+            logger.WriteLine(
+                $"ATSBUILD range-edge relayer env: {(string.IsNullOrWhiteSpace(rangeEdgeRelayerEnv) ? "<unset>" : rangeEdgeRelayerEnv)} (resolved {(EnableRangeEdgeRelayer ? "ON" : "OFF")}).");
+            ClearBufferedDefpointsWindowsBeforeBuild(database, logger);
             var exitStage = "startup";
             void SetExitStage(string stage)
             {
@@ -397,6 +425,24 @@ namespace AtsBackgroundBuilder
                 logger.Dispose();
                 return;
             }
+
+            const int sectionSummaryLimit = 12;
+            string sectionSummary;
+            if (input.SectionRequests.Count == 0)
+            {
+                sectionSummary = "(none)";
+            }
+            else
+            {
+                var sectionRequestSummaries = input.SectionRequests
+                    .Take(sectionSummaryLimit)
+                    .Select(request =>
+                        $"{request.Key.Zone}/{request.Key.Township}-{request.Key.Range}-{request.Key.Section} [{request.Quarter}]");
+                var additionalSectionRequests = Math.Max(0, input.SectionRequests.Count - sectionSummaryLimit);
+                sectionSummary = string.Join(", ", sectionRequestSummaries) + (additionalSectionRequests > 0 ? $" +{additionalSectionRequests} more" : string.Empty);
+            }
+
+            logger.WriteLine($"ATSBUILD sections: {sectionSummary}");
 
             var selectedXmlCount = input.PlsrXmlPaths?.Count ?? 0;
             logger.WriteLine(
@@ -1946,9 +1992,24 @@ namespace AtsBackgroundBuilder
             NormalizeHorizontalSecRoadAllowanceLayers(database, ruleScopeIds, generatedRoadAllowanceIds, logger);
             NormalizeBottomTownshipBoundaryLayers(database, ruleScopeIds, generatedRoadAllowanceIds, quarterInfosForRoadAllowanceRules, logger);
             NormalizeThirtyEighteenCorridorLayers(database, ruleScopeIds, logger);
-            // TODO: unresolved WIP - R/A layer mix/match still occurs on corridors perpendicular
-            // to township/range switch boundaries. Keep disabled range-edge relayer until deterministic fix.
-            CleanupDuplicateBlindLineSegments(database, ruleScopeIds, logger);
+            var runRangeEdgeRelayer = IsRangeEdgeRelayerEnabled();
+            if (runRangeEdgeRelayer)
+            {
+                logger.WriteLine("Cleanup: range-edge relayer enabled; running duplicate cleanup pass.");
+                CleanupDuplicateBlindLineSegments(database, ruleScopeIds, logger);
+            }
+            else
+            {
+                logger?.WriteLine(
+                    "Cleanup: range-edge relayer intentionally disabled pending deterministic fix for " +
+                    "R/A layer mix/match on perpendicular township/range boundaries.");
+            }
+
+            static bool IsRangeEdgeRelayerEnabled()
+            {
+                return EnableRangeEdgeRelayer;
+            }
+
             logger.WriteLine("Cleanup: legacy SW/NW/simple-west/stop-rule passes skipped in canonical RA mode; SE east-boundary bridge pass enabled.");
             NormalizeBlindLineLayersBySecConnections(database, ruleScopeIds, logger);
             NormalizeUsecLayersToThreeBands(
@@ -2063,9 +2124,12 @@ namespace AtsBackgroundBuilder
             var restoredNearbySectionIds = RestoreStashedSectionBuildingGeometry(database, stashedNearbySectionEntities, logger);
             if (keepGeneratedAtsFabric)
             {
+                var postRestoreCleanupWindows = ExpandClipWindows(
+                    requestedIsolationWindows,
+                    PostRestoreOverlapCleanupExpansionMeters);
                 CleanupOverlappingSectionLinesByShortest(
                     database,
-                    requestedIsolationWindows,
+                    postRestoreCleanupWindows,
                     restoredNearbySectionIds,
                     logger);
             }
@@ -3951,6 +4015,26 @@ namespace AtsBackgroundBuilder
             return MergeOverlappingClipWindows(windows);
         }
 
+        private static List<Extents3d> ExpandClipWindows(IReadOnlyList<Extents3d> windows, double expansionMeters)
+        {
+            var expanded = new List<Extents3d>();
+            if (windows == null || windows.Count == 0)
+            {
+                return expanded;
+            }
+
+            var pad = Math.Max(0.0, expansionMeters);
+            for (var i = 0; i < windows.Count; i++)
+            {
+                var window = windows[i];
+                expanded.Add(new Extents3d(
+                    new Point3d(window.MinPoint.X - pad, window.MinPoint.Y - pad, window.MinPoint.Z),
+                    new Point3d(window.MaxPoint.X + pad, window.MaxPoint.Y + pad, window.MaxPoint.Z)));
+            }
+
+            return MergeOverlappingClipWindows(expanded);
+        }
+
         private static bool IsSectionBuildingLayer(string layerName)
         {
             if (string.IsNullOrWhiteSpace(layerName))
@@ -4180,7 +4264,7 @@ namespace AtsBackgroundBuilder
             var preferEraseSet = preferEraseOnTieIds == null
                 ? new HashSet<ObjectId>()
                 : new HashSet<ObjectId>(preferEraseOnTieIds.Where(id => !id.IsNull));
-            var segments = new List<(ObjectId Id, Point2d A, Point2d B, double Length, bool PreferErase)>();
+            var segments = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase)>();
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
@@ -4204,11 +4288,15 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    segments.Add((id, a, b, a.GetDistanceTo(b), preferEraseSet.Contains(id)));
+                    segments.Add((id, ent.Layer, a, b, a.GetDistanceTo(b), preferEraseSet.Contains(id)));
                 }
 
                 const double equalLengthTol = 0.05;
                 var toErase = new HashSet<ObjectId>();
+                var restoredNearDuplicatePairHits = 0;
+                var restoredCrossLayerNearDuplicatePairHits = 0;
+                var nearCoincidentDuplicatePairHits = 0;
+                var restoredLongestWinsPairs = 0;
                 for (var i = 0; i < segments.Count; i++)
                 {
                     var a = segments[i];
@@ -4225,12 +4313,46 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!AreSegmentsDuplicateOrCollinearOverlap(a.A, a.B, b.A, b.B))
+                        var strictOverlap = AreSegmentsDuplicateOrCollinearOverlap(a.A, a.B, b.A, b.B);
+                        var restoredNearDuplicate = false;
+                        var nearCoincidentDuplicate = false;
+                        if (!strictOverlap && (a.PreferErase != b.PreferErase))
+                        {
+                            var sameLayer = string.Equals(a.Layer, b.Layer, StringComparison.OrdinalIgnoreCase);
+                            var lateralTol = sameLayer ? 5.0 : 1.4;
+                            restoredNearDuplicate = AreSegmentsNearParallelRestoredDuplicate(
+                                a.A,
+                                a.B,
+                                b.A,
+                                b.B,
+                                lateralDistanceTolOverride: lateralTol);
+                            if (restoredNearDuplicate)
+                            {
+                                restoredNearDuplicatePairHits++;
+                                if (!sameLayer)
+                                {
+                                    restoredCrossLayerNearDuplicatePairHits++;
+                                }
+                            }
+                        }
+
+                        if (!strictOverlap && !restoredNearDuplicate)
+                        {
+                            nearCoincidentDuplicate = AreSegmentsNearCoincidentDuplicate(a.A, a.B, b.A, b.B);
+                            if (nearCoincidentDuplicate)
+                            {
+                                nearCoincidentDuplicatePairHits++;
+                            }
+                        }
+
+                        if (!strictOverlap && !restoredNearDuplicate && !nearCoincidentDuplicate)
                         {
                             continue;
                         }
 
-                        if (DoSegmentsShareEndpoint(a.A, a.B, b.A, b.B, endpointTol: 0.20) &&
+                        if (!restoredNearDuplicate &&
+                            !nearCoincidentDuplicate &&
+                            DoSegmentsShareEndpoint(a.A, a.B, b.A, b.B, endpointTol: 0.20) &&
                             !AreSegmentEndpointsNear(a.A, a.B, b.A, b.B, endpointTol: 0.20))
                         {
                             // Adjacent section fragments are allowed to meet at one endpoint.
@@ -4239,24 +4361,107 @@ namespace AtsBackgroundBuilder
                         }
 
                         ObjectId eraseId;
-                        var lengthDiff = a.Length - b.Length;
-                        if (Math.Abs(lengthDiff) <= equalLengthTol)
+                        if ((restoredNearDuplicate || nearCoincidentDuplicate) && a.PreferErase != b.PreferErase)
                         {
-                            if (a.PreferErase != b.PreferErase)
-                            {
-                                eraseId = a.PreferErase ? a.Id : b.Id;
-                            }
-                            else
-                            {
-                                eraseId = a.Id.Handle.Value > b.Id.Handle.Value ? a.Id : b.Id;
-                            }
+                            eraseId = a.PreferErase ? a.Id : b.Id;
                         }
                         else
                         {
-                            eraseId = lengthDiff < 0.0 ? a.Id : b.Id;
+                            var lengthDiff = a.Length - b.Length;
+                            if (Math.Abs(lengthDiff) <= equalLengthTol)
+                            {
+                                if (a.PreferErase != b.PreferErase)
+                                {
+                                    eraseId = a.PreferErase ? a.Id : b.Id;
+                                }
+                                else
+                                {
+                                    eraseId = a.Id.Handle.Value > b.Id.Handle.Value ? a.Id : b.Id;
+                                }
+                            }
+                            else
+                            {
+                                eraseId = lengthDiff < 0.0 ? a.Id : b.Id;
+                            }
                         }
 
                         toErase.Add(eraseId);
+                    }
+                }
+
+                bool IsRestoredVsNewLongestWinsMatch(
+                    (ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase) shorter,
+                    (ObjectId Id, string Layer, Point2d A, Point2d B, double Length, bool PreferErase) longer)
+                {
+                    if (longer.Length <= (shorter.Length + 0.75))
+                    {
+                        return false;
+                    }
+
+                    const double angleTol = 0.02;
+                    const double lateralTol = 1.80;
+                    const double minOverlapMeters = 12.0;
+                    const double minCoverageRatio = 0.75;
+
+                    var shortVec = shorter.B - shorter.A;
+                    var longVec = longer.B - longer.A;
+                    var shortLen = shorter.Length;
+                    var longLen = longer.Length;
+                    if (shortLen <= 1e-6 || longLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var cross = Math.Abs((shortVec.X * longVec.Y) - (shortVec.Y * longVec.X)) / (shortLen * longLen);
+                    if (cross > angleTol)
+                    {
+                        return false;
+                    }
+
+                    if (DistancePointToInfiniteLine(shorter.A, longer.A, longer.B) > lateralTol ||
+                        DistancePointToInfiniteLine(shorter.B, longer.A, longer.B) > lateralTol)
+                    {
+                        return false;
+                    }
+
+                    var axis = longVec / longLen;
+                    var t0 = (shorter.A - longer.A).DotProduct(axis);
+                    var t1 = (shorter.B - longer.A).DotProduct(axis);
+                    var overlap = Math.Min(longLen, Math.Max(t0, t1)) - Math.Max(0.0, Math.Min(t0, t1));
+                    if (overlap <= 0.0)
+                    {
+                        return false;
+                    }
+
+                    var requiredOverlap = Math.Max(minOverlapMeters, shortLen * minCoverageRatio);
+                    return overlap >= requiredOverlap;
+                }
+
+                for (var i = 0; i < segments.Count; i++)
+                {
+                    var a = segments[i];
+                    if (toErase.Contains(a.Id))
+                    {
+                        continue;
+                    }
+
+                    for (var j = i + 1; j < segments.Count; j++)
+                    {
+                        var b = segments[j];
+                        if (toErase.Contains(b.Id) || (a.PreferErase == b.PreferErase))
+                        {
+                            continue;
+                        }
+
+                        var shorter = a.Length <= b.Length ? a : b;
+                        var longer = shorter.Id == a.Id ? b : a;
+                        if (!IsRestoredVsNewLongestWinsMatch(shorter, longer))
+                        {
+                            continue;
+                        }
+
+                        toErase.Add(shorter.Id);
+                        restoredLongestWinsPairs++;
                     }
                 }
 
@@ -4276,7 +4481,11 @@ namespace AtsBackgroundBuilder
                 if (erased > 0)
                 {
                     logger?.WriteLine(
-                        $"Cleanup: overlap shortest-wins erased {erased} section segment(s) within requested isolation window(s).");
+                        $"Cleanup: overlap shortest-wins erased {erased} section segment(s) within requested isolation window(s) " +
+                        $"(restoredNearDuplicatePairs={restoredNearDuplicatePairHits}, " +
+                        $"restoredCrossLayerNearDuplicatePairs={restoredCrossLayerNearDuplicatePairHits}, " +
+                        $"nearCoincidentDuplicatePairs={nearCoincidentDuplicatePairHits}, " +
+                        $"restoredLongestWinsPairs={restoredLongestWinsPairs}).");
                 }
             }
         }
@@ -7413,6 +7622,146 @@ namespace AtsBackgroundBuilder
             var bMax = Math.Max(tB0, tB1);
             var overlap = Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
             return overlap > overlapTol;
+        }
+
+        private static bool AreSegmentsNearParallelRestoredDuplicate(
+            Point2d a0,
+            Point2d a1,
+            Point2d b0,
+            Point2d b1,
+            double? lateralDistanceTolOverride = null)
+        {
+            const double angleTol = 0.02;
+            const double minOverlapMeters = 6.0;
+            const double minShorterCoverageRatio = 0.75;
+            var lateralDistanceTol = lateralDistanceTolOverride.HasValue
+                ? Math.Max(0.2, lateralDistanceTolOverride.Value)
+                : 5.0;
+
+            var segA = a1 - a0;
+            var segB = b1 - b0;
+            var lenA = segA.Length;
+            var lenB = segB.Length;
+            if (lenA <= 1e-6 || lenB <= 1e-6)
+            {
+                return false;
+            }
+
+            var cross = Math.Abs((segA.X * segB.Y) - (segA.Y * segB.X)) / (lenA * lenB);
+            if (cross > angleTol)
+            {
+                return false;
+            }
+
+            // Evaluate projected overlap on the longer segment axis.
+            Point2d baseStart;
+            Point2d baseEnd;
+            Point2d otherStart;
+            Point2d otherEnd;
+            double baseLen;
+            double otherLen;
+            if (lenA >= lenB)
+            {
+                baseStart = a0;
+                baseEnd = a1;
+                otherStart = b0;
+                otherEnd = b1;
+                baseLen = lenA;
+                otherLen = lenB;
+            }
+            else
+            {
+                baseStart = b0;
+                baseEnd = b1;
+                otherStart = a0;
+                otherEnd = a1;
+                baseLen = lenB;
+                otherLen = lenA;
+            }
+
+            if (DistancePointToInfiniteLine(otherStart, baseStart, baseEnd) > lateralDistanceTol ||
+                DistancePointToInfiniteLine(otherEnd, baseStart, baseEnd) > lateralDistanceTol)
+            {
+                return false;
+            }
+
+            var axis = (baseEnd - baseStart) / baseLen;
+            var otherT0 = (otherStart - baseStart).DotProduct(axis);
+            var otherT1 = (otherEnd - baseStart).DotProduct(axis);
+            var overlap = Math.Min(baseLen, Math.Max(otherT0, otherT1)) - Math.Max(0.0, Math.Min(otherT0, otherT1));
+            if (overlap <= 0.0)
+            {
+                return false;
+            }
+
+            var requiredOverlap = Math.Max(minOverlapMeters, Math.Min(baseLen, otherLen) * minShorterCoverageRatio);
+            return overlap >= requiredOverlap;
+        }
+
+        private static bool AreSegmentsNearCoincidentDuplicate(Point2d a0, Point2d a1, Point2d b0, Point2d b1)
+        {
+            const double angleTol = 0.03;
+            const double endpointToSegmentTol = 0.85;
+            const double minOverlapMeters = 6.0;
+            const double minShorterCoverageRatio = 0.80;
+
+            var segA = a1 - a0;
+            var segB = b1 - b0;
+            var lenA = segA.Length;
+            var lenB = segB.Length;
+            if (lenA <= 1e-6 || lenB <= 1e-6)
+            {
+                return false;
+            }
+
+            var cross = Math.Abs((segA.X * segB.Y) - (segA.Y * segB.X)) / (lenA * lenB);
+            if (cross > angleTol)
+            {
+                return false;
+            }
+
+            Point2d baseStart;
+            Point2d baseEnd;
+            Point2d otherStart;
+            Point2d otherEnd;
+            double baseLen;
+            double otherLen;
+            if (lenA >= lenB)
+            {
+                baseStart = a0;
+                baseEnd = a1;
+                otherStart = b0;
+                otherEnd = b1;
+                baseLen = lenA;
+                otherLen = lenB;
+            }
+            else
+            {
+                baseStart = b0;
+                baseEnd = b1;
+                otherStart = a0;
+                otherEnd = a1;
+                baseLen = lenB;
+                otherLen = lenA;
+            }
+
+            if (DistancePointToSegment(otherStart, baseStart, baseEnd) > endpointToSegmentTol ||
+                DistancePointToSegment(otherEnd, baseStart, baseEnd) > endpointToSegmentTol)
+            {
+                return false;
+            }
+
+            var axis = (baseEnd - baseStart) / baseLen;
+            var otherT0 = (otherStart - baseStart).DotProduct(axis);
+            var otherT1 = (otherEnd - baseStart).DotProduct(axis);
+            var overlap = Math.Min(baseLen, Math.Max(otherT0, otherT1)) - Math.Max(0.0, Math.Min(otherT0, otherT1));
+            if (overlap <= 0.0)
+            {
+                return false;
+            }
+
+            var requiredOverlap = Math.Max(minOverlapMeters, otherLen * minShorterCoverageRatio);
+            return overlap >= requiredOverlap;
         }
 
         private static double DistancePointToInfiniteLine(Point2d p, Point2d a, Point2d b)
