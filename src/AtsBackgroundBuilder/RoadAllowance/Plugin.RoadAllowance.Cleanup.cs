@@ -8287,10 +8287,47 @@ namespace AtsBackgroundBuilder
                 tr.Commit();
                 if (adjusted > 0 || unresolved > 0 || skippedBlind > 0)
                 {
-                    logger?.WriteLine(
-                        $"Cleanup: deterministic section-edge relayer adjusted={adjusted}, unchanged={unchanged}, unresolved={unresolved}, skippedBlind={skippedBlind}, ownerResolved={ownerResolved}, fallbackResolved={fallbackResolved}, preserved20ByZeroCompanion={preservedTwentyByZeroCompanion}, forced20To0RangeEdge={forcedTwentyToZeroByRangeEdge}, forced20To0SecCompanion={forcedTwentyToZeroBySecCompanion}, forced20To0GeomPattern={forcedTwentyToZeroByGeomPattern}, demotedBlind30To20={demotedBlindThirty}, demotedBlind30To20ZeroAnchor={demotedBlindThirtyByZeroAnchor}, demotedBlind30To20TwentyAnchor={demotedBlindThirtyByTwentyAnchor}, demotedBlind30To20RangeEdge={demotedBlindThirtyByRangeEdge}, demotedBlind30To20SectionSide={demotedBlindThirtyBySectionSide}.");
+                    WriteDeterministicSectionEdgeRelayerSummary(
+                        logger,
+                        adjusted,
+                        unchanged,
+                        unresolved,
+                        skippedBlind,
+                        ownerResolved,
+                        fallbackResolved,
+                        preservedTwentyByZeroCompanion,
+                        forcedTwentyToZeroByRangeEdge,
+                        forcedTwentyToZeroBySecCompanion,
+                        forcedTwentyToZeroByGeomPattern,
+                        demotedBlindThirty,
+                        demotedBlindThirtyByZeroAnchor,
+                        demotedBlindThirtyByTwentyAnchor,
+                        demotedBlindThirtyByRangeEdge,
+                        demotedBlindThirtyBySectionSide);
                 }
             }
+        }
+
+        private static void WriteDeterministicSectionEdgeRelayerSummary(
+            Logger? logger,
+            int adjusted,
+            int unchanged,
+            int unresolved,
+            int skippedBlind,
+            int ownerResolved,
+            int fallbackResolved,
+            int preservedTwentyByZeroCompanion,
+            int forcedTwentyToZeroByRangeEdge,
+            int forcedTwentyToZeroBySecCompanion,
+            int forcedTwentyToZeroByGeomPattern,
+            int demotedBlindThirty,
+            int demotedBlindThirtyByZeroAnchor,
+            int demotedBlindThirtyByTwentyAnchor,
+            int demotedBlindThirtyByRangeEdge,
+            int demotedBlindThirtyBySectionSide)
+        {
+            logger?.WriteLine(
+                $"Cleanup: deterministic section-edge relayer adjusted={adjusted}, unchanged={unchanged}, unresolved={unresolved}, skippedBlind={skippedBlind}, ownerResolved={ownerResolved}, fallbackResolved={fallbackResolved}, preserved20ByZeroCompanion={preservedTwentyByZeroCompanion}, forced20To0RangeEdge={forcedTwentyToZeroByRangeEdge}, forced20To0SecCompanion={forcedTwentyToZeroBySecCompanion}, forced20To0GeomPattern={forcedTwentyToZeroByGeomPattern}, demotedBlind30To20={demotedBlindThirty}, demotedBlind30To20ZeroAnchor={demotedBlindThirtyByZeroAnchor}, demotedBlind30To20TwentyAnchor={demotedBlindThirtyByTwentyAnchor}, demotedBlind30To20RangeEdge={demotedBlindThirtyByRangeEdge}, demotedBlind30To20SectionSide={demotedBlindThirtyBySectionSide}.");
         }
 
         private static void NormalizeUsecCollinearComponentLayerConsistency(
