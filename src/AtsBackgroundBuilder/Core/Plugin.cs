@@ -656,7 +656,9 @@ namespace AtsBackgroundBuilder
                     logger,
                     config,
                     dispositionImportScopeIds,
-                    importedDispositionPolylines);
+                    importedDispositionPolylines,
+                    scopeBufferMeters: 100.0,
+                    utmZoneHint: executionPlan.IncludeAtsFabric ? input.Zone : (int?)null);
                 if (importedDispositionPolylines.Count == 0)
                 {
                     editor.WriteMessage("\nNo disposition polylines imported from shapefiles.");

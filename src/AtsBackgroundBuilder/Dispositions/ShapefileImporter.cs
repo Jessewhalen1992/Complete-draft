@@ -32,6 +32,16 @@ namespace AtsBackgroundBuilder.Dispositions
 
     public static class ShapefileImporter
     {
+        // Native Map importer can hard-crash on extremely large DBF-backed sets even
+        // with a location window. Keep the size guard available, but disabled by default
+        // so normal production imports still run unless explicitly safety-gated.
+        private const long MaxNativeImporterDbfBytesWithoutOverride = 512L * 1024L * 1024L;
+        private const long MaxNativeImporterShpBytesWithoutOverride = 256L * 1024L * 1024L;
+        private const int DefaultLargeImportChunkRecordCount = 10000;
+        private const int MinLargeImportChunkRecordCount = 1000;
+        private const int MaxLargeImportChunkRecordCount = 200000;
+        private const string EnableSingleSubsetImportEnvVar = "ATSBUILD_ENABLE_SINGLE_SUBSET_IMPORT";
+
         public static ShapefileImportSummary ImportShapefiles(
             Database database,
             Editor editor,
@@ -39,7 +49,8 @@ namespace AtsBackgroundBuilder.Dispositions
             Config config,
             IReadOnlyList<ObjectId> scopePolylineIds,
             List<ObjectId> dispositionPolylines,
-            double scopeBufferMeters = 0.0)
+            double scopeBufferMeters = 0.0,
+            int? utmZoneHint = null)
         {
             var summary = new ShapefileImportSummary();
 
@@ -109,98 +120,233 @@ namespace AtsBackgroundBuilder.Dispositions
                     logger.WriteLine($"Using shapefile: {shapefilePath}");
                     LogShapefileSidecars(shapefilePath, logger);
 
-                    logger.WriteLine("Starting shapefile import.");
-                    if (!TryImportShapefile(importer, shapefilePath, sectionExtents, logger, out var odTableName, true))
+                    if (ShouldSkipLargeNativeDispositionImport(shapefilePath, logger, out var largeSkipReason))
                     {
-                        logger.WriteLine("Shapefile import failed.");
+                        logger.WriteLine(largeSkipReason);
                         summary.ImportFailures++;
                         continue;
                     }
 
-                    // Find newly-created candidates (polylines + mpolygons)
-                    var newCandidates = CaptureNewDispositionCandidateIds(database, existingCandidates);
-                    existingCandidates.UnionWith(newCandidates);
-
-                    var newPolylines = newCandidates.Where(IsLwPolylineId).ToList();
-                    var newMPolygons = newCandidates.Where(IsMPolygonId).ToList();
-
-                    logger.WriteLine($"Post-import candidates: {newPolylines.Count} LWPOLYLINE, {newMPolygons.Count} MPOLYGON.");
-
-                    if (newPolylines.Count == 0 && newMPolygons.Count == 0)
+                    var importPaths = new List<string> { shapefilePath };
+                    var temporaryImportFolders = new List<string>();
+                    if (ShouldUseSpatialSubsetImport(shapefilePath))
                     {
-                        logger.WriteLine("No candidates found with location window; retrying import once without location window.");
-                        if (TryImportShapefile(importer, shapefilePath, sectionExtents, logger, out odTableName, false))
+                        importPaths.Clear();
+                        if (!IsSingleSubsetImportEnabled())
                         {
-                            newCandidates = CaptureNewDispositionCandidateIds(database, existingCandidates);
-                            existingCandidates.UnionWith(newCandidates);
-                            newPolylines = newCandidates.Where(IsLwPolylineId).ToList();
-                            newMPolygons = newCandidates.Where(IsMPolygonId).ToList();
-                            logger.WriteLine($"Retry (no location window) candidates: {newPolylines.Count} LWPOLYLINE, {newMPolygons.Count} MPOLYGON.");
+                            logger.WriteLine(
+                                $"Large-file import safety mode is ON for '{Path.GetFileName(shapefilePath)}': using chunked source import (single subset import disabled; set {EnableSingleSubsetImportEnvVar}=1 to re-enable subset-file imports).");
+
+                            if (!TryCreateChunkedSubsetShapefiles(
+                                    shapefilePath,
+                                    logger,
+                                    out var chunkPaths,
+                                    out var chunkRootFolder,
+                                    out var chunkFailureReason))
+                            {
+                                logger.WriteLine(
+                                    $"Chunked safe import preparation failed for '{Path.GetFileName(shapefilePath)}': {chunkFailureReason}");
+                                summary.ImportFailures++;
+                                continue;
+                            }
+
+                            importPaths.AddRange(chunkPaths);
+                            if (!string.IsNullOrWhiteSpace(chunkRootFolder))
+                            {
+                                temporaryImportFolders.Add(chunkRootFolder);
+                            }
+
+                            logger.WriteLine(
+                                $"Chunked safe import enabled for '{Path.GetFileName(shapefilePath)}': {chunkPaths.Count} chunk(s).");
+                        }
+                        else if (TryCreateSpatialSubsetShapefile(
+                                     shapefilePath,
+                                     sectionExtents,
+                                     utmZoneHint,
+                                     logger,
+                                     out var subsetPath,
+                                     out var subsetKeptCount,
+                                     out var subsetTotalCount,
+                                     out var noSubsetRecordsInScope))
+                        {
+                            importPaths.Add(subsetPath);
+                            var subsetFolder = Path.GetDirectoryName(subsetPath);
+                            if (!string.IsNullOrWhiteSpace(subsetFolder))
+                            {
+                                temporaryImportFolders.Add(subsetFolder);
+                            }
+
+                            logger.WriteLine(
+                                $"Spatial subset import enabled for '{Path.GetFileName(shapefilePath)}': kept {subsetKeptCount}/{subsetTotalCount} record(s).");
+                        }
+                        else if (noSubsetRecordsInScope)
+                        {
+                            logger.WriteLine(
+                                $"Spatial subset import found no raw-coordinate intersections for '{Path.GetFileName(shapefilePath)}'; falling back to chunked safe import.");
+                            if (!TryCreateChunkedSubsetShapefiles(
+                                    shapefilePath,
+                                    logger,
+                                    out var chunkPaths,
+                                    out var chunkRootFolder,
+                                    out var chunkFailureReason))
+                            {
+                                logger.WriteLine(
+                                    $"Chunked safe import preparation failed for '{Path.GetFileName(shapefilePath)}': {chunkFailureReason}");
+                                summary.ImportFailures++;
+                                continue;
+                            }
+
+                            importPaths.AddRange(chunkPaths);
+                            if (!string.IsNullOrWhiteSpace(chunkRootFolder))
+                            {
+                                temporaryImportFolders.Add(chunkRootFolder);
+                            }
+
+                            logger.WriteLine(
+                                $"Chunked safe import enabled for '{Path.GetFileName(shapefilePath)}': {chunkPaths.Count} chunk(s).");
+                        }
+                        else
+                        {
+                            logger.WriteLine(
+                                $"Spatial subset preparation failed for '{Path.GetFileName(shapefilePath)}'; skipping native source import to avoid host crash.");
+                            summary.ImportFailures++;
+                            continue;
                         }
                     }
 
-                    // Fallback: If Map still made MPOLYGON, convert to LWPOLYLINE and erase MPOLYGON.
-                    if (newMPolygons.Count > 0)
+                    try
                     {
-                        var converted = new List<ObjectId>();
-                        const int batchSize = 40;
-                        var batchCount = (newMPolygons.Count + batchSize - 1) / batchSize;
-                        var verboseImportLogging = IsVerboseImportLoggingEnabled();
-                        if (verboseImportLogging)
+                        for (var importIndex = 0; importIndex < importPaths.Count; importIndex++)
                         {
-                            logger.WriteLine($"MPOLYGON conversion start: total={newMPolygons.Count}, batchSize={batchSize}, batches={batchCount}.");
-                        }
+                            var importPath = importPaths[importIndex];
+                            var useLocationWindowForImport =
+                                importPaths.Count > 1 ||
+                                PathsEqual(importPath, shapefilePath);
 
-                        for (var offset = 0; offset < newMPolygons.Count; offset += batchSize)
-                        {
-                            var batchIndex = (offset / batchSize) + 1;
-                            var batch = newMPolygons.Skip(offset).Take(batchSize).ToList();
-                            try
+                            if (importPaths.Count > 1)
                             {
-                                var convertedBatch = ConvertPolygonEntitiesToPolylines(
-                                    database: database,
-                                    logger: logger,
-                                    polygonEntityIds: batch,
-                                    odTableName: odTableName,
-                                    sectionExtents: sectionExtents);
-                                converted.AddRange(convertedBatch);
-                                if (verboseImportLogging)
+                                logger.WriteLine(
+                                    $"Starting shapefile import chunk {importIndex + 1}/{importPaths.Count}: {Path.GetFileName(importPath)}");
+                            }
+                            else
+                            {
+                                    logger.WriteLine("Starting shapefile import.");
+                            }
+
+                            if (!useLocationWindowForImport)
+                            {
+                                logger.WriteLine(
+                                    $"Shapefile import for '{Path.GetFileName(shapefilePath)}' is using prefiltered subset input; location window disabled.");
+                            }
+
+                            if (!TryImportShapefile(
+                                    importer,
+                                    importPath,
+                                    shapefilePath,
+                                    sectionExtents,
+                                    logger,
+                                    out var odTableName,
+                                    useLocationWindowForImport))
+                            {
+                                logger.WriteLine(
+                                    $"Shapefile import failed for '{Path.GetFileName(shapefilePath)}' ({Path.GetFileName(importPath)}).");
+                                summary.ImportFailures++;
+                                continue;
+                            }
+
+                            // Find newly-created candidates (polylines + mpolygons)
+                            var newCandidates = CaptureNewDispositionCandidateIds(database, existingCandidates);
+                            existingCandidates.UnionWith(newCandidates);
+
+                            var newPolylines = newCandidates.Where(IsLwPolylineId).ToList();
+                            var newMPolygons = newCandidates.Where(IsMPolygonId).ToList();
+
+                            logger.WriteLine($"Post-import candidates: {newPolylines.Count} LWPOLYLINE, {newMPolygons.Count} MPOLYGON.");
+
+                            if (useLocationWindowForImport && newPolylines.Count == 0 && newMPolygons.Count == 0)
+                            {
+                                logger.WriteLine("No candidates found with location window; retrying import once without location window.");
+                                if (TryImportShapefile(importer, importPath, shapefilePath, sectionExtents, logger, out odTableName, false))
                                 {
-                                    logger.WriteLine($"MPOLYGON conversion batch {batchIndex}/{batchCount}: converted={convertedBatch.Count}, source={batch.Count}.");
+                                    newCandidates = CaptureNewDispositionCandidateIds(database, existingCandidates);
+                                    existingCandidates.UnionWith(newCandidates);
+                                    newPolylines = newCandidates.Where(IsLwPolylineId).ToList();
+                                    newMPolygons = newCandidates.Where(IsMPolygonId).ToList();
+                                    logger.WriteLine($"Retry (no location window) candidates: {newPolylines.Count} LWPOLYLINE, {newMPolygons.Count} MPOLYGON.");
                                 }
                             }
-                            catch (System.Exception ex)
+
+                            // Fallback: If Map still made MPOLYGON, convert to LWPOLYLINE and erase MPOLYGON.
+                            if (newMPolygons.Count > 0)
                             {
-                                logger.WriteLine($"MPOLYGON conversion batch {batchIndex}/{batchCount} failed: {ex.Message}");
+                                var converted = new List<ObjectId>();
+                                const int batchSize = 40;
+                                var batchCount = (newMPolygons.Count + batchSize - 1) / batchSize;
+                                var verboseImportLogging = IsVerboseImportLoggingEnabled();
+                                if (verboseImportLogging)
+                                {
+                                    logger.WriteLine($"MPOLYGON conversion start: total={newMPolygons.Count}, batchSize={batchSize}, batches={batchCount}.");
+                                }
+
+                                for (var offset = 0; offset < newMPolygons.Count; offset += batchSize)
+                                {
+                                    var batchIndex = (offset / batchSize) + 1;
+                                    var batch = newMPolygons.Skip(offset).Take(batchSize).ToList();
+                                    try
+                                    {
+                                        var convertedBatch = ConvertPolygonEntitiesToPolylines(
+                                            database: database,
+                                            logger: logger,
+                                            polygonEntityIds: batch,
+                                            odTableName: odTableName,
+                                            sectionExtents: sectionExtents);
+                                        converted.AddRange(convertedBatch);
+                                        if (verboseImportLogging)
+                                        {
+                                            logger.WriteLine($"MPOLYGON conversion batch {batchIndex}/{batchCount}: converted={convertedBatch.Count}, source={batch.Count}.");
+                                        }
+                                    }
+                                    catch (System.Exception ex)
+                                    {
+                                        logger.WriteLine($"MPOLYGON conversion batch {batchIndex}/{batchCount} failed: {ex.Message}");
+                                    }
+                                }
+
+                                foreach (var mpId in newMPolygons)
+                                    existingCandidates.Remove(mpId);
+
+                                existingCandidates.UnionWith(converted);
+                                newPolylines.AddRange(converted);
+
+                                logger.WriteLine($"Converted {converted.Count} MPOLYGON to LWPOLYLINE (OD attempted from '{odTableName}').");
                             }
+
+                            logger.WriteLine($"Shapefile import produced {newPolylines.Count} new polyline candidates.");
+
+                            if (newPolylines.Count == 0)
+                            {
+                                logger.WriteLine("No new LWPOLYLINE candidates detected after import/conversion.");
+                                continue;
+                            }
+
+                            FilterAndCollect(
+                                database,
+                                logger,
+                                newPolylines,
+                                sectionExtents,
+                                existingKeys,
+                                dispositionPolylines,
+                                summary,
+                                Path.GetFileName(shapefilePath));
                         }
-
-                        foreach (var mpId in newMPolygons)
-                            existingCandidates.Remove(mpId);
-
-                        existingCandidates.UnionWith(converted);
-                        newPolylines.AddRange(converted);
-
-                        logger.WriteLine($"Converted {converted.Count} MPOLYGON to LWPOLYLINE (OD attempted from '{odTableName}').");
                     }
-
-                    logger.WriteLine($"Shapefile import produced {newPolylines.Count} new polyline candidates.");
-
-                    if (newPolylines.Count == 0)
+                    finally
                     {
-                        logger.WriteLine("No new LWPOLYLINE candidates detected after import/conversion.");
-                        continue;
+                        foreach (var folder in temporaryImportFolders.Distinct(StringComparer.OrdinalIgnoreCase))
+                        {
+                            TryDeleteSpatialSubsetFolder(folder, logger);
+                        }
                     }
-
-                    FilterAndCollect(
-                        database,
-                        logger,
-                        newPolylines,
-                        sectionExtents,
-                        existingKeys,
-                        dispositionPolylines,
-                        summary,
-                        Path.GetFileName(shapefilePath));
                 }
             }
             finally
@@ -224,6 +370,1297 @@ namespace AtsBackgroundBuilder.Dispositions
             summary.ImportedDispositions = dispositionPolylines.Count;
             editor.WriteMessage($"\nImported {summary.ImportedDispositions} dispositions from shapefiles.");
             return summary;
+        }
+
+        private static bool PathsEqual(string first, string second)
+        {
+            if (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(second))
+            {
+                return false;
+            }
+
+            try
+            {
+                var left = Path.GetFullPath(first);
+                var right = Path.GetFullPath(second);
+                return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return string.Equals(first, second, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        private static bool ShouldSkipLargeNativeDispositionImport(
+            string shapefilePath,
+            Logger logger,
+            out string reason)
+        {
+            reason = string.Empty;
+            if (string.IsNullOrWhiteSpace(shapefilePath))
+            {
+                return false;
+            }
+
+            if (!IsLargeDispositionImportSafetyGateEnabled())
+            {
+                return false;
+            }
+
+            if (IsLargeDispositionImportOverrideEnabled())
+            {
+                return false;
+            }
+
+            var shpBytes = GetSafeFileLengthBytes(shapefilePath);
+            var dbfPath = Path.ChangeExtension(shapefilePath, ".dbf");
+            var dbfBytes = GetSafeFileLengthBytes(dbfPath);
+
+            if (dbfBytes <= MaxNativeImporterDbfBytesWithoutOverride &&
+                shpBytes <= MaxNativeImporterShpBytesWithoutOverride)
+            {
+                return false;
+            }
+
+            reason =
+                $"Shapefile import skipped for '{Path.GetFileName(shapefilePath)}': " +
+                $"size exceeds safe native-import threshold " +
+                $"(SHP={FormatSizeMb(shpBytes)}, DBF={FormatSizeMb(dbfBytes)}, " +
+                $"maxSHP={FormatSizeMb(MaxNativeImporterShpBytesWithoutOverride)}, " +
+                $"maxDBF={FormatSizeMb(MaxNativeImporterDbfBytesWithoutOverride)}). " +
+                "Set ATSBUILD_ALLOW_LARGE_DISPOSITION_IMPORT=1 to force native import " +
+                "(when ATSBUILD_SKIP_LARGE_DISPOSITION_IMPORT=1 is enabled).";
+            return true;
+        }
+
+        private static bool IsLargeDispositionImportSafetyGateEnabled()
+        {
+            var raw = Environment.GetEnvironmentVariable("ATSBUILD_SKIP_LARGE_DISPOSITION_IMPORT");
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            var normalized = raw.Trim();
+            return string.Equals(normalized, "1", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "true", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "yes", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "on", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsLargeDispositionImportOverrideEnabled()
+        {
+            var raw = Environment.GetEnvironmentVariable("ATSBUILD_ALLOW_LARGE_DISPOSITION_IMPORT");
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            var normalized = raw.Trim();
+            return string.Equals(normalized, "1", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "true", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "yes", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "on", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static long GetSafeFileLengthBytes(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return 0;
+            }
+
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    return 0;
+                }
+
+                return new FileInfo(path).Length;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private static string FormatSizeMb(long bytes)
+        {
+            var mb = bytes / (1024d * 1024d);
+            return mb.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " MB";
+        }
+
+        private readonly struct ShxEntry
+        {
+            public ShxEntry(int offsetWords, int contentLengthWords)
+            {
+                OffsetWords = offsetWords;
+                ContentLengthWords = contentLengthWords;
+            }
+
+            public int OffsetWords { get; }
+            public int ContentLengthWords { get; }
+        }
+
+        private readonly struct SpatialSubsetRecord
+        {
+            public SpatialSubsetRecord(int sourceRecordIndex, int sourceOffsetWords, int contentLengthWords)
+            {
+                SourceRecordIndex = sourceRecordIndex;
+                SourceOffsetWords = sourceOffsetWords;
+                ContentLengthWords = contentLengthWords;
+            }
+
+            public int SourceRecordIndex { get; }
+            public int SourceOffsetWords { get; }
+            public int ContentLengthWords { get; }
+        }
+
+        private static bool ShouldUseSpatialSubsetImport(string shapefilePath)
+        {
+            if (string.IsNullOrWhiteSpace(shapefilePath))
+            {
+                return false;
+            }
+
+            var shpBytes = GetSafeFileLengthBytes(shapefilePath);
+            var dbfBytes = GetSafeFileLengthBytes(Path.ChangeExtension(shapefilePath, ".dbf"));
+            return dbfBytes > MaxNativeImporterDbfBytesWithoutOverride ||
+                   shpBytes > MaxNativeImporterShpBytesWithoutOverride;
+        }
+
+        private static void TryDeleteSpatialSubsetFolder(string? folderPath, Logger logger)
+        {
+            if (string.IsNullOrWhiteSpace(folderPath))
+            {
+                return;
+            }
+
+            try
+            {
+                if (Directory.Exists(folderPath))
+                {
+                    Directory.Delete(folderPath, recursive: true);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine($"Spatial subset cleanup failed for '{folderPath}': {ex.Message}");
+            }
+        }
+
+        private static bool TryCreateSpatialSubsetShapefile(
+            string sourceShapefilePath,
+            List<Extents2d> sectionExtents,
+            int? utmZoneHint,
+            Logger logger,
+            out string subsetShapefilePath,
+            out int keptRecordCount,
+            out int totalRecordCount,
+            out bool noSubsetRecordsInScope)
+        {
+            subsetShapefilePath = string.Empty;
+            keptRecordCount = 0;
+            totalRecordCount = 0;
+            noSubsetRecordsInScope = false;
+
+            if (string.IsNullOrWhiteSpace(sourceShapefilePath) ||
+                sectionExtents == null ||
+                sectionExtents.Count == 0)
+            {
+                return false;
+            }
+
+            var sourceShxPath = Path.ChangeExtension(sourceShapefilePath, ".shx");
+            var sourceDbfPath = Path.ChangeExtension(sourceShapefilePath, ".dbf");
+            if (!File.Exists(sourceShapefilePath) || !File.Exists(sourceShxPath) || !File.Exists(sourceDbfPath))
+            {
+                logger.WriteLine(
+                    $"Spatial subset preparation skipped for '{Path.GetFileName(sourceShapefilePath)}': required sidecars are missing.");
+                return false;
+            }
+
+            if (!TryReadDbfHeader(sourceDbfPath, out var dbfHeaderBytes, out var dbfHeaderLength, out var dbfRecordLength, out var dbfRecordCount, out var dbfHeaderFailure))
+            {
+                logger.WriteLine(
+                    $"Spatial subset preparation failed for '{Path.GetFileName(sourceShapefilePath)}': invalid DBF ({dbfHeaderFailure}).");
+                return false;
+            }
+
+            var shxEntries = ReadShxEntries(sourceShxPath, logger);
+            if (shxEntries.Count == 0)
+            {
+                logger.WriteLine(
+                    $"Spatial subset preparation failed for '{Path.GetFileName(sourceShapefilePath)}': no SHX records.");
+                return false;
+            }
+
+            totalRecordCount = Math.Min(shxEntries.Count, dbfRecordCount);
+            if (totalRecordCount <= 0)
+            {
+                noSubsetRecordsInScope = true;
+                logger.WriteLine(
+                    $"Spatial subset preparation skipped for '{Path.GetFileName(sourceShapefilePath)}': source records are empty.");
+                return false;
+            }
+
+            var subsetSectionExtents = ResolveSectionExtentsForShapefileCoordinates(
+                sourceShapefilePath,
+                sectionExtents,
+                utmZoneHint,
+                logger);
+            var keptRecords = new List<SpatialSubsetRecord>();
+            var loggedUnsupportedShapeTypes = new HashSet<int>();
+            var hasBounds = false;
+            var subsetBounds = default(Extents2d);
+
+            try
+            {
+                using (var shpStream = new FileStream(sourceShapefilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var shpReader = new BinaryReader(shpStream, Encoding.UTF8, leaveOpen: true))
+                {
+                    for (var recordIndex = 0; recordIndex < totalRecordCount; recordIndex++)
+                    {
+                        var entry = shxEntries[recordIndex];
+                        if (entry.OffsetWords <= 0 || entry.ContentLengthWords <= 0)
+                        {
+                            continue;
+                        }
+
+                        var recordOffsetBytes = (long)entry.OffsetWords * 2L;
+                        var recordLengthBytes = 8L + ((long)entry.ContentLengthWords * 2L);
+                        if (recordOffsetBytes < 100 || recordOffsetBytes + recordLengthBytes > shpStream.Length)
+                        {
+                            continue;
+                        }
+
+                        var hasRecordBounds = TryReadShapeRecordBounds(
+                            shpReader,
+                            recordOffsetBytes,
+                            entry.ContentLengthWords,
+                            out var recordBounds,
+                            out var shapeType);
+
+                        bool keepRecord;
+                        if (hasRecordBounds)
+                        {
+                            keepRecord = IsWithinSections(recordBounds, subsetSectionExtents);
+                        }
+                        else if (shapeType == 0)
+                        {
+                            keepRecord = false;
+                        }
+                        else
+                        {
+                            // Keep unsupported non-null shape types rather than risk silently dropping valid records.
+                            keepRecord = true;
+                            if (loggedUnsupportedShapeTypes.Add(shapeType))
+                            {
+                                logger.WriteLine(
+                                    $"Spatial subset: unsupported shape type {shapeType} encountered; keeping these records unfiltered.");
+                            }
+                        }
+
+                        if (!keepRecord)
+                        {
+                            continue;
+                        }
+
+                        keptRecords.Add(new SpatialSubsetRecord(
+                            sourceRecordIndex: recordIndex,
+                            sourceOffsetWords: entry.OffsetWords,
+                            contentLengthWords: entry.ContentLengthWords));
+
+                        if (hasRecordBounds)
+                        {
+                            if (!hasBounds)
+                            {
+                                subsetBounds = recordBounds;
+                                hasBounds = true;
+                            }
+                            else
+                            {
+                                subsetBounds = UnionExtents(subsetBounds, recordBounds);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine(
+                    $"Spatial subset preparation failed for '{Path.GetFileName(sourceShapefilePath)}' while scanning records: {ex.Message}");
+                return false;
+            }
+
+            if (keptRecords.Count == 0)
+            {
+                noSubsetRecordsInScope = true;
+                return false;
+            }
+
+            var subsetFolder = Path.Combine(
+                Path.GetTempPath(),
+                "AtsBackgroundBuilder",
+                "shape-subsets",
+                Guid.NewGuid().ToString("N"));
+            var sourceFileName = Path.GetFileName(sourceShapefilePath);
+            var subsetShpPath = Path.Combine(subsetFolder, sourceFileName);
+            var subsetShxPath = Path.ChangeExtension(subsetShpPath, ".shx");
+            var subsetDbfPath = Path.ChangeExtension(subsetShpPath, ".dbf");
+            Extents2d? subsetBoundsOrNull = hasBounds ? subsetBounds : (Extents2d?)null;
+
+            try
+            {
+                Directory.CreateDirectory(subsetFolder);
+
+                if (!TryWriteSpatialSubsetShpAndShx(
+                        sourceShapefilePath,
+                        sourceShxPath,
+                        subsetShpPath,
+                        subsetShxPath,
+                        keptRecords,
+                        subsetBoundsOrNull,
+                        out var shpFailure))
+                {
+                    logger.WriteLine(
+                        $"Spatial subset preparation failed for '{sourceFileName}' while writing SHP/SHX: {shpFailure}");
+                    TryDeleteSpatialSubsetFolder(subsetFolder, logger);
+                    return false;
+                }
+
+                if (!TryWriteSpatialSubsetDbf(
+                        sourceDbfPath,
+                        subsetDbfPath,
+                        dbfHeaderBytes,
+                        dbfHeaderLength,
+                        dbfRecordLength,
+                        keptRecords,
+                        out var dbfFailure))
+                {
+                    logger.WriteLine(
+                        $"Spatial subset preparation failed for '{sourceFileName}' while writing DBF: {dbfFailure}");
+                    TryDeleteSpatialSubsetFolder(subsetFolder, logger);
+                    return false;
+                }
+
+                TryCopySpatialSubsetSidecar(sourceShapefilePath, subsetShpPath, ".prj", logger);
+                TryCopySpatialSubsetSidecar(sourceShapefilePath, subsetShpPath, ".cpg", logger);
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine(
+                    $"Spatial subset preparation failed for '{sourceFileName}': {ex.Message}");
+                TryDeleteSpatialSubsetFolder(subsetFolder, logger);
+                return false;
+            }
+
+            subsetShapefilePath = subsetShpPath;
+            keptRecordCount = keptRecords.Count;
+            return true;
+        }
+
+        private static bool TryCreateChunkedSubsetShapefiles(
+            string sourceShapefilePath,
+            Logger logger,
+            out List<string> chunkShapefilePaths,
+            out string chunkRootFolder,
+            out string failureReason)
+        {
+            chunkShapefilePaths = new List<string>();
+            chunkRootFolder = string.Empty;
+            failureReason = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(sourceShapefilePath))
+            {
+                failureReason = "Source shapefile path is empty.";
+                return false;
+            }
+
+            var sourceShxPath = Path.ChangeExtension(sourceShapefilePath, ".shx");
+            var sourceDbfPath = Path.ChangeExtension(sourceShapefilePath, ".dbf");
+            if (!File.Exists(sourceShapefilePath) || !File.Exists(sourceShxPath) || !File.Exists(sourceDbfPath))
+            {
+                failureReason = "Source shapefile sidecars are missing.";
+                return false;
+            }
+
+            if (!TryReadDbfHeader(
+                    sourceDbfPath,
+                    out var dbfHeaderBytes,
+                    out var dbfHeaderLength,
+                    out var dbfRecordLength,
+                    out var dbfRecordCount,
+                    out var dbfHeaderFailure))
+            {
+                failureReason = "Invalid DBF for chunked import: " + dbfHeaderFailure;
+                return false;
+            }
+
+            var shxEntries = ReadShxEntries(sourceShxPath, logger);
+            if (shxEntries.Count == 0)
+            {
+                failureReason = "No SHX entries available for chunked import.";
+                return false;
+            }
+
+            var totalRecordCount = Math.Min(shxEntries.Count, dbfRecordCount);
+            if (totalRecordCount <= 0)
+            {
+                failureReason = "No records available for chunked import.";
+                return false;
+            }
+
+            var chunkSize = GetLargeImportChunkRecordCount();
+            chunkRootFolder = Path.Combine(
+                Path.GetTempPath(),
+                "AtsBackgroundBuilder",
+                "shape-chunks",
+                Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(chunkRootFolder);
+
+            var sourceBaseName = Path.GetFileNameWithoutExtension(sourceShapefilePath) ?? "shape";
+            var chunkIndex = 0;
+            for (var start = 0; start < totalRecordCount; start += chunkSize)
+            {
+                var count = Math.Min(chunkSize, totalRecordCount - start);
+                if (count <= 0)
+                {
+                    break;
+                }
+
+                var records = new List<SpatialSubsetRecord>(count);
+                for (var offset = 0; offset < count; offset++)
+                {
+                    var recordIndex = start + offset;
+                    var entry = shxEntries[recordIndex];
+                    if (entry.OffsetWords <= 0 || entry.ContentLengthWords <= 0)
+                    {
+                        continue;
+                    }
+
+                    records.Add(new SpatialSubsetRecord(
+                        sourceRecordIndex: recordIndex,
+                        sourceOffsetWords: entry.OffsetWords,
+                        contentLengthWords: entry.ContentLengthWords));
+                }
+
+                if (records.Count == 0)
+                {
+                    continue;
+                }
+
+                chunkIndex++;
+                var chunkFolder = Path.Combine(chunkRootFolder, $"chunk-{chunkIndex:0000}");
+                Directory.CreateDirectory(chunkFolder);
+                var chunkName = $"{sourceBaseName}-chunk-{chunkIndex:0000}.shp";
+                var chunkShpPath = Path.Combine(chunkFolder, chunkName);
+                var chunkShxPath = Path.ChangeExtension(chunkShpPath, ".shx");
+                var chunkDbfPath = Path.ChangeExtension(chunkShpPath, ".dbf");
+
+                if (!TryWriteSpatialSubsetShpAndShx(
+                        sourceShapefilePath,
+                        sourceShxPath,
+                        chunkShpPath,
+                        chunkShxPath,
+                        records,
+                        subsetBounds: null,
+                        out var shpFailure))
+                {
+                    failureReason = $"Chunk {chunkIndex} SHP/SHX write failed: {shpFailure}";
+                    TryDeleteSpatialSubsetFolder(chunkRootFolder, logger);
+                    chunkRootFolder = string.Empty;
+                    chunkShapefilePaths.Clear();
+                    return false;
+                }
+
+                if (!TryWriteSpatialSubsetDbf(
+                        sourceDbfPath,
+                        chunkDbfPath,
+                        dbfHeaderBytes,
+                        dbfHeaderLength,
+                        dbfRecordLength,
+                        records,
+                        out var dbfFailure))
+                {
+                    failureReason = $"Chunk {chunkIndex} DBF write failed: {dbfFailure}";
+                    TryDeleteSpatialSubsetFolder(chunkRootFolder, logger);
+                    chunkRootFolder = string.Empty;
+                    chunkShapefilePaths.Clear();
+                    return false;
+                }
+
+                TryCopySpatialSubsetSidecar(sourceShapefilePath, chunkShpPath, ".prj", logger);
+                TryCopySpatialSubsetSidecar(sourceShapefilePath, chunkShpPath, ".cpg", logger);
+                chunkShapefilePaths.Add(chunkShpPath);
+            }
+
+            if (chunkShapefilePaths.Count == 0)
+            {
+                failureReason = "Chunked import created no chunk files.";
+                TryDeleteSpatialSubsetFolder(chunkRootFolder, logger);
+                chunkRootFolder = string.Empty;
+                return false;
+            }
+
+            return true;
+        }
+
+        private static List<Extents2d> ResolveSectionExtentsForShapefileCoordinates(
+            string sourceShapefilePath,
+            List<Extents2d> sectionExtents,
+            int? utmZoneHint,
+            Logger logger)
+        {
+            if (sectionExtents.Count == 0)
+            {
+                return sectionExtents;
+            }
+
+            if (!TryReadShapefileHeaderBounds(sourceShapefilePath, out var sourceBounds))
+            {
+                return sectionExtents;
+            }
+
+            if (!LooksGeographicCoordinateSystem(sourceBounds) ||
+                !LooksProjectedCoordinateSystem(sectionExtents))
+            {
+                return sectionExtents;
+            }
+
+            if (!utmZoneHint.HasValue || utmZoneHint.Value < 1 || utmZoneHint.Value > 60)
+            {
+                logger.WriteLine(
+                    $"Spatial subset CRS transform skipped for '{Path.GetFileName(sourceShapefilePath)}': UTM zone hint unavailable.");
+                return sectionExtents;
+            }
+
+            if (TryConvertSectionExtentsFromUtmToGeographic(sectionExtents, utmZoneHint.Value, out var geographicSectionExtents))
+            {
+                logger.WriteLine(
+                    $"Spatial subset CRS transform applied for '{Path.GetFileName(sourceShapefilePath)}': UTM zone {utmZoneHint.Value} -> geographic.");
+                return geographicSectionExtents;
+            }
+
+            logger.WriteLine(
+                $"Spatial subset CRS transform failed for '{Path.GetFileName(sourceShapefilePath)}'; using drawing-coordinate extents.");
+            return sectionExtents;
+        }
+
+        private static bool TryReadShapefileHeaderBounds(string shapefilePath, out Extents2d bounds)
+        {
+            bounds = default;
+
+            try
+            {
+                using (var stream = new FileStream(shapefilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true))
+                {
+                    if (stream.Length < 100)
+                    {
+                        return false;
+                    }
+
+                    stream.Seek(36, SeekOrigin.Begin);
+                    var minX = reader.ReadDouble();
+                    var minY = reader.ReadDouble();
+                    var maxX = reader.ReadDouble();
+                    var maxY = reader.ReadDouble();
+
+                    if (double.IsNaN(minX) || double.IsNaN(minY) || double.IsNaN(maxX) || double.IsNaN(maxY) ||
+                        double.IsInfinity(minX) || double.IsInfinity(minY) || double.IsInfinity(maxX) || double.IsInfinity(maxY))
+                    {
+                        return false;
+                    }
+
+                    if (maxX < minX)
+                    {
+                        (minX, maxX) = (maxX, minX);
+                    }
+
+                    if (maxY < minY)
+                    {
+                        (minY, maxY) = (maxY, minY);
+                    }
+
+                    bounds = new Extents2d(new Point2d(minX, minY), new Point2d(maxX, maxY));
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool LooksGeographicCoordinateSystem(Extents2d bounds)
+        {
+            return bounds.MinPoint.X >= -180.0 && bounds.MaxPoint.X <= 180.0 &&
+                   bounds.MinPoint.Y >= -90.0 && bounds.MaxPoint.Y <= 90.0;
+        }
+
+        private static bool LooksProjectedCoordinateSystem(List<Extents2d> extents)
+        {
+            var maxAbs = 0.0;
+            foreach (var extent in extents)
+            {
+                maxAbs = Math.Max(maxAbs, Math.Abs(extent.MinPoint.X));
+                maxAbs = Math.Max(maxAbs, Math.Abs(extent.MaxPoint.X));
+                maxAbs = Math.Max(maxAbs, Math.Abs(extent.MinPoint.Y));
+                maxAbs = Math.Max(maxAbs, Math.Abs(extent.MaxPoint.Y));
+            }
+
+            return maxAbs > 1000.0;
+        }
+
+        private static bool TryConvertSectionExtentsFromUtmToGeographic(
+            List<Extents2d> sourceExtents,
+            int zone,
+            out List<Extents2d> converted)
+        {
+            converted = new List<Extents2d>(sourceExtents.Count);
+            foreach (var extent in sourceExtents)
+            {
+                if (!TryConvertUtmExtentToGeographic(extent, zone, out var convertedExtent))
+                {
+                    converted.Clear();
+                    return false;
+                }
+
+                converted.Add(convertedExtent);
+            }
+
+            return converted.Count > 0;
+        }
+
+        private static bool TryConvertUtmExtentToGeographic(Extents2d utmExtent, int zone, out Extents2d geographicExtent)
+        {
+            geographicExtent = default;
+
+            var corners = new[]
+            {
+                new Point2d(utmExtent.MinPoint.X, utmExtent.MinPoint.Y),
+                new Point2d(utmExtent.MinPoint.X, utmExtent.MaxPoint.Y),
+                new Point2d(utmExtent.MaxPoint.X, utmExtent.MinPoint.Y),
+                new Point2d(utmExtent.MaxPoint.X, utmExtent.MaxPoint.Y)
+            };
+
+            var hasPoint = false;
+            var minLon = 0.0;
+            var minLat = 0.0;
+            var maxLon = 0.0;
+            var maxLat = 0.0;
+
+            foreach (var corner in corners)
+            {
+                if (!TryConvertUtmPointToLonLat(corner.X, corner.Y, zone, out var lon, out var lat))
+                {
+                    return false;
+                }
+
+                if (!hasPoint)
+                {
+                    minLon = maxLon = lon;
+                    minLat = maxLat = lat;
+                    hasPoint = true;
+                }
+                else
+                {
+                    minLon = Math.Min(minLon, lon);
+                    minLat = Math.Min(minLat, lat);
+                    maxLon = Math.Max(maxLon, lon);
+                    maxLat = Math.Max(maxLat, lat);
+                }
+            }
+
+            if (!hasPoint)
+            {
+                return false;
+            }
+
+            geographicExtent = new Extents2d(
+                new Point2d(minLon, minLat),
+                new Point2d(maxLon, maxLat));
+            return true;
+        }
+
+        private static bool TryConvertUtmPointToLonLat(double easting, double northing, int zone, out double lonDeg, out double latDeg)
+        {
+            lonDeg = 0.0;
+            latDeg = 0.0;
+
+            if (zone < 1 || zone > 60 ||
+                double.IsNaN(easting) || double.IsNaN(northing) ||
+                double.IsInfinity(easting) || double.IsInfinity(northing))
+            {
+                return false;
+            }
+
+            // WGS84/NAD83 ellipsoid (difference is negligible at this filtering stage).
+            const double a = 6378137.0;
+            const double f = 1.0 / 298.257223563;
+            const double k0 = 0.9996;
+
+            var e2 = f * (2.0 - f);
+            var ePrime2 = e2 / (1.0 - e2);
+            var x = easting - 500000.0;
+            var y = northing; // Alberta input is northern hemisphere.
+
+            var m = y / k0;
+            var mu = m / (a * (1.0 - e2 / 4.0 - 3.0 * e2 * e2 / 64.0 - 5.0 * e2 * e2 * e2 / 256.0));
+
+            var sqrtOneMinusE2 = Math.Sqrt(1.0 - e2);
+            var e1 = (1.0 - sqrtOneMinusE2) / (1.0 + sqrtOneMinusE2);
+            var j1 = 3.0 * e1 / 2.0 - 27.0 * Math.Pow(e1, 3.0) / 32.0;
+            var j2 = 21.0 * e1 * e1 / 16.0 - 55.0 * Math.Pow(e1, 4.0) / 32.0;
+            var j3 = 151.0 * Math.Pow(e1, 3.0) / 96.0;
+            var j4 = 1097.0 * Math.Pow(e1, 4.0) / 512.0;
+
+            var fp = mu +
+                     j1 * Math.Sin(2.0 * mu) +
+                     j2 * Math.Sin(4.0 * mu) +
+                     j3 * Math.Sin(6.0 * mu) +
+                     j4 * Math.Sin(8.0 * mu);
+
+            var sinFp = Math.Sin(fp);
+            var cosFp = Math.Cos(fp);
+            var tanFp = Math.Tan(fp);
+
+            var c1 = ePrime2 * cosFp * cosFp;
+            var t1 = tanFp * tanFp;
+            var n1 = a / Math.Sqrt(1.0 - e2 * sinFp * sinFp);
+            var r1 = a * (1.0 - e2) / Math.Pow(1.0 - e2 * sinFp * sinFp, 1.5);
+            var d = x / (n1 * k0);
+
+            var latRad = fp - (n1 * tanFp / r1) *
+                         (d * d / 2.0 -
+                          (5.0 + 3.0 * t1 + 10.0 * c1 - 4.0 * c1 * c1 - 9.0 * ePrime2) * Math.Pow(d, 4.0) / 24.0 +
+                          (61.0 + 90.0 * t1 + 298.0 * c1 + 45.0 * t1 * t1 - 252.0 * ePrime2 - 3.0 * c1 * c1) * Math.Pow(d, 6.0) / 720.0);
+
+            var lonRad = (d -
+                          (1.0 + 2.0 * t1 + c1) * Math.Pow(d, 3.0) / 6.0 +
+                          (5.0 - 2.0 * c1 + 28.0 * t1 - 3.0 * c1 * c1 + 8.0 * ePrime2 + 24.0 * t1 * t1) * Math.Pow(d, 5.0) / 120.0) / cosFp;
+
+            var lonOriginDeg = (zone - 1) * 6.0 - 180.0 + 3.0;
+            latDeg = latRad * 180.0 / Math.PI;
+            lonDeg = lonOriginDeg + lonRad * 180.0 / Math.PI;
+
+            return !double.IsNaN(lonDeg) && !double.IsNaN(latDeg) &&
+                   !double.IsInfinity(lonDeg) && !double.IsInfinity(latDeg);
+        }
+
+        private static int GetLargeImportChunkRecordCount()
+        {
+            var raw = Environment.GetEnvironmentVariable("ATSBUILD_LARGE_IMPORT_CHUNK_RECORDS");
+            if (!int.TryParse(raw, out var parsed))
+            {
+                return DefaultLargeImportChunkRecordCount;
+            }
+
+            if (parsed < MinLargeImportChunkRecordCount)
+            {
+                return MinLargeImportChunkRecordCount;
+            }
+
+            if (parsed > MaxLargeImportChunkRecordCount)
+            {
+                return MaxLargeImportChunkRecordCount;
+            }
+
+            return parsed;
+        }
+
+        private static bool IsSingleSubsetImportEnabled()
+        {
+            var raw = Environment.GetEnvironmentVariable(EnableSingleSubsetImportEnvVar);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            var normalized = raw.Trim();
+            return string.Equals(normalized, "1", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "true", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "yes", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "on", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryReadDbfHeader(
+            string dbfPath,
+            out byte[] headerBytes,
+            out int headerLength,
+            out int recordLength,
+            out int recordCount,
+            out string failureReason)
+        {
+            headerBytes = Array.Empty<byte>();
+            headerLength = 0;
+            recordLength = 0;
+            recordCount = 0;
+            failureReason = string.Empty;
+
+            try
+            {
+                using (var dbfStream = new FileStream(dbfPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var dbfReader = new BinaryReader(dbfStream, Encoding.UTF8, leaveOpen: true))
+                {
+                    if (dbfStream.Length < 32)
+                    {
+                        failureReason = "DBF header shorter than 32 bytes.";
+                        return false;
+                    }
+
+                    var first32 = dbfReader.ReadBytes(32);
+                    if (first32.Length != 32)
+                    {
+                        failureReason = "Unable to read first DBF header bytes.";
+                        return false;
+                    }
+
+                    recordCount =
+                        first32[4] |
+                        (first32[5] << 8) |
+                        (first32[6] << 16) |
+                        (first32[7] << 24);
+                    headerLength = first32[8] | (first32[9] << 8);
+                    recordLength = first32[10] | (first32[11] << 8);
+
+                    if (recordCount < 0)
+                    {
+                        failureReason = $"Invalid DBF record count {recordCount}.";
+                        return false;
+                    }
+
+                    if (headerLength < 32)
+                    {
+                        failureReason = $"Invalid DBF header length {headerLength}.";
+                        return false;
+                    }
+
+                    if (recordLength <= 0)
+                    {
+                        failureReason = $"Invalid DBF record length {recordLength}.";
+                        return false;
+                    }
+
+                    if (dbfStream.Length < headerLength)
+                    {
+                        failureReason = $"DBF file shorter than header length ({dbfStream.Length} < {headerLength}).";
+                        return false;
+                    }
+
+                    dbfStream.Seek(0, SeekOrigin.Begin);
+                    headerBytes = dbfReader.ReadBytes(headerLength);
+                    if (headerBytes.Length != headerLength)
+                    {
+                        failureReason = "Unable to read full DBF header.";
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                failureReason = ex.Message;
+                return false;
+            }
+        }
+
+        private static List<ShxEntry> ReadShxEntries(string shxPath, Logger logger)
+        {
+            var entries = new List<ShxEntry>();
+
+            try
+            {
+                using (var shxStream = new FileStream(shxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var shxReader = new BinaryReader(shxStream, Encoding.UTF8, leaveOpen: true))
+                {
+                    if (shxStream.Length < 100)
+                    {
+                        logger.WriteLine($"SHX index read failed for '{Path.GetFileName(shxPath)}': header shorter than 100 bytes.");
+                        return entries;
+                    }
+
+                    shxStream.Seek(100, SeekOrigin.Begin);
+                    var recordCount = (int)((shxStream.Length - 100) / 8);
+                    for (var i = 0; i < recordCount; i++)
+                    {
+                        var offsetWords = ReadInt32BigEndian(shxReader);
+                        var contentLengthWords = ReadInt32BigEndian(shxReader);
+                        entries.Add(new ShxEntry(offsetWords, contentLengthWords));
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine($"SHX index read failed for '{Path.GetFileName(shxPath)}': {ex.Message}");
+            }
+
+            return entries;
+        }
+
+        private static bool TryReadShapeRecordBounds(
+            BinaryReader shpReader,
+            long recordOffsetBytes,
+            int contentLengthWords,
+            out Extents2d recordBounds,
+            out int shapeType)
+        {
+            recordBounds = default;
+            shapeType = 0;
+
+            var contentLengthBytes = (long)contentLengthWords * 2L;
+            if (contentLengthBytes < 4)
+            {
+                return false;
+            }
+
+            try
+            {
+                shpReader.BaseStream.Seek(recordOffsetBytes + 8L, SeekOrigin.Begin);
+                shapeType = shpReader.ReadInt32();
+                if (shapeType == 0)
+                {
+                    return false;
+                }
+
+                if (IsPointShapeType(shapeType))
+                {
+                    if (contentLengthBytes < 20)
+                    {
+                        return false;
+                    }
+
+                    var x = shpReader.ReadDouble();
+                    var y = shpReader.ReadDouble();
+                    if (double.IsNaN(x) || double.IsNaN(y) || double.IsInfinity(x) || double.IsInfinity(y))
+                    {
+                        return false;
+                    }
+
+                    var pt = new Point2d(x, y);
+                    recordBounds = new Extents2d(pt, pt);
+                    return true;
+                }
+
+                if (!IsBoxShapeType(shapeType) || contentLengthBytes < 36)
+                {
+                    return false;
+                }
+
+                var minX = shpReader.ReadDouble();
+                var minY = shpReader.ReadDouble();
+                var maxX = shpReader.ReadDouble();
+                var maxY = shpReader.ReadDouble();
+                if (double.IsNaN(minX) || double.IsNaN(minY) || double.IsNaN(maxX) || double.IsNaN(maxY) ||
+                    double.IsInfinity(minX) || double.IsInfinity(minY) || double.IsInfinity(maxX) || double.IsInfinity(maxY))
+                {
+                    return false;
+                }
+
+                if (maxX < minX)
+                {
+                    (minX, maxX) = (maxX, minX);
+                }
+
+                if (maxY < minY)
+                {
+                    (minY, maxY) = (maxY, minY);
+                }
+
+                recordBounds = new Extents2d(new Point2d(minX, minY), new Point2d(maxX, maxY));
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsPointShapeType(int shapeType)
+        {
+            return shapeType == 1 || shapeType == 11 || shapeType == 21;
+        }
+
+        private static bool IsBoxShapeType(int shapeType)
+        {
+            switch (shapeType)
+            {
+                case 3:  // PolyLine
+                case 5:  // Polygon
+                case 8:  // MultiPoint
+                case 13: // PolyLineZ
+                case 15: // PolygonZ
+                case 18: // MultiPointZ
+                case 23: // PolyLineM
+                case 25: // PolygonM
+                case 28: // MultiPointM
+                case 31: // MultiPatch
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        private static bool TryWriteSpatialSubsetShpAndShx(
+            string sourceShpPath,
+            string sourceShxPath,
+            string subsetShpPath,
+            string subsetShxPath,
+            IReadOnlyList<SpatialSubsetRecord> records,
+            Extents2d? subsetBounds,
+            out string failureReason)
+        {
+            failureReason = string.Empty;
+
+            try
+            {
+                using (var sourceShpStream = new FileStream(sourceShpPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var sourceShpReader = new BinaryReader(sourceShpStream, Encoding.UTF8, leaveOpen: true))
+                using (var sourceShxStream = new FileStream(sourceShxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    var shpHeader = new byte[100];
+                    var shxHeader = new byte[100];
+                    if (sourceShpStream.Read(shpHeader, 0, shpHeader.Length) != shpHeader.Length)
+                    {
+                        failureReason = "Failed to read source SHP header.";
+                        return false;
+                    }
+
+                    if (sourceShxStream.Read(shxHeader, 0, shxHeader.Length) != shxHeader.Length)
+                    {
+                        failureReason = "Failed to read source SHX header.";
+                        return false;
+                    }
+
+                    using (var subsetShpStream = new FileStream(subsetShpPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+                    using (var subsetShxStream = new FileStream(subsetShxPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+                    {
+                        subsetShpStream.Write(shpHeader, 0, shpHeader.Length);
+                        subsetShxStream.Write(shxHeader, 0, shxHeader.Length);
+
+                        var currentOffsetWords = 50; // 100 bytes / 2
+                        var targetRecordNumber = 1;
+                        foreach (var record in records)
+                        {
+                            var sourceRecordOffsetBytes = (long)record.SourceOffsetWords * 2L;
+                            sourceShpStream.Seek(sourceRecordOffsetBytes, SeekOrigin.Begin);
+
+                            _ = ReadInt32BigEndian(sourceShpReader); // source record number
+                            var sourceContentLengthWords = ReadInt32BigEndian(sourceShpReader);
+                            if (sourceContentLengthWords <= 0)
+                            {
+                                failureReason = $"Invalid SHP content length ({sourceContentLengthWords}) at source record {record.SourceRecordIndex + 1}.";
+                                return false;
+                            }
+
+                            WriteInt32BigEndian(subsetShpStream, targetRecordNumber);
+                            WriteInt32BigEndian(subsetShpStream, sourceContentLengthWords);
+
+                            var contentBytes = (long)sourceContentLengthWords * 2L;
+                            if (!CopyExactBytes(sourceShpStream, subsetShpStream, contentBytes))
+                            {
+                                failureReason = $"Failed copying SHP payload for source record {record.SourceRecordIndex + 1}.";
+                                return false;
+                            }
+
+                            WriteInt32BigEndian(subsetShxStream, currentOffsetWords);
+                            WriteInt32BigEndian(subsetShxStream, sourceContentLengthWords);
+
+                            currentOffsetWords += 4 + sourceContentLengthWords; // 8-byte record header + payload
+                            targetRecordNumber++;
+                        }
+
+                        var subsetShpLengthWords = checked((int)(subsetShpStream.Length / 2L));
+                        var subsetShxLengthWords = checked((int)(subsetShxStream.Length / 2L));
+
+                        PatchShapefileHeader(subsetShpStream, shpHeader, subsetShpLengthWords, subsetBounds);
+                        PatchShapefileHeader(subsetShxStream, shxHeader, subsetShxLengthWords, subsetBounds);
+                    }
+                }
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                failureReason = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool TryWriteSpatialSubsetDbf(
+            string sourceDbfPath,
+            string subsetDbfPath,
+            byte[] dbfHeaderBytes,
+            int dbfHeaderLength,
+            int dbfRecordLength,
+            IReadOnlyList<SpatialSubsetRecord> records,
+            out string failureReason)
+        {
+            failureReason = string.Empty;
+
+            try
+            {
+                using (var sourceDbfStream = new FileStream(sourceDbfPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var subsetDbfStream = new FileStream(subsetDbfPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    var header = (byte[])dbfHeaderBytes.Clone();
+                    WriteInt32LittleEndian(header, 4, records.Count);
+                    subsetDbfStream.Write(header, 0, header.Length);
+
+                    var recordBuffer = new byte[dbfRecordLength];
+                    foreach (var record in records)
+                    {
+                        var sourceOffset = (long)dbfHeaderLength + ((long)record.SourceRecordIndex * dbfRecordLength);
+                        if (sourceOffset < 0 || sourceOffset + dbfRecordLength > sourceDbfStream.Length)
+                        {
+                            failureReason = $"DBF source record out of range at index {record.SourceRecordIndex}.";
+                            return false;
+                        }
+
+                        sourceDbfStream.Seek(sourceOffset, SeekOrigin.Begin);
+                        if (!TryReadExact(sourceDbfStream, recordBuffer, dbfRecordLength))
+                        {
+                            failureReason = $"Failed reading DBF source record at index {record.SourceRecordIndex}.";
+                            return false;
+                        }
+
+                        subsetDbfStream.Write(recordBuffer, 0, recordBuffer.Length);
+                    }
+
+                    subsetDbfStream.WriteByte(0x1A);
+                }
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                failureReason = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool TryReadExact(Stream source, byte[] buffer, int length)
+        {
+            var totalRead = 0;
+            while (totalRead < length)
+            {
+                var read = source.Read(buffer, totalRead, length - totalRead);
+                if (read <= 0)
+                {
+                    return false;
+                }
+
+                totalRead += read;
+            }
+
+            return true;
+        }
+
+        private static bool CopyExactBytes(Stream source, Stream destination, long totalBytes)
+        {
+            var buffer = new byte[64 * 1024];
+            var remaining = totalBytes;
+            while (remaining > 0)
+            {
+                var requested = (int)Math.Min(buffer.Length, remaining);
+                var read = source.Read(buffer, 0, requested);
+                if (read <= 0)
+                {
+                    return false;
+                }
+
+                destination.Write(buffer, 0, read);
+                remaining -= read;
+            }
+
+            return true;
+        }
+
+        private static void PatchShapefileHeader(
+            FileStream targetStream,
+            byte[] sourceHeader,
+            int fileLengthWords,
+            Extents2d? subsetBounds)
+        {
+            targetStream.Seek(0, SeekOrigin.Begin);
+            targetStream.Write(sourceHeader, 0, sourceHeader.Length);
+            targetStream.Seek(24, SeekOrigin.Begin);
+            WriteInt32BigEndian(targetStream, fileLengthWords);
+
+            if (subsetBounds.HasValue)
+            {
+                var bounds = subsetBounds.Value;
+                targetStream.Seek(36, SeekOrigin.Begin);
+                WriteDoubleLittleEndian(targetStream, bounds.MinPoint.X);
+                WriteDoubleLittleEndian(targetStream, bounds.MinPoint.Y);
+                WriteDoubleLittleEndian(targetStream, bounds.MaxPoint.X);
+                WriteDoubleLittleEndian(targetStream, bounds.MaxPoint.Y);
+            }
+
+            targetStream.Flush();
+        }
+
+        private static void WriteInt32BigEndian(Stream targetStream, int value)
+        {
+            var bytes = BitConverter.GetBytes(value);
+            if (BitConverter.IsLittleEndian)
+            {
+                Array.Reverse(bytes);
+            }
+
+            targetStream.Write(bytes, 0, bytes.Length);
+        }
+
+        private static void WriteInt32LittleEndian(byte[] target, int offset, int value)
+        {
+            target[offset + 0] = (byte)(value & 0xFF);
+            target[offset + 1] = (byte)((value >> 8) & 0xFF);
+            target[offset + 2] = (byte)((value >> 16) & 0xFF);
+            target[offset + 3] = (byte)((value >> 24) & 0xFF);
+        }
+
+        private static void WriteDoubleLittleEndian(Stream targetStream, double value)
+        {
+            var bytes = BitConverter.GetBytes(value);
+            if (!BitConverter.IsLittleEndian)
+            {
+                Array.Reverse(bytes);
+            }
+
+            targetStream.Write(bytes, 0, bytes.Length);
+        }
+
+        private static void TryCopySpatialSubsetSidecar(string sourceShapefilePath, string targetShapefilePath, string extension, Logger logger)
+        {
+            try
+            {
+                var sourceSidecar = Path.ChangeExtension(sourceShapefilePath, extension);
+                if (!File.Exists(sourceSidecar))
+                {
+                    return;
+                }
+
+                var targetSidecar = Path.ChangeExtension(targetShapefilePath, extension);
+                File.Copy(sourceSidecar, targetSidecar, overwrite: true);
+            }
+            catch (System.Exception ex)
+            {
+                logger.WriteLine(
+                    $"Spatial subset sidecar copy failed for '{Path.GetFileName(sourceShapefilePath)}' ({extension}): {ex.Message}");
+            }
+        }
+
+        private static Extents2d UnionExtents(Extents2d first, Extents2d second)
+        {
+            var minX = Math.Min(first.MinPoint.X, second.MinPoint.X);
+            var minY = Math.Min(first.MinPoint.Y, second.MinPoint.Y);
+            var maxX = Math.Max(first.MaxPoint.X, second.MaxPoint.X);
+            var maxY = Math.Max(first.MaxPoint.Y, second.MaxPoint.Y);
+            return new Extents2d(new Point2d(minX, minY), new Point2d(maxX, maxY));
         }
 
         private static bool TryGetMap3dImporter(Logger logger, [NotNullWhen(true)] out Importer? importer)
@@ -268,18 +1705,19 @@ namespace AtsBackgroundBuilder.Dispositions
 
         private static bool TryImportShapefile(
             Importer importer,
-            string shapefilePath,
+            string importPath,
+            string logicalShapefilePath,
             List<Extents2d> sectionExtents,
             Logger logger,
             out string odTableName,
             bool useLocationWindow)
         {
-            odTableName = BuildOdTableName(shapefilePath);
+            odTableName = BuildOdTableName(logicalShapefilePath);
 
             try
             {
-                logger.WriteLine($"Importer.Init begin: {Path.GetFileName(shapefilePath)}");
-                importer.Init("SHP", shapefilePath);
+                logger.WriteLine($"Importer.Init begin: {Path.GetFileName(importPath)}");
+                importer.Init("SHP", importPath);
                 logger.WriteLine("Importer.Init completed.");
 
                 // Import window restriction to reduce heavy loads
@@ -290,20 +1728,20 @@ namespace AtsBackgroundBuilder.Dispositions
                     var allowNoWindowImport = IsNoLocationWindowImportAllowed();
                     if (!locationWindowApplied)
                     {
-                        if (IsCompassSurveyedShapefile(shapefilePath) && !allowNoWindowImport)
+                        if (IsCompassSurveyedShapefile(logicalShapefilePath) && !allowNoWindowImport)
                         {
                             logger.WriteLine(
-                                $"Shapefile import skipped for '{Path.GetFileName(shapefilePath)}': location window unavailable; refusing unsafe full-file import. Set ATSBUILD_ALLOW_NO_LOCATION_WINDOW_IMPORT=1 to override.");
+                                $"Shapefile import skipped for '{Path.GetFileName(logicalShapefilePath)}': location window unavailable; refusing unsafe full-file import. Set ATSBUILD_ALLOW_NO_LOCATION_WINDOW_IMPORT=1 to override.");
                             return false;
                         }
 
                         logger.WriteLine(
-                            $"Proceeding without location window for '{Path.GetFileName(shapefilePath)}' (ATSBUILD_ALLOW_NO_LOCATION_WINDOW_IMPORT={(allowNoWindowImport ? "1" : "0")}).");
+                            $"Proceeding without location window for '{Path.GetFileName(logicalShapefilePath)}' (ATSBUILD_ALLOW_NO_LOCATION_WINDOW_IMPORT={(allowNoWindowImport ? "1" : "0")}).");
                     }
                 }
 
                 var mappingMode = DetermineDataMappingMode(odTableName, logger);
-                var isCompassSurveyShapefile = IsCompassSurveyedShapefile(shapefilePath);
+                var isCompassSurveyShapefile = IsCompassSurveyedShapefile(logicalShapefilePath);
                 var verboseImportLogging = IsVerboseImportLoggingEnabled();
                 int layerCount = 0;
                 var mappingSuccessCount = 0;
@@ -337,12 +1775,12 @@ namespace AtsBackgroundBuilder.Dispositions
                     if (mappingFailureCount > 0)
                     {
                         logger.WriteLine(
-                            $"Compass data mapping failed for '{Path.GetFileName(shapefilePath)}' on {mappingFailureCount}/{layerCount} layer(s). First='{firstMappingFailure ?? "n/a"}'.");
+                            $"Compass data mapping failed for '{Path.GetFileName(logicalShapefilePath)}' on {mappingFailureCount}/{layerCount} layer(s). First='{firstMappingFailure ?? "n/a"}'.");
                     }
                     else
                     {
                         logger.WriteLine(
-                            $"Compass data mapping applied for '{Path.GetFileName(shapefilePath)}' on {mappingSuccessCount} layer(s).");
+                            $"Compass data mapping applied for '{Path.GetFileName(logicalShapefilePath)}' on {mappingSuccessCount} layer(s).");
                     }
                 }
 

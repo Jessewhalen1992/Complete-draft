@@ -47,6 +47,7 @@ internal static class Program
         TestNoIntentSnapshotUnavailableUsesAutoClosePrefix();
 
         TestQuarterVisibilityPolicyMatrix();
+        TestCleanupPlanMatrix();
         TestBuildExecutionPlanDefaults();
         TestBuildExecutionPlanQuarterVisibility();
         TestBuildExecutionPlanPlsrDrivesScopeAndImport();
@@ -414,6 +415,69 @@ internal static class Program
             enableQuarterViewByEnvironment: true);
         AssertEqual(true, envOnly.ShowQuarterDefinitionView, nameof(TestQuarterVisibilityPolicyMatrix));
         AssertEqual(true, envOnly.KeepQuarterHelperLinework, nameof(TestQuarterVisibilityPolicyMatrix));
+    }
+
+    private static void TestCleanupPlanMatrix()
+    {
+        var offOffInput = new AtsBuildInput
+        {
+            IncludeAtsFabric = false,
+            AllowMultiQuarterDispositions = false,
+            IncludeDispositionLinework = false,
+        };
+        var offOffVisibility = QuarterVisibilityPolicy.Create(
+            includeAtsFabric: offOffInput.IncludeAtsFabric,
+            allowMultiQuarterDispositions: offOffInput.AllowMultiQuarterDispositions,
+            enableQuarterViewByEnvironment: false);
+        var offOffPlan = CleanupPlan.Create(offOffInput, offOffVisibility);
+        AssertEqual(true, offOffPlan.EraseQuarterDefinitionQuarterView, nameof(TestCleanupPlanMatrix));
+        AssertEqual(true, offOffPlan.EraseQuarterDefinitionHelperLines, nameof(TestCleanupPlanMatrix));
+        AssertEqual(true, offOffPlan.EraseQuarterBoxes, nameof(TestCleanupPlanMatrix));
+        AssertEqual(true, offOffPlan.EraseQuarterHelpers, nameof(TestCleanupPlanMatrix));
+        AssertEqual(true, offOffPlan.EraseSectionOutlines, nameof(TestCleanupPlanMatrix));
+        AssertEqual(true, offOffPlan.EraseContextSectionPieces, nameof(TestCleanupPlanMatrix));
+        AssertEqual(true, offOffPlan.EraseSectionLabels, nameof(TestCleanupPlanMatrix));
+        AssertEqual(true, offOffPlan.EraseDispositionLinework, nameof(TestCleanupPlanMatrix));
+
+        var atsOnlyInput = new AtsBuildInput
+        {
+            IncludeAtsFabric = true,
+            AllowMultiQuarterDispositions = false,
+            IncludeDispositionLinework = false,
+        };
+        var atsOnlyVisibility = QuarterVisibilityPolicy.Create(
+            includeAtsFabric: atsOnlyInput.IncludeAtsFabric,
+            allowMultiQuarterDispositions: atsOnlyInput.AllowMultiQuarterDispositions,
+            enableQuarterViewByEnvironment: false);
+        var atsOnlyPlan = CleanupPlan.Create(atsOnlyInput, atsOnlyVisibility);
+        AssertEqual(true, atsOnlyPlan.EraseQuarterDefinitionQuarterView, nameof(TestCleanupPlanMatrix));
+        AssertEqual(false, atsOnlyPlan.EraseQuarterDefinitionHelperLines, nameof(TestCleanupPlanMatrix));
+        AssertEqual(true, atsOnlyPlan.EraseQuarterBoxes, nameof(TestCleanupPlanMatrix));
+        AssertEqual(false, atsOnlyPlan.EraseQuarterHelpers, nameof(TestCleanupPlanMatrix));
+        AssertEqual(false, atsOnlyPlan.EraseSectionOutlines, nameof(TestCleanupPlanMatrix));
+        AssertEqual(false, atsOnlyPlan.EraseContextSectionPieces, nameof(TestCleanupPlanMatrix));
+        AssertEqual(false, atsOnlyPlan.EraseSectionLabels, nameof(TestCleanupPlanMatrix));
+        AssertEqual(true, atsOnlyPlan.EraseDispositionLinework, nameof(TestCleanupPlanMatrix));
+
+        var fullVisibleInput = new AtsBuildInput
+        {
+            IncludeAtsFabric = true,
+            AllowMultiQuarterDispositions = true,
+            IncludeDispositionLinework = true,
+        };
+        var fullVisibleVisibility = QuarterVisibilityPolicy.Create(
+            includeAtsFabric: fullVisibleInput.IncludeAtsFabric,
+            allowMultiQuarterDispositions: fullVisibleInput.AllowMultiQuarterDispositions,
+            enableQuarterViewByEnvironment: false);
+        var fullVisiblePlan = CleanupPlan.Create(fullVisibleInput, fullVisibleVisibility);
+        AssertEqual(false, fullVisiblePlan.EraseQuarterDefinitionQuarterView, nameof(TestCleanupPlanMatrix));
+        AssertEqual(false, fullVisiblePlan.EraseQuarterDefinitionHelperLines, nameof(TestCleanupPlanMatrix));
+        AssertEqual(true, fullVisiblePlan.EraseQuarterBoxes, nameof(TestCleanupPlanMatrix));
+        AssertEqual(false, fullVisiblePlan.EraseQuarterHelpers, nameof(TestCleanupPlanMatrix));
+        AssertEqual(false, fullVisiblePlan.EraseSectionOutlines, nameof(TestCleanupPlanMatrix));
+        AssertEqual(false, fullVisiblePlan.EraseContextSectionPieces, nameof(TestCleanupPlanMatrix));
+        AssertEqual(false, fullVisiblePlan.EraseSectionLabels, nameof(TestCleanupPlanMatrix));
+        AssertEqual(false, fullVisiblePlan.EraseDispositionLinework, nameof(TestCleanupPlanMatrix));
     }
 
     private static void TestBuildExecutionPlanQuarterVisibility()

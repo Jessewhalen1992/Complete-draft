@@ -300,7 +300,8 @@ namespace AtsBackgroundBuilder
                 importConfig,
                 scopePolylineIds,
                 imported,
-                scopeBufferMeters: 100.0);
+                scopeBufferMeters: 100.0,
+                utmZoneHint: zone);
             summary.FilteredEntities = importSummary.FilteredDispositions;
             summary.ImportFailures = importSummary.ImportFailures;
             if (imported.Count == 0)

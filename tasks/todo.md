@@ -2506,3 +2506,225 @@
 - Verification:
   - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
   - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (Cleanup Plan Refactor, 2026-03-02)
+
+- [x] Extract cleanup branching decisions into a pure `CleanupPlan` helper.
+- [x] Wire `CleanupAfterBuild(...)` to execute plan outputs rather than inline toggle branching.
+- [x] Add decision tests for cleanup matrix scenarios (ATS off/on, 1/4 off/on, disposition linework on/off).
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Cleanup Plan Refactor, 2026-03-02)
+
+- Added `src/AtsBackgroundBuilder/Core/CleanupPlan.cs`:
+  - Encapsulates cleanup decisions as pure booleans:
+    - `EraseQuarterDefinitionQuarterView`
+    - `EraseQuarterDefinitionHelperLines`
+    - `EraseQuarterBoxes`
+    - `EraseQuarterHelpers`
+    - `EraseSectionOutlines`
+    - `EraseContextSectionPieces`
+    - `EraseSectionLabels`
+    - `EraseDispositionLinework`
+  - `CleanupPlan.Create(...)` derives behavior from `AtsBuildInput` + `QuarterVisibilityPolicy`.
+- Updated `src/AtsBackgroundBuilder/Diagnostics/Plugin.Diagnostics.CleanupDiagnostics.cs`:
+  - computes `quarterVisibility` + `cleanupPlan` up front.
+  - applies cleanup operations via plan flags.
+  - avoids duplicate `QuarterHelperEntityIds` erase when ATS-off already erases full helper set.
+- Updated decision tests wiring:
+  - `src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj` links `Core/CleanupPlan.cs`.
+  - `src/AtsBackgroundBuilder.DecisionTests/Program.cs` adds `TestCleanupPlanMatrix()` and runs it in `RunAll()`.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (Native Disposition Import Crash Guard for Large SHP/DBF, 2026-03-02)
+
+- [x] Inspect latest ATSBUILD log to identify crash stage for `ATS Fabric + Dispositions + Labels` run.
+- [x] Add pre-import guard to skip known high-risk large native shapefile imports instead of calling `Importer.Import()`.
+- [x] Keep behavior overridable via env for explicit force-run.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Native Disposition Import Crash Guard for Large SHP/DBF, 2026-03-02)
+
+- Root-cause signal from log:
+  - run terminated after `Importer.Import begin.` with no `Importer.Import completed.` / no ATSBUILD exit marker.
+  - indicates host-level native Map importer crash boundary.
+- Updated `src/AtsBackgroundBuilder/Dispositions/ShapefileImporter.cs`:
+  - added guarded native-size thresholds:
+    - `MaxNativeImporterDbfBytesWithoutOverride = 512 MB`
+    - `MaxNativeImporterShpBytesWithoutOverride = 256 MB`
+  - added per-shapefile guard before native import:
+    - `ShouldSkipLargeNativeDispositionImport(...)`
+    - if exceeded, logs explicit skip reason and increments import failure instead of invoking `Importer.Import()`.
+  - added env override for deliberate force-run:
+    - `ATSBUILD_ALLOW_LARGE_DISPOSITION_IMPORT=1`
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (ATS-Fabric-ON Crash on Generated Subset Import, 2026-03-02)
+
+- [x] Inspect newest `/debug-config` ATS Fabric ON crash log boundary.
+- [x] Replace default large-file single-subset import path with chunked source import (stable path).
+- [x] Keep subset-file import available only through explicit env opt-in.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (ATS-Fabric-ON Crash on Generated Subset Import, 2026-03-02)
+
+- Root-cause boundary from latest local log:
+  - ATS Fabric ON run stopped at:
+    - `Spatial subset import enabled for 'DAB_APPL.shp': kept 112/415688 record(s).`
+    - `Shapefile import for 'DAB_APPL.shp' is using prefiltered subset input; location window disabled.`
+    - `Importer.Import begin.`
+  - no `Importer.Import completed.` / no `ATSBUILD exit stage`, indicating host termination while importing generated subset input.
+- Updated `src/AtsBackgroundBuilder/Dispositions/ShapefileImporter.cs`:
+  - Added env-gated behavior:
+    - new opt-in env var: `ATSBUILD_ENABLE_SINGLE_SUBSET_IMPORT=1`.
+    - default (`unset`): skip generated single-subset import files for large shapefiles.
+  - Default large-file mode now:
+    - use chunked source import (`TryCreateChunkedSubsetShapefiles(...)`) with existing section-window filtering and post-filter logic.
+    - log explicit safety-mode message with env override instructions.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.nuget_packages'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.nuget_packages'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (Large DAB_APPL Safe Spatial-Subset Import, 2026-03-02)
+
+- [x] Replace crash-prone large-file native import path with temporary spatial subset generation for disposition shapefiles above safe size threshold.
+- [x] Keep OD table naming tied to original shapefile name while importing from subset path.
+- [x] Add cleanup for temporary subset artifacts and explicit diagnostics (`kept/total` records).
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Large DAB_APPL Safe Spatial-Subset Import, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/ShapefileImporter.cs`:
+  - Added large-file route `ShouldUseSpatialSubsetImport(...)` (uses existing 256 MB SHP / 512 MB DBF thresholds).
+  - Added subset generation pipeline:
+    - reads SHX record index,
+    - spatial-filters records against requested section extents,
+    - writes temporary filtered `.shp/.shx/.dbf` under `%TEMP%\AtsBackgroundBuilder\shape-subsets\...`,
+    - copies optional `.prj/.cpg` sidecars,
+    - logs `kept/total` counts.
+  - Updated native import call sites to:
+    - import from subset path when applicable,
+    - preserve logical OD table naming and shapefile identity using original source path,
+    - delete temporary subset folder in `finally`.
+  - Safety behavior for large files:
+    - if subset prep fails, skip source native import instead of falling back to crash-prone `Importer.Import()` on the full source file.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (Chunked Safe Import Fallback When Raw Spatial Filter Misses, 2026-03-02)
+
+- [x] Investigate `/debug-config` log showing `Spatial subset import skipped ... no records intersect requested scope`.
+- [x] Add fallback path so large-file import does not skip when raw-coordinate filtering misses.
+- [x] Keep crash-safe behavior by avoiding direct full-source native import.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Chunked Safe Import Fallback When Raw Spatial Filter Misses, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/ShapefileImporter.cs`:
+  - If large-file raw spatial subset has zero matches, importer now falls back to chunked safe import instead of skipping `DAB_APPL`.
+  - Added `TryCreateChunkedSubsetShapefiles(...)`:
+    - builds sequential temporary SHP/SHX/DBF chunks from source records,
+    - imports each chunk with existing location-window logic,
+    - keeps OD table naming bound to original source shapefile.
+  - Added chunk-size control env var:
+    - `ATSBUILD_LARGE_IMPORT_CHUNK_RECORDS` (default `50000`, clamped to safe min/max).
+  - Added chunk-progress logging and temporary folder cleanup for all generated chunk sets.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (ATS Fabric OFF Crash During Chunked Large Import, 2026-03-02)
+
+- [x] Inspect latest `/debug-config` crash tail for ATS-off path.
+- [x] Reduce per-chunk large-import default size to lower peak MPOLYGON/memory pressure.
+- [x] Rebuild and rerun decision tests.
+
+## Review (ATS Fabric OFF Crash During Chunked Large Import, 2026-03-02)
+
+- Root-cause boundary from latest log:
+  - ATS-off run reached chunked large import and stopped immediately after:
+    - `Chunked safe import enabled for 'DAB_APPL.shp': 9 chunk(s).`
+    - `Importer.Import completed.` (chunk 1)
+  - no later summary/exit marker, indicating post-import chunk processing instability under large per-chunk volume.
+- Updated `src/AtsBackgroundBuilder/Dispositions/ShapefileImporter.cs`:
+  - reduced default `ATSBUILD_LARGE_IMPORT_CHUNK_RECORDS` from `50000` to `10000`.
+  - lowered min clamp from `2000` to `1000`.
+  - intent: reduce per-chunk imported MPOLYGON counts and memory pressure in ATS-off path.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (Disposition Import Scope Buffer +100m, 2026-03-02)
+
+- [x] Confirm current disposition import scope buffer behavior.
+- [x] Update ATS disposition import call to use `sections + 100m` buffer.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Disposition Import Scope Buffer +100m, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - main `ShapefileImporter.ImportShapefiles(...)` call now passes `scopeBufferMeters: 100.0`.
+  - this applies to the primary ATS disposition import flow (independent of ATS Fabric on/off).
+- Expected runtime log change:
+  - `Section extents loaded: <n> (buffer 100).`
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (CRS-Aware Spatial Subset for Geographic Disposition SHP, 2026-03-02)
+
+- [x] Identify why large-file spatial subset keeps missing valid in-scope dispositions.
+- [x] Add coordinate-aware subset logic to transform section extents when source SHP is geographic and drawing extents are projected.
+- [x] Wire zone hint from ATS UI/input into primary shapefile import path.
+- [x] Wire zone hint for compass-mapping import path.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (CRS-Aware Spatial Subset for Geographic Disposition SHP, 2026-03-02)
+
+- Root cause:
+  - `DAB_APPL.shp` header/prj is geographic (`lon/lat`, approx `X=-120..-110`, `Y=49..60`), while ATS section extents are projected UTM coordinates.
+  - Raw record-bounds subset filtering in drawing coordinates returned zero matches, forcing expensive chunked fallback (`42` chunks at 10k records/chunk).
+- Updated `src/AtsBackgroundBuilder/Dispositions/ShapefileImporter.cs`:
+  - `ImportShapefiles(...)` now accepts optional `utmZoneHint`.
+  - During spatial subset prep, detects source geographic bounds and projected section extents.
+  - Converts section extents from UTM -> geographic (zone-aware) before record-bounds intersection.
+  - Logs CRS transform application/fallback explicitly.
+- Updated call sites:
+  - `src/AtsBackgroundBuilder/Core/Plugin.cs`: passes `utmZoneHint: input.Zone` for main disposition import.
+  - `src/AtsBackgroundBuilder/Core/Plugin.Core.ImportWindowing.cs`: passes `utmZoneHint: zone` for compass mapping import.
+- Expected runtime behavior:
+  - For `DAB_APPL`, logs should show CRS transform applied and `Spatial subset import enabled ... kept X/Y` instead of immediate chunk fallback.
+  - ATS Fabric ON runs should be materially faster because import volume is reduced before native Map import/conversion.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (ATS-Fabric-OFF Stability Gate for CRS Subset Path, 2026-03-02)
+
+- [x] Investigate `/debug-config` crash report occurring with ATS Fabric OFF after CRS-subset optimization.
+- [x] Gate CRS-subset zone hint to ATS Fabric ON runs only.
+- [x] Keep ATS Fabric OFF on the prior chunked-safe fallback behavior.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (ATS-Fabric-OFF Stability Gate for CRS Subset Path, 2026-03-02)
+
+- Root-cause boundary from latest local log:
+  - ATS Fabric OFF run stopped at:
+    - `Spatial subset CRS transform applied for 'DAB_APPL.shp'...`
+    - `Spatial subset import enabled ... kept 112/...`
+    - `Importer.Import begin.`
+  - no completion/exit marker afterward, indicating a host-level native importer crash boundary on that path.
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - main disposition import now passes:
+    - `utmZoneHint: executionPlan.IncludeAtsFabric ? input.Zone : (int?)null`
+  - effect:
+    - ATS Fabric ON: keeps CRS-aware subset acceleration.
+    - ATS Fabric OFF: disables CRS transform hint and reverts to previous chunked-safe path behavior.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).

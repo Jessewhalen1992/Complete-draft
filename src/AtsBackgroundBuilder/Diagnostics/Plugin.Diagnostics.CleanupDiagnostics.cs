@@ -33,10 +33,11 @@ namespace AtsBackgroundBuilder
                     input.IncludeAtsFabric,
                     input.AllowMultiQuarterDispositions,
                     EnableQuarterViewByEnvironment);
+                var cleanupPlan = CleanupPlan.Create(input, quarterVisibility);
 
                 // L-QUATER display should follow 1/4 Definitions toggle (or env override),
                 // regardless of ATS fabric.
-                if (!quarterVisibility.ShowQuarterDefinitionView)
+                if (cleanupPlan.EraseQuarterDefinitionQuarterView)
                 {
                     EraseEntitiesOnLayerWithinSectionWindows(
                         database,
@@ -48,7 +49,7 @@ namespace AtsBackgroundBuilder
 
                 // Keep internal quarter helper lines when ATS fabric is requested; otherwise
                 // remove visible helper lines if 1/4 definition display is off.
-                if (!quarterVisibility.KeepQuarterHelperLinework)
+                if (cleanupPlan.EraseQuarterDefinitionHelperLines && !cleanupPlan.EraseQuarterHelpers)
                 {
                     EraseEntitiesByLayer(
                         database,
@@ -58,23 +59,33 @@ namespace AtsBackgroundBuilder
                         "1/4 definition lines");
                 }
 
-                if (!input.IncludeAtsFabric)
+                if (cleanupPlan.EraseQuarterBoxes)
                 {
-                    // If ATS fabric is not requested, remove all temporary section geometry.
-                    EraseEntities(database, sectionDrawResult.QuarterPolylineIds, logger, "quarter boxes");
-                    EraseEntities(database, sectionDrawResult.QuarterHelperEntityIds, logger, "quarter helper lines");
-                    EraseEntities(database, sectionDrawResult.SectionPolylineIds, logger, "section outlines");
-                    EraseEntities(database, sectionDrawResult.ContextSectionPolylineIds, logger, "context section pieces");
-                    EraseEntities(database, sectionDrawResult.SectionLabelEntityIds, logger, "section labels");
-                }
-                else
-                {
-                    // Keep mapped section lines and generated linework; remove temp quarter polygons only.
                     EraseEntities(database, sectionDrawResult.QuarterPolylineIds, logger, "quarter boxes");
                 }
 
+                if (cleanupPlan.EraseQuarterHelpers)
+                {
+                    EraseEntities(database, sectionDrawResult.QuarterHelperEntityIds, logger, "quarter helper lines");
+                }
+
+                if (cleanupPlan.EraseSectionOutlines)
+                {
+                    EraseEntities(database, sectionDrawResult.SectionPolylineIds, logger, "section outlines");
+                }
+
+                if (cleanupPlan.EraseContextSectionPieces)
+                {
+                    EraseEntities(database, sectionDrawResult.ContextSectionPolylineIds, logger, "context section pieces");
+                }
+
+                if (cleanupPlan.EraseSectionLabels)
+                {
+                    EraseEntities(database, sectionDrawResult.SectionLabelEntityIds, logger, "section labels");
+                }
+
                 // If disposition linework is NOT requested, erase imported disposition polylines after labels are placed.
-                if (!input.IncludeDispositionLinework)
+                if (cleanupPlan.EraseDispositionLinework)
                 {
                     EraseEntities(database, dispositionPolylineIds, logger, "disposition linework");
                 }
