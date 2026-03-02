@@ -4894,10 +4894,7 @@ namespace AtsBackgroundBuilder
                 {
                     if (!TryGetWritableEntity(tr, id, out var ent))
                     {
-                        if (!contextSectionIds.IsReadOnly)
-                        {
-                            contextSectionIds.Remove(id);
-                        }
+                        RemoveContextIdIfMutable(contextSectionIds, id);
                         continue;
                     }
 
@@ -5019,6 +5016,16 @@ namespace AtsBackgroundBuilder
             }
 
             return ent != null && !ent.IsErased;
+        }
+
+        private static void RemoveContextIdIfMutable(ICollection<ObjectId> contextSectionIds, ObjectId id)
+        {
+            if (contextSectionIds == null || contextSectionIds.IsReadOnly)
+            {
+                return;
+            }
+
+            contextSectionIds.Remove(id);
         }
 
         private static bool TryWriteOpenTwoPointSegment(Entity ent, Point2d a, Point2d b)
