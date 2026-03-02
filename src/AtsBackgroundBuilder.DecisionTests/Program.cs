@@ -53,6 +53,14 @@ internal static class Program
         TestBuildExecutionPlanPlsrMissingLabelPrecheckGate();
         TestBuildExecutionPlanSupplementalSectionInfoGate();
         TestBuildExecutionPlanPassThroughFlags();
+
+        TestPlsrApplyDecisionEngineRoutesAcceptedAndIgnored();
+        TestPlsrApplyDecisionEnginePreservesAcceptedOrder();
+        TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted();
+
+        TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes();
+        TestPlsrSummaryComposerBuildsWarningWithSortedExamples();
+        TestPlsrSummaryComposerSkipsWarningWhenTextFallbackAllowed();
     }
 
     private static void TestPromptLifecycleRefreshRunsOnSuccess()
@@ -491,11 +499,188 @@ internal static class Program
         AssertEqual(true, plan.ShouldPlaceQuarterSectionLabels, nameof(TestBuildExecutionPlanPassThroughFlags));
     }
 
+    private static void TestPlsrApplyDecisionEngineRoutesAcceptedAndIgnored()
+    {
+        var idUpdate = Guid.NewGuid();
+        var idIgnored = Guid.NewGuid();
+        var idCreateTemplate = Guid.NewGuid();
+
+        var result = PlsrApplyDecisionEngine.Route(
+            new[]
+            {
+                new PlsrApplyDecisionItem
+                {
+                    IssueId = idUpdate,
+                    IsActionable = true,
+                    ActionType = PlsrApplyDecisionActionType.UpdateOwner
+                },
+                new PlsrApplyDecisionItem
+                {
+                    IssueId = idIgnored,
+                    IsActionable = true,
+                    ActionType = PlsrApplyDecisionActionType.TagExpired
+                },
+                new PlsrApplyDecisionItem
+                {
+                    IssueId = idCreateTemplate,
+                    IsActionable = true,
+                    ActionType = PlsrApplyDecisionActionType.CreateMissingLabelFromTemplate
+                }
+            },
+            new HashSet<Guid> { idUpdate, idCreateTemplate });
+
+        AssertEqual(2, result.AcceptedActionable, nameof(TestPlsrApplyDecisionEngineRoutesAcceptedAndIgnored));
+        AssertEqual(1, result.IgnoredActionable, nameof(TestPlsrApplyDecisionEngineRoutesAcceptedAndIgnored));
+        AssertEqual(2, result.AcceptedRoutedIssues.Count, nameof(TestPlsrApplyDecisionEngineRoutesAcceptedAndIgnored));
+        AssertEqual(idUpdate, result.AcceptedRoutedIssues[0].IssueId, nameof(TestPlsrApplyDecisionEngineRoutesAcceptedAndIgnored));
+        AssertEqual(PlsrApplyDecisionActionType.UpdateOwner, result.AcceptedRoutedIssues[0].ActionType, nameof(TestPlsrApplyDecisionEngineRoutesAcceptedAndIgnored));
+        AssertEqual(idCreateTemplate, result.AcceptedRoutedIssues[1].IssueId, nameof(TestPlsrApplyDecisionEngineRoutesAcceptedAndIgnored));
+        AssertEqual(PlsrApplyDecisionActionType.CreateMissingLabelFromTemplate, result.AcceptedRoutedIssues[1].ActionType, nameof(TestPlsrApplyDecisionEngineRoutesAcceptedAndIgnored));
+    }
+
+    private static void TestPlsrApplyDecisionEnginePreservesAcceptedOrder()
+    {
+        var idCreate = Guid.NewGuid();
+        var idUpdate = Guid.NewGuid();
+        var idXml = Guid.NewGuid();
+
+        var result = PlsrApplyDecisionEngine.Route(
+            new[]
+            {
+                new PlsrApplyDecisionItem
+                {
+                    IssueId = idCreate,
+                    IsActionable = true,
+                    ActionType = PlsrApplyDecisionActionType.CreateMissingLabel
+                },
+                new PlsrApplyDecisionItem
+                {
+                    IssueId = idUpdate,
+                    IsActionable = true,
+                    ActionType = PlsrApplyDecisionActionType.UpdateOwner
+                },
+                new PlsrApplyDecisionItem
+                {
+                    IssueId = idXml,
+                    IsActionable = true,
+                    ActionType = PlsrApplyDecisionActionType.CreateMissingLabelFromXml
+                }
+            },
+            new HashSet<Guid> { idCreate, idUpdate, idXml });
+
+        AssertEqual(3, result.AcceptedActionable, nameof(TestPlsrApplyDecisionEnginePreservesAcceptedOrder));
+        AssertEqual(0, result.IgnoredActionable, nameof(TestPlsrApplyDecisionEnginePreservesAcceptedOrder));
+        AssertEqual(idCreate, result.AcceptedRoutedIssues[0].IssueId, nameof(TestPlsrApplyDecisionEnginePreservesAcceptedOrder));
+        AssertEqual(idUpdate, result.AcceptedRoutedIssues[1].IssueId, nameof(TestPlsrApplyDecisionEnginePreservesAcceptedOrder));
+        AssertEqual(idXml, result.AcceptedRoutedIssues[2].IssueId, nameof(TestPlsrApplyDecisionEnginePreservesAcceptedOrder));
+    }
+
+    private static void TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted()
+    {
+        var idNonActionable = Guid.NewGuid();
+        var idAccepted = Guid.NewGuid();
+
+        var result = PlsrApplyDecisionEngine.Route(
+            new[]
+            {
+                new PlsrApplyDecisionItem
+                {
+                    IssueId = idNonActionable,
+                    IsActionable = false,
+                    ActionType = PlsrApplyDecisionActionType.CreateMissingLabel
+                },
+                new PlsrApplyDecisionItem
+                {
+                    IssueId = idAccepted,
+                    IsActionable = true,
+                    ActionType = PlsrApplyDecisionActionType.TagExpired
+                }
+            },
+            new HashSet<Guid> { idNonActionable, idAccepted });
+
+        AssertEqual(1, result.AcceptedActionable, nameof(TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted));
+        AssertEqual(0, result.IgnoredActionable, nameof(TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted));
+        AssertEqual(1, result.AcceptedRoutedIssues.Count, nameof(TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted));
+        AssertEqual(idAccepted, result.AcceptedRoutedIssues[0].IssueId, nameof(TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted));
+    }
+
+    private static void TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes()
+    {
+        var result = PlsrSummaryComposer.Compose(
+            new PlsrSummaryComposeInput
+            {
+                IssueSummaryLines = new[] { "Issue B", "Issue A" },
+                NotIncludedPrefixes = new[] { "z", "A", "m" },
+                MissingLabels = 10,
+                OwnerMismatches = 3,
+                ExtraLabels = 4,
+                ExpiredCandidates = 5,
+                MissingCreated = 2,
+                SkippedTextOnlyFallbackLabels = 1,
+                OwnerUpdated = 6,
+                ExpiredTagged = 7,
+                AcceptedActionable = 8,
+                IgnoredActionable = 9,
+                ApplyErrors = 11,
+                AllowTextOnlyFallbackLabels = false
+            });
+
+        AssertContains(result.SummaryText, "Issue B", nameof(TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes));
+        AssertContains(result.SummaryText, "Issue A", nameof(TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes));
+        AssertContains(result.SummaryText, "Not Included in check: A, m, z", nameof(TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes));
+        AssertContains(result.SummaryText, "Missing labels: 10", nameof(TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes));
+        AssertContains(result.SummaryText, "Apply errors: 11", nameof(TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes));
+    }
+
+    private static void TestPlsrSummaryComposerBuildsWarningWithSortedExamples()
+    {
+        var result = PlsrSummaryComposer.Compose(
+            new PlsrSummaryComposeInput
+            {
+                SkippedTextOnlyFallbackLabels = 3,
+                AllowTextOnlyFallbackLabels = false,
+                SkippedTextOnlyFallbackExamples = new[]
+                {
+                    "PLA 2 in 1-1",
+                    "LOC 1 in 1-1",
+                    "DLO 4 in 1-1"
+                }
+            });
+
+        AssertEqual(true, result.ShouldShowWarning, nameof(TestPlsrSummaryComposerBuildsWarningWithSortedExamples));
+        AssertContains(result.WarningText, "Skipped labels:", nameof(TestPlsrSummaryComposerBuildsWarningWithSortedExamples));
+        AssertContains(result.WarningText, " - DLO 4 in 1-1", nameof(TestPlsrSummaryComposerBuildsWarningWithSortedExamples));
+        AssertContains(result.WarningText, " - LOC 1 in 1-1", nameof(TestPlsrSummaryComposerBuildsWarningWithSortedExamples));
+        AssertContains(result.WarningText, " - PLA 2 in 1-1", nameof(TestPlsrSummaryComposerBuildsWarningWithSortedExamples));
+    }
+
+    private static void TestPlsrSummaryComposerSkipsWarningWhenTextFallbackAllowed()
+    {
+        var result = PlsrSummaryComposer.Compose(
+            new PlsrSummaryComposeInput
+            {
+                SkippedTextOnlyFallbackLabels = 5,
+                AllowTextOnlyFallbackLabels = true,
+                SkippedTextOnlyFallbackExamples = new[] { "LOC 1 in 1-1" }
+            });
+
+        AssertEqual(false, result.ShouldShowWarning, nameof(TestPlsrSummaryComposerSkipsWarningWhenTextFallbackAllowed));
+        AssertEqual(string.Empty, result.WarningText, nameof(TestPlsrSummaryComposerSkipsWarningWhenTextFallbackAllowed));
+    }
+
     private static void AssertEqual<T>(T expected, T actual, string testName)
     {
         if (!EqualityComparer<T>.Default.Equals(expected, actual))
         {
             throw new InvalidOperationException($"{testName}: expected '{expected}', actual '{actual}'.");
+        }
+    }
+
+    private static void AssertContains(string text, string expectedSubstring, string testName)
+    {
+        if (text == null || expectedSubstring == null || text.IndexOf(expectedSubstring, StringComparison.Ordinal) < 0)
+        {
+            throw new InvalidOperationException($"{testName}: expected substring '{expectedSubstring}' was not found.");
         }
     }
 }

@@ -1,3 +1,190 @@
+# Follow-up (PLSR Apply Decision Engine Tests, 2026-03-02)
+
+- [x] Extract pure apply-routing logic into a testable decision engine.
+- [x] Wire plugin apply stage to use routed decision output (accepted/ignored counters + ordered routed issues).
+- [x] Add decision tests for accepted/ignored counts and routing order.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Apply Decision Engine Tests, 2026-03-02)
+
+- Added `src/AtsBackgroundBuilder/Core/PlsrApplyDecisionEngine.cs`:
+  - `PlsrApplyDecisionItem`
+  - `PlsrApplyDecisionRoutedIssue`
+  - `PlsrApplyDecisionResult`
+  - `PlsrApplyDecisionEngine.Route(...)`
+  - `PlsrApplyDecisionActionType`
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - `ApplyAcceptedPlsrActions(...)` now:
+    - maps issues to `PlsrApplyDecisionItem`,
+    - calls `PlsrApplyDecisionEngine.Route(...)`,
+    - uses routed accepted issue order for apply execution,
+    - sources accepted/ignored counters from decision result.
+  - added `MapPlsrApplyDecisionActionType(...)` to map plugin enum to decision-engine enum.
+  - preserved existing apply exception logs, stage markers, and create-missing routing behavior.
+- Updated decision test project wiring:
+  - `src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj`
+    - linked `..\AtsBackgroundBuilder\Core\PlsrApplyDecisionEngine.cs`.
+- Added decision tests in `src/AtsBackgroundBuilder.DecisionTests/Program.cs`:
+  - `TestPlsrApplyDecisionEngineRoutesAcceptedAndIgnored`
+  - `TestPlsrApplyDecisionEnginePreservesAcceptedOrder`
+  - `TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted`
+- Verification:
+  - build succeeded (warnings only):
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - decision tests passed:
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+
+# Follow-up (PLSR Summary Composer Tests, 2026-03-02)
+
+- [x] Extract PLSR summary/warning formatting into a pure helper that is testable without AutoCAD dependencies.
+- [x] Wire `BuildPlsrSummary(...)` to use the pure composer output.
+- [x] Add decision tests for summary formatting and warning generation behavior.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Summary Composer Tests, 2026-03-02)
+
+- Added `src/AtsBackgroundBuilder/Core/PlsrSummaryComposer.cs`:
+  - `PlsrSummaryComposeInput`
+  - `PlsrSummaryComposeResult`
+  - `PlsrSummaryComposer.Compose(...)`
+  - preserves existing summary and warning wording/order behavior, including sorted prefixes/examples.
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - `BuildPlsrSummary(...)` now maps scan/apply state into `PlsrSummaryComposer.Compose(...)`.
+  - local `PlsrSummaryResult` is still used by existing PLSR flow; behavior unchanged.
+- Updated test project wiring:
+  - `src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj`
+    - linked `..\AtsBackgroundBuilder\Core\PlsrSummaryComposer.cs`.
+- Added decision tests in `src/AtsBackgroundBuilder.DecisionTests/Program.cs`:
+  - `TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes`
+  - `TestPlsrSummaryComposerBuildsWarningWithSortedExamples`
+  - `TestPlsrSummaryComposerSkipsWarningWhenTextFallbackAllowed`
+- Verification:
+  - build succeeded (warnings only):
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - decision tests passed:
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+
+# Follow-up (PLSR Apply Helper Split Refactor, 2026-03-02)
+
+- [x] Split `RunPlsrApply(...)` into smaller helper methods for readability and maintenance.
+- [x] Keep action routing, exception handling, and log strings unchanged.
+- [x] Keep stage flow unchanged (`apply_actions`, `create_missing_labels`).
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Apply Helper Split Refactor, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - added `PlsrAcceptedActionBuckets` for accepted create-missing action groups.
+  - refactored `RunPlsrApply(...)` orchestration to call:
+    - `ApplyAcceptedPlsrActions(...)`
+    - `ApplyAcceptedPlsrMissingLabelCreates(...)`
+  - extracted focused helpers:
+    - `ApplyAcceptedPlsrAction(...)`
+    - `CreatePlsrMissingLabelsFromDispositions(...)`
+    - `CreatePlsrMissingLabelsFromTemplates(...)`
+    - `CreatePlsrMissingLabelsFromXml(...)`
+  - preserved existing behavior:
+    - per-issue actionable acceptance handling,
+    - direct owner/expired updates,
+    - grouped missing-label creation paths,
+    - all existing skip/failure log text and counters.
+- Verification:
+  - build succeeded (warnings only):
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - decision tests passed:
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+
+# Follow-up (PLSR Summary Extraction Refactor, 2026-03-02)
+
+- [x] Extract PLSR summary text composition from `RunPlsrCheck(...)` into a dedicated helper.
+- [x] Extract skipped-text-only warning composition into the same summary helper output.
+- [x] Keep summary-stage flow and final log/write behavior unchanged.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Summary Extraction Refactor, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - added `PlsrSummaryResult` carrier:
+    - `SummaryText`
+    - `WarningText`
+    - `ShouldShowWarning`
+  - added `BuildPlsrSummary(PlsrScanResult, PlsrApplyResult)`:
+    - composes full summary text from scan/apply counters and issue lines,
+    - composes warning text for skipped text-only fallback labels (with full ordered examples list).
+  - `RunPlsrCheck(...)` now:
+    - calls `BuildPlsrSummary(...)` at stage `summary`,
+    - shows warning dialog using `summaryResult.WarningText`,
+    - writes `summaryResult.SummaryText` to `PLSR_Check.txt`.
+- Verification:
+  - build succeeded (warnings only):
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - decision tests passed:
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+
+# Follow-up (PLSR Apply Extraction Refactor, 2026-03-02)
+
+- [x] Extract PLSR apply-phase action handling from `RunPlsrCheck(...)` into a dedicated helper.
+- [x] Extract missing-label creation branch (`CreateMissingLabel`, template, XML) into the same apply helper.
+- [x] Keep stage markers and behavior unchanged (`apply_actions`, `create_missing_labels`).
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Apply Extraction Refactor, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - added `PlsrApplyResult` carrier for:
+    - `OwnerUpdated`
+    - `ExpiredTagged`
+    - `MissingCreated`
+    - `AcceptedActionable`
+    - `IgnoredActionable`
+    - `ApplyErrors`
+  - extracted apply + create-missing flow into `RunPlsrApply(...)`:
+    - preserves the existing `switch` behavior for actionable issue types,
+    - preserves collection of accepted create-missing issue groups,
+    - preserves all existing exception/log messages,
+    - preserves missing-label creation mechanics and skip/failure logs.
+  - simplified `RunPlsrCheck(...)` to:
+    - run review dialog,
+    - call `RunPlsrApply(...)`,
+    - consume returned counters for summary output.
+- Verification:
+  - build succeeded (warnings only):
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - decision tests passed:
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+
+# Follow-up (PLSR Scan Extraction Refactor, 2026-03-02)
+
+- [x] Extract scan-only PLSR analysis from `RunPlsrCheck(...)` into a dedicated helper.
+- [x] Add a dedicated scan result carrier for issues, counters, and lookup/index outputs.
+- [x] Keep review/apply/summary behavior unchanged while wiring to extracted scan outputs.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Scan Extraction Refactor, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - added `PlsrScanResult` carrier type to hold:
+    - generated issues,
+    - scan counters (`missing`, `owner mismatch`, `extra`, `expired`, skipped fallback),
+    - scan artifacts (`NotIncludedPrefixes`, `LabelByQuarter`, `DispositionsByDispNum`),
+    - text-only fallback warning examples.
+  - extracted scan phase into `RunPlsrScan(...)`:
+    - XML load,
+    - requested quarter key build,
+    - current label collection/indexing,
+    - issue generation for missing/owner mismatch/not-in-PLSR/expired/missing-quarter.
+  - simplified `RunPlsrCheck(...)` orchestration to:
+    - validate inputs,
+    - call `RunPlsrScan(...)`,
+    - continue existing review/apply/create-missing/summary flow unchanged using scan outputs.
+  - tightened nullable flow in scan helper via `labelsForQuarter` local to avoid nullable warnings introduced by extraction.
+- Verification:
+  - initial restore-based build failed due blocked network to NuGet (`api.nuget.org`).
+  - no-restore build succeeded (warnings only):
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - decision tests passed:
+    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+
 # Follow-up (/debug-config lingering command prompt screenshot, 2026-03-02)
 
 - [x] Confirm screenshot state against current source behavior.
