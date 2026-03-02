@@ -4882,86 +4882,17 @@ namespace AtsBackgroundBuilder
             var protectedCoreWindows = protectRequestedCore
                 ? BuildBufferedQuarterWindows(database, requestedQuarterIds, 0.0)
                 : new List<Extents3d>();
+            var contextIds = contextSectionIds.Where(x => !x.IsNull).Distinct().ToList();
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
-
-                bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-                {
-                    a = default;
-                    b = default;
-                    if (ent == null)
-                    {
-                        return false;
-                    }
-
-                    if (ent is Line ln)
-                    {
-                        a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                        b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                        return a.GetDistanceTo(b) > 1e-4;
-                    }
-
-                    if (ent is Polyline pl)
-                    {
-                        if (pl.Closed || pl.NumberOfVertices != 2)
-                        {
-                            return false;
-                        }
-
-                        a = pl.GetPoint2dAt(0);
-                        b = pl.GetPoint2dAt(1);
-                        return a.GetDistanceTo(b) > 1e-4;
-                    }
-
-                    return false;
-                }
-
-                bool TryWriteOpenSegment(Entity ent, Point2d a, Point2d b)
-                {
-                    if (ent is Line ln)
-                    {
-                        ln.StartPoint = new Point3d(a.X, a.Y, ln.StartPoint.Z);
-                        ln.EndPoint = new Point3d(b.X, b.Y, ln.EndPoint.Z);
-                        return true;
-                    }
-
-                    if (ent is Polyline pl && !pl.Closed && pl.NumberOfVertices == 2)
-                    {
-                        pl.SetPointAt(0, a);
-                        pl.SetPointAt(1, b);
-                        return true;
-                    }
-
-                    return false;
-                }
-
-                bool SegmentIntersectsAnyWindow(Point2d segA, Point2d segB, IReadOnlyList<Extents3d> windows)
-                {
-                    if (windows == null || windows.Count == 0)
-                    {
-                        return false;
-                    }
-
-                    for (var wi = 0; wi < windows.Count; wi++)
-                    {
-                        if (TryClipSegmentToWindow(segA, segB, windows[wi], out _, out _))
-                        {
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
-
                 var trimmed = 0;
                 var erased = 0;
                 var protectedSkipped = 0;
                 const double endpointMoveTol = 0.05;
-                foreach (var id in contextSectionIds.Where(x => !x.IsNull).Distinct().ToList())
+                foreach (var id in contextIds)
                 {
-                    if (id.IsNull || id.IsErased)
+                    if (!TryGetWritableEntity(tr, id, out var ent))
                     {
                         if (!contextSectionIds.IsReadOnly)
                         {
@@ -4970,37 +4901,14 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    Entity? ent = null;
-                    try
-                    {
-                        ent = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
-                    }
-                    catch (Autodesk.AutoCAD.Runtime.Exception)
-                    {
-                        if (!contextSectionIds.IsReadOnly)
-                        {
-                            contextSectionIds.Remove(id);
-                        }
-                        continue;
-                    }
-
-                    if (ent == null || ent.IsErased)
-                    {
-                        if (!contextSectionIds.IsReadOnly)
-                        {
-                            contextSectionIds.Remove(id);
-                        }
-                        continue;
-                    }
-
-                    if (!TryReadOpenSegment(ent, out var a, out var b))
+                    if (ent == null || !TryReadOpenTwoPointSegment(ent, out var a, out var b))
                     {
                         continue;
                     }
 
                     // Keep requested section geometry authoritative: do not trim generated/context
                     // lines that still intersect the requested section core extents.
-                    if (protectRequestedCore && SegmentIntersectsAnyWindow(a, b, protectedCoreWindows))
+                    if (protectRequestedCore && IntersectsAnyClipWindow(a, b, protectedCoreWindows))
                     {
                         protectedSkipped++;
                         continue;
@@ -5078,7 +4986,7 @@ namespace AtsBackgroundBuilder
                         .First();
                     var changed = primary.A.GetDistanceTo(a) > endpointMoveTol ||
                                   primary.B.GetDistanceTo(b) > endpointMoveTol;
-                    if (changed && TryWriteOpenSegment(ent, primary.A, primary.B))
+                    if (changed && TryWriteOpenTwoPointSegment(ent, primary.A, primary.B))
                     {
                         trimmed++;
                     }
@@ -5091,6 +4999,50 @@ namespace AtsBackgroundBuilder
                         $"Cleanup: final 100m trim adjusted {trimmed} context segment(s), erased {erased} outside segment(s), protectedSkip={protectedSkipped}, protectRequestedCore={protectRequestedCore}.");
                 }
             }
+        }
+
+        private static bool TryGetWritableEntity(Transaction tr, ObjectId id, [NotNullWhen(true)] out Entity? ent)
+        {
+            ent = null;
+            if (tr == null || id.IsNull || id.IsErased)
+            {
+                return false;
+            }
+
+            try
+            {
+                ent = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception)
+            {
+                return false;
+            }
+
+            return ent != null && !ent.IsErased;
+        }
+
+        private static bool TryWriteOpenTwoPointSegment(Entity ent, Point2d a, Point2d b)
+        {
+            if (ent == null)
+            {
+                return false;
+            }
+
+            if (ent is Line ln)
+            {
+                ln.StartPoint = new Point3d(a.X, a.Y, ln.StartPoint.Z);
+                ln.EndPoint = new Point3d(b.X, b.Y, ln.EndPoint.Z);
+                return true;
+            }
+
+            if (ent is Polyline pl && !pl.Closed && pl.NumberOfVertices == 2)
+            {
+                pl.SetPointAt(0, a);
+                pl.SetPointAt(1, b);
+                return true;
+            }
+
+            return false;
         }
 
         private static void ConnectDanglingUsecZeroTwentyEndpoints(
