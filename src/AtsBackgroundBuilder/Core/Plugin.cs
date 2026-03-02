@@ -4898,7 +4898,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (ent == null || !TryReadOpenTwoPointSegment(ent, out var a, out var b))
+                    if (!TryReadOpenTwoPointSegment(ent, out var a, out var b))
                     {
                         continue;
                     }
@@ -4998,9 +4998,9 @@ namespace AtsBackgroundBuilder
             }
         }
 
-        private static bool TryGetWritableEntity(Transaction tr, ObjectId id, [NotNullWhen(true)] out Entity? ent)
+        private static bool TryGetWritableEntity(Transaction tr, ObjectId id, out Entity ent)
         {
-            ent = null;
+            ent = null!;
             if (tr == null || id.IsNull || id.IsErased)
             {
                 return false;
@@ -5008,14 +5008,19 @@ namespace AtsBackgroundBuilder
 
             try
             {
-                ent = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
+                var candidate = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
+                if (candidate == null || candidate.IsErased)
+                {
+                    return false;
+                }
+
+                ent = candidate;
+                return true;
             }
             catch (Autodesk.AutoCAD.Runtime.Exception)
             {
                 return false;
             }
-
-            return ent != null && !ent.IsErased;
         }
 
         private static void RemoveContextIdIfMutable(ICollection<ObjectId> contextSectionIds, ObjectId id)
