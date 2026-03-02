@@ -4543,107 +4543,13 @@ namespace AtsBackgroundBuilder
             }
 
             var contextSet = new HashSet<ObjectId>(contextSectionIds);
-            var contextSegments = new List<(ObjectId Id, Point2d A, Point2d B, double Length)>();
-            var otherSegments = new List<(ObjectId Id, Point2d A, Point2d B, double Length)>();
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
-                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-                foreach (ObjectId id in ms)
-                {
-                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Polyline pl))
-                    {
-                        continue;
-                    }
-
-                    if (!string.Equals(pl.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) &&
-                        !string.Equals(pl.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    if (pl.Closed || pl.NumberOfVertices != 2)
-                    {
-                        continue;
-                    }
-
-                    var a = pl.GetPoint2dAt(0);
-                    var b = pl.GetPoint2dAt(1);
-                    var len = a.GetDistanceTo(b);
-                    if (len <= 1e-4)
-                    {
-                        continue;
-                    }
-
-                    if (contextSet.Contains(id))
-                    {
-                        contextSegments.Add((id, a, b, len));
-                    }
-                    else
-                    {
-                        otherSegments.Add((id, a, b, len));
-                    }
-                }
-
-                var toErase = new HashSet<ObjectId>();
-                // Remove context segments that duplicate/overlap any existing section linework.
-                foreach (var c in contextSegments)
-                {
-                    foreach (var o in otherSegments)
-                    {
-                        if (!AreSegmentsDuplicateOrCollinearOverlap(c.A, c.B, o.A, o.B))
-                        {
-                            continue;
-                        }
-
-                        toErase.Add(c.Id);
-                        break;
-                    }
-                }
-
-                // De-dupe within context fragments themselves: keep longer one.
-                for (var i = 0; i < contextSegments.Count; i++)
-                {
-                    var s1 = contextSegments[i];
-                    if (toErase.Contains(s1.Id))
-                    {
-                        continue;
-                    }
-
-                    for (var j = i + 1; j < contextSegments.Count; j++)
-                    {
-                        var s2 = contextSegments[j];
-                        if (toErase.Contains(s2.Id))
-                        {
-                            continue;
-                        }
-
-                        if (!AreSegmentsDuplicateOrCollinearOverlap(s1.A, s1.B, s2.A, s2.B))
-                        {
-                            continue;
-                        }
-
-                        var eraseId = s1.Length < s2.Length ? s1.Id : s2.Id;
-                        if (Math.Abs(s1.Length - s2.Length) <= 0.01)
-                        {
-                            eraseId = s1.Id.Handle.Value > s2.Id.Handle.Value ? s1.Id : s2.Id;
-                        }
-
-                        toErase.Add(eraseId);
-                    }
-                }
-
-                var erased = 0;
-                foreach (var id in toErase)
-                {
-                    if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity ent) || ent.IsErased)
-                    {
-                        continue;
-                    }
-
-                    ent.Erase();
-                    erased++;
-                }
+                var contextSegments = new List<(ObjectId Id, Point2d A, Point2d B, double Length)>();
+                var otherSegments = new List<(ObjectId Id, Point2d A, Point2d B, double Length)>();
+                CollectContextOverlapSegments(database, tr, contextSet, contextSegments, otherSegments);
+                var toErase = ResolveContextOverlapEraseSet(contextSegments, otherSegments);
+                var erased = EraseEntitiesById(tr, toErase);
 
                 tr.Commit();
                 if (erased > 0)
@@ -4651,6 +4557,118 @@ namespace AtsBackgroundBuilder
                     logger?.WriteLine($"Cleanup: erased {erased} overlapping context L-SEC/L-USEC segment(s).");
                 }
             }
+        }
+
+        private static void CollectContextOverlapSegments(
+            Database database,
+            Transaction tr,
+            ISet<ObjectId> contextSet,
+            ICollection<(ObjectId Id, Point2d A, Point2d B, double Length)> contextSegments,
+            ICollection<(ObjectId Id, Point2d A, Point2d B, double Length)> otherSegments)
+        {
+            if (database == null || tr == null || contextSet == null || contextSegments == null || otherSegments == null)
+            {
+                return;
+            }
+
+            var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+            var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+            foreach (ObjectId id in ms)
+            {
+                if (!(tr.GetObject(id, OpenMode.ForRead, false) is Polyline pl))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(pl.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(pl.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (pl.Closed || pl.NumberOfVertices != 2)
+                {
+                    continue;
+                }
+
+                var a = pl.GetPoint2dAt(0);
+                var b = pl.GetPoint2dAt(1);
+                var len = a.GetDistanceTo(b);
+                if (len <= 1e-4)
+                {
+                    continue;
+                }
+
+                if (contextSet.Contains(id))
+                {
+                    contextSegments.Add((id, a, b, len));
+                }
+                else
+                {
+                    otherSegments.Add((id, a, b, len));
+                }
+            }
+        }
+
+        private static HashSet<ObjectId> ResolveContextOverlapEraseSet(
+            IReadOnlyList<(ObjectId Id, Point2d A, Point2d B, double Length)> contextSegments,
+            IReadOnlyList<(ObjectId Id, Point2d A, Point2d B, double Length)> otherSegments)
+        {
+            var toErase = new HashSet<ObjectId>();
+            if (contextSegments == null || contextSegments.Count == 0)
+            {
+                return toErase;
+            }
+
+            // Remove context segments that duplicate/overlap any existing section linework.
+            foreach (var c in contextSegments)
+            {
+                for (var oi = 0; oi < otherSegments.Count; oi++)
+                {
+                    var o = otherSegments[oi];
+                    if (!AreSegmentsDuplicateOrCollinearOverlap(c.A, c.B, o.A, o.B))
+                    {
+                        continue;
+                    }
+
+                    toErase.Add(c.Id);
+                    break;
+                }
+            }
+
+            // De-dupe within context fragments themselves: keep longer one.
+            for (var i = 0; i < contextSegments.Count; i++)
+            {
+                var s1 = contextSegments[i];
+                if (toErase.Contains(s1.Id))
+                {
+                    continue;
+                }
+
+                for (var j = i + 1; j < contextSegments.Count; j++)
+                {
+                    var s2 = contextSegments[j];
+                    if (toErase.Contains(s2.Id))
+                    {
+                        continue;
+                    }
+
+                    if (!AreSegmentsDuplicateOrCollinearOverlap(s1.A, s1.B, s2.A, s2.B))
+                    {
+                        continue;
+                    }
+
+                    var eraseId = s1.Length < s2.Length ? s1.Id : s2.Id;
+                    if (Math.Abs(s1.Length - s2.Length) <= 0.01)
+                    {
+                        eraseId = s1.Id.Handle.Value > s2.Id.Handle.Value ? s1.Id : s2.Id;
+                    }
+
+                    toErase.Add(eraseId);
+                }
+            }
+
+            return toErase;
         }
 
         private static void CleanupGeneratedRoadAllowanceOverlaps(
