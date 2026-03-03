@@ -31,6 +31,7 @@ namespace WildlifeSweeps
         private const string QuarterValidationLayerName = "L-QUARTER";
         private const string QuarterLegacySourceLayerName = "L-QUATER";
         private const string DefaultAtsSectionIndexFolder = @"C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\RES MANAGER";
+        private const string AllowSimpleQuarterFallbackEnvVar = "WLS_ALLOW_SIMPLE_QUARTER_FALLBACK";
         private const short QuarterValidationLayerColor = 30;
 
         private enum BufferMode
@@ -253,23 +254,63 @@ namespace WildlifeSweeps
                     return;
                 }
 
+                var atsQuarterGenerationAttempted = false;
+                var atsQuarterGenerationSucceeded = false;
+                var atsGenerationDetail = string.Empty;
                 if (quarterLayerSources.Count == 0 &&
                     locationResolver != null &&
-                    hasLocationZone &&
-                    TryGenerateQuarterSourcesViaAtsBuild(
+                    hasLocationZone)
+                {
+                    atsQuarterGenerationAttempted = true;
+                    atsQuarterGenerationSucceeded = TryGenerateQuarterSourcesViaAtsBuild(
                         doc.Database,
                         editor,
                         locationResolver,
                         activeFindings,
                         locationZone,
-                        out var atsGenerationDetail))
-                {
-                    editor.WriteMessage($"\nQuarter boundary resolver: {atsGenerationDetail}");
-                    quarterLayerSources = LoadQuarterLayerSources(doc.Database, locationResolver);
-                    if (quarterLayerSources.Count > 0)
+                        out atsGenerationDetail);
+                    if (atsQuarterGenerationSucceeded)
                     {
-                        WriteQuarterLayerSourceSummary(editor, quarterLayerSources);
+                        editor.WriteMessage($"\nQuarter boundary resolver: {atsGenerationDetail}");
+                        quarterLayerSources = LoadQuarterLayerSources(doc.Database, locationResolver);
+                        if (quarterLayerSources.Count > 0)
+                        {
+                            WriteQuarterLayerSourceSummary(editor, quarterLayerSources);
+                        }
                     }
+                }
+
+                var allowSimpleQuarterFallback = IsAffirmativeToggle(Environment.GetEnvironmentVariable(AllowSimpleQuarterFallbackEnvVar));
+                if (!allowSimpleQuarterFallback && quarterLayerSources.Count == 0)
+                {
+                    string reason;
+                    if (atsQuarterGenerationAttempted)
+                    {
+                        reason = string.IsNullOrWhiteSpace(atsGenerationDetail)
+                            ? "ATS section build fallback did not produce quarter polygons."
+                            : atsGenerationDetail;
+                    }
+                    else if (!hasLocationZone)
+                    {
+                        reason = "ATS section build fallback skipped (UTM zone is invalid).";
+                    }
+                    else if (locationResolver == null)
+                    {
+                        reason = "ATS section build fallback skipped (section index resolver could not initialize).";
+                    }
+                    else
+                    {
+                        reason = "ATS section build fallback skipped (unknown precondition failure).";
+                    }
+
+                    var message =
+                        "Quarter boundary resolver strict mode: missing quarter source polygons and ATS quarter generation was unavailable.\n" +
+                        $"Details: {reason}\n" +
+                        "Load AtsBackgroundBuilder.dll (or place it in a probe path), then run again.\n" +
+                        $"To force legacy simple fallback, set {AllowSimpleQuarterFallbackEnvVar}=1.";
+                    Application.ShowAlertDialog(message);
+                    editor.WriteMessage($"\n{message}");
+                    return;
                 }
 
                 var quarterLayerMatches = new List<QuarterLayerMatch>();
@@ -1518,6 +1559,21 @@ namespace WildlifeSweeps
             {
                 return string.Empty;
             }
+        }
+
+        private static bool IsAffirmativeToggle(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            var normalized = raw.Trim();
+            return string.Equals(normalized, "1", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "true", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "yes", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "on", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "y", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool SetReflectionProperty(object target, string propertyName, object value)
