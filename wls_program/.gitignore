@@ -1,0 +1,27 @@
+# Build outputs
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Rider
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local tooling/cache
+.dotnet-codex/
+.dotnet-codex-local/
+.nuget-packages/
+
+# Local build bundles / screenshots
+builds/
+ENVIROKMZSNAP.png
+src/WildlifeSweeps/Screenshot *.png

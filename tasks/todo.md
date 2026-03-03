@@ -2858,3 +2858,377 @@
 - Verification:
   - `powershell -ExecutionPolicy Bypass -File .\scripts\run-ops-gate.ps1 -SkipZ11 -SkipZ12`
   - output: `Ops checked: 4832`, `Ops failed: 0`.
+
+# Follow-up (Integrate WLS Program as Standalone Module, 2026-03-03)
+
+- [x] Create a dedicated `wls_program/` module in this repository and import WLS source/docs/assets.
+- [x] Exclude nested-repo/tool/build artifacts from the imported module (`.git`, `.vs`, `bin`, `obj`, local dotnet cache folders).
+- [x] Update root docs so WLS module location/build workflow is explicit.
+- [x] Verify solution-level build entry points for both modules still resolve from the new layout.
+
+## Review (Integrate WLS Program as Standalone Module, 2026-03-03)
+
+- Added new standalone module root:
+  - `wls_program/`
+  - includes WLS source, docs, lookup assets, and legacy workflow archive source snapshot.
+- Import hygiene:
+  - excluded nested repository/tooling/build folders during import:
+    - `.git`
+    - `.vs`
+    - `.dotnet-codex-test`
+    - `bin`
+    - `obj`
+  - removed copied workspace-clutter bundle under:
+    - `wls_program/archive/2026-03-03-workspace-clutter`
+- Documentation updates:
+  - updated root `README.md` with WLS module location + build command.
+  - updated `wls_program/README.md` with:
+    - integration context,
+    - recommended reuse patterns for pulling shared code from `src/AtsBackgroundBuilder`,
+    - linked-file include example for quick function reuse.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:n` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet restore .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln /m:1 -v:n` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release /m:1 -v:n` succeeded.
+
+# Follow-up (WLS Table LOCATION from ATS Quarter Resolution, 2026-03-03)
+
+- [x] Add ATS-style section index resolver for point-to-quarter matching in WLS (no ATS linework drawing).
+- [x] Populate WLS table `LOCATION` cells from resolved quarter/location token per finding.
+- [x] Log match summary (resolved/unresolved) for generated findings.
+- [x] Build WLS solution and confirm compile success.
+
+## Review (WLS Table LOCATION from ATS Quarter Resolution, 2026-03-03)
+
+- Reused ATS index-reading code directly in WLS:
+  - linked `src/AtsBackgroundBuilder/Sections/SectionIndexReader.cs` into WLS project.
+  - added compatibility logger shim `wls_program/src/WildlifeSweeps/AtsLoggerShim.cs` (`AtsBackgroundBuilder.Logger`).
+- Added WLS resolver `wls_program/src/WildlifeSweeps/AtsQuarterLocationResolver.cs`:
+  - loads ATS section outlines for active UTM zone from section index folders,
+  - performs point-in-section lookup,
+  - resolves quarter (`NW/NE/SW/SE`) using section-local orientation,
+  - outputs table location token format: `<QTR> <SEC>-<TWP>-<RGE>-W<MER>`.
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - initializes resolver once per run using selected UTM zone,
+  - assigns resolved location token when creating each `PhotoPointRecord`,
+  - fills table `LOCATION` column from `record.Location`,
+  - logs summary: `ATS location match: X/Y finding(s) resolved to quarter/section.`
+- Updated WLS data model:
+  - `PhotoPointRecord` now includes `Location`.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release /m:1 -v:n` succeeded.
+
+# Follow-up (WLS Optional L-QUARTER Validation Linework Toggle, 2026-03-03)
+
+- [x] Add a persisted WLS setting for optional quarter validation linework output.
+- [x] Add a Complete From Photos UI checkbox to toggle L-QUARTER validation output.
+- [x] Extend ATS quarter resolver output to return matched quarter polygon geometry.
+- [x] Draw unique matched quarter polygons on `L-QUARTER` during Complete From Photos when enabled.
+- [x] Build WLS solution and confirm compile success.
+
+## Review (WLS Optional L-QUARTER Validation Linework Toggle, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/PluginSettings.cs`:
+  - added `CompleteFromPhotosIncludeQuarterLinework` (`false` default).
+- Updated `wls_program/src/WildlifeSweeps/Ui/PaletteControl.cs`:
+  - added checkbox `Include L-QUARTER linework`,
+  - wired setting load/save in `TryUpdateSettings(...)` and `ApplyCompleteFromPhotosBufferMode(...)`,
+  - added tooltip describing visual quarter-assignment validation intent.
+- Updated `wls_program/src/WildlifeSweeps/AtsQuarterLocationResolver.cs`:
+  - added `TryResolveQuarterMatch(...)` returning both:
+    - location token (`NW/NE/SW/SE SEC-TWP-RGE-WMER`),
+    - quarter polygon vertices based on section-local orientation.
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - collects unique quarter polygons by resolved location token while inserting findings,
+  - when toggle is enabled, draws matched quarter polygons as closed polylines on `L-QUARTER`,
+  - ensures `L-QUARTER` exists (ACI 30),
+  - writes result messages:
+    - section index unavailable,
+    - no quarter matches,
+    - or count of drawn validation polygons.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release --no-restore /m:1 -v:n` succeeded.
+
+# Follow-up (WLS SORT 100m buffer Photos Button + Copy Workflow, 2026-03-03)
+
+- [x] Add a new WLS UI button for sorting/copying in-buffer photos.
+- [x] Implement service workflow: pick closed buffer, pick photo folder, create `within 100m`, copy matching GPS photos.
+- [x] Reuse WLS UTM conversion flow (zone prompt + lat/lon -> UTM projection) for buffer inclusion test.
+- [x] Build WLS solution and confirm compile success.
+
+## Review (WLS SORT 100m buffer Photos Button + Copy Workflow, 2026-03-03)
+
+- Added new service `wls_program/src/WildlifeSweeps/SortBufferPhotosService.cs`:
+  - prompts for closed polyline buffer,
+  - prompts for photo folder selection,
+  - prompts for UTM zone (`11/12`) using existing WLS pattern,
+  - reads JPG/JPEG EXIF GPS metadata,
+  - projects photo coordinates to UTM,
+  - copies in-buffer photos to `<selected folder>\within 100m`,
+  - logs summary counts (copied/outside/skipped/copy failures/overwritten).
+- Updated `wls_program/src/WildlifeSweeps/Ui/PaletteControl.cs`:
+  - added button `SORT 100m buffer Photos`,
+  - wired click to `RunSortBufferPhotos()`,
+  - added tooltip explaining the workflow.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release --no-restore /m:1 -v:n` succeeded.
+
+# Follow-up (WLS BUFFERS: PROPOSED / 100m Dual-Buffer + Dual-Block Flow, 2026-03-03)
+
+- [x] Update `BUFFERS: PROPOSED / 100m` mode to prompt for two boundaries (`PROPOSED` and `100m`).
+- [x] Update same mode to prompt for two sample blocks (one per boundary zone).
+- [x] Ensure nested matches do not duplicate inserts (PROPOSED takes precedence when point is in both).
+- [x] Build WLS solution and confirm compile success.
+
+## Review (WLS BUFFERS: PROPOSED / 100m Dual-Buffer + Dual-Block Flow, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - for `IncludeBufferExcludeOutside` mode:
+    - prompts for `PROPOSED` boundary,
+    - prompts for `100m` boundary,
+    - prompts for `PROPOSED` block and `100m-only` block.
+  - added zone classifier (`Proposed`, `HundredMeter`, `Outside`) with precedence:
+    - if inside both boundaries, classify as `Proposed` to avoid duplicate placements.
+  - insert phase now picks block by zone for this mode:
+    - `Proposed -> proposed block`
+    - `HundredMeter -> 100m-only block`
+    - `Outside -> skipped`
+  - existing `PROPOSED / 100m / OUTSIDE` mode behavior remains unchanged.
+- Updated tooltip text in `wls_program/src/WildlifeSweeps/Ui/PaletteControl.cs` for `BUFFERS: PROPOSED / 100m` to describe dual-buffer/dual-block behavior and duplicate prevention.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release --no-restore /m:1 -v:n` succeeded.
+
+# Follow-up (WLS Quarter Assignment Must Use L-QUATER Boundaries + Dotted Tokens, 2026-03-03)
+
+- [x] Prioritize `L-QUATER`/`L-QUARTER` polygon containment for WLS finding location assignment.
+- [x] Keep ATS section-index fallback when no quarter-layer polygon match exists.
+- [x] Format table quarter token as `N.W.`, `N.E.`, `S.W.`, `S.E.` instead of `NW/NE/SW/SE`.
+- [x] Rebuild WLS to verify compile (using alternate output path when runtime DLL is locked).
+
+## Review (WLS Quarter Assignment Must Use L-QUATER Boundaries + Dotted Tokens, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - loads closed quarter polygons from both `L-QUATER` and `L-QUARTER`,
+  - resolves each finding by quarter-layer polygon containment first,
+  - falls back to ATS section-index quarter resolution only when no layer polygon contains the finding.
+- Updated `wls_program/src/WildlifeSweeps/AtsQuarterLocationResolver.cs`:
+  - quarter token display is now dotted in table location strings:
+    - `NW -> N.W.`
+    - `NE -> N.E.`
+    - `SW -> S.W.`
+    - `SE -> S.E.`
+- Verification:
+  - direct release build remains blocked by runtime file lock:
+    - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release --no-restore /m:1 -v:n`
+    - failed with `MSB3027/MSB3021` (`WildlifeSweeps.dll` locked in `bin\Release\net8.0-windows`).
+  - compile verified to alternate output path:
+    - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath="C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\wls_alt\"`
+    - succeeded.
+
+# Follow-up (WLS LSD Location + Photo Caption + Proposed/100m Table Grouping, 2026-03-03)
+
+- [x] Change WLS location output from quarter token to LSD-style legal location format.
+- [x] Add second caption line under photo label with the same finding text used in table rows.
+- [x] Force `PHOTO #` caption label text green (without forcing number text color to green).
+- [x] For `BUFFERS: PROPOSED / 100m`, order findings `PROPOSED` first then `100m`, and insert one blank table row between groups.
+- [x] Build WLS project to verify compile success.
+
+## Review (WLS LSD Location + Photo Caption + Proposed/100m Table Grouping, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/AtsQuarterLocationResolver.cs`:
+  - added LSD resolver output (`TryResolveLsdMatch`) using ATS section-local 4x4 LSD row/col mapping with serpentine numbering:
+    - even south-rows count right-to-left,
+    - odd south-rows count left-to-right.
+  - location strings now support LSD format:
+    - `<LSD>-<SEC>-<TWP>-<RGE>-W<MER>`.
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - switched finding location assignment to LSD resolution,
+  - kept quarter-layer containment (`L-QUATER`/`L-QUARTER`) as first containment path,
+  - changed summary wording to `resolved to LSD/section`,
+  - added mode-aware ordering helper so `IncludeBufferExcludeOutside` (`PROPOSED / 100m`) is always:
+    - all proposed findings first (direction-sorted),
+    - then all 100m-only findings (direction-sorted),
+  - extended table generation to inject one blank spacer row at proposed->100m boundary.
+- Updated `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs`:
+  - extended `PhotoLayoutRecord` with caption text,
+  - caption now renders:
+    - line 1: `PHOTO #<n>` with only `PHOTO #` forced green via MText inline color,
+    - line 2: finding description (matching table text),
+  - escapes MText control characters in caption content.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath="C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\wls_alt\"`
+  - succeeded.
+
+# Follow-up (WLS Quarter Source Priority + Photo Label Style Offset, 2026-03-03)
+
+- [x] Make WLS quarter-boundary matching prefer ATS `L-QUATER` polygons over validation `L-QUARTER`.
+- [x] Keep `L-QUARTER` as fallback only when `L-QUATER` is unavailable.
+- [x] Stop adding synthetic resolver quarter polygons to validation linework output.
+- [x] Make photo captions all-caps and fully green.
+- [x] Move photo caption label down an additional 24m.
+- [x] Rebuild WLS solution and confirm compile success.
+
+## Review (WLS Quarter Source Priority + Photo Label Style Offset, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - `LoadQuarterLayerMatches(...)` now scans both layers but uses this precedence:
+    - `L-QUATER` first (ATS road-allowance quarter geometry),
+    - `L-QUARTER` only if no `L-QUATER` polygons exist.
+  - runtime message now reports the actual source layer in use.
+  - validation linework capture now stores only polygons coming from matched quarter-layer geometry (no synthetic fallback polygons from section-index quarter split).
+- Updated `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs`:
+  - label insertion Y offset changed from `-24.0` to `-48.0` (additional 24m down),
+  - caption text now uppercases via `ToUpperInvariant()`,
+  - entire caption (`PHOTO #` line + finding line) now uses green text color.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release --no-restore /m:1 -v:n`
+  - succeeded.
+
+# Follow-up (WLS Proposed/100m Spacer Row Border + Height, 2026-03-03)
+
+- [x] Update the proposed->100m spacer row to remove side/vertical borders.
+- [x] Keep only top and bottom borders on that spacer row.
+- [x] Set proposed->100m spacer row height to `125`.
+- [x] Rebuild WLS project to verify compile success.
+
+## Review (WLS Proposed/100m Spacer Row Border + Height, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - `ConfigureGroupSpacerRow(...)` now:
+    - sets row height to `125.0`,
+    - clears text,
+    - hides `Left`, `Right`, and `Vertical` borders,
+    - keeps `Top` and `Bottom` borders visible.
+- Verification:
+  - standard build attempted but blocked by DLL lock in `bin\Release\net8.0-windows\WildlifeSweeps.dll` (`MSB3027/MSB3021`).
+  - alternate output build succeeded:
+    - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath="C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\wls_alt\"`
+
+# Follow-up (WLS ATS Quarter Source Selection + L-QUARTER Boundary Fidelity, 2026-03-03)
+
+- [x] Load both ATS quarter polygon layers (`L-QUATER` and `L-QUARTER`) instead of locking source choice up-front.
+- [x] Select the quarter source that matches the most active findings (tie-break by polygon count, then ATS `L-QUATER`).
+- [x] Harden quarter-layer LSD resolution with per-finding ATS metadata fallback and near-boundary matching tolerance.
+- [x] Build WLS project to verify compile success.
+
+## Review (WLS ATS Quarter Source Selection + L-QUARTER Boundary Fidelity, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - replaced single-source loader with `LoadQuarterLayerSources(...)` to ingest both `L-QUATER` and `L-QUARTER` polygon sets.
+  - added `TrySelectQuarterLayerSource(...)` to score each source against actual active findings and auto-pick the best-matching layer for the current run.
+  - improved quarter match robustness:
+    - `TryResolveFromQuarterLayer(...)` now applies a bounded near-miss fallback (`2.0m`) when strict containment misses due tiny slivers/gaps.
+  - improved quarter-layer LSD output path:
+    - `TryResolveLsdLocationFromQuarterLayer(...)` now accepts resolver context and fills missing quarter/ATS tokens from per-finding `TryResolveQuarterMatch(...)`.
+  - updated run-time messaging to show discovered quarter sources and the selected source hit count.
+  - kept validation linework capture tied to matched quarter polygons and removed unnecessary ATS-index gating for the capture dictionary.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath="C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\wls_alt\"`
+  - succeeded (`0 Warning(s)`, `0 Error(s)`).
+
+# Follow-up (WLS L-QUARTER Toggle Drew Nothing - Diagnostic Fallback, 2026-03-03)
+
+- [x] Add fallback quarter-source selection when scoring returns no direct containment hits.
+- [x] Add nearest-quarter diagnostic capture for validation linework when strict containment misses.
+- [x] Improve validation status messages to distinguish no-source vs no-associated-polygons cases.
+- [x] Rebuild WLS project in a fresh alternate output path to verify compile success.
+
+## Review (WLS L-QUARTER Toggle Drew Nothing - Diagnostic Fallback, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - added `TryGetPreferredQuarterLayerSource(...)` fallback to keep quarter source selection deterministic (`L-QUATER` preferred).
+  - added `TryResolveNearestQuarterLayerForDiagnostics(...)` and per-finding capture so validation drawing still gets candidate quarter polygons when strict containment misses.
+  - added tracking/reporting for:
+    - direct quarter containment matches,
+    - nearest diagnostic adds.
+  - updated linework messaging to report no-source vs no-associated diagnostics.
+- Verification:
+  - first build attempt to previous alt output path failed on locked output DLL (`MSB3027/MSB3021`).
+  - rebuilt to a fresh path and succeeded:
+    - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath="C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\wls_alt_20260303_1600\"`
+  - succeeded (`0 Warning(s)`, `0 Error(s)`).
+
+# Follow-up (WLS Enforce ATS L-QUATER-Only Quarter Source, 2026-03-03)
+
+- [x] Restrict WLS quarter source loading to ATS quarter-view layer `L-QUATER` only.
+- [x] Remove fallback quarter-source loading from `L-QUARTER` for location/section determination.
+- [x] Keep validation draw output on `L-QUARTER` (orange) while sourcing geometry strictly from `L-QUATER` matches.
+- [x] Rebuild WLS project in fresh alt output path and verify success.
+
+## Review (WLS Enforce ATS L-QUATER-Only Quarter Source, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - `LoadQuarterLayerSources(...)` now loads only closed polylines from `L-QUATER` (ATS quarter-view source).
+  - removed `L-QUARTER` from source-selection input for location matching.
+  - updated no-source message to explicitly report missing ATS `L-QUATER` polygons.
+  - retained optional validation drawing to `L-QUARTER` orange layer using matched ATS-source quarter polygons.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath="C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\wls_alt_20260303_1610\"`
+  - succeeded (`0 Warning(s)`, `0 Error(s)`).
+
+# Follow-up (WLS Use L-QUARTER Source for Validation, 2026-03-03)
+
+- [x] Re-enable quarter source loading from `L-QUARTER` for Complete From Photos matching/validation.
+- [x] Prioritize `L-QUARTER` over `L-QUATER` during source selection.
+- [x] Update no-source message text to reference `L-QUARTER` expectation.
+- [x] Rebuild WLS project to fresh output path and verify success.
+
+## Review (WLS Use L-QUARTER Source for Validation, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - `LoadQuarterLayerSources(...)` now loads both layers again and captures `L-QUARTER` matches.
+  - source ordering now places `L-QUARTER` first.
+  - tie-break priority in source scoring/preferred fallback now favors `L-QUARTER`.
+  - no-source linework message updated to `no L-QUARTER source polygons were found`.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath="C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\wls_alt_20260303_1620\"`
+  - succeeded (`0 Warning(s)`, `0 Error(s)`).
+
+# Follow-up (WLS Canonical Quarter Layer Name Only, 2026-03-03)
+
+- [x] Remove `L-QUATER` legacy alias from WLS quarter source-loading logic.
+- [x] Keep only `L-QUARTER` as the source layer for quarter matching and validation selection.
+- [x] Rebuild WLS project to a fresh output path and verify success.
+
+## Review (WLS Canonical Quarter Layer Name Only, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - removed `QuarterLayerLegacyName` constant and all `L-QUATER` branching.
+  - `LoadQuarterLayerSources(...)` now scans only closed polylines on `L-QUARTER`.
+  - quarter source list now contains only canonical `L-QUARTER` source entries.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath="C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\wls_alt_20260303_1630\"`
+  - succeeded (`0 Warning(s)`, `0 Error(s)`).
+
+# Follow-up (WLS L-QUARTER Draw Fallback from ATS Resolver, 2026-03-03)
+
+- [x] Add resolver-based quarter polygon fallback when no quarter-layer source polygons are available.
+- [x] Keep quarter validation linework output on `L-QUARTER` (orange) while sourcing fallback geometry from ATS quarter resolver.
+- [x] Rebuild WLS project in Release and verify successful compile.
+
+## Review (WLS L-QUARTER Draw Fallback from ATS Resolver, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - when a finding does not resolve to any loaded quarter-layer polygon, `TryResolveLsdMatch(...)` now also contributes `QuarterVertices` into the validation-draw polygon set.
+  - added `resolver fallback adds` metric in linework status output to confirm fallback path usage.
+  - retained existing direct-match and nearest-diagnostic counters.
+- Verification:
+  - `dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release`
+  - succeeded (`0 Warning(s)`, `0 Error(s)`).
+
+# Follow-up (WLS ATS Section-Build Quarter Generation Fallback, 2026-03-03)
+
+- [x] Add fallback that triggers ATS section build pipeline when quarter source polygons are missing.
+- [x] Reuse ATS `DrawSectionsFromRequests` + ATS cleanup to generate L-QUATER definitions and remove temporary sectioning linework.
+- [x] Reload quarter polygon sources after ATS generation and continue normal WLS location/linework flow.
+- [x] Rebuild WLS Release DLL and verify compile success.
+
+## Review (WLS ATS Section-Build Quarter Generation Fallback, 2026-03-03)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - Added `TryGenerateQuarterSourcesViaAtsBuild(...)` reflection path to invoke ATS internal section build (`DrawSectionsFromRequests`) when no `L-QUARTER/L-QUATER` source polygons exist.
+  - Added ATS cleanup invocation (`CleanupAfterBuild`) configured to remove temporary ATS build linework while preserving quarter definitions (`L-QUATER`).
+  - Added source-summary helper reuse and post-generation quarter-source reload.
+- Verification:
+  - `dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release`
+  - succeeded (`0 Warning(s)`, `0 Error(s)`).

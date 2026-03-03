@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>WildlifeSweeps</RootNamespace>
+    <AssemblyName>WildlifeSweeps</AssemblyName>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <Nullable>annotations</Nullable>
+    <NoWarn>CS8632;MSB3277</NoWarn>
+    <ACAD_DIR Condition="'$(ACAD_DIR)' == ''">C:\Program Files\Autodesk\AutoCAD 2025</ACAD_DIR>
+    <WildlifeLookupSourceFile>$(MSBuildProjectDirectory)\..\..\wildlife_parsing_codex_lookup.xlsx</WildlifeLookupSourceFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\..\src\AtsBackgroundBuilder\Sections\SectionIndexReader.cs" Link="Shared\Ats\SectionIndexReader.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="accoremgd">
+      <HintPath>$(ACAD_DIR)\accoremgd.dll</HintPath>
+    </Reference>
+    <Reference Include="Acdbmgd">
+      <HintPath>$(ACAD_DIR)\acdbmgd.dll</HintPath>
+    </Reference>
+    <Reference Include="Acmgd">
+      <HintPath>$(ACAD_DIR)\acmgd.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CopyWildlifeLookup" AfterTargets="Build" Condition="Exists('$(WildlifeLookupSourceFile)')">
+    <Copy
+      SourceFiles="$(WildlifeLookupSourceFile)"
+      DestinationFolder="$(OutputPath)"
+      SkipUnchangedFiles="true" />
+  </Target>
+</Project>

@@ -1,0 +1,14 @@
+[
+  {
+    "description": "Rabbit Scat",
+    "pattern": "(?=.*\\brabbit\\b)(?=.*\\b(scat|droppings)\\b)"
+  },
+  {
+    "description": "Deer Scat",
+    "pattern": "(?=.*\\bdeer\\b)(?=.*\\bscat\\b)"
+  },
+  {
+    "description": "Moose Scat",
+    "pattern": "(?=.*\\bmoose\\b)(?=.*\\bscat\\b)"
+  }
+]
