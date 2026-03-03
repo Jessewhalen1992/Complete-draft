@@ -33,6 +33,27 @@ Run the command:
 ATSBUILD
 ```
 
+## Pre-AutoCAD Ops Gate
+
+Run the calibrated section-validation gate in one step:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-ops-gate.ps1
+```
+
+Defaults in the script:
+- runs zone 11 + zone 12 validator sweeps
+- applies ops scope filter: `TWP >= 50` and `sections >= 30`
+- fails gate when any township has:
+  - `unmatched_ratio > 0.30`, or
+  - `accepted_pairs == 0`, or
+  - `sections_with_gt2_unmatched > 22`
+
+Artifacts:
+- `out-validate\z11-gate\validation_summary.json`
+- `out-validate\z12-gate\validation_summary.json`
+- `out-validate\ops-gate-failures.csv`
+
 ## CAD line export for Python diagnosis
 
 To visualize the exact final AutoCAD linework in the Streamlit viewer (layer toggles by CAD layer):

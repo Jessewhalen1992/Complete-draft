@@ -15,6 +15,23 @@ python -m ats_viewer --sections "11-1-1-W5,14-1-1-W5" --debug --out out-debug/
 python -m ats_viewer --township "TWP 1 RGE 1 W5" --zone 11 --debug --out out-debug/merged --road-width-targets "20.11,30.17" --gap-tolerance 1.0
 ```
 
+ATS-wide invariant validation (pre-AutoCAD):
+
+```bash
+python -m ats_viewer.validator --township "TWP 57 RGE 18 W5" --zone 11 --out out-validate/twp-57-18-w5
+python -m ats_viewer.validator --all-townships --zone 11 --out out-validate/z11
+python -m ats_viewer.validator --all-townships --zone auto --out out-validate/all-zones
+```
+
+Validator outputs:
+- `validation_summary.json`
+- `validation_summary.md`
+- `validation_failures.csv`
+
+Exit code:
+- `0`: all checked townships passed configured invariants.
+- `1`: one or more townships failed.
+
 Note:
 - `--road-width-targets` must be provided as one quoted value: `--road-width-targets "20.11,30.17"`.
 

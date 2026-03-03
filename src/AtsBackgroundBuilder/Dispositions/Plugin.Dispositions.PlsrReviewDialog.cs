@@ -115,7 +115,8 @@ namespace AtsBackgroundBuilder
                     applyButton.Click += (_, __) =>
                     {
                         grid.EndEdit();
-                        if (form.BindingContext[rows] is WinForms.CurrencyManager manager)
+                        var bindingContext = form.BindingContext;
+                        if (bindingContext != null && bindingContext[rows] is WinForms.CurrencyManager manager)
                         {
                             manager.EndCurrentEdit();
                         }

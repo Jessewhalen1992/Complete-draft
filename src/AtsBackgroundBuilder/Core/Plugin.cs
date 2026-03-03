@@ -2010,7 +2010,7 @@ namespace AtsBackgroundBuilder
                 return EnableRangeEdgeRelayer;
             }
 
-            logger.WriteLine("Cleanup: legacy SW/NW/simple-west/stop-rule passes skipped in canonical RA mode; SE east-boundary bridge pass enabled.");
+            logger?.WriteLine("Cleanup: legacy SW/NW/simple-west/stop-rule passes skipped in canonical RA mode; SE east-boundary bridge pass enabled.");
             NormalizeBlindLineLayersBySecConnections(database, ruleScopeIds, logger);
             NormalizeUsecLayersToThreeBands(
                 database,
@@ -2043,7 +2043,7 @@ namespace AtsBackgroundBuilder
                 originalRangeEdgeSecAnchors,
                 logger);
             TraceTargetLayerSegmentState(database, ruleScopeIds, "after-range-edge-reapply-1", logger);
-            logger.WriteLine("Cleanup: context endpoint snap/stitch disabled (context is build-adjoining + 100m trim only).");
+            logger?.WriteLine("Cleanup: context endpoint snap/stitch disabled (context is build-adjoining + 100m trim only).");
             TrimContextSectionsToBufferedWindows(database, contextSectionIds, requestedScopeIds, logger);
             if (generatedRoadAllowanceIds.Count > 0)
             {
@@ -2100,13 +2100,13 @@ namespace AtsBackgroundBuilder
             EnforceSecLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
             EnforceQuarterLineEndpointsOnSectionBoundaries(database, requestedScopeIds, logger);
             EnforceBlindLineEndpointsOnSectionBoundaries(database, requestedScopeIds, logger);
-            logger.WriteLine("Cleanup: section geometry finalized (SEC/QSEC/blind endpoint passes complete); deferred LSD draw begins.");
+            logger?.WriteLine("Cleanup: section geometry finalized (SEC/QSEC/blind endpoint passes complete); deferred LSD draw begins.");
             if (drawLsds)
             {
                 DrawDeferredLsdSubdivisionLines(database, lsdQuarterInfos, logger);
                 EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger, lsdQuarterInfos);
             }
-            logger.WriteLine("Cleanup: final endpoint convergence pass begins (all endpoint targets recalculated from final geometry).");
+            logger?.WriteLine("Cleanup: final endpoint convergence pass begins (all endpoint targets recalculated from final geometry).");
             ConnectDanglingUsecZeroTwentyEndpoints(database, requestedScopeIds, logger);
             CleanupOverlappingZeroTwentySectionLines(database, requestedScopeIds, logger);
             EnforceSectionLineNoCrossingRules(database, requestedScopeIds, logger);
@@ -2135,7 +2135,7 @@ namespace AtsBackgroundBuilder
             }
             else
             {
-                logger.WriteLine("Cleanup: skipped overlap shortest-wins on restored existing section segments (ATS fabric disabled).");
+                logger?.WriteLine("Cleanup: skipped overlap shortest-wins on restored existing section segments (ATS fabric disabled).");
             }
             ApplyCorrectionLinePostBuildRules(
                 database,
@@ -2154,8 +2154,8 @@ namespace AtsBackgroundBuilder
                 EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger, lsdQuarterInfos);
                 RebuildLsdLabelsAtFinalIntersections(database, lsdQuarterInfos, logger);
             }
-            logger.WriteLine("Cleanup: final endpoint convergence pass complete.");
-            logger.WriteLine($"TIMING DrawSectionsFromRequests: road allowances processed in {timer.ElapsedMilliseconds} ms");
+            logger?.WriteLine("Cleanup: final endpoint convergence pass complete.");
+            logger?.WriteLine($"TIMING DrawSectionsFromRequests: road allowances processed in {timer.ElapsedMilliseconds} ms");
 
             if (EnableBufferedQuarterWindowDrawing)
             {
@@ -2163,9 +2163,9 @@ namespace AtsBackgroundBuilder
             }
             else
             {
-                logger.WriteLine("DEFPOINTS 100m buffer drawing skipped (ATSBUILD_DRAW_100M_BUFFER != 1).");
+                logger?.WriteLine("DEFPOINTS 100m buffer drawing skipped (ATSBUILD_DRAW_100M_BUFFER != 1).");
             }
-            logger.WriteLine($"TIMING DrawSectionsFromRequests: total {timer.ElapsedMilliseconds} ms");
+            logger?.WriteLine($"TIMING DrawSectionsFromRequests: total {timer.ElapsedMilliseconds} ms");
 
             return new SectionDrawResult(
                 labelQuarterIds.ToList(),

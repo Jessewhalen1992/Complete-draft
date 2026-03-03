@@ -3,9 +3,10 @@
 ## Canonical Specs
 
 1. Section rules: `docs/specs/sections/SECTION_RULES.md`
-2. Road allowance rules: `docs/specs/road-allowance/ROAD_ALLOWANCE_GOLDEN_RULES.md`
-3. Disposition rules: `docs/specs/dispositions/DISPOSITION_RULES.md`
-4. Disposition examples: `docs/specs/dispositions/DISPOSITION_EXAMPLES.md`
+2. ATS-wide section validation: `docs/specs/sections/ATS_WIDE_VALIDATION.md`
+3. Road allowance rules: `docs/specs/road-allowance/ROAD_ALLOWANCE_GOLDEN_RULES.md`
+4. Disposition rules: `docs/specs/dispositions/DISPOSITION_RULES.md`
+5. Disposition examples: `docs/specs/dispositions/DISPOSITION_EXAMPLES.md`
 
 ## Handoffs
 

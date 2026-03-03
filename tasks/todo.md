@@ -2589,6 +2589,27 @@
   - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.nuget_packages'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
   - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.nuget_packages'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
 
+# Follow-up (LSD 20.12 vs 30.18 Boundary Regression, 2026-03-02)
+
+- [x] Trace regression path for LSD endpoints terminating on 30.18-class boundaries.
+- [x] Patch west-boundary selector to promote 20.12-class candidates over `L-USEC-0` when available.
+- [x] Patch south-boundary selector to promote 20.12-class candidates over `L-USEC-0` when available.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (LSD 20.12 vs 30.18 Boundary Regression, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - Added preferred west-boundary promotion pass when initial source resolves to `L-USEC-0`.
+  - Added preferred south-boundary promotion pass when initial source resolves to `L-USEC-0` (non-blind south path).
+  - Preferred candidate set: `L-USEC2012`, `L-USEC-2012`, `L-USEC`, `L-SEC`, `L-SEC-2012`.
+  - For both passes, selector now tries:
+    1) existing expected inset behavior, then
+    2) a `0.0` offset fallback to handle normalized-edge cases where inset is already consumed.
+  - South promotion is now deterministic once a preferred candidate resolves (instead of requiring an error-delta threshold).
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.nuget_packages'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.nuget_packages'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
 # Follow-up (Large DAB_APPL Safe Spatial-Subset Import, 2026-03-02)
 
 - [x] Replace crash-prone large-file native import path with temporary spatial subset generation for disposition shapefiles above safe size threshold.
@@ -2728,3 +2749,112 @@
 - Verification:
   - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
   - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (LSD Endpoint 30.18 Escape Hardening, 2026-03-02)
+
+- [x] Re-check LSD endpoint fallback chain for `L-USEC-3018` survivors.
+- [x] Add relaxed 30.18 escape fallback while preserving zero/20 side preference.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (LSD Endpoint 30.18 Escape Hardening, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs`:
+  - Added stronger 30.18 escape tuning constants in LSD hard-boundary enforcement:
+    - `thirtyEscapeLateralTol = 90.0`
+    - `thirtyEscapeMaxMove = 140.0`
+  - Extended helper signatures with optional overrides for 30.18 handling:
+    - `TryFindPreferredHardBoundaryMidpoint(..., maxMoveOverride)`
+    - `TryFindPreferredHardBoundaryMidpointRelaxed(..., maxMoveOverride)`
+    - `TryFindNearestHardBoundaryPoint(..., lateralTolOverride, maxMoveOverride, allowBacktrack)`
+  - In both `p0OnThirty` and `p1OnThirty` branches:
+    - widened preferred-midpoint search window,
+    - added relaxed nearest hard-boundary fallback,
+    - and added `TryFindSnapTarget(...)` fallback when preferred paths fail.
+  - In final LSD invariant pass:
+    - widened `nearThirtyTol` from `1.25` to `3.00`,
+    - applied the same widened 30.18 escape chain for both horizontal and vertical endpoints,
+    - added final relaxed nearest hard-boundary fallback with `preferZero: null` to prevent 30.18 persistence when preferred side candidates are absent.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+
+# Follow-up (LSD Boundary Segment Collection Robustness, 2026-03-02)
+
+- [x] Investigate why LSD 30.18 endpoint fix showed no visible behavior change.
+- [x] Harden LSD boundary collection to include non-collinear polyline segments (and closed polylines) for layer scans.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (LSD Boundary Segment Collection Robustness, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` in `EnforceLsdLineEndpointsOnHardSectionBoundaries(...)`:
+  - replaced single-segment-only boundary collection with per-segment entity extraction:
+    - `Line`: one segment
+    - `Polyline`: every adjacent segment; if closed, also closing segment
+  - retained strict `TryReadOpenSegment` use for identifying movable LSD source lines (`L-SECTION-LSD`) so adjustment scope remains deterministic.
+  - applied scope filtering per extracted segment, then fed layer-classified segment sets (`hardBoundarySegments`, `thirtyBoundarySegments`, QSEC targets) from those scoped segments.
+- Expected effect:
+  - `L-USEC-3018` boundaries represented as segmented/closed polylines are now visible to LSD endpoint rules and final 30.18 invariant snap.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
+  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+# Follow-up (Nullable Warning Cleanup + Build Simulation, 2026-03-02)
+
+- [x] Add targeted null-safety guards for reported CS8602 warnings.
+- [x] Rebuild solution in Release and confirm warning status.
+- [x] Document review notes and reproducible build-simulation commands.
+
+## Review (Nullable Warning Cleanup + Build Simulation, 2026-03-02)
+
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - added null-safe logger writes at warning sites in `DrawSectionsFromRequests(...)`.
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.PlsrReviewDialog.cs`:
+  - guarded `BindingContext` before indexing in the Apply handler (`bindingContext != null && bindingContext[rows] is CurrencyManager`).
+- Verification:
+  - `C:\Program Files\dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore`
+  - result: `Build succeeded`, `0 Warning(s)`, `0 Error(s)`.
+# Follow-up (ATS-Wide Section Invariant Validator Scaffolding, 2026-03-02)
+
+- [x] Add explicit section-building invariant spec for ATS-wide pre-AutoCAD validation.
+- [x] Implement headless JSONL-driven batch validator CLI for township/all-township runs.
+- [x] Document validator usage and pass/fail gating workflow.
+- [x] Run smoke checks and record verification results.
+
+## Review (ATS-Wide Section Invariant Validator Scaffolding, 2026-03-02)
+
+- Added spec `docs/specs/sections/ATS_WIDE_VALIDATION.md`:
+  - defines tiered validation strategy (`Tier 0` to `Tier 3`),
+  - enumerates stable invariant IDs (`INV-T0-*`, `INV-T1-*`),
+  - sets default gating thresholds for ATS-wide batch checks.
+- Added runner `ats_viewer/validator.py`:
+  - supports `--township` and `--all-townships`,
+  - evaluates township invariants from JSONL section data,
+  - writes `validation_summary.json`, `validation_summary.md`, and `validation_failures.csv`,
+  - returns non-zero exit code when any township fails.
+- Updated docs:
+  - `ats_viewer/README.md` includes validator commands and exit-code behavior.
+  - `docs/README.md` indexes the new ATS-wide validation spec.
+- Verification:
+  - `python -m ats_viewer.validator --help` succeeded.
+  - `python -m py_compile ats_viewer/validator.py ats_viewer/cli.py ats_viewer/streamlit_app.py` succeeded.
+  - `python -m ats_viewer.validator --township "TWP 1 RGE 1 W5" --zone 11 --out out-validate-smoke` failed as expected in this environment due missing runtime dependency (`shapely`/`pyproj`).
+
+# Follow-up (One-Command Ops Gate Script, 2026-03-02)
+
+- [x] Add a single PowerShell script that runs calibrated ops validation gate.
+- [x] Document gate command and default thresholds in root README.
+- [x] Verify script execution on existing summary outputs.
+
+## Review (One-Command Ops Gate Script, 2026-03-02)
+
+- Added `scripts/run-ops-gate.ps1`:
+  - runs zone validator sweeps (`z11`, `z12`) unless skipped,
+  - applies ops filter (`TWP >= 50` and `sections >= 30`),
+  - fails when any township violates:
+    - unmatched ratio threshold,
+    - zero accepted pairs,
+    - sections-with-gt2-unmatched threshold.
+  - writes `out-validate\ops-gate-failures.csv`.
+- Updated `README.md` with one-command usage and default gate behavior.
+- Verification:
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\run-ops-gate.ps1 -SkipZ11 -SkipZ12`
+  - output: `Ops checked: 4832`, `Ops failed: 0`.
