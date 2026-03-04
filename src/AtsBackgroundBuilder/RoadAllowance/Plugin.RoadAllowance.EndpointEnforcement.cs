@@ -25,171 +25,20 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool IsPointOnAnyWindowBoundary(Point2d p, double tol) => IsPointOnAnyWindowBoundaryForEndpointEnforcement(p, tol, clipWindows);
 
-                return false;
-            }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForEndpointEnforcement(a, b, clipWindows);
 
-            bool IsPointOnAnyWindowBoundary(Point2d p, double tol)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    var withinX = p.X >= (w.MinPoint.X - tol) && p.X <= (w.MaxPoint.X + tol);
-                    var withinY = p.Y >= (w.MinPoint.Y - tol) && p.Y <= (w.MaxPoint.Y + tol);
-                    if (!withinX || !withinY)
-                    {
-                        continue;
-                    }
 
-                    var onLeft = Math.Abs(p.X - w.MinPoint.X) <= tol;
-                    var onRight = Math.Abs(p.X - w.MaxPoint.X) <= tol;
-                    var onBottom = Math.Abs(p.Y - w.MinPoint.Y) <= tol;
-                    var onTop = Math.Abs(p.Y - w.MaxPoint.Y) <= tol;
-                    if (onLeft || onRight || onBottom || onTop)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
-            {
-                if (writable is Line ln)
-                {
-                    var old = moveStart
-                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
-                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    if (moveStart)
-                    {
-                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
-                    }
-                    else
-                    {
-                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
-                    }
-
-                    return true;
-                }
-
-                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
-                {
-                    var index = moveStart ? 0 : pl.NumberOfVertices - 1;
-                    var old = pl.GetPoint2dAt(index);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    pl.SetPointAt(index, target);
-                    return true;
-                }
-
-                return false;
-            }
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForEndpointEnforcement(writable, moveStart, target, moveTol);
 
             bool IsSecSourceLayer(string layer)
             {
                 return string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase);
             }
 
-            bool IsHardBoundaryLayer(string layer)
-            {
-                if (string.IsNullOrWhiteSpace(layer))
-                {
-                    return false;
-                }
-
-                return string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
-            }
+            bool IsHardBoundaryLayer(string layer) =>
+                IsHardBoundaryLayerForEndpointEnforcement(layer, includeSecAliases: false);
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -204,7 +53,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(ent, out var a, out var b))
+                    if (!TryReadOpenSegmentForEndpointEnforcement(ent, out var a, out var b))
                     {
                         continue;
                     }
@@ -248,24 +97,12 @@ namespace AtsBackgroundBuilder
                 var adjustedLines = 0;
                 var fallbackEndpointUsed = 0;
 
-                bool IsEndpointOnHardBoundary(Point2d endpoint, ObjectId sourceId)
-                {
-                    for (var i = 0; i < hardBoundarySegments.Count; i++)
-                    {
-                        var seg = hardBoundarySegments[i];
-                        if (seg.Id == sourceId)
-                        {
-                            continue;
-                        }
-
-                        if (DistancePointToSegment(endpoint, seg.A, seg.B) <= endpointTouchTol)
-                        {
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
+                bool IsEndpointOnHardBoundary(Point2d endpoint, ObjectId sourceId) =>
+                    IsEndpointOnBoundarySegmentsForEndpointEnforcement(
+                        endpoint,
+                        sourceId,
+                        hardBoundarySegments,
+                        endpointTouchTol);
 
                 bool TryFindExtensionTarget(Point2d endpoint, Point2d other, ObjectId sourceId, out Point2d target)
                 {
@@ -369,7 +206,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(writable, out var p0, out var p1))
+                    if (!TryReadOpenSegmentForEndpointEnforcement(writable, out var p0, out var p1))
                     {
                         continue;
                     }
@@ -477,152 +314,12 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool IsPointOnAnyWindowBoundary(Point2d p, double tol) => IsPointOnAnyWindowBoundaryForEndpointEnforcement(p, tol, clipWindows);
 
-                return false;
-            }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForEndpointEnforcement(a, b, clipWindows);
 
-            bool IsPointOnAnyWindowBoundary(Point2d p, double tol)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    var withinX = p.X >= (w.MinPoint.X - tol) && p.X <= (w.MaxPoint.X + tol);
-                    var withinY = p.Y >= (w.MinPoint.Y - tol) && p.Y <= (w.MaxPoint.Y + tol);
-                    if (!withinX || !withinY)
-                    {
-                        continue;
-                    }
 
-                    var onLeft = Math.Abs(p.X - w.MinPoint.X) <= tol;
-                    var onRight = Math.Abs(p.X - w.MaxPoint.X) <= tol;
-                    var onBottom = Math.Abs(p.Y - w.MinPoint.Y) <= tol;
-                    var onTop = Math.Abs(p.Y - w.MaxPoint.Y) <= tol;
-                    if (onLeft || onRight || onBottom || onTop)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
-            {
-                if (writable is Line ln)
-                {
-                    var old = moveStart
-                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
-                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    if (moveStart)
-                    {
-                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
-                    }
-                    else
-                    {
-                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
-                    }
-
-                    return true;
-                }
-
-                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
-                {
-                    var index = moveStart ? 0 : pl.NumberOfVertices - 1;
-                    var old = pl.GetPoint2dAt(index);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    pl.SetPointAt(index, target);
-                    return true;
-                }
-
-                return false;
-            }
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForEndpointEnforcement(writable, moveStart, target, moveTol);
 
             bool IsQuarterLineLayer(string layer)
             {
@@ -657,7 +354,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(ent, out var a, out var b))
+                    if (!TryReadOpenSegmentForEndpointEnforcement(ent, out var a, out var b))
                     {
                         continue;
                     }
@@ -720,19 +417,8 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
-                bool IsEndpointNearCorrectionBoundary(Point2d endpoint)
-                {
-                    for (var i = 0; i < correctionBoundarySegments.Count; i++)
-                    {
-                        var seg = correctionBoundarySegments[i];
-                        if (DistancePointToSegment(endpoint, seg.A, seg.B) <= correctionAdjTol)
-                        {
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
+                bool IsEndpointNearCorrectionBoundary(Point2d endpoint) =>
+                    IsEndpointNearBoundarySegmentsForEndpointEnforcement(endpoint, correctionBoundarySegments, correctionAdjTol);
 
                 bool TryIntersectInfiniteLineWithBoundedSegmentExtension(
                     Point2d linePoint,
@@ -987,7 +673,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(writable, out var p0, out var p1))
+                    if (!TryReadOpenSegmentForEndpointEnforcement(writable, out var p0, out var p1))
                     {
                         continue;
                     }
@@ -1140,143 +826,12 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForEndpointEnforcement(a, b, clipWindows);
 
-                return false;
-            }
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForEndpointEnforcement(writable, moveStart, target, moveTol);
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
 
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
-            {
-                if (writable is Line ln)
-                {
-                    var old = moveStart
-                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
-                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    if (moveStart)
-                    {
-                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
-                    }
-                    else
-                    {
-                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
-                    }
-
-                    return true;
-                }
-
-                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
-                {
-                    var index = moveStart ? 0 : pl.NumberOfVertices - 1;
-                    var old = pl.GetPoint2dAt(index);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    pl.SetPointAt(index, target);
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b, Vector2d eastUnit, Vector2d northUnit)
-            {
-                var d = b - a;
-                var eastSpan = Math.Abs(d.DotProduct(eastUnit));
-                var northSpan = Math.Abs(d.DotProduct(northUnit));
-                return eastSpan >= northSpan;
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b, Vector2d eastUnit, Vector2d northUnit)
-            {
-                var d = b - a;
-                var eastSpan = Math.Abs(d.DotProduct(eastUnit));
-                var northSpan = Math.Abs(d.DotProduct(northUnit));
-                return northSpan > eastSpan;
-            }
 
             bool IsUsecZeroLayer(string layer)
             {
@@ -1419,22 +974,8 @@ namespace AtsBackgroundBuilder
                 }
             }
 
-            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
-            {
-                intersection = default;
-                var da = a1 - a0;
-                var db = b1 - b0;
-                var denom = Cross2d(da, db);
-                if (Math.Abs(denom) <= 1e-9)
-                {
-                    return false;
-                }
-
-                var diff = b0 - a0;
-                var t = Cross2d(diff, db) / denom;
-                intersection = a0 + (da * t);
-                return true;
-            }
+            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
+                TryIntersectInfiniteLinesForPluginGeometry(a0, a1, b0, b1, out intersection);
 
             double ProjectOnAxis(Point2d p, Vector2d axis)
             {
@@ -1676,7 +1217,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(ent, out var a, out var b))
+                    if (!TryReadOpenSegmentForEndpointEnforcement(ent, out var a, out var b))
                     {
                         continue;
                     }
@@ -2362,20 +1903,6 @@ namespace AtsBackgroundBuilder
                 const double endpointMoveTol = 0.005;
                 var traceRuleFlow = logger != null;
 
-                string FormatPoint(Point2d p) => $"({p.X:0.###},{p.Y:0.###})";
-
-                string FormatLsdId(ObjectId objectId)
-                {
-                    try
-                    {
-                        return objectId.Handle.ToString();
-                    }
-                    catch
-                    {
-                        return objectId.ToString();
-                    }
-                }
-
                 if (traceRuleFlow)
                 {
                     logger?.WriteLine(
@@ -2402,16 +1929,16 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(writable, out var p0, out var p1))
+                    if (!TryReadOpenSegmentForEndpointEnforcement(writable, out var p0, out var p1))
                     {
                         continue;
                     }
 
-                    var lineIdText = FormatLsdId(id);
+                    var lineIdText = FormatLsdEndpointTraceId(id);
                     if (traceRuleFlow)
                     {
                         logger?.WriteLine(
-                            $"LSD-ENDPT line={lineIdText} pass=rule-matrix start p0={FormatPoint(p0)} p1={FormatPoint(p1)}.");
+                            $"LSD-ENDPT line={lineIdText} pass=rule-matrix start p0={FormatLsdEndpointTracePoint(p0)} p1={FormatLsdEndpointTracePoint(p1)}.");
                     }
 
                     var lineMid = Midpoint(p0, p1);
@@ -2421,20 +1948,20 @@ namespace AtsBackgroundBuilder
                         if (traceRuleFlow)
                         {
                             logger?.WriteLine(
-                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix skip reason=no-quarter-context mid={FormatPoint(lineMid)}.");
+                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix skip reason=no-quarter-context mid={FormatLsdEndpointTracePoint(lineMid)}.");
                         }
 
                         continue;
                     }
 
-                    var lineIsHorizontal = IsHorizontalLike(p0, p1, context.EastUnit, context.NorthUnit);
-                    var lineIsVertical = IsVerticalLike(p0, p1, context.EastUnit, context.NorthUnit);
+                    var lineIsHorizontal = IsHorizontalLikeForEndpointEnforcement(p0, p1, context.EastUnit, context.NorthUnit);
+                    var lineIsVertical = IsVerticalLikeForEndpointEnforcement(p0, p1, context.EastUnit, context.NorthUnit);
                     if (!lineIsHorizontal && !lineIsVertical)
                     {
                         if (traceRuleFlow)
                         {
                             logger?.WriteLine(
-                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix skip reason=non-axis p0={FormatPoint(p0)} p1={FormatPoint(p1)}.");
+                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix skip reason=non-axis p0={FormatLsdEndpointTracePoint(p0)} p1={FormatLsdEndpointTracePoint(p1)}.");
                         }
 
                         continue;
@@ -2471,10 +1998,10 @@ namespace AtsBackgroundBuilder
                     {
                         logger?.WriteLine(
                             $"LSD-ENDPT line={lineIdText} pass=rule-matrix inner sec={context.SectionNumber} q={context.Quarter} orient={(lineIsHorizontal ? "H" : "V")} " +
-                            $"startIsInner={startIsInner} moved={innerMoved} target={FormatPoint(innerTarget)}.");
+                            $"startIsInner={startIsInner} moved={innerMoved} target={FormatLsdEndpointTracePoint(innerTarget)}.");
                     }
 
-                    if (!TryReadOpenSegment(writable, out p0, out p1))
+                    if (!TryReadOpenSegmentForEndpointEnforcement(writable, out p0, out p1))
                     {
                         if (traceRuleFlow)
                         {
@@ -2596,13 +2123,13 @@ namespace AtsBackgroundBuilder
                         if (traceRuleFlow)
                         {
                             logger?.WriteLine(
-                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix outer source=fallback-anchor moved={movedByFallbackAnchor} target={FormatPoint(outerTarget)} kinds={string.Join("/", preferredKinds)}.");
+                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix outer source=fallback-anchor moved={movedByFallbackAnchor} target={FormatLsdEndpointTracePoint(outerTarget)} kinds={string.Join("/", preferredKinds)}.");
                         }
 
-                        if (traceRuleFlow && TryReadOpenSegment(writable, out var fallbackP0, out var fallbackP1))
+                        if (traceRuleFlow && TryReadOpenSegmentForEndpointEnforcement(writable, out var fallbackP0, out var fallbackP1))
                         {
                             logger?.WriteLine(
-                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix final p0={FormatPoint(fallbackP0)} p1={FormatPoint(fallbackP1)}.");
+                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix final p0={FormatLsdEndpointTracePoint(fallbackP0)} p1={FormatLsdEndpointTracePoint(fallbackP1)}.");
                         }
 
                         continue;
@@ -2625,13 +2152,13 @@ namespace AtsBackgroundBuilder
                     if (traceRuleFlow)
                     {
                         logger?.WriteLine(
-                            $"LSD-ENDPT line={lineIdText} pass=rule-matrix outer source={(usedMidpointTarget ? "midpoint-kind" : "unknown")} moved={movedByMidpoint} target={FormatPoint(outerTarget)} kinds={string.Join("/", preferredKinds)}.");
+                            $"LSD-ENDPT line={lineIdText} pass=rule-matrix outer source={(usedMidpointTarget ? "midpoint-kind" : "unknown")} moved={movedByMidpoint} target={FormatLsdEndpointTracePoint(outerTarget)} kinds={string.Join("/", preferredKinds)}.");
                     }
 
-                    if (traceRuleFlow && TryReadOpenSegment(writable, out var finalP0, out var finalP1))
+                    if (traceRuleFlow && TryReadOpenSegmentForEndpointEnforcement(writable, out var finalP0, out var finalP1))
                     {
                         logger?.WriteLine(
-                            $"LSD-ENDPT line={lineIdText} pass=rule-matrix final p0={FormatPoint(finalP0)} p1={FormatPoint(finalP1)}.");
+                            $"LSD-ENDPT line={lineIdText} pass=rule-matrix final p0={FormatLsdEndpointTracePoint(finalP0)} p1={FormatLsdEndpointTracePoint(finalP1)}.");
                     }
                 }
 
@@ -2669,45 +2196,7 @@ namespace AtsBackgroundBuilder
                 coreClipWindows = clipWindows;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool IsPointOnAnyWindowBoundary(Point2d p, double tol)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    var withinX = p.X >= (w.MinPoint.X - tol) && p.X <= (w.MaxPoint.X + tol);
-                    var withinY = p.Y >= (w.MinPoint.Y - tol) && p.Y <= (w.MaxPoint.Y + tol);
-                    if (!withinX || !withinY)
-                    {
-                        continue;
-                    }
-
-                    var onLeft = Math.Abs(p.X - w.MinPoint.X) <= tol;
-                    var onRight = Math.Abs(p.X - w.MaxPoint.X) <= tol;
-                    var onBottom = Math.Abs(p.Y - w.MinPoint.Y) <= tol;
-                    var onTop = Math.Abs(p.Y - w.MaxPoint.Y) <= tol;
-                    if (onLeft || onRight || onBottom || onTop)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
+            bool IsPointOnAnyWindowBoundary(Point2d p, double tol) => IsPointOnAnyWindowBoundaryForEndpointEnforcement(p, tol, clipWindows);
 
             bool IsPointInAnyCoreWindow(Point2d p)
             {
@@ -2724,23 +2213,7 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForEndpointEnforcement(a, b, clipWindows);
 
             bool DoesSegmentIntersectAnyCoreWindow(Point2d a, Point2d b)
             {
@@ -2760,94 +2233,8 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
 
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
-            {
-                if (writable is Line ln)
-                {
-                    var old = moveStart
-                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
-                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    if (moveStart)
-                    {
-                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
-                    }
-                    else
-                    {
-                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
-                    }
-
-                    return true;
-                }
-
-                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
-                {
-                    var index = moveStart ? 0 : pl.NumberOfVertices - 1;
-                    var old = pl.GetPoint2dAt(index);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    pl.SetPointAt(index, target);
-                    return true;
-                }
-
-                return false;
-            }
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForEndpointEnforcement(writable, moveStart, target, moveTol);
 
             bool IsUsecZeroBoundaryLayer(string layer)
             {
@@ -2872,16 +2259,7 @@ namespace AtsBackgroundBuilder
                        string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase);
             }
 
-            bool IsThirtyEighteenLayer(string layer)
-            {
-                if (string.IsNullOrWhiteSpace(layer))
-                {
-                    return false;
-                }
-
-                return string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
-            }
+            bool IsThirtyEighteenLayer(string layer) => IsThirtyEighteenLayerForEndpointEnforcement(layer);
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -2905,7 +2283,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    var hasPrimarySegment = TryReadOpenSegment(ent, out var primaryA, out var primaryB);
+                    var hasPrimarySegment = TryReadOpenSegmentForEndpointEnforcement(ent, out var primaryA, out var primaryB);
                     var entitySegments = new List<(Point2d A, Point2d B)>();
                     if (ent is Line line)
                     {
@@ -2990,11 +2368,11 @@ namespace AtsBackgroundBuilder
                                 correctionBoundarySegments.Add((a, b));
                             }
 
-                            if (IsHorizontalLike(a, b))
+                            if (IsHorizontalLikeForEndpointEnforcement(a, b))
                             {
                                 horizontalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 2));
                             }
-                            else if (IsVerticalLike(a, b))
+                            else if (IsVerticalLikeForEndpointEnforcement(a, b))
                             {
                                 verticalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 2));
                             }
@@ -3005,11 +2383,11 @@ namespace AtsBackgroundBuilder
                         if (IsUsecTwentyBoundaryLayer(layer))
                         {
                             hardBoundarySegments.Add((a, b, IsZero: false));
-                            if (IsHorizontalLike(a, b))
+                            if (IsHorizontalLikeForEndpointEnforcement(a, b))
                             {
                                 horizontalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 1));
                             }
-                            else if (IsVerticalLike(a, b))
+                            else if (IsVerticalLikeForEndpointEnforcement(a, b))
                             {
                                 verticalMidpointTargetSegments.Add((a, b, Midpoint(a, b), Priority: 1));
                             }
@@ -3031,7 +2409,7 @@ namespace AtsBackgroundBuilder
 
                         // Midpoint targets for LSD endpoints:
                         // 1) quarter lines (preferred), 2) blind lines, 3) section lines.
-                        if (IsHorizontalLike(a, b))
+                        if (IsHorizontalLikeForEndpointEnforcement(a, b))
                         {
                             if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
                             {
@@ -3050,7 +2428,7 @@ namespace AtsBackgroundBuilder
                             }
                         }
 
-                        if (IsVerticalLike(a, b))
+                        if (IsVerticalLikeForEndpointEnforcement(a, b))
                         {
                             if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
                             {
@@ -3287,40 +2665,16 @@ namespace AtsBackgroundBuilder
                 var qsecComponentClampEndpoints = 0;
                 var traceLsdEndpointFlow = logger != null;
 
-                bool IsHorizontalLike(Point2d a, Point2d b)
-                {
-                    var d = b - a;
-                    return Math.Abs(d.X) >= Math.Abs(d.Y);
-                }
 
-                bool IsVerticalLike(Point2d a, Point2d b)
-                {
-                    var d = b - a;
-                    return Math.Abs(d.Y) > Math.Abs(d.X);
-                }
-
-                string FormatPoint(Point2d p) => $"({p.X:0.###},{p.Y:0.###})";
-
-                string FormatLsdId(ObjectId objectId)
-                {
-                    try
-                    {
-                        return objectId.Handle.ToString();
-                    }
-                    catch
-                    {
-                        return objectId.ToString();
-                    }
-                }
 
                 string ClassifyOrientation(Point2d a, Point2d b)
                 {
-                    if (IsHorizontalLike(a, b))
+                    if (IsHorizontalLikeForEndpointEnforcement(a, b))
                     {
                         return "H";
                     }
 
-                    if (IsVerticalLike(a, b))
+                    if (IsVerticalLikeForEndpointEnforcement(a, b))
                     {
                         return "V";
                     }
@@ -3334,33 +2688,11 @@ namespace AtsBackgroundBuilder
                         $"LSD-ENDPT init lsdLines={lsdLineIds.Count} hardSegs={hardBoundarySegments.Count} thirtySegs={thirtyBoundarySegments.Count} qsecH={qsecHorizontalSegments.Count} qsecV={qsecVerticalSegments.Count}.");
                 }
 
-                bool IsEndpointNearCorrectionBoundary(Point2d endpoint)
-                {
-                    for (var i = 0; i < correctionBoundarySegments.Count; i++)
-                    {
-                        var seg = correctionBoundarySegments[i];
-                        if (DistancePointToSegment(endpoint, seg.A, seg.B) <= correctionAdjTol)
-                        {
-                            return true;
-                        }
-                    }
+                bool IsEndpointNearCorrectionBoundary(Point2d endpoint) =>
+                    IsEndpointNearBoundarySegmentsForEndpointEnforcement(endpoint, correctionBoundarySegments, correctionAdjTol);
 
-                    return false;
-                }
-
-                bool IsEndpointOnHardBoundary(Point2d endpoint)
-                {
-                    for (var i = 0; i < hardBoundarySegments.Count; i++)
-                    {
-                        var seg = hardBoundarySegments[i];
-                        if (DistancePointToSegment(endpoint, seg.A, seg.B) <= endpointTouchTol)
-                        {
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
+                bool IsEndpointOnHardBoundary(Point2d endpoint) =>
+                    IsEndpointOnBoundarySegmentsForEndpointEnforcement(endpoint, hardBoundarySegments, endpointTouchTol);
 
                 bool IsEndpointOnUsecZeroBoundary(Point2d endpoint)
                 {
@@ -5358,8 +4690,8 @@ namespace AtsBackgroundBuilder
                         return false;
                     }
 
-                    var sourceHorizontal = IsHorizontalLike(other, endpoint);
-                    var sourceVertical = IsVerticalLike(other, endpoint);
+                    var sourceHorizontal = IsHorizontalLikeForEndpointEnforcement(other, endpoint);
+                    var sourceVertical = IsVerticalLikeForEndpointEnforcement(other, endpoint);
                     if (!sourceHorizontal && !sourceVertical)
                     {
                         return false;
@@ -5373,8 +4705,8 @@ namespace AtsBackgroundBuilder
                     for (var i = 0; i < hardBoundarySegments.Count; i++)
                     {
                         var seg = hardBoundarySegments[i];
-                        var segHorizontal = IsHorizontalLike(seg.A, seg.B);
-                        var segVertical = IsVerticalLike(seg.A, seg.B);
+                        var segHorizontal = IsHorizontalLikeForEndpointEnforcement(seg.A, seg.B);
+                        var segVertical = IsVerticalLikeForEndpointEnforcement(seg.A, seg.B);
 
                         // LSD endpoints should land on midpoint of orthogonal hard boundary.
                         if (sourceHorizontal && !segVertical)
@@ -5443,8 +4775,8 @@ namespace AtsBackgroundBuilder
                         return false;
                     }
 
-                    var sourceHorizontal = IsHorizontalLike(other, endpoint);
-                    var sourceVertical = IsVerticalLike(other, endpoint);
+                    var sourceHorizontal = IsHorizontalLikeForEndpointEnforcement(other, endpoint);
+                    var sourceVertical = IsVerticalLikeForEndpointEnforcement(other, endpoint);
                     if (!sourceHorizontal && !sourceVertical)
                     {
                         return false;
@@ -5485,21 +4817,8 @@ namespace AtsBackgroundBuilder
                             ? correctionBoundarySegments
                             : preferredCorrectionSegments;
 
-                    Point2d ClosestPointOnSegment(Point2d p, Point2d a, Point2d b)
-                    {
-                        var ab = b - a;
-                        var len2 = ab.DotProduct(ab);
-                        if (len2 <= 1e-12)
-                        {
-                            return a;
-                        }
-
-                        var ap = p - a;
-                        var t = ap.DotProduct(ab) / len2;
-                        if (t < 0.0) t = 0.0;
-                        if (t > 1.0) t = 1.0;
-                        return new Point2d(a.X + (ab.X * t), a.Y + (ab.Y * t));
-                    }
+                    Point2d ClosestPointOnSegment(Point2d p, Point2d a, Point2d b) =>
+                        ClosestPointOnSegmentForEndpointEnforcement(p, a, b);
 
                     bool EndpointTouchesQsec(Point2d p)
                     {
@@ -5571,8 +4890,8 @@ namespace AtsBackgroundBuilder
                         for (var i = 0; i < correctionBoundarySegments.Count; i++)
                         {
                             var seg = correctionBoundarySegments[i];
-                            var segHorizontal = IsHorizontalLike(seg.A, seg.B);
-                            var segVertical = IsVerticalLike(seg.A, seg.B);
+                            var segHorizontal = IsHorizontalLikeForEndpointEnforcement(seg.A, seg.B);
+                            var segVertical = IsVerticalLikeForEndpointEnforcement(seg.A, seg.B);
                             if (sourceVertical && !segHorizontal)
                             {
                                 continue;
@@ -5771,8 +5090,8 @@ namespace AtsBackgroundBuilder
                         for (var i = 0; i < directionalCorrectionSegments.Count; i++)
                         {
                             var seg = directionalCorrectionSegments[i];
-                            var segHorizontal = IsHorizontalLike(seg.A, seg.B);
-                            var segVertical = IsVerticalLike(seg.A, seg.B);
+                            var segHorizontal = IsHorizontalLikeForEndpointEnforcement(seg.A, seg.B);
+                            var segVertical = IsVerticalLikeForEndpointEnforcement(seg.A, seg.B);
                             if (sourceVertical && !segHorizontal)
                             {
                                 continue;
@@ -5948,8 +5267,8 @@ namespace AtsBackgroundBuilder
 
                     void ConsiderBoundarySegment(Point2d a, Point2d b, bool fromCorrection, double? lateralTolOverride = null)
                     {
-                        var segHorizontal = IsHorizontalLike(a, b);
-                        var segVertical = IsVerticalLike(a, b);
+                        var segHorizontal = IsHorizontalLikeForEndpointEnforcement(a, b);
+                        var segVertical = IsVerticalLikeForEndpointEnforcement(a, b);
                         if (sourceHorizontal && !segVertical)
                         {
                             return;
@@ -6167,8 +5486,8 @@ namespace AtsBackgroundBuilder
                         return false;
                     }
 
-                    var sourceHorizontal = IsHorizontalLike(other, endpoint);
-                    var sourceVertical = IsVerticalLike(other, endpoint);
+                    var sourceHorizontal = IsHorizontalLikeForEndpointEnforcement(other, endpoint);
+                    var sourceVertical = IsVerticalLikeForEndpointEnforcement(other, endpoint);
                     if (!sourceHorizontal && !sourceVertical)
                     {
                         return false;
@@ -6187,8 +5506,8 @@ namespace AtsBackgroundBuilder
                     for (var i = 0; i < hardBoundarySegments.Count; i++)
                     {
                         var seg = hardBoundarySegments[i];
-                        var segHorizontal = IsHorizontalLike(seg.A, seg.B);
-                        var segVertical = IsVerticalLike(seg.A, seg.B);
+                        var segHorizontal = IsHorizontalLikeForEndpointEnforcement(seg.A, seg.B);
+                        var segVertical = IsVerticalLikeForEndpointEnforcement(seg.A, seg.B);
                         if (sourceHorizontal && !segVertical)
                         {
                             continue;
@@ -6284,8 +5603,8 @@ namespace AtsBackgroundBuilder
                     double? maxMoveOverride = null)
                 {
                     target = endpoint;
-                    var sourceHorizontal = IsHorizontalLike(other, endpoint);
-                    var sourceVertical = IsVerticalLike(other, endpoint);
+                    var sourceHorizontal = IsHorizontalLikeForEndpointEnforcement(other, endpoint);
+                    var sourceVertical = IsVerticalLikeForEndpointEnforcement(other, endpoint);
                     if (!sourceHorizontal && !sourceVertical)
                     {
                         return false;
@@ -6303,8 +5622,8 @@ namespace AtsBackgroundBuilder
                     for (var i = 0; i < hardBoundarySegments.Count; i++)
                     {
                         var seg = hardBoundarySegments[i];
-                        var segHorizontal = IsHorizontalLike(seg.A, seg.B);
-                        var segVertical = IsVerticalLike(seg.A, seg.B);
+                        var segHorizontal = IsHorizontalLikeForEndpointEnforcement(seg.A, seg.B);
+                        var segVertical = IsVerticalLikeForEndpointEnforcement(seg.A, seg.B);
                         if (sourceHorizontal && !segVertical)
                         {
                             continue;
@@ -6388,8 +5707,8 @@ namespace AtsBackgroundBuilder
                         return false;
                     }
 
-                    var sourceHorizontal = IsHorizontalLike(other, endpoint);
-                    var sourceVertical = IsVerticalLike(other, endpoint);
+                    var sourceHorizontal = IsHorizontalLikeForEndpointEnforcement(other, endpoint);
+                    var sourceVertical = IsVerticalLikeForEndpointEnforcement(other, endpoint);
                     if (!sourceHorizontal && !sourceVertical)
                     {
                         return false;
@@ -6406,27 +5725,14 @@ namespace AtsBackgroundBuilder
                     var lateralTol = lateralTolOverride ?? midpointAxisTol;
                     var maxCandidateMove = maxMoveOverride ?? maxMove;
 
-                    Point2d ClosestPointOnSegment(Point2d p, Point2d a, Point2d b)
-                    {
-                        var ab = b - a;
-                        var len2 = ab.DotProduct(ab);
-                        if (len2 <= 1e-12)
-                        {
-                            return a;
-                        }
-
-                        var ap = p - a;
-                        var t = ap.DotProduct(ab) / len2;
-                        if (t < 0.0) t = 0.0;
-                        if (t > 1.0) t = 1.0;
-                        return new Point2d(a.X + (ab.X * t), a.Y + (ab.Y * t));
-                    }
+                    Point2d ClosestPointOnSegment(Point2d p, Point2d a, Point2d b) =>
+                        ClosestPointOnSegmentForEndpointEnforcement(p, a, b);
 
                     for (var i = 0; i < hardBoundarySegments.Count; i++)
                     {
                         var seg = hardBoundarySegments[i];
-                        var segHorizontal = IsHorizontalLike(seg.A, seg.B);
-                        var segVertical = IsVerticalLike(seg.A, seg.B);
+                        var segHorizontal = IsHorizontalLikeForEndpointEnforcement(seg.A, seg.B);
+                        var segVertical = IsVerticalLikeForEndpointEnforcement(seg.A, seg.B);
                         if (sourceHorizontal && !segVertical)
                         {
                             continue;
@@ -6503,8 +5809,8 @@ namespace AtsBackgroundBuilder
                 bool TryFindCurrentHardBoundaryMidpoint(Point2d endpoint, Point2d other, bool? preferZero, out Point2d target)
                 {
                     target = endpoint;
-                    var sourceHorizontal = IsHorizontalLike(other, endpoint);
-                    var sourceVertical = IsVerticalLike(other, endpoint);
+                    var sourceHorizontal = IsHorizontalLikeForEndpointEnforcement(other, endpoint);
+                    var sourceVertical = IsVerticalLikeForEndpointEnforcement(other, endpoint);
                     if (!sourceHorizontal && !sourceVertical)
                     {
                         return false;
@@ -6520,8 +5826,8 @@ namespace AtsBackgroundBuilder
                     for (var i = 0; i < hardBoundarySegments.Count; i++)
                     {
                         var seg = hardBoundarySegments[i];
-                        var segHorizontal = IsHorizontalLike(seg.A, seg.B);
-                        var segVertical = IsVerticalLike(seg.A, seg.B);
+                        var segHorizontal = IsHorizontalLikeForEndpointEnforcement(seg.A, seg.B);
+                        var segVertical = IsVerticalLikeForEndpointEnforcement(seg.A, seg.B);
                         if (sourceHorizontal && !segVertical)
                         {
                             continue;
@@ -6597,7 +5903,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(writable, out var p0, out var p1))
+                    if (!TryReadOpenSegmentForEndpointEnforcement(writable, out var p0, out var p1))
                     {
                         continue;
                     }
@@ -6608,7 +5914,7 @@ namespace AtsBackgroundBuilder
                     var targetEnd = p1;
                     var midpointLockedStart = false;
                     var midpointLockedEnd = false;
-                    var lineIdText = FormatLsdId(id);
+                    var lineIdText = FormatLsdEndpointTraceId(id);
                     var startDecision = "none";
                     var endDecision = "none";
                     var startSource = "none";
@@ -6617,13 +5923,13 @@ namespace AtsBackgroundBuilder
                     if (traceLsdEndpointFlow)
                     {
                         logger?.WriteLine(
-                            $"LSD-ENDPT line={lineIdText} pass=main start p0={FormatPoint(p0)} p1={FormatPoint(p1)} orient={ClassifyOrientation(p0, p1)}.");
+                            $"LSD-ENDPT line={lineIdText} pass=main start p0={FormatLsdEndpointTracePoint(p0)} p1={FormatLsdEndpointTracePoint(p1)} orient={ClassifyOrientation(p0, p1)}.");
                     }
 
                     // Midpoint special case:
                     // anchor LSD endpoints to the midpoint of the line they terminate on
                     // (1/4, blind, or section) before generic hard-boundary snapping.
-                    if (IsVerticalLike(p0, p1))
+                    if (IsVerticalLikeForEndpointEnforcement(p0, p1))
                     {
                         var p0CorrectionAdjacentForMidpoint =
                             IsEndpointNearCorrectionBoundary(p0) && IsEndpointOnThirtyBoundary(p0);
@@ -6754,7 +6060,7 @@ namespace AtsBackgroundBuilder
                                     midpointAdjustedLines++;
                                 }
 
-                                if (!TryReadOpenSegment(writable, out p0, out p1))
+                                if (!TryReadOpenSegmentForEndpointEnforcement(writable, out p0, out p1))
                                 {
                                     continue;
                                 }
@@ -6770,7 +6076,7 @@ namespace AtsBackgroundBuilder
                             targetEnd = p1;
                         }
                     }
-                    else if (IsHorizontalLike(p0, p1))
+                    else if (IsHorizontalLikeForEndpointEnforcement(p0, p1))
                     {
                         var p0CorrectionAdjacentForMidpoint =
                             IsEndpointNearCorrectionBoundary(p0) && IsEndpointOnThirtyBoundary(p0);
@@ -7014,7 +6320,7 @@ namespace AtsBackgroundBuilder
                                     midpointAdjustedLines++;
                                 }
 
-                                if (!TryReadOpenSegment(writable, out p0, out p1))
+                                if (!TryReadOpenSegmentForEndpointEnforcement(writable, out p0, out p1))
                                 {
                                     continue;
                                 }
@@ -7043,7 +6349,7 @@ namespace AtsBackgroundBuilder
                         if (traceLsdEndpointFlow)
                         {
                             logger?.WriteLine(
-                                $"LSD-ENDPT line={lineIdText} pass=main skip reason=both-midpoint-locked p0={FormatPoint(p0)} p1={FormatPoint(p1)}.");
+                                $"LSD-ENDPT line={lineIdText} pass=main skip reason=both-midpoint-locked p0={FormatLsdEndpointTracePoint(p0)} p1={FormatLsdEndpointTracePoint(p1)}.");
                         }
 
                         continue;
@@ -7061,7 +6367,7 @@ namespace AtsBackgroundBuilder
                         // seams when they terminate on either 30.18 or the correction outer boundary.
                         var p0OnCorrectionZero = p0OnZero && p0CorrectionAdjacent;
                         var p0CorrectionSnapEligible =
-                            IsVerticalLike(p0, p1) &&
+                            IsVerticalLikeForEndpointEnforcement(p0, p1) &&
                             p0CorrectionAdjacent &&
                             !p0OnTwenty &&
                             (p0OnThirty || p0OnCorrectionOuter || p0OnCorrectionZero);
@@ -7109,8 +6415,8 @@ namespace AtsBackgroundBuilder
                             if (!foundStartTarget && p0OnThirty)
                             {
                                 bool? preferZero = null;
-                                var sourceIsHorizontalLsd = IsHorizontalLike(p0, p1);
-                                var sourceIsVerticalLsd = IsVerticalLike(p0, p1);
+                                var sourceIsHorizontalLsd = IsHorizontalLikeForEndpointEnforcement(p0, p1);
+                                var sourceIsVerticalLsd = IsVerticalLikeForEndpointEnforcement(p0, p1);
                                 if (!foundStartTarget && sourceIsHorizontalLsd)
                                 {
                                     // Horizontal LSD side rule: right endpoint -> 0, left endpoint -> 20.12.
@@ -7247,7 +6553,7 @@ namespace AtsBackgroundBuilder
                         var p1CorrectionAdjacent = IsEndpointNearCorrectionBoundary(p1);
                         var p1OnCorrectionZero = p1OnZero && p1CorrectionAdjacent;
                         var p1CorrectionSnapEligible =
-                            IsVerticalLike(p0, p1) &&
+                            IsVerticalLikeForEndpointEnforcement(p0, p1) &&
                             p1CorrectionAdjacent &&
                             !p1OnTwenty &&
                             (p1OnThirty || p1OnCorrectionOuter || p1OnCorrectionZero);
@@ -7295,8 +6601,8 @@ namespace AtsBackgroundBuilder
                             if (!foundEndTarget && p1OnThirty)
                             {
                                 bool? preferZero = null;
-                                var sourceIsHorizontalLsd = IsHorizontalLike(p0, p1);
-                                var sourceIsVerticalLsd = IsVerticalLike(p0, p1);
+                                var sourceIsHorizontalLsd = IsHorizontalLikeForEndpointEnforcement(p0, p1);
+                                var sourceIsVerticalLsd = IsVerticalLikeForEndpointEnforcement(p0, p1);
                                 if (!foundEndTarget && sourceIsHorizontalLsd)
                                 {
                                     // Horizontal LSD side rule: right endpoint -> 0, left endpoint -> 20.12.
@@ -7444,7 +6750,7 @@ namespace AtsBackgroundBuilder
                         if (traceLsdEndpointFlow)
                         {
                             logger?.WriteLine(
-                                $"LSD-ENDPT line={lineIdText} pass=main no-move start={startDecision}({startSource}) end={endDecision}({endSource}) p0={FormatPoint(p0)} p1={FormatPoint(p1)}.");
+                                $"LSD-ENDPT line={lineIdText} pass=main no-move start={startDecision}({startSource}) end={endDecision}({endSource}) p0={FormatLsdEndpointTracePoint(p0)} p1={FormatLsdEndpointTracePoint(p1)}.");
                         }
 
                         continue;
@@ -7482,7 +6788,7 @@ namespace AtsBackgroundBuilder
 
                     if (traceLsdEndpointFlow)
                     {
-                        if (!TryReadOpenSegment(writable, out var postP0, out var postP1))
+                        if (!TryReadOpenSegmentForEndpointEnforcement(writable, out var postP0, out var postP1))
                         {
                             postP0 = p0;
                             postP1 = p1;
@@ -7490,8 +6796,8 @@ namespace AtsBackgroundBuilder
 
                         logger?.WriteLine(
                             $"LSD-ENDPT line={lineIdText} pass=main moved={movedLine} movedStart={movedStart} movedEnd={movedEnd} " +
-                            $"start={startDecision}({startSource}) end={endDecision}({endSource}) targetStart={FormatPoint(targetStart)} targetEnd={FormatPoint(targetEnd)} " +
-                            $"postP0={FormatPoint(postP0)} postP1={FormatPoint(postP1)}.");
+                            $"start={startDecision}({startSource}) end={endDecision}({endSource}) targetStart={FormatLsdEndpointTracePoint(targetStart)} targetEnd={FormatLsdEndpointTracePoint(targetEnd)} " +
+                            $"postP0={FormatLsdEndpointTracePoint(postP0)} postP1={FormatLsdEndpointTracePoint(postP1)}.");
                     }
                 }
 
@@ -7532,13 +6838,13 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!TryReadOpenSegment(writable, out var p0, out var p1))
+                        if (!TryReadOpenSegmentForEndpointEnforcement(writable, out var p0, out var p1))
                         {
                             continue;
                         }
 
                         var movedAny = false;
-                        if (IsVerticalLike(p0, p1))
+                        if (IsVerticalLikeForEndpointEnforcement(p0, p1))
                         {
                             var moveStart = false;
                             var moveEnd = false;
@@ -7570,7 +6876,7 @@ namespace AtsBackgroundBuilder
                                 movedAny = true;
                             }
                         }
-                        else if (IsHorizontalLike(p0, p1))
+                        else if (IsHorizontalLikeForEndpointEnforcement(p0, p1))
                         {
                             var moveStart = false;
                             var moveEnd = false;
@@ -7732,11 +7038,11 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var finalLineIdText = FormatLsdId(id);
+                        var finalLineIdText = FormatLsdEndpointTraceId(id);
 
-                        if (!TryReadOpenSegment(writable, out var p0, out var p1) || !IsHorizontalLike(p0, p1))
+                        if (!TryReadOpenSegmentForEndpointEnforcement(writable, out var p0, out var p1) || !IsHorizontalLikeForEndpointEnforcement(p0, p1))
                         {
-                            if (!TryReadOpenSegment(writable, out p0, out p1) || !IsVerticalLike(p0, p1))
+                            if (!TryReadOpenSegmentForEndpointEnforcement(writable, out p0, out p1) || !IsVerticalLikeForEndpointEnforcement(p0, p1))
                             {
                                 if (traceLsdEndpointFlow)
                                 {
@@ -7753,7 +7059,7 @@ namespace AtsBackgroundBuilder
                             if (traceLsdEndpointFlow)
                             {
                                 logger?.WriteLine(
-                                    $"LSD-ENDPT line={finalLineIdText} pass=final-invariant orient=V p0={FormatPoint(p0)} p1={FormatPoint(p1)} p0Near30={p0NearThirty} p1Near30={p1NearThirty}.");
+                                    $"LSD-ENDPT line={finalLineIdText} pass=final-invariant orient=V p0={FormatLsdEndpointTracePoint(p0)} p1={FormatLsdEndpointTracePoint(p1)} p0Near30={p0NearThirty} p1Near30={p1NearThirty}.");
                             }
 
                             if (p0NearThirty)
@@ -7797,7 +7103,7 @@ namespace AtsBackgroundBuilder
                                 }
                             }
 
-                            if (!TryReadOpenSegment(writable, out p0, out p1))
+                            if (!TryReadOpenSegmentForEndpointEnforcement(writable, out p0, out p1))
                             {
                                 if (movedVertical)
                                 {
@@ -7807,7 +7113,7 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
 
-                            if (IsVerticalLike(p0, p1) && IsEndpointNearThirtyBoundary(p1, nearThirtyTol))
+                            if (IsVerticalLikeForEndpointEnforcement(p0, p1) && IsEndpointNearThirtyBoundary(p1, nearThirtyTol))
                             {
                                 var preferZero = p1.Y > p0.Y;
                                 if (TryFindPreferredHardBoundaryMidpoint(
@@ -7855,14 +7161,14 @@ namespace AtsBackgroundBuilder
 
                             if (traceLsdEndpointFlow)
                             {
-                                if (!TryReadOpenSegment(writable, out var postV0, out var postV1))
+                                if (!TryReadOpenSegmentForEndpointEnforcement(writable, out var postV0, out var postV1))
                                 {
                                     postV0 = p0;
                                     postV1 = p1;
                                 }
 
                                 logger?.WriteLine(
-                                    $"LSD-ENDPT line={finalLineIdText} pass=final-invariant orient=V moved={movedVertical} postP0={FormatPoint(postV0)} postP1={FormatPoint(postV1)}.");
+                                    $"LSD-ENDPT line={finalLineIdText} pass=final-invariant orient=V moved={movedVertical} postP0={FormatLsdEndpointTracePoint(postV0)} postP1={FormatLsdEndpointTracePoint(postV1)}.");
                             }
 
                             continue;
@@ -7874,7 +7180,7 @@ namespace AtsBackgroundBuilder
                         if (traceLsdEndpointFlow)
                         {
                             logger?.WriteLine(
-                                $"LSD-ENDPT line={finalLineIdText} pass=final-invariant orient=H p0={FormatPoint(p0)} p1={FormatPoint(p1)} p0Near30={p0NearThirtyH} p1Near30={p1NearThirtyH}.");
+                                $"LSD-ENDPT line={finalLineIdText} pass=final-invariant orient=H p0={FormatLsdEndpointTracePoint(p0)} p1={FormatLsdEndpointTracePoint(p1)} p0Near30={p0NearThirtyH} p1Near30={p1NearThirtyH}.");
                         }
 
                         if (p0NearThirtyH)
@@ -7918,7 +7224,7 @@ namespace AtsBackgroundBuilder
                             }
                         }
 
-                        if (!TryReadOpenSegment(writable, out p0, out p1))
+                        if (!TryReadOpenSegmentForEndpointEnforcement(writable, out p0, out p1))
                         {
                             if (movedAny)
                             {
@@ -7928,7 +7234,7 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (IsHorizontalLike(p0, p1) && p1NearThirtyH)
+                        if (IsHorizontalLikeForEndpointEnforcement(p0, p1) && p1NearThirtyH)
                         {
                             var preferZero = p1.X > p0.X;
                             if (TryFindPreferredHardBoundaryMidpoint(
@@ -7976,14 +7282,14 @@ namespace AtsBackgroundBuilder
 
                         if (traceLsdEndpointFlow)
                         {
-                            if (!TryReadOpenSegment(writable, out var postH0, out var postH1))
+                            if (!TryReadOpenSegmentForEndpointEnforcement(writable, out var postH0, out var postH1))
                             {
                                 postH0 = p0;
                                 postH1 = p1;
                             }
 
                             logger?.WriteLine(
-                                $"LSD-ENDPT line={finalLineIdText} pass=final-invariant orient=H moved={movedAny} postP0={FormatPoint(postH0)} postP1={FormatPoint(postH1)}.");
+                                $"LSD-ENDPT line={finalLineIdText} pass=final-invariant orient=H moved={movedAny} postP0={FormatLsdEndpointTracePoint(postH0)} postP1={FormatLsdEndpointTracePoint(postH1)}.");
                         }
                     }
                 }
@@ -8010,152 +7316,12 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool IsPointOnAnyWindowBoundary(Point2d p, double tol) => IsPointOnAnyWindowBoundaryForEndpointEnforcement(p, tol, clipWindows);
 
-                return false;
-            }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForEndpointEnforcement(a, b, clipWindows);
 
-            bool IsPointOnAnyWindowBoundary(Point2d p, double tol)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    var withinX = p.X >= (w.MinPoint.X - tol) && p.X <= (w.MaxPoint.X + tol);
-                    var withinY = p.Y >= (w.MinPoint.Y - tol) && p.Y <= (w.MaxPoint.Y + tol);
-                    if (!withinX || !withinY)
-                    {
-                        continue;
-                    }
 
-                    var onLeft = Math.Abs(p.X - w.MinPoint.X) <= tol;
-                    var onRight = Math.Abs(p.X - w.MaxPoint.X) <= tol;
-                    var onBottom = Math.Abs(p.Y - w.MinPoint.Y) <= tol;
-                    var onTop = Math.Abs(p.Y - w.MaxPoint.Y) <= tol;
-                    if (onLeft || onRight || onBottom || onTop)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
-            {
-                if (writable is Line ln)
-                {
-                    var old = moveStart
-                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
-                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    if (moveStart)
-                    {
-                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
-                    }
-                    else
-                    {
-                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
-                    }
-
-                    return true;
-                }
-
-                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
-                {
-                    var index = moveStart ? 0 : pl.NumberOfVertices - 1;
-                    var old = pl.GetPoint2dAt(index);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    pl.SetPointAt(index, target);
-                    return true;
-                }
-
-                return false;
-            }
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForEndpointEnforcement(writable, moveStart, target, moveTol);
 
             bool IsBlindSourceLayer(string layer)
             {
@@ -8168,33 +7334,11 @@ namespace AtsBackgroundBuilder
                        string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase);
             }
 
-            bool IsHardBoundaryLayer(string layer)
-            {
-                if (string.IsNullOrWhiteSpace(layer))
-                {
-                    return false;
-                }
+            // Accept both canonical and alias names used in old files/log notes.
+            bool IsHardBoundaryLayer(string layer) =>
+                IsHardBoundaryLayerForEndpointEnforcement(layer, includeSecAliases: true);
 
-                // Accept both canonical and alias names used in old files/log notes.
-                return string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
-            }
-
-            bool IsThirtyEighteenLayer(string layer)
-            {
-                if (string.IsNullOrWhiteSpace(layer))
-                {
-                    return false;
-                }
-
-                return string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
-            }
+            bool IsThirtyEighteenLayer(string layer) => IsThirtyEighteenLayerForEndpointEnforcement(layer);
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -8210,7 +7354,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(ent, out var a, out var b))
+                    if (!TryReadOpenSegmentForEndpointEnforcement(ent, out var a, out var b))
                     {
                         continue;
                     }
@@ -8262,19 +7406,8 @@ namespace AtsBackgroundBuilder
                 var adjustedEndpoints = 0;
                 var adjustedLines = 0;
 
-                bool IsEndpointOnHardBoundary(Point2d endpoint)
-                {
-                    for (var i = 0; i < hardBoundarySegments.Count; i++)
-                    {
-                        var seg = hardBoundarySegments[i];
-                        if (DistancePointToSegment(endpoint, seg.A, seg.B) <= endpointTouchTol)
-                        {
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
+                bool IsEndpointOnHardBoundary(Point2d endpoint) =>
+                    IsEndpointOnBoundarySegmentsForEndpointEnforcement(endpoint, hardBoundarySegments, endpointTouchTol);
 
                 bool IsEndpointOnThirtyOnly(Point2d endpoint)
                 {
@@ -8343,7 +7476,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(writable, out var p0, out var p1))
+                    if (!TryReadOpenSegmentForEndpointEnforcement(writable, out var p0, out var p1))
                     {
                         continue;
                     }
@@ -8467,99 +7600,10 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForEndpointEnforcement(a, b, clipWindows);
 
-                return false;
-            }
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
-            }
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -8591,7 +7635,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(ent, out var a, out var b))
+                    if (!TryReadOpenSegmentForEndpointEnforcement(ent, out var a, out var b))
                     {
                         continue;
                     }
@@ -8607,7 +7651,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!IsHorizontalLike(a, b) && !IsVerticalLike(a, b))
+                    if (!IsHorizontalLikeForEndpointEnforcement(a, b) && !IsVerticalLikeForEndpointEnforcement(a, b))
                     {
                         continue;
                     }
@@ -8714,5 +7758,347 @@ namespace AtsBackgroundBuilder
                 }
             }
         }
+
+        private static bool IsPointInAnyWindowForEndpointEnforcement(Point2d point, IReadOnlyList<Extents3d> clipWindows)
+        {
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                var window = clipWindows[i];
+                if (point.X >= window.MinPoint.X &&
+                    point.X <= window.MaxPoint.X &&
+                    point.Y >= window.MinPoint.Y &&
+                    point.Y <= window.MaxPoint.Y)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsPointOnAnyWindowBoundaryForEndpointEnforcement(
+            Point2d point,
+            double tolerance,
+            IReadOnlyList<Extents3d> clipWindows)
+        {
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                var window = clipWindows[i];
+                var withinX = point.X >= (window.MinPoint.X - tolerance) && point.X <= (window.MaxPoint.X + tolerance);
+                var withinY = point.Y >= (window.MinPoint.Y - tolerance) && point.Y <= (window.MaxPoint.Y + tolerance);
+                if (!withinX || !withinY)
+                {
+                    continue;
+                }
+
+                var onLeft = Math.Abs(point.X - window.MinPoint.X) <= tolerance;
+                var onRight = Math.Abs(point.X - window.MaxPoint.X) <= tolerance;
+                var onBottom = Math.Abs(point.Y - window.MinPoint.Y) <= tolerance;
+                var onTop = Math.Abs(point.Y - window.MaxPoint.Y) <= tolerance;
+                if (onLeft || onRight || onBottom || onTop)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool DoesSegmentIntersectAnyWindowForEndpointEnforcement(Point2d a, Point2d b, IReadOnlyList<Extents3d> clipWindows)
+        {
+            if (IsPointInAnyWindowForEndpointEnforcement(a, clipWindows) ||
+                IsPointInAnyWindowForEndpointEnforcement(b, clipWindows))
+            {
+                return true;
+            }
+
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryMoveEndpointForEndpointEnforcement(Entity writable, bool moveStart, Point2d target, double moveTolerance)
+        {
+            if (writable is Line ln)
+            {
+                var old = moveStart
+                    ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
+                    : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                if (old.GetDistanceTo(target) <= moveTolerance)
+                {
+                    return false;
+                }
+
+                if (moveStart)
+                {
+                    ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
+                }
+                else
+                {
+                    ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
+                }
+
+                return true;
+            }
+
+            if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
+            {
+                var endpointIndex = moveStart ? 0 : pl.NumberOfVertices - 1;
+                var old = pl.GetPoint2dAt(endpointIndex);
+                if (old.GetDistanceTo(target) <= moveTolerance)
+                {
+                    return false;
+                }
+
+                pl.SetPointAt(endpointIndex, target);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsHardBoundaryLayerForEndpointEnforcement(string layer, bool includeSecAliases)
+        {
+            if (string.IsNullOrWhiteSpace(layer))
+            {
+                return false;
+            }
+
+            if (string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return includeSecAliases &&
+                   (string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool IsThirtyEighteenLayerForEndpointEnforcement(string layer)
+        {
+            if (string.IsNullOrWhiteSpace(layer))
+            {
+                return false;
+            }
+
+            return string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsEndpointNearBoundarySegmentsForEndpointEnforcement(
+            Point2d endpoint,
+            IReadOnlyList<(Point2d A, Point2d B)> boundarySegments,
+            double touchTolerance)
+        {
+            for (var i = 0; i < boundarySegments.Count; i++)
+            {
+                var segment = boundarySegments[i];
+                if (DistancePointToSegment(endpoint, segment.A, segment.B) <= touchTolerance)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsEndpointOnBoundarySegmentsForEndpointEnforcement(
+            Point2d endpoint,
+            IReadOnlyList<(Point2d A, Point2d B)> boundarySegments,
+            double touchTolerance)
+        {
+            for (var i = 0; i < boundarySegments.Count; i++)
+            {
+                var segment = boundarySegments[i];
+                if (DistancePointToSegment(endpoint, segment.A, segment.B) <= touchTolerance)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsEndpointOnBoundarySegmentsForEndpointEnforcement(
+            Point2d endpoint,
+            IReadOnlyList<(Point2d A, Point2d B, bool IsZero)> boundarySegments,
+            double touchTolerance)
+        {
+            for (var i = 0; i < boundarySegments.Count; i++)
+            {
+                var segment = boundarySegments[i];
+                if (DistancePointToSegment(endpoint, segment.A, segment.B) <= touchTolerance)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsEndpointOnBoundarySegmentsForEndpointEnforcement(
+            Point2d endpoint,
+            ObjectId sourceId,
+            IReadOnlyList<(ObjectId Id, Point2d A, Point2d B)> boundarySegments,
+            double touchTolerance)
+        {
+            for (var i = 0; i < boundarySegments.Count; i++)
+            {
+                var segment = boundarySegments[i];
+                if (segment.Id == sourceId)
+                {
+                    continue;
+                }
+
+                if (DistancePointToSegment(endpoint, segment.A, segment.B) <= touchTolerance)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static Point2d ClosestPointOnSegmentForEndpointEnforcement(Point2d point, Point2d segmentStart, Point2d segmentEnd)
+        {
+            var segment = segmentEnd - segmentStart;
+            var lengthSquared = segment.DotProduct(segment);
+            if (lengthSquared <= 1e-12)
+            {
+                return segmentStart;
+            }
+
+            var offset = point - segmentStart;
+            var t = offset.DotProduct(segment) / lengthSquared;
+            if (t < 0.0)
+            {
+                t = 0.0;
+            }
+            else if (t > 1.0)
+            {
+                t = 1.0;
+            }
+
+            return new Point2d(
+                segmentStart.X + (segment.X * t),
+                segmentStart.Y + (segment.Y * t));
+        }
+
+        private static bool TryReadOpenSegmentForEndpointEnforcement(Entity ent, out Point2d a, out Point2d b)
+        {
+            a = default;
+            b = default;
+            if (ent == null)
+            {
+                return false;
+            }
+
+            if (ent is Line ln)
+            {
+                a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            if (ent is Polyline pl)
+            {
+                if (pl.Closed || pl.NumberOfVertices < 2)
+                {
+                    return false;
+                }
+
+                a = pl.GetPoint2dAt(0);
+                b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
+                if (a.GetDistanceTo(b) <= 1e-4)
+                {
+                    return false;
+                }
+
+                if (pl.NumberOfVertices > 2)
+                {
+                    const double collinearTol = 0.35;
+                    for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
+                    {
+                        var p = pl.GetPoint2dAt(vi);
+                        if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsHorizontalLikeForEndpointEnforcement(Point2d a, Point2d b)
+        {
+            var d = b - a;
+            return Math.Abs(d.X) >= Math.Abs(d.Y);
+        }
+
+        private static bool IsVerticalLikeForEndpointEnforcement(Point2d a, Point2d b)
+        {
+            var d = b - a;
+            return Math.Abs(d.Y) > Math.Abs(d.X);
+        }
+
+        private static bool IsHorizontalLikeForEndpointEnforcement(
+            Point2d a,
+            Point2d b,
+            Vector2d eastUnit,
+            Vector2d northUnit)
+        {
+            var d = b - a;
+            var eastSpan = Math.Abs(d.DotProduct(eastUnit));
+            var northSpan = Math.Abs(d.DotProduct(northUnit));
+            return eastSpan >= northSpan;
+        }
+
+        private static bool IsVerticalLikeForEndpointEnforcement(
+            Point2d a,
+            Point2d b,
+            Vector2d eastUnit,
+            Vector2d northUnit)
+        {
+            var d = b - a;
+            var eastSpan = Math.Abs(d.DotProduct(eastUnit));
+            var northSpan = Math.Abs(d.DotProduct(northUnit));
+            return northSpan > eastSpan;
+        }
+
+        private static string FormatLsdEndpointTracePoint(Point2d point)
+        {
+            return $"({point.X:0.###},{point.Y:0.###})";
+        }
+
+        private static string FormatLsdEndpointTraceId(ObjectId objectId)
+        {
+            try
+            {
+                return objectId.Handle.ToString();
+            }
+            catch
+            {
+                return objectId.ToString();
+            }
+        }
     }
 }
+
+
+
+
+

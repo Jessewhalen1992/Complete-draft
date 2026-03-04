@@ -26,83 +26,16 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForNormalization(a, b, clipWindows);
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-                {
-                    a = default;
-                    b = default;
-                    if (ent == null)
-                    {
-                        return false;
-                    }
+                bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) =>
+                    TryReadOpenSegmentForNormalization(ent, requireTwoVertexPolyline: true, requireCollinearWhenMultiVertex: false, out a, out b);
 
-                    if (ent is Line ln)
-                    {
-                        a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                        b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                        return a.GetDistanceTo(b) > 1e-4;
-                    }
+                bool IsHorizontalLike(Point2d a, Point2d b) => IsHorizontalLikeForNormalization(a, b);
 
-                    if (ent is Polyline pl)
-                    {
-                        if (pl.Closed || pl.NumberOfVertices != 2)
-                        {
-                            return false;
-                        }
-
-                        a = pl.GetPoint2dAt(0);
-                        b = pl.GetPoint2dAt(1);
-                        return a.GetDistanceTo(b) > 1e-4;
-                    }
-
-                    return false;
-                }
-
-                bool IsHorizontalLike(Point2d a, Point2d b)
-                {
-                    var d = b - a;
-                    return Math.Abs(d.X) >= Math.Abs(d.Y);
-                }
-
-                bool IsVerticalLike(Point2d a, Point2d b)
-                {
-                    var d = b - a;
-                    return Math.Abs(d.Y) > Math.Abs(d.X);
-                }
+                bool IsVerticalLike(Point2d a, Point2d b) => IsVerticalLikeForNormalization(a, b);
 
                 var generatedSet = generatedRoadAllowanceIds == null
                     ? new HashSet<ObjectId>()
@@ -482,111 +415,16 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForNormalization(a, b, clipWindows);
 
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) =>
+                TryReadOpenSegmentForNormalization(ent, requireTwoVertexPolyline: false, requireCollinearWhenMultiVertex: true, out a, out b);
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
+            bool IsHorizontalLike(Point2d a, Point2d b) => IsHorizontalLikeForNormalization(a, b);
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    // Accept multi-vertex open polylines only when they are effectively collinear.
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsSeamLayer(string layer)
-            {
-                if (string.IsNullOrWhiteSpace(layer))
-                {
-                    return false;
-                }
-
-                // Baseline seam forcing is for hard seam boundaries only.
-                // Never force 30.16/30.18 corridor bands (L-USEC / L-USEC-3018) to L-SEC.
-                return string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
-            }
+            // Baseline seam forcing is for hard seam boundaries only.
+            // Never force 30.16/30.18 corridor bands (L-USEC / L-USEC-3018) to L-SEC.
+            bool IsSeamLayer(string layer) => IsSeamLayerForNormalization(layer, includeUsecBaseLayer: false);
 
             var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
             using (var tr = database.TransactionManager.StartTransaction())
@@ -661,15 +499,8 @@ namespace AtsBackgroundBuilder
                 const double neighborAxisTol = 0.80;
                 const double neighborOverlapMin = 8.0;
 
-                bool HorizontalOverlaps((Point2d A, Point2d B) a, (Point2d A, Point2d B) b, double minOverlap)
-                {
-                    var aMin = Math.Min(a.A.X, a.B.X);
-                    var aMax = Math.Max(a.A.X, a.B.X);
-                    var bMin = Math.Min(b.A.X, b.B.X);
-                    var bMax = Math.Max(b.A.X, b.B.X);
-                    var overlap = Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
-                    return overlap >= minOverlap;
-                }
+                bool HorizontalOverlaps((Point2d A, Point2d B) a, (Point2d A, Point2d B) b, double minOverlap) =>
+                    HorizontalOverlapsForNormalization(a, b, minOverlap);
 
                 (bool SecLeft, bool SecRight, bool UsecLeft, bool UsecRight) AnalyzeNeighbors(int index)
                 {
@@ -888,93 +719,16 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForNormalization(a, b, clipWindows);
 
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) =>
+                TryReadOpenSegmentForNormalization(ent, requireTwoVertexPolyline: false, requireCollinearWhenMultiVertex: false, out a, out b);
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
+            bool IsHorizontalLike(Point2d a, Point2d b) => IsHorizontalLikeForNormalization(a, b);
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsSeamLayer(string layer)
-            {
-                if (string.IsNullOrWhiteSpace(layer))
-                {
-                    return false;
-                }
-
-                // Baseline township forcing targets SEC + surveyed hard-boundary rows (0/20.12),
-                // but never 30.16/30.18 corridor bands.
-                return string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
-            }
+            // Baseline township forcing targets SEC + surveyed hard-boundary rows (0/20.12),
+            // but never 30.16/30.18 corridor bands.
+            bool IsSeamLayer(string layer) => IsSeamLayerForNormalization(layer, includeUsecBaseLayer: true);
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -1290,103 +1044,15 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForNormalization(a, b, clipWindows);
 
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) =>
+                TryReadOpenSegmentForNormalization(ent, requireTwoVertexPolyline: false, requireCollinearWhenMultiVertex: true, out a, out b);
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
+            bool IsHorizontalLike(Point2d a, Point2d b) => IsHorizontalLikeForNormalization(a, b);
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool HorizontalOverlaps((Point2d A, Point2d B) a, (Point2d A, Point2d B) b, double minOverlap)
-            {
-                var aMin = Math.Min(a.A.X, a.B.X);
-                var aMax = Math.Max(a.A.X, a.B.X);
-                var bMin = Math.Min(b.A.X, b.B.X);
-                var bMax = Math.Max(b.A.X, b.B.X);
-                var overlap = Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
-                return overlap >= minOverlap;
-            }
+            bool HorizontalOverlaps((Point2d A, Point2d B) a, (Point2d A, Point2d B) b, double minOverlap) =>
+                HorizontalOverlapsForNormalization(a, b, minOverlap);
 
             var clipMinX = clipWindows.Min(w => w.MinPoint.X);
             var clipMaxX = clipWindows.Max(w => w.MaxPoint.X);
@@ -1451,14 +1117,8 @@ namespace AtsBackgroundBuilder
                     return;
                 }
 
-                bool IsRangeEdgeCandidate((ObjectId Id, string Layer, Point2d A, Point2d B, double Y, bool Generated) c)
-                {
-                    var segMinX = Math.Min(c.A.X, c.B.X);
-                    var segMaxX = Math.Max(c.A.X, c.B.X);
-                    var touchesWestEdge = segMinX <= (clipMinX + edgeBand);
-                    var touchesEastEdge = segMaxX >= (clipMaxX - edgeBand);
-                    return touchesWestEdge || touchesEastEdge;
-                }
+                bool IsRangeEdgeCandidate((ObjectId Id, string Layer, Point2d A, Point2d B, double Y, bool Generated) c) =>
+                    IsRangeEdgeCandidateForNormalization(c.A, c.B, clipMinX, clipMaxX, edgeBand);
 
                 var targets = new Dictionary<ObjectId, string>();
                 var inspectedGenerated = 0;
@@ -1585,89 +1245,17 @@ namespace AtsBackgroundBuilder
                 ? new HashSet<ObjectId>()
                 : new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForNormalization(a, b, clipWindows);
 
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) =>
+                TryReadOpenSegmentForNormalization(ent, requireTwoVertexPolyline: false, requireCollinearWhenMultiVertex: false, out a, out b);
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
+            bool IsHorizontalLike(Point2d a, Point2d b) => IsHorizontalLikeForNormalization(a, b);
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
+            bool IsVerticalLike(Point2d a, Point2d b) => IsVerticalLikeForNormalization(a, b);
 
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
-            }
-
-            bool IsRangeEdgeCandidate(Point2d a, Point2d b)
-            {
-                var segMinX = Math.Min(a.X, b.X);
-                var segMaxX = Math.Max(a.X, b.X);
-                return segMinX <= (clipMinX + edgeBand) ||
-                       segMaxX >= (clipMaxX - edgeBand);
-            }
+            bool IsRangeEdgeCandidate(Point2d a, Point2d b) =>
+                IsRangeEdgeCandidateForNormalization(a, b, clipMinX, clipMaxX, edgeBand);
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -1764,38 +1352,7 @@ namespace AtsBackgroundBuilder
             var clipMinX = clipWindows.Min(w => w.MinPoint.X);
             var clipMaxX = clipWindows.Max(w => w.MaxPoint.X);
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForNormalization(a, b, clipWindows);
 
             static bool HasSpanOverlap(double aMin, double aMax, double bMin, double bMax, double minOverlap)
             {
@@ -1818,56 +1375,15 @@ namespace AtsBackgroundBuilder
                 return 0.0;
             }
 
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) =>
+                TryReadOpenSegmentForNormalization(ent, requireTwoVertexPolyline: false, requireCollinearWhenMultiVertex: false, out a, out b);
 
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
+            bool IsHorizontalLike(Point2d a, Point2d b) => IsHorizontalLikeForNormalization(a, b);
 
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
+            bool IsVerticalLike(Point2d a, Point2d b) => IsVerticalLikeForNormalization(a, b);
 
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
-            }
-
-            bool IsRangeEdgeCandidate(Point2d a, Point2d b)
-            {
-                var segMinX = Math.Min(a.X, b.X);
-                var segMaxX = Math.Max(a.X, b.X);
-                return segMinX <= (clipMinX + edgeBand) ||
-                       segMaxX >= (clipMaxX - edgeBand);
-            }
+            bool IsRangeEdgeCandidate(Point2d a, Point2d b) =>
+                IsRangeEdgeCandidateForNormalization(a, b, clipMinX, clipMaxX, edgeBand);
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -2106,69 +1622,10 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForNormalization(a, b, clipWindows);
 
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) =>
+                TryReadOpenSegmentForNormalization(ent, requireTwoVertexPolyline: false, requireCollinearWhenMultiVertex: false, out a, out b);
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -2234,6 +1691,159 @@ namespace AtsBackgroundBuilder
 
                 tr.Commit();
             }
+        }
+
+        private static bool IsSeamLayerForNormalization(string layer, bool includeUsecBaseLayer)
+        {
+            if (string.IsNullOrWhiteSpace(layer))
+            {
+                return false;
+            }
+
+            if (string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return includeUsecBaseLayer &&
+                   string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool HorizontalOverlapsForNormalization(
+            (Point2d A, Point2d B) a,
+            (Point2d A, Point2d B) b,
+            double minOverlap)
+        {
+            var aMin = Math.Min(a.A.X, a.B.X);
+            var aMax = Math.Max(a.A.X, a.B.X);
+            var bMin = Math.Min(b.A.X, b.B.X);
+            var bMax = Math.Max(b.A.X, b.B.X);
+            var overlap = Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
+            return overlap >= minOverlap;
+        }
+
+        private static bool IsRangeEdgeCandidateForNormalization(
+            Point2d a,
+            Point2d b,
+            double clipMinX,
+            double clipMaxX,
+            double edgeBand)
+        {
+            var segMinX = Math.Min(a.X, b.X);
+            var segMaxX = Math.Max(a.X, b.X);
+            var touchesWestEdge = segMinX <= (clipMinX + edgeBand);
+            var touchesEastEdge = segMaxX >= (clipMaxX - edgeBand);
+            return touchesWestEdge || touchesEastEdge;
+        }
+
+        private static bool IsPointInAnyWindowForNormalization(Point2d point, IReadOnlyList<Extents3d> clipWindows)
+        {
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                var window = clipWindows[i];
+                if (point.X >= window.MinPoint.X && point.X <= window.MaxPoint.X &&
+                    point.Y >= window.MinPoint.Y && point.Y <= window.MaxPoint.Y)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool DoesSegmentIntersectAnyWindowForNormalization(Point2d a, Point2d b, IReadOnlyList<Extents3d> clipWindows)
+        {
+            if (IsPointInAnyWindowForNormalization(a, clipWindows) ||
+                IsPointInAnyWindowForNormalization(b, clipWindows))
+            {
+                return true;
+            }
+
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryReadOpenSegmentForNormalization(
+            Entity ent,
+            bool requireTwoVertexPolyline,
+            bool requireCollinearWhenMultiVertex,
+            out Point2d a,
+            out Point2d b)
+        {
+            a = default;
+            b = default;
+            if (ent == null)
+            {
+                return false;
+            }
+
+            if (ent is Line line)
+            {
+                a = new Point2d(line.StartPoint.X, line.StartPoint.Y);
+                b = new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            if (ent is Polyline polyline)
+            {
+                if (polyline.Closed || polyline.NumberOfVertices < 2)
+                {
+                    return false;
+                }
+
+                if (requireTwoVertexPolyline && polyline.NumberOfVertices != 2)
+                {
+                    return false;
+                }
+
+                a = polyline.GetPoint2dAt(0);
+                b = polyline.GetPoint2dAt(polyline.NumberOfVertices - 1);
+                if (a.GetDistanceTo(b) <= 1e-4)
+                {
+                    return false;
+                }
+
+                if (requireCollinearWhenMultiVertex && polyline.NumberOfVertices > 2)
+                {
+                    const double collinearTol = 0.35;
+                    for (var vi = 1; vi < polyline.NumberOfVertices - 1; vi++)
+                    {
+                        var point = polyline.GetPoint2dAt(vi);
+                        if (DistancePointToInfiniteLine(point, a, b) > collinearTol)
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsHorizontalLikeForNormalization(Point2d a, Point2d b)
+        {
+            var d = b - a;
+            return Math.Abs(d.X) >= Math.Abs(d.Y);
+        }
+
+        private static bool IsVerticalLikeForNormalization(Point2d a, Point2d b)
+        {
+            var d = b - a;
+            return Math.Abs(d.Y) > Math.Abs(d.X);
         }
     }
 }

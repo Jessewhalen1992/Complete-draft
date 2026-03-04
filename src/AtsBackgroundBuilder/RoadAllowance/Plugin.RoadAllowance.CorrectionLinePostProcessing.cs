@@ -1202,45 +1202,9 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
 
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var dx = Math.Abs(b.X - a.X);
-                var dy = Math.Abs(b.Y - a.Y);
-                return dx >= (dy * 1.2);
-            }
+            bool IsHorizontalLike(Point2d a, Point2d b) => IsHorizontalLikeForCorrectionLinePost(a, b);
 
             const double endpointTouchTol = 1.6;
             const double collinearTol = 0.90;
@@ -1453,52 +1417,11 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
 
-                return false;
-            }
+            bool IsHorizontalLike(Point2d a, Point2d b) => IsHorizontalLikeForCorrectionLinePost(a, b);
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var dx = Math.Abs(b.X - a.X);
-                var dy = Math.Abs(b.Y - a.Y);
-                return dx >= (dy * 1.2);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var dx = Math.Abs(b.X - a.X);
-                var dy = Math.Abs(b.Y - a.Y);
-                return dy >= (dx * 1.2);
-            }
+            bool IsVerticalLike(Point2d a, Point2d b) => IsVerticalLikeForCorrectionLinePost(a, b);
 
             bool IsVerticalHardTargetLayer(string layer)
             {
@@ -1507,62 +1430,10 @@ namespace AtsBackgroundBuilder
                        string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
             }
 
-            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
-            {
-                if (writable is Line ln)
-                {
-                    var old = moveStart
-                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
-                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForCorrectionLinePost(writable, moveStart, target, moveTol);
 
-                    if (moveStart)
-                    {
-                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
-                    }
-                    else
-                    {
-                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
-                    }
-
-                    return true;
-                }
-
-                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
-                {
-                    var index = moveStart ? 0 : pl.NumberOfVertices - 1;
-                    var old = pl.GetPoint2dAt(index);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    pl.SetPointAt(index, target);
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
-            {
-                intersection = default;
-                var da = a1 - a0;
-                var db = b1 - b0;
-                var denom = Cross2d(da, db);
-                if (Math.Abs(denom) <= 1e-9)
-                {
-                    return false;
-                }
-
-                var diff = b0 - a0;
-                var t = Cross2d(diff, db) / denom;
-                intersection = a0 + (da * t);
-                return true;
-            }
+            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
+                TryIntersectInfiniteLinesForPluginGeometry(a0, a1, b0, b1, out intersection);
 
             bool TryResolveInnerDirectionSign(
                 Point2d a,
@@ -2484,6 +2355,99 @@ namespace AtsBackgroundBuilder
 
                 return movedEndpoints > 0 || splitInnerCreated > 0;
             }
+        }
+
+        private static bool IsPointInAnyWindowForCorrectionLinePost(Point2d point, IReadOnlyList<Extents3d> clipWindows)
+        {
+            if (clipWindows == null || clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                var window = clipWindows[i];
+                if (point.X >= window.MinPoint.X && point.X <= window.MaxPoint.X &&
+                    point.Y >= window.MinPoint.Y && point.Y <= window.MaxPoint.Y)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool DoesSegmentIntersectAnyWindowForCorrectionLinePost(Point2d a, Point2d b, IReadOnlyList<Extents3d> clipWindows)
+        {
+            if (IsPointInAnyWindowForCorrectionLinePost(a, clipWindows) ||
+                IsPointInAnyWindowForCorrectionLinePost(b, clipWindows))
+            {
+                return true;
+            }
+
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsHorizontalLikeForCorrectionLinePost(Point2d a, Point2d b)
+        {
+            var dx = Math.Abs(b.X - a.X);
+            var dy = Math.Abs(b.Y - a.Y);
+            return dx >= (dy * 1.2);
+        }
+
+        private static bool IsVerticalLikeForCorrectionLinePost(Point2d a, Point2d b)
+        {
+            var dx = Math.Abs(b.X - a.X);
+            var dy = Math.Abs(b.Y - a.Y);
+            return dy >= (dx * 1.2);
+        }
+
+        private static bool TryMoveEndpointForCorrectionLinePost(Entity writable, bool moveStart, Point2d target, double moveTol)
+        {
+            if (writable is Line line)
+            {
+                var old = moveStart
+                    ? new Point2d(line.StartPoint.X, line.StartPoint.Y)
+                    : new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                if (old.GetDistanceTo(target) <= moveTol)
+                {
+                    return false;
+                }
+
+                if (moveStart)
+                {
+                    line.StartPoint = new Point3d(target.X, target.Y, line.StartPoint.Z);
+                }
+                else
+                {
+                    line.EndPoint = new Point3d(target.X, target.Y, line.EndPoint.Z);
+                }
+
+                return true;
+            }
+
+            if (writable is Polyline polyline && !polyline.Closed && polyline.NumberOfVertices >= 2)
+            {
+                var index = moveStart ? 0 : polyline.NumberOfVertices - 1;
+                var old = polyline.GetPoint2dAt(index);
+                if (old.GetDistanceTo(target) <= moveTol)
+                {
+                    return false;
+                }
+
+                polyline.SetPointAt(index, target);
+                return true;
+            }
+
+            return false;
         }
 
         private static bool IntersectsAnyCorrectionSeamWindow(CorrectionSegment segment, IReadOnlyList<CorrectionSeam> seams)

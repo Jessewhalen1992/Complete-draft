@@ -179,37 +179,9 @@ namespace AtsBackgroundBuilder
                 return records ?? new List<SurfaceImpactActivityRecord>();
             }
 
-            string NormalizeLand(string value) => (value ?? string.Empty).Trim();
-
-            static DateTime ReportDate(SurfaceImpactActivityRecord record)
-            {
-                if (record != null && record.ReportRunDate.HasValue)
-                {
-                    return record.ReportRunDate.Value.Date;
-                }
-
-                return DateTime.MinValue;
-            }
-
-            bool HasRealLand(SurfaceImpactActivityRecord record)
-            {
-                if (record == null)
-                {
-                    return false;
-                }
-
-                var land = NormalizeLand(record.LandLocation);
-                if (string.IsNullOrWhiteSpace(land))
-                {
-                    return false;
-                }
-
-                return !string.Equals(land, "N/A", StringComparison.OrdinalIgnoreCase);
-            }
-
             var landGroups = records
-                .Where(HasRealLand)
-                .GroupBy(r => NormalizeLand(r.LandLocation), StringComparer.OrdinalIgnoreCase)
+                .Where(HasRealSurfaceImpactLandLocation)
+                .GroupBy(r => NormalizeSurfaceImpactLandLocation(r.LandLocation), StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             duplicateLandLocationCount = landGroups.Count(g => g.Count() > 1);
@@ -220,7 +192,7 @@ namespace AtsBackgroundBuilder
                 var maxDate = DateTime.MinValue;
                 foreach (var record in group)
                 {
-                    var date = ReportDate(record);
+                    var date = GetSurfaceImpactReportDate(record);
                     if (date > maxDate)
                     {
                         maxDate = date;
@@ -235,16 +207,16 @@ namespace AtsBackgroundBuilder
 
             foreach (var record in records)
             {
-                if (!HasRealLand(record))
+                if (!HasRealSurfaceImpactLandLocation(record))
                 {
                     output.Add(record);
                     continue;
                 }
 
-                var land = NormalizeLand(record.LandLocation);
+                var land = NormalizeSurfaceImpactLandLocation(record.LandLocation);
                 var newestDate = newestDateByLand.TryGetValue(land, out var nd) ? nd : DateTime.MinValue;
 
-                var recordDate = ReportDate(record);
+                var recordDate = GetSurfaceImpactReportDate(record);
                 if (recordDate != newestDate)
                 {
                     removedRecords++;
@@ -270,6 +242,37 @@ namespace AtsBackgroundBuilder
             }
 
             return output;
+        }
+
+        private static string NormalizeSurfaceImpactLandLocation(string value)
+        {
+            return (value ?? string.Empty).Trim();
+        }
+
+        private static DateTime GetSurfaceImpactReportDate(SurfaceImpactActivityRecord record)
+        {
+            if (record != null && record.ReportRunDate.HasValue)
+            {
+                return record.ReportRunDate.Value.Date;
+            }
+
+            return DateTime.MinValue;
+        }
+
+        private static bool HasRealSurfaceImpactLandLocation(SurfaceImpactActivityRecord record)
+        {
+            if (record == null)
+            {
+                return false;
+            }
+
+            var land = NormalizeSurfaceImpactLandLocation(record.LandLocation);
+            if (string.IsNullOrWhiteSpace(land))
+            {
+                return false;
+            }
+
+            return !string.Equals(land, "N/A", StringComparison.OrdinalIgnoreCase);
         }
 
         private static List<SurfaceImpactActivityRecord> FilterSurfaceImpactRecordsByInputScope(

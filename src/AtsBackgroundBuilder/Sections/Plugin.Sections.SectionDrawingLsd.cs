@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using AtsBackgroundBuilder.Core;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
@@ -257,13 +258,18 @@ namespace AtsBackgroundBuilder
                         TryGetQuarterCorner(section, eastUnit, northUnit, QuarterCorner.SouthWest, out swCorner) &&
                         TryGetQuarterCorner(section, eastUnit, northUnit, QuarterCorner.SouthEast, out seCorner);
 
-                    double ProjectU(Point2d p) => (p - origin).DotProduct(eastUnit);
-                    double ProjectV(Point2d p) => (p - origin).DotProduct(northUnit);
-
-                    var westEdgeU = 0.5 * (ProjectU(swCorner) + ProjectU(nwCorner));
-                    var eastEdgeU = 0.5 * (ProjectU(seCorner) + ProjectU(neCorner));
-                    var southEdgeV = 0.5 * (ProjectV(swCorner) + ProjectV(seCorner));
-                    var northEdgeV = 0.5 * (ProjectV(nwCorner) + ProjectV(neCorner));
+                    var westEdgeU = 0.5 * (
+                        ProjectPointToQuarterU(swCorner, origin, eastUnit) +
+                        ProjectPointToQuarterU(nwCorner, origin, eastUnit));
+                    var eastEdgeU = 0.5 * (
+                        ProjectPointToQuarterU(seCorner, origin, eastUnit) +
+                        ProjectPointToQuarterU(neCorner, origin, eastUnit));
+                    var southEdgeV = 0.5 * (
+                        ProjectPointToQuarterV(swCorner, origin, northUnit) +
+                        ProjectPointToQuarterV(seCorner, origin, northUnit));
+                    var northEdgeV = 0.5 * (
+                        ProjectPointToQuarterV(nwCorner, origin, northUnit) +
+                        ProjectPointToQuarterV(neCorner, origin, northUnit));
 
                     if (!haveCorners || westEdgeU >= eastEdgeU || southEdgeV >= northEdgeV)
                     {
@@ -304,8 +310,12 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    var midU = 0.5 * (ProjectU(anchors.Top) + ProjectU(anchors.Bottom));
-                    var midV = 0.5 * (ProjectV(anchors.Left) + ProjectV(anchors.Right));
+                    var midU = 0.5 * (
+                        ProjectPointToQuarterU(anchors.Top, origin, eastUnit) +
+                        ProjectPointToQuarterU(anchors.Bottom, origin, eastUnit));
+                    var midV = 0.5 * (
+                        ProjectPointToQuarterV(anchors.Left, origin, northUnit) +
+                        ProjectPointToQuarterV(anchors.Right, origin, northUnit));
                     if ((midU - westEdgeU) <= minQuarterSpan || (midV - southEdgeV) <= minQuarterSpan)
                     {
                         continue;
@@ -357,711 +367,6 @@ namespace AtsBackgroundBuilder
                     return;
                 }
 
-                bool SegmentIntersectsAnyQuarterWindow(Point2d a, Point2d b)
-                {
-                    for (var i = 0; i < frames.Count; i++)
-                    {
-                        if (TryClipSegmentToWindow(a, b, frames[i].CleanupWindow, out _, out _))
-                        {
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
-
-                bool ExtentsIntersectAnyQuarterWindow(Extents3d extents)
-                {
-                    for (var i = 0; i < frames.Count; i++)
-                    {
-                        if (DoExtentsOverlapOrTouch(extents, frames[i].CleanupWindow, 0.01))
-                        {
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
-
-                bool TryFindQuarterVertexSnapTarget(
-                    Point2d vertex,
-                    Point2d prev,
-                    Point2d next,
-                    IReadOnlyList<Point2d> hardBoundaryCornerEndpoints,
-                    out Point2d target)
-                {
-                    target = vertex;
-                    if (hardBoundaryCornerEndpoints == null || hardBoundaryCornerEndpoints.Count == 0)
-                    {
-                        return false;
-                    }
-
-                    const double strictMaxSnapDistance = 30.0;
-                    const double strictLineMatchTolerance = 1.25;
-                    const double relaxedMaxSnapDistance = 35.0;
-                    const double relaxedLineMatchTolerance = 8.0;
-                    const double relaxedSingleEdgeMissMaxDistance = 10.0;
-                    const double nearestEdgeMissMaxDistance = 10.0;
-                    const double minMove = 0.01;
-
-                    bool TryPick(bool requireBothEdgeMatches, double lineMatchTolerance, double maxSnapDistance, out Point2d picked)
-                    {
-                        picked = vertex;
-                        var found = false;
-                        var bestDistance = double.MaxValue;
-                        for (var i = 0; i < hardBoundaryCornerEndpoints.Count; i++)
-                        {
-                            var candidate = hardBoundaryCornerEndpoints[i];
-                            var moveDistance = vertex.GetDistanceTo(candidate);
-                            if (moveDistance <= minMove || moveDistance > maxSnapDistance)
-                            {
-                                continue;
-                            }
-
-                            if (prev.GetDistanceTo(vertex) <= 1e-6 || next.GetDistanceTo(vertex) <= 1e-6)
-                            {
-                                continue;
-                            }
-
-                            var prevLineDistance = DistancePointToInfiniteLine(candidate, vertex, prev);
-                            var nextLineDistance = DistancePointToInfiniteLine(candidate, vertex, next);
-                            var prevMatch = prevLineDistance <= lineMatchTolerance;
-                            var nextMatch = nextLineDistance <= lineMatchTolerance;
-                            if (requireBothEdgeMatches)
-                            {
-                                if (!prevMatch || !nextMatch)
-                                {
-                                    continue;
-                                }
-                            }
-                            else if (!prevMatch && !nextMatch)
-                            {
-                                continue;
-                            }
-
-                            if (!requireBothEdgeMatches && prevMatch != nextMatch)
-                            {
-                                var unmatchedDistance = prevMatch ? nextLineDistance : prevLineDistance;
-                                if (unmatchedDistance > relaxedSingleEdgeMissMaxDistance)
-                                {
-                                    continue;
-                                }
-                            }
-
-                            if (!found || moveDistance < bestDistance)
-                            {
-                                found = true;
-                                bestDistance = moveDistance;
-                                picked = candidate;
-                            }
-                        }
-
-                        return found;
-                    }
-
-                    if (TryPick(requireBothEdgeMatches: true, strictLineMatchTolerance, strictMaxSnapDistance, out var strictTarget))
-                    {
-                        target = strictTarget;
-                        return true;
-                    }
-
-                    if (TryPick(requireBothEdgeMatches: false, relaxedLineMatchTolerance, relaxedMaxSnapDistance, out var relaxedTarget))
-                    {
-                        target = relaxedTarget;
-                        return true;
-                    }
-
-                    var foundNearest = false;
-                    var nearestDistance = double.MaxValue;
-                    for (var i = 0; i < hardBoundaryCornerEndpoints.Count; i++)
-                    {
-                        var candidate = hardBoundaryCornerEndpoints[i];
-                        var moveDistance = vertex.GetDistanceTo(candidate);
-                        if (moveDistance <= minMove || moveDistance > strictMaxSnapDistance)
-                        {
-                            continue;
-                        }
-
-                        if (prev.GetDistanceTo(vertex) <= 1e-6 || next.GetDistanceTo(vertex) <= 1e-6)
-                        {
-                            continue;
-                        }
-
-                        var prevLineDistance = DistancePointToInfiniteLine(candidate, vertex, prev);
-                        var nextLineDistance = DistancePointToInfiniteLine(candidate, vertex, next);
-                        var edgeMatched = prevLineDistance <= relaxedLineMatchTolerance || nextLineDistance <= relaxedLineMatchTolerance;
-                        if (!edgeMatched)
-                        {
-                            continue;
-                        }
-
-                        if (Math.Max(prevLineDistance, nextLineDistance) > nearestEdgeMissMaxDistance)
-                        {
-                            continue;
-                        }
-
-                        if (!foundNearest || moveDistance < nearestDistance)
-                        {
-                            foundNearest = true;
-                            nearestDistance = moveDistance;
-                            target = candidate;
-                        }
-                    }
-
-                    return foundNearest;
-                }
-
-                bool TryResolveSouthDividerCornerFromHardBoundaries(
-                    QuarterViewSectionFrame frame,
-                    IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
-                    double dividerU,
-                    Point2d currentLocal,
-                    out Point2d resolvedLocal,
-                    out int resolvedPriority)
-                {
-                    resolvedLocal = currentLocal;
-                    resolvedPriority = int.MaxValue;
-                    if (cornerClusters == null || cornerClusters.Count == 0)
-                    {
-                        return false;
-                    }
-
-                    const double maxMove = 20.0;
-                    const double dividerUTol = 8.0;
-                    const double southBandPadding = 12.0;
-                    var found = false;
-                    var bestScore = double.MaxValue;
-                    for (var i = 0; i < cornerClusters.Count; i++)
-                    {
-                        var cluster = cornerClusters[i];
-                        if (!cluster.HasHorizontal || !cluster.HasVertical)
-                        {
-                            continue;
-                        }
-
-                        if (!TryConvertQuarterWorldToLocal(frame, cluster.Rep, out var u, out var v))
-                        {
-                            continue;
-                        }
-
-                        if (u < (frame.WestEdgeU - southBandPadding) || u > (frame.EastEdgeU + southBandPadding))
-                        {
-                            continue;
-                        }
-
-                        if (v < (frame.SouthEdgeV - southBandPadding) || v > (frame.MidV + southBandPadding))
-                        {
-                            continue;
-                        }
-
-                        var dividerGap = Math.Abs(u - dividerU);
-                        if (dividerGap > dividerUTol)
-                        {
-                            continue;
-                        }
-
-                        var move = new Point2d(u, v).GetDistanceTo(currentLocal);
-                        if (move <= 1e-3 || move > maxMove)
-                        {
-                            continue;
-                        }
-
-                        var score =
-                            (cluster.Priority * 100.0) +
-                            (dividerGap * 8.0) +
-                            Math.Abs(v - currentLocal.Y) -
-                            Math.Min(cluster.Count, 6);
-                        if (!found || score < bestScore)
-                        {
-                            found = true;
-                            bestScore = score;
-                            resolvedLocal = new Point2d(u, v);
-                            resolvedPriority = cluster.Priority;
-                        }
-                    }
-
-                    return found;
-                }
-
-                bool TryResolveWestBandCornerFromHardBoundaries(
-                    QuarterViewSectionFrame frame,
-                    IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
-                    double preferredWestU,
-                    bool northBand,
-                    Point2d currentLocal,
-                    double maxMove,
-                    out Point2d resolvedLocal,
-                    out int resolvedPriority)
-                {
-                    resolvedLocal = currentLocal;
-                    resolvedPriority = int.MaxValue;
-                    if (cornerClusters == null || cornerClusters.Count == 0)
-                    {
-                        return false;
-                    }
-
-                    const double westWindowPadding = 20.0;
-                    const double verticalBandPadding = 20.0;
-                    const double maxWestGap = 70.0;
-                    var found = false;
-                    var bestScore = double.MaxValue;
-                    for (var i = 0; i < cornerClusters.Count; i++)
-                    {
-                        var cluster = cornerClusters[i];
-                        if (!cluster.HasHorizontal || !cluster.HasVertical)
-                        {
-                            continue;
-                        }
-
-                        if (!TryConvertQuarterWorldToLocal(frame, cluster.Rep, out var u, out var v))
-                        {
-                            continue;
-                        }
-
-                        if (u < (frame.WestEdgeU - 90.0) || u > (frame.MidU + westWindowPadding))
-                        {
-                            continue;
-                        }
-
-                        if (northBand)
-                        {
-                            if (v < (frame.MidV - verticalBandPadding) || v > (frame.NorthEdgeV + verticalBandPadding))
-                            {
-                                continue;
-                            }
-                        }
-                        else
-                        {
-                            if (v < (frame.SouthEdgeV - verticalBandPadding) || v > (frame.MidV + verticalBandPadding))
-                            {
-                                continue;
-                            }
-                        }
-
-                        var westGap = Math.Abs(u - preferredWestU);
-                        if (westGap > maxWestGap)
-                        {
-                            continue;
-                        }
-
-                        var edgeGap = northBand
-                            ? Math.Abs(v - frame.NorthEdgeV)
-                            : Math.Abs(v - frame.SouthEdgeV);
-                        var move = new Point2d(u, v).GetDistanceTo(currentLocal);
-                        if (move <= 1e-3 || move > maxMove)
-                        {
-                            continue;
-                        }
-
-                        var score =
-                            (cluster.Priority * 100.0) +
-                            (westGap * 4.0) +
-                            (edgeGap * 3.0) +
-                            (move * 0.5) -
-                            Math.Min(cluster.Count, 6);
-                        if (!found || score < bestScore)
-                        {
-                            found = true;
-                            bestScore = score;
-                            resolvedLocal = new Point2d(u, v);
-                            resolvedPriority = cluster.Priority;
-                        }
-                    }
-
-                    return found;
-                }
-
-                bool TryResolveEastBandCornerFromHardBoundaries(
-                    QuarterViewSectionFrame frame,
-                    IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
-                    double preferredEastU,
-                    bool northBand,
-                    Point2d currentLocal,
-                    double maxMove,
-                    out Point2d resolvedLocal,
-                    out int resolvedPriority)
-                {
-                    resolvedLocal = currentLocal;
-                    resolvedPriority = int.MaxValue;
-                    if (cornerClusters == null || cornerClusters.Count == 0)
-                    {
-                        return false;
-                    }
-
-                    const double eastWindowPadding = 20.0;
-                    const double verticalBandPadding = 20.0;
-                    const double maxEastGap = 120.0;
-                    var found = false;
-                    var bestScore = double.MaxValue;
-                    for (var i = 0; i < cornerClusters.Count; i++)
-                    {
-                        var cluster = cornerClusters[i];
-                        if (!cluster.HasHorizontal || !cluster.HasVertical)
-                        {
-                            continue;
-                        }
-
-                        if (!TryConvertQuarterWorldToLocal(frame, cluster.Rep, out var u, out var v))
-                        {
-                            continue;
-                        }
-
-                        if (u < (frame.MidU - eastWindowPadding) || u > (frame.EastEdgeU + 220.0))
-                        {
-                            continue;
-                        }
-
-                        if (northBand)
-                        {
-                            if (v < (frame.MidV - verticalBandPadding) || v > (frame.NorthEdgeV + 220.0))
-                            {
-                                continue;
-                            }
-                        }
-                        else
-                        {
-                            if (v < (frame.SouthEdgeV - verticalBandPadding) || v > (frame.MidV + verticalBandPadding))
-                            {
-                                continue;
-                            }
-                        }
-
-                        var eastGap = Math.Abs(u - preferredEastU);
-                        if (eastGap > maxEastGap)
-                        {
-                            continue;
-                        }
-
-                        var edgeGap = northBand
-                            ? Math.Abs(v - frame.NorthEdgeV)
-                            : Math.Abs(v - frame.SouthEdgeV);
-                        var move = new Point2d(u, v).GetDistanceTo(currentLocal);
-                        if (move <= 1e-3 || move > maxMove)
-                        {
-                            continue;
-                        }
-
-                        var score =
-                            (cluster.Priority * 100.0) +
-                            (eastGap * 4.0) +
-                            (edgeGap * 3.0) +
-                            (move * 0.5) -
-                            Math.Min(cluster.Count, 6);
-                        if (!found || score < bestScore)
-                        {
-                            found = true;
-                            bestScore = score;
-                            resolvedLocal = new Point2d(u, v);
-                            resolvedPriority = cluster.Priority;
-                        }
-                    }
-
-                    return found;
-                }
-
-                bool TryResolveNorthEastCornerFromEastHardNode(
-                    QuarterViewSectionFrame frame,
-                    IReadOnlyList<(Point2d A, Point2d B, string Layer)> segments,
-                    IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
-                    Point2d eastBoundaryA,
-                    Point2d eastBoundaryB,
-                    Point2d currentLocal,
-                    out Point2d resolvedLocal,
-                    out int resolvedPriority,
-                    out string resolvedLayer,
-                    out double resolvedClusterDistance,
-                    out double resolvedHorizontalReachGap)
-                {
-                    resolvedLocal = currentLocal;
-                    resolvedPriority = int.MaxValue;
-                    resolvedLayer = string.Empty;
-                    resolvedClusterDistance = double.MaxValue;
-                    resolvedHorizontalReachGap = double.MaxValue;
-                    if (segments == null || segments.Count == 0 || cornerClusters == null || cornerClusters.Count == 0)
-                    {
-                        return false;
-                    }
-
-                    if (!TryConvertQuarterWorldToLocal(frame, eastBoundaryA, out var eastAu, out var eastAv) ||
-                        !TryConvertQuarterWorldToLocal(frame, eastBoundaryB, out var eastBu, out var eastBv))
-                    {
-                        return false;
-                    }
-
-                    var eastMinV = Math.Min(eastAv, eastBv);
-                    var eastMaxV = Math.Max(eastAv, eastBv);
-                    const double maxHorizontalReachGap = 80.0;
-                    const double maxEastReachGap = 120.0;
-                    const double maxClusterDistance = 6.0;
-                    const double maxMove = 120.0;
-                    var found = false;
-                    var bestScore = double.MaxValue;
-                    for (var i = 0; i < segments.Count; i++)
-                    {
-                        var seg = segments[i];
-                        if (!IsQuarterViewBoundaryCandidateLayer(seg.Layer))
-                        {
-                            continue;
-                        }
-
-                        var delta = seg.B - seg.A;
-                        var eastComp = Math.Abs(delta.DotProduct(frame.EastUnit));
-                        var northComp = Math.Abs(delta.DotProduct(frame.NorthUnit));
-                        if (eastComp <= northComp)
-                        {
-                            continue;
-                        }
-
-                        if (!TryIntersectLocalInfiniteLines(
-                                frame,
-                                eastBoundaryA,
-                                eastBoundaryB,
-                                seg.A,
-                                seg.B,
-                                out var u,
-                                out var v))
-                        {
-                            continue;
-                        }
-
-                        if (u < (frame.MidU - 40.0) || u > (frame.EastEdgeU + 220.0) ||
-                            v < (frame.MidV - 40.0) || v > (frame.NorthEdgeV + 220.0))
-                        {
-                            continue;
-                        }
-
-                        if (!TryConvertQuarterWorldToLocal(frame, seg.A, out var segAu, out var segAv) ||
-                            !TryConvertQuarterWorldToLocal(frame, seg.B, out var segBu, out var segBv))
-                        {
-                            continue;
-                        }
-
-                        var segMinU = Math.Min(segAu, segBu);
-                        var segMaxU = Math.Max(segAu, segBu);
-                        var horizontalReachGap = DistanceToClosedInterval(u, segMinU, segMaxU);
-                        if (horizontalReachGap > maxHorizontalReachGap)
-                        {
-                            continue;
-                        }
-
-                        var eastReachGap = DistanceToClosedInterval(v, eastMinV, eastMaxV);
-                        if (eastReachGap > maxEastReachGap)
-                        {
-                            continue;
-                        }
-
-                        var candidateLocal = new Point2d(u, v);
-                        var move = candidateLocal.GetDistanceTo(currentLocal);
-                        if (move <= 1e-3 || move > maxMove)
-                        {
-                            continue;
-                        }
-
-                        var candidateWorld = QuarterViewLocalToWorld(frame, u, v);
-                        var bestClusterDistance = double.MaxValue;
-                        var clusterPriority = int.MaxValue;
-                        for (var ci = 0; ci < cornerClusters.Count; ci++)
-                        {
-                            var cluster = cornerClusters[ci];
-                            if (!cluster.HasHorizontal || !cluster.HasVertical)
-                            {
-                                continue;
-                            }
-
-                            var dist = candidateWorld.GetDistanceTo(cluster.Rep);
-                            if (dist >= bestClusterDistance)
-                            {
-                                continue;
-                            }
-
-                            bestClusterDistance = dist;
-                            clusterPriority = cluster.Priority;
-                        }
-
-                        if (bestClusterDistance > maxClusterDistance)
-                        {
-                            continue;
-                        }
-
-                        var layerPriority = GetQuarterViewBoundaryLayerPriority(seg.Layer);
-                        var score =
-                            (clusterPriority * 100.0) +
-                            (layerPriority * 20.0) +
-                            (bestClusterDistance * 12.0) +
-                            (horizontalReachGap * 7.0) +
-                            (eastReachGap * 3.0) +
-                            (move * 0.5);
-                        if (!found || score < bestScore)
-                        {
-                            found = true;
-                            bestScore = score;
-                            resolvedLocal = candidateLocal;
-                            resolvedPriority = clusterPriority;
-                            resolvedLayer = seg.Layer ?? string.Empty;
-                            resolvedClusterDistance = bestClusterDistance;
-                            resolvedHorizontalReachGap = horizontalReachGap;
-                        }
-                    }
-
-                    return found;
-                }
-
-                bool TryResolveNorthEastCornerFromEndpointCornerClusters(
-                    QuarterViewSectionFrame frame,
-                    IReadOnlyList<(Point2d A, Point2d B, string Layer)> segments,
-                    IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
-                    Point2d currentLocal,
-                    bool requireEndpointNode,
-                    out Point2d resolvedLocal,
-                    out int resolvedPriority,
-                    out double resolvedMove,
-                    out double resolvedEndpointDistance)
-                {
-                    resolvedLocal = currentLocal;
-                    resolvedPriority = int.MaxValue;
-                    resolvedMove = double.MaxValue;
-                    resolvedEndpointDistance = double.MaxValue;
-                    if (segments == null || segments.Count == 0 || cornerClusters == null || cornerClusters.Count == 0)
-                    {
-                        return false;
-                    }
-
-                    bool IsBoundaryCandidateLayer(string layer) => IsQuarterViewBoundaryCandidateLayer(layer);
-                    bool IsHorizontal(Point2d a, Point2d b)
-                    {
-                        var d = b - a;
-                        var eastComp = Math.Abs(d.DotProduct(frame.EastUnit));
-                        var northComp = Math.Abs(d.DotProduct(frame.NorthUnit));
-                        return eastComp > northComp;
-                    }
-
-                    bool IsVertical(Point2d a, Point2d b)
-                    {
-                        var d = b - a;
-                        var eastComp = Math.Abs(d.DotProduct(frame.EastUnit));
-                        var northComp = Math.Abs(d.DotProduct(frame.NorthUnit));
-                        return northComp > eastComp;
-                    }
-
-                    bool HasEndpointHorizontalAndVerticalAt(Point2d worldPoint, double tol, out double bestEndpointDistance)
-                    {
-                        bestEndpointDistance = double.MaxValue;
-                        var hasHorizontal = false;
-                        var hasVertical = false;
-                        for (var si = 0; si < segments.Count; si++)
-                        {
-                            var seg = segments[si];
-                            if (!IsBoundaryCandidateLayer(seg.Layer))
-                            {
-                                continue;
-                            }
-
-                            var segmentIsHorizontal = IsHorizontal(seg.A, seg.B);
-                            var segmentIsVertical = IsVertical(seg.A, seg.B);
-                            if (!segmentIsHorizontal && !segmentIsVertical)
-                            {
-                                continue;
-                            }
-
-                            var dA = worldPoint.GetDistanceTo(seg.A);
-                            if (dA <= tol)
-                            {
-                                bestEndpointDistance = Math.Min(bestEndpointDistance, dA);
-                                if (segmentIsHorizontal)
-                                {
-                                    hasHorizontal = true;
-                                }
-
-                                if (segmentIsVertical)
-                                {
-                                    hasVertical = true;
-                                }
-                            }
-
-                            var dB = worldPoint.GetDistanceTo(seg.B);
-                            if (dB <= tol)
-                            {
-                                bestEndpointDistance = Math.Min(bestEndpointDistance, dB);
-                                if (segmentIsHorizontal)
-                                {
-                                    hasHorizontal = true;
-                                }
-
-                                if (segmentIsVertical)
-                                {
-                                    hasVertical = true;
-                                }
-                            }
-
-                            if (hasHorizontal && hasVertical)
-                            {
-                                return true;
-                            }
-                        }
-
-                        return false;
-                    }
-
-                    const double maxMove = 140.0;
-                    const double endpointTol = 0.55;
-                    var found = false;
-                    var bestScore = double.MaxValue;
-                    for (var i = 0; i < cornerClusters.Count; i++)
-                    {
-                        var cluster = cornerClusters[i];
-                        if (!cluster.HasHorizontal || !cluster.HasVertical)
-                        {
-                            continue;
-                        }
-
-                        if (!TryConvertQuarterWorldToLocal(frame, cluster.Rep, out var u, out var v))
-                        {
-                            continue;
-                        }
-
-                        if (u < (frame.MidU - 30.0) || u > (frame.EastEdgeU + 140.0) ||
-                            v < (frame.MidV - 30.0) || v > (frame.NorthEdgeV + 140.0))
-                        {
-                            continue;
-                        }
-
-                        var candidateLocal = new Point2d(u, v);
-                        var move = candidateLocal.GetDistanceTo(currentLocal);
-                        if (move <= 1e-3 || move > maxMove)
-                        {
-                            continue;
-                        }
-
-                        var hasEndpointNode = HasEndpointHorizontalAndVerticalAt(cluster.Rep, endpointTol, out var endpointDistance);
-                        if (requireEndpointNode && !hasEndpointNode)
-                        {
-                            continue;
-                        }
-
-                        var eastInset = frame.EastEdgeU - u;
-                        var northInset = frame.NorthEdgeV - v;
-                        var insetTarget = RoadAllowanceSecWidthMeters;
-                        var insetScore = Math.Abs(eastInset - insetTarget) + Math.Abs(northInset - insetTarget);
-                        var endpointPenalty = hasEndpointNode ? endpointDistance * 8.0 : 120.0;
-                        var score =
-                            (cluster.Priority * 80.0) +
-                            endpointPenalty +
-                            (insetScore * 2.0) +
-                            (move * 0.5);
-                        if (!found || score < bestScore)
-                        {
-                            found = true;
-                            bestScore = score;
-                            resolvedLocal = candidateLocal;
-                            resolvedPriority = cluster.Priority;
-                            resolvedMove = move;
-                            resolvedEndpointDistance = endpointDistance;
-                        }
-                    }
-
-                    return found;
-                }
-
                 var boundarySegments = new List<(Point2d A, Point2d B, string Layer)>();
                 var quarterDividerSegments = new List<(Point2d A, Point2d B)>();
                 var correctionSouthBoundarySegments = new List<(Point2d A, Point2d B)>();
@@ -1078,7 +383,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!SegmentIntersectsAnyQuarterWindow(a, b))
+                    if (!SegmentIntersectsAnyQuarterWindow(a, b, frames))
                     {
                         continue;
                     }
@@ -1109,105 +414,6 @@ namespace AtsBackgroundBuilder
 
                 var hardBoundaryCornerClusters = new List<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)>();
                 const double cornerClusterTolerance = 0.40;
-                void AddBoundaryEndpointToCornerClusters(Point2d endpoint, bool isHorizontal, bool isVertical, int priority)
-                {
-                    var bestIndex = -1;
-                    var bestDistance = double.MaxValue;
-                    for (var ci = 0; ci < hardBoundaryCornerClusters.Count; ci++)
-                    {
-                        var cluster = hardBoundaryCornerClusters[ci];
-                        var distance = endpoint.GetDistanceTo(cluster.Rep);
-                        if (distance > cornerClusterTolerance || distance >= bestDistance)
-                        {
-                            continue;
-                        }
-
-                        bestIndex = ci;
-                        bestDistance = distance;
-                    }
-
-                    if (bestIndex < 0)
-                    {
-                        hardBoundaryCornerClusters.Add((endpoint, 1, isHorizontal, isVertical, priority));
-                        return;
-                    }
-
-                    var existing = hardBoundaryCornerClusters[bestIndex];
-                    var replaceRep = priority < existing.Priority;
-                    var newRep = replaceRep ? endpoint : existing.Rep;
-                    var newPriority = replaceRep ? priority : existing.Priority;
-                    hardBoundaryCornerClusters[bestIndex] = (
-                        newRep,
-                        existing.Count + 1,
-                        existing.HasHorizontal || isHorizontal,
-                        existing.HasVertical || isVertical,
-                        newPriority);
-                }
-
-                bool IsPointInAnyQuarterWindow(Point2d p, double tol)
-                {
-                    for (var i = 0; i < frames.Count; i++)
-                    {
-                        var w = frames[i].CleanupWindow;
-                        if (p.X >= (w.MinPoint.X - tol) && p.X <= (w.MaxPoint.X + tol) &&
-                            p.Y >= (w.MinPoint.Y - tol) && p.Y <= (w.MaxPoint.Y + tol))
-                        {
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
-
-                bool TryFindApparentCornerIntersection(
-                    Point2d firstA,
-                    Point2d firstB,
-                    Point2d secondA,
-                    Point2d secondB,
-                    out Point2d corner)
-                {
-                    corner = default;
-                    if (firstA.GetDistanceTo(firstB) <= 1e-6 || secondA.GetDistanceTo(secondB) <= 1e-6)
-                    {
-                        return false;
-                    }
-
-                    var r = firstB - firstA;
-                    var s = secondB - secondA;
-                    var denom = (r.X * s.Y) - (r.Y * s.X);
-                    if (Math.Abs(denom) <= 1e-9)
-                    {
-                        return false;
-                    }
-
-                    var diff = secondA - firstA;
-                    var t = ((diff.X * s.Y) - (diff.Y * s.X)) / denom;
-                    var u = ((diff.X * r.Y) - (diff.Y * r.X)) / denom;
-                    var hit = new Point2d(firstA.X + (r.X * t), firstA.Y + (r.Y * t));
-
-                    const double apparentIntersectionPadding = 80.0;
-                    bool WithinExpandedBounds(Point2d a, Point2d b)
-                    {
-                        var minX = Math.Min(a.X, b.X) - apparentIntersectionPadding;
-                        var maxX = Math.Max(a.X, b.X) + apparentIntersectionPadding;
-                        var minY = Math.Min(a.Y, b.Y) - apparentIntersectionPadding;
-                        var maxY = Math.Max(a.Y, b.Y) + apparentIntersectionPadding;
-                        return hit.X >= minX && hit.X <= maxX && hit.Y >= minY && hit.Y <= maxY;
-                    }
-
-                    if (!WithinExpandedBounds(firstA, firstB) || !WithinExpandedBounds(secondA, secondB))
-                    {
-                        return false;
-                    }
-
-                    if (!IsPointInAnyQuarterWindow(hit, 0.01))
-                    {
-                        return false;
-                    }
-
-                    corner = hit;
-                    return true;
-                }
 
                 for (var i = 0; i < boundarySegments.Count; i++)
                 {
@@ -1222,8 +428,20 @@ namespace AtsBackgroundBuilder
 
                     var isHorizontal = absX >= absY;
                     var isVertical = absY >= absX;
-                    AddBoundaryEndpointToCornerClusters(seg.A, isHorizontal, isVertical, priority: 1);
-                    AddBoundaryEndpointToCornerClusters(seg.B, isHorizontal, isVertical, priority: 1);
+                    AddBoundaryEndpointToCornerClusters(
+                        hardBoundaryCornerClusters,
+                        cornerClusterTolerance,
+                        seg.A,
+                        isHorizontal,
+                        isVertical,
+                        priority: 1);
+                    AddBoundaryEndpointToCornerClusters(
+                        hardBoundaryCornerClusters,
+                        cornerClusterTolerance,
+                        seg.B,
+                        isHorizontal,
+                        isVertical,
+                        priority: 1);
                 }
 
                 for (var i = 0; i < boundarySegments.Count; i++)
@@ -1269,12 +487,24 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!TryFindApparentCornerIntersection(first.A, first.B, second.A, second.B, out var corner))
+                        if (!TryFindApparentCornerIntersection(
+                                first.A,
+                                first.B,
+                                second.A,
+                                second.B,
+                                frames,
+                                out var corner))
                         {
                             continue;
                         }
 
-                        AddBoundaryEndpointToCornerClusters(corner, isHorizontal: true, isVertical: true, priority: 0);
+                        AddBoundaryEndpointToCornerClusters(
+                            hardBoundaryCornerClusters,
+                            cornerClusterTolerance,
+                            corner,
+                            isHorizontal: true,
+                            isVertical: true,
+                            priority: 0);
                     }
                 }
 
@@ -1284,63 +514,6 @@ namespace AtsBackgroundBuilder
                     .ToList();
 
                 var erased = 0;
-                bool IsPointInsideFrame(QuarterViewSectionFrame frame, Point2d worldPoint, double tol)
-                {
-                    if (!TryConvertQuarterWorldToLocal(frame, worldPoint, out var u, out var v))
-                    {
-                        return false;
-                    }
-
-                    return u >= (frame.WestEdgeU - tol) && u <= (frame.EastEdgeU + tol) &&
-                           v >= (frame.SouthEdgeV - tol) && v <= (frame.NorthEdgeV + tol);
-                }
-
-                bool IsPolylineOwnedByAnyRebuiltSection(Polyline poly)
-                {
-                    if (poly == null || poly.NumberOfVertices < 3)
-                    {
-                        return false;
-                    }
-
-                    var sumX = 0.0;
-                    var sumY = 0.0;
-                    for (var vi = 0; vi < poly.NumberOfVertices; vi++)
-                    {
-                        var p = poly.GetPoint2dAt(vi);
-                        sumX += p.X;
-                        sumY += p.Y;
-                    }
-
-                    var centroid = new Point2d(sumX / poly.NumberOfVertices, sumY / poly.NumberOfVertices);
-                    const double centroidTol = 0.75;
-                    const double vertexTol = 0.35;
-                    for (var i = 0; i < frames.Count; i++)
-                    {
-                        var frame = frames[i];
-                        if (!IsPointInsideFrame(frame, centroid, centroidTol))
-                        {
-                            continue;
-                        }
-
-                        var allVerticesInside = true;
-                        for (var vi = 0; vi < poly.NumberOfVertices; vi++)
-                        {
-                            if (!IsPointInsideFrame(frame, poly.GetPoint2dAt(vi), vertexTol))
-                            {
-                                allVerticesInside = false;
-                                break;
-                            }
-                        }
-
-                        if (allVerticesInside)
-                        {
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
-
                 foreach (ObjectId id in modelSpace)
                 {
                     if (!(transaction.GetObject(id, OpenMode.ForWrite, false) is Entity ent) || ent.IsErased)
@@ -1358,7 +531,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!IsPolylineOwnedByAnyRebuiltSection(poly))
+                    if (!IsQuarterViewPolylineOwnedByAnyRebuiltSection(poly, frames))
                     {
                         continue;
                     }
@@ -1454,27 +627,19 @@ namespace AtsBackgroundBuilder
                     // Side-specific ownership targets:
                     // - west: prefer USEC-width when a west L-USEC-0 ownership candidate exists, otherwise SEC-width.
                     // - south: same rule for surveyed south sections; blind south keeps legacy zero-offset behavior.
-                    var westExpectedOffset = hasWestUsecZeroOwnershipCandidate
-                        ? RoadAllowanceUsecWidthMeters
-                        : RoadAllowanceSecWidthMeters;
+                    var ownershipPolicy = QuarterBoundaryOwnershipPolicy.Create(
+                        isBlindSouthBoundarySection,
+                        hasWestUsecZeroOwnershipCandidate,
+                        hasSouthUsecZeroOwnershipCandidate,
+                        RoadAllowanceSecWidthMeters,
+                        RoadAllowanceUsecWidthMeters);
+                    var westExpectedOffset = ownershipPolicy.WestExpectedOffset;
                     var westBoundaryU = frame.WestEdgeU - westExpectedOffset;
-                    var southFallbackOffset = isBlindSouthBoundarySection
-                        ? 0.0
-                        : (hasSouthUsecZeroOwnershipCandidate
-                            ? RoadAllowanceUsecWidthMeters
-                            : RoadAllowanceSecWidthMeters);
-                    // If a L-USEC-0 west ownership candidate exists, do not permit downgrade fallback.
-                    var allowWestInsetDowngrade = !hasWestUsecZeroOwnershipCandidate;
+                    var southFallbackOffset = ownershipPolicy.SouthFallbackOffset;
+                    var allowWestInsetDowngrade = ownershipPolicy.AllowWestInsetDowngrade;
                     var southBoundaryV = frame.SouthEdgeV - southFallbackOffset;
-                    var westSource = westExpectedOffset >= (RoadAllowanceUsecWidthMeters - 0.5)
-                        ? "fallback-30.16"
-                        : "fallback-20.12";
-                    var southSource = southFallbackOffset <= 0.0
-                        ? "fallback-blind"
-                        : (southFallbackOffset >= (RoadAllowanceUsecWidthMeters - 0.5)
-                            ? "fallback-30.16"
-                            : "fallback-20.12");
-                    var hasResolvedWest = false;
+                    var westSource = ownershipPolicy.WestFallbackSource;
+                    var southSource = ownershipPolicy.SouthFallbackSource;
                     var hasWestBoundarySegment = false;
                     var westBoundarySegmentA = default(Point2d);
                     var westBoundarySegmentB = default(Point2d);
@@ -1492,45 +657,16 @@ namespace AtsBackgroundBuilder
                     var eastBoundarySegmentA = default(Point2d);
                     var eastBoundarySegmentB = default(Point2d);
 
-                    hasResolvedWest = TryResolveQuarterViewWestBoundaryU(
-                        frame,
-                        westResolutionSegments,
-                        westExpectedOffset,
-                        dividerPreferredU,
-                        out var resolvedWestU,
-                        out var resolvedWestLayer,
-                        out var resolvedWestA,
-                        out var resolvedWestB);
-                    if (!hasResolvedWest &&
-                        westExpectedOffset >= (RoadAllowanceUsecWidthMeters - 0.5) &&
-                        allowWestInsetDowngrade)
-                    {
-                        // Fallback to SEC-width ownership when USEC-width candidates are absent.
-                        var secWidthInset = RoadAllowanceSecWidthMeters;
-                        hasResolvedWest = TryResolveQuarterViewWestBoundaryU(
+                    if (TryResolveQuarterViewWestBoundaryWithInsetFallbacks(
                             frame,
                             westResolutionSegments,
-                            secWidthInset,
+                            westExpectedOffset,
                             dividerPreferredU,
-                            out resolvedWestU,
-                            out resolvedWestLayer,
-                            out resolvedWestA,
-                            out resolvedWestB);
-                    }
-                    if (!hasResolvedWest && westExpectedOffset > 0.5 && allowWestInsetDowngrade)
-                    {
-                        // Final fallback keeps legacy near-edge behavior when no offset-class candidate survives filters.
-                        hasResolvedWest = TryResolveQuarterViewWestBoundaryU(
-                            frame,
-                            westResolutionSegments,
-                            0.0,
-                            dividerPreferredU,
-                            out resolvedWestU,
-                            out resolvedWestLayer,
-                            out resolvedWestA,
-                            out resolvedWestB);
-                    }
-                    if (hasResolvedWest)
+                            allowWestInsetDowngrade,
+                            out var resolvedWestU,
+                            out var resolvedWestLayer,
+                            out var resolvedWestA,
+                            out var resolvedWestB))
                     {
                         westBoundaryU = resolvedWestU;
                         westSource = resolvedWestLayer;
@@ -1539,188 +675,47 @@ namespace AtsBackgroundBuilder
                         hasWestBoundarySegment = true;
                     }
 
-                    bool TryResolvePreferredWestBoundary(
-                        IReadOnlyList<(Point2d A, Point2d B, string Layer)> candidates,
-                        out double resolvedU,
-                        out string resolvedLayer,
-                        out Point2d resolvedA,
-                        out Point2d resolvedB)
-                    {
-                        resolvedU = default;
-                        resolvedLayer = string.Empty;
-                        resolvedA = default;
-                        resolvedB = default;
-                        if (candidates == null || candidates.Count == 0)
-                        {
-                            return false;
-                        }
-
-                        // First pass: keep prior expected inset behavior.
-                        if (TryResolveQuarterViewWestBoundaryU(
-                                frame,
-                                candidates,
-                                westExpectedOffset,
-                                dividerPreferredU,
-                                out resolvedU,
-                                out resolvedLayer,
-                                out resolvedA,
-                                out resolvedB))
-                        {
-                            return true;
-                        }
-
-                        if (!allowWestInsetDowngrade)
-                        {
-                            return false;
-                        }
-
-                        // Regression guard: if geometry has already shifted section edge inward,
-                        // a zero expected offset still selects the intended 20.12-class boundary.
-                        return TryResolveQuarterViewWestBoundaryU(
-                            frame,
-                            candidates,
-                            0.0,
-                            dividerPreferredU,
-                            out resolvedU,
-                            out resolvedLayer,
-                            out resolvedA,
-                            out resolvedB);
-                    }
-
                     if (hasWestBoundarySegment &&
-                        string.Equals(westSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
+                        TryResolveQuarterViewPreferredWestBoundaryFromSections(
+                            frame,
+                            boundarySegments,
+                            westSource,
+                            westExpectedOffset,
+                            dividerPreferredU,
+                            allowWestInsetDowngrade,
+                            out var preferredWestU,
+                            out var preferredWestLayer,
+                            out var preferredWestA,
+                            out var preferredWestB))
                     {
-                        var preferredWestSegments = boundarySegments
-                            .Where(s =>
-                                string.Equals(s.Layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(s.Layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(s.Layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(s.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(s.Layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
-                            .ToList();
-                        if (TryResolvePreferredWestBoundary(
-                                preferredWestSegments,
-                                out var preferredWestU,
-                                out var preferredWestLayer,
-                                out var preferredWestA,
-                                out var preferredWestB))
-                        {
-                            westBoundaryU = preferredWestU;
-                            westSource = preferredWestLayer;
-                            westBoundarySegmentA = preferredWestA;
-                            westBoundarySegmentB = preferredWestB;
-                            hasWestBoundarySegment = true;
-                        }
+                        westBoundaryU = preferredWestU;
+                        westSource = preferredWestLayer;
+                        westBoundarySegmentA = preferredWestA;
+                        westBoundarySegmentB = preferredWestB;
+                        hasWestBoundarySegment = true;
                     }
 
-                    bool TryResolvePreferredEastBoundarySegment(
-                        out Point2d resolvedEastA,
-                        out Point2d resolvedEastB,
-                        out string resolvedEastLayer)
-                    {
-                        resolvedEastA = default;
-                        resolvedEastB = default;
-                        resolvedEastLayer = string.Empty;
-
-                        // Prefer explicit quarter/section hard boundaries before broad fallback.
-                        var preferredEastLayers = new[]
-                        {
-                            LayerUsecTwenty,
-                            "L-USEC-2012",
-                            LayerUsecBase,
-                            "L-SEC",
-                            "L-SEC-2012",
-                            LayerUsecZero
-                        };
-
-                        // First pass: prefer a full-width inward road-allowance candidate.
-                        for (var li = 0; li < preferredEastLayers.Length; li++)
-                        {
-                            var layer = preferredEastLayers[li];
-                            if (!TryResolveQuarterViewEastBoundarySegmentOnLayer(
-                                    frame,
-                                    boundarySegments,
-                                    layer,
-                                    eastExpectedOffset,
-                                    out resolvedEastA,
-                                    out resolvedEastB))
-                            {
-                                continue;
-                            }
-
-                            resolvedEastLayer = layer;
-                            return true;
-                        }
-
-                        // Fallback: preserve legacy near-edge behavior when full-width geometry is unavailable.
-                        if (eastExpectedOffset > 0.5)
-                        {
-                            for (var li = 0; li < preferredEastLayers.Length; li++)
-                            {
-                                var layer = preferredEastLayers[li];
-                                if (!TryResolveQuarterViewEastBoundarySegmentOnLayer(
-                                        frame,
-                                        boundarySegments,
-                                        layer,
-                                        0.0,
-                                        out resolvedEastA,
-                                        out resolvedEastB))
-                                {
-                                    continue;
-                                }
-
-                                resolvedEastLayer = layer;
-                                return true;
-                            }
-                        }
-
-                        return false;
-                    }
-
-                    if (TryResolvePreferredEastBoundarySegment(
+                    if (TryResolvePreferredQuarterViewEastBoundary(
+                            frame,
+                            boundarySegments,
+                            eastExpectedOffset,
+                            out var preferredEastMidU,
                             out var resolvedEastA,
                             out var resolvedEastB,
                             out var resolvedEastLayer))
                     {
-                        var relEastA = resolvedEastA - frame.Origin;
-                        var relEastB = resolvedEastB - frame.Origin;
-                        eastBoundaryU = 0.5 * (
-                            relEastA.DotProduct(frame.EastUnit) +
-                            relEastB.DotProduct(frame.EastUnit));
-                        if (TryProjectBoundarySegmentUAtV(
-                                frame,
-                                resolvedEastA,
-                                resolvedEastB,
-                                frame.MidV,
-                                out var projectedEastMidU))
-                        {
-                            eastBoundaryU = projectedEastMidU;
-                        }
-
+                        eastBoundaryU = preferredEastMidU;
                         eastSource = resolvedEastLayer;
                         eastBoundarySegmentA = resolvedEastA;
                         eastBoundarySegmentB = resolvedEastB;
                         hasEastBoundarySegment = true;
                     }
 
-                    if (TryResolveQuarterViewSouthCorrectionBoundaryV(
-                        frame,
-                        correctionSouthBoundarySegments,
-                        out var correctionSouthV,
-                        out var correctionSouthA,
-                        out var correctionSouthB))
-                    {
-                        southBoundaryV = correctionSouthV;
-                        southSource = LayerUsecCorrectionZero;
-                        southBoundarySegmentA = correctionSouthA;
-                        southBoundarySegmentB = correctionSouthB;
-                        hasSouthBoundarySegment = true;
-                    }
-                    else
-                    {
-                        var hasResolvedSouth = TryResolveQuarterViewSouthBoundaryV(
+                    if (TryResolvePreferredQuarterViewSouthBoundaryWithCorrection(
                             frame,
                             southResolutionSegments,
+                            correctionSouthBoundarySegments,
+                            isBlindSouthBoundarySection,
                             southFallbackOffset,
                             dividerPreferredU,
                             dividerLineA,
@@ -1728,150 +723,48 @@ namespace AtsBackgroundBuilder
                             out var resolvedSouthV,
                             out var resolvedSouthLayer,
                             out var resolvedSouthA,
-                            out var resolvedSouthB);
-
-                        if (!hasResolvedSouth &&
-                            !isBlindSouthBoundarySection &&
-                            southFallbackOffset <= (RoadAllowanceSecWidthMeters + 0.5))
-                        {
-                            // If SEC-width matching misses, allow a USEC-width retry for mixed/tight geometry.
-                            hasResolvedSouth = TryResolveQuarterViewSouthBoundaryV(
-                                frame,
-                                southResolutionSegments,
-                                RoadAllowanceUsecWidthMeters,
-                                dividerPreferredU,
-                                dividerLineA,
-                                dividerLineB,
-                                out resolvedSouthV,
-                                out resolvedSouthLayer,
-                                out resolvedSouthA,
-                                out resolvedSouthB);
-                        }
-
-                        if (!hasResolvedSouth &&
-                            !isBlindSouthBoundarySection &&
-                            southFallbackOffset >= (RoadAllowanceUsecWidthMeters - 0.5))
-                        {
-                            // Symmetric retry back to SEC-width when USEC-width detection is noisy.
-                            hasResolvedSouth = TryResolveQuarterViewSouthBoundaryV(
-                                frame,
-                                southResolutionSegments,
-                                RoadAllowanceSecWidthMeters,
-                                dividerPreferredU,
-                                dividerLineA,
-                                dividerLineB,
-                                out resolvedSouthV,
-                                out resolvedSouthLayer,
-                                out resolvedSouthA,
-                                out resolvedSouthB);
-                        }
-
-                        if (hasResolvedSouth)
-                        {
-                            southBoundaryV = resolvedSouthV;
-                            southSource = resolvedSouthLayer;
-                            southBoundarySegmentA = resolvedSouthA;
-                            southBoundarySegmentB = resolvedSouthB;
-                            hasSouthBoundarySegment = true;
-                        }
-                    }
-
-                    if (!IsBlindSouthBoundarySectionForQuarterView(frame.SectionNumber) &&
-                        hasSouthBoundarySegment &&
-                        string.Equals(southSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase) &&
-                        southFallbackOffset <= (RoadAllowanceSecWidthMeters + 0.5))
+                            out var resolvedSouthB))
                     {
-                        bool TryResolvePreferredSouthBoundary(
-                            IReadOnlyList<(Point2d A, Point2d B, string Layer)> candidates,
-                            out double resolvedV,
-                            out string resolvedLayer,
-                            out Point2d resolvedA,
-                            out Point2d resolvedB)
-                        {
-                            resolvedV = default;
-                            resolvedLayer = string.Empty;
-                            resolvedA = default;
-                            resolvedB = default;
-                            if (candidates == null || candidates.Count == 0)
-                            {
-                                return false;
-                            }
-
-                            // First pass: keep prior expected inset behavior.
-                            if (TryResolveQuarterViewSouthBoundaryV(
-                                    frame,
-                                    candidates,
-                                    southFallbackOffset,
-                                    dividerPreferredU,
-                                    dividerLineA,
-                                    dividerLineB,
-                                    out resolvedV,
-                                    out resolvedLayer,
-                                    out resolvedA,
-                                    out resolvedB))
-                            {
-                                return true;
-                            }
-
-                            // Regression guard: allow near-edge fallback for SEC-width ownership.
-                            return TryResolveQuarterViewSouthBoundaryV(
-                                frame,
-                                candidates,
-                                0.0,
-                                dividerPreferredU,
-                                dividerLineA,
-                                dividerLineB,
-                                out resolvedV,
-                                out resolvedLayer,
-                                out resolvedA,
-                                out resolvedB);
-                        }
-
-                        var preferredSouthSegments = boundarySegments
-                            .Where(s =>
-                                string.Equals(s.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(s.Layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
-                            .ToList();
-                        if (TryResolvePreferredSouthBoundary(
-                                preferredSouthSegments,
-                                out var preferredSouthV,
-                                out var preferredSouthLayer,
-                                out var preferredSouthA,
-                                out var preferredSouthB))
-                        {
-                            southBoundaryV = preferredSouthV;
-                            southSource = preferredSouthLayer;
-                            southBoundarySegmentA = preferredSouthA;
-                            southBoundarySegmentB = preferredSouthB;
-                            hasSouthBoundarySegment = true;
-                        }
+                        southBoundaryV = resolvedSouthV;
+                        southSource = resolvedSouthLayer;
+                        southBoundarySegmentA = resolvedSouthA;
+                        southBoundarySegmentB = resolvedSouthB;
+                        hasSouthBoundarySegment = true;
                     }
 
-                    if (TryResolveQuarterViewNorthCorrectionBoundaryV(
-                        frame,
-                        correctionNorthBoundarySegments,
-                        out var correctionNorthV,
-                        out var correctionNorthLayer,
-                        out var correctionNorthA,
-                        out var correctionNorthB))
+                    if (hasSouthBoundarySegment &&
+                        TryResolveQuarterViewPreferredSouthBoundaryFromSections(
+                            frame,
+                            boundarySegments,
+                            southSource,
+                            southFallbackOffset,
+                            dividerPreferredU,
+                            dividerLineA,
+                            dividerLineB,
+                            out var preferredSouthV,
+                            out var preferredSouthLayer,
+                            out var preferredSouthA,
+                            out var preferredSouthB))
                     {
-                        northBoundaryV = correctionNorthV;
-                        northSource = correctionNorthLayer;
-                        northBoundarySegmentA = correctionNorthA;
-                        northBoundarySegmentB = correctionNorthB;
-                        hasNorthBoundarySegment = true;
+                        southBoundaryV = preferredSouthV;
+                        southSource = preferredSouthLayer;
+                        southBoundarySegmentA = preferredSouthA;
+                        southBoundarySegmentB = preferredSouthB;
+                        hasSouthBoundarySegment = true;
                     }
-                    else if (TryResolveQuarterViewNorthBoundaryV(
-                                 frame,
-                                 boundarySegments,
-                                 dividerPreferredU,
-                                 southFallbackOffset <= 0.5 && hasWestBoundarySegment,
-                                 westBoundarySegmentA,
-                                 westBoundarySegmentB,
-                                 out var resolvedNorthV,
-                                 out var resolvedNorthLayer,
-                                 out var resolvedNorthA,
-                                 out var resolvedNorthB))
+
+                    if (TryResolvePreferredQuarterViewNorthBoundary(
+                            frame,
+                            boundarySegments,
+                            correctionNorthBoundarySegments,
+                            dividerPreferredU,
+                            southFallbackOffset <= 0.5 && hasWestBoundarySegment,
+                            westBoundarySegmentA,
+                            westBoundarySegmentB,
+                            out var resolvedNorthV,
+                            out var resolvedNorthLayer,
+                            out var resolvedNorthA,
+                            out var resolvedNorthB))
                     {
                         northBoundaryV = resolvedNorthV;
                         northSource = resolvedNorthLayer;
@@ -1880,12 +773,13 @@ namespace AtsBackgroundBuilder
                         hasNorthBoundarySegment = true;
                     }
 
-                    if (IsBlindSouthBoundarySectionForQuarterView(frame.SectionNumber) &&
+                    if (isBlindSouthBoundarySection &&
                         hasSouthBoundarySegment &&
                         hasNorthBoundarySegment &&
-                        TryResolveQuarterViewEastBoundarySegmentFromNorthSouth(
+                        TryResolveQuarterViewBlindEastBoundaryFromNorthSouth(
                             frame,
                             boundarySegments,
+                            eastBoundaryU,
                             southBoundarySegmentA,
                             southBoundarySegmentB,
                             northBoundarySegmentA,
@@ -1893,6 +787,7 @@ namespace AtsBackgroundBuilder
                             out var refinedEastA,
                             out var refinedEastB,
                             out var refinedEastLayer,
+                            out var resolvedEastMidU,
                             out var refinedEastOffset,
                             out var refinedSouthOffset,
                             out var refinedNorthOffset))
@@ -1901,23 +796,7 @@ namespace AtsBackgroundBuilder
                         eastBoundarySegmentB = refinedEastB;
                         eastSource = refinedEastLayer;
                         hasEastBoundarySegment = true;
-                        if (TryProjectBoundarySegmentUAtV(
-                                frame,
-                                eastBoundarySegmentA,
-                                eastBoundarySegmentB,
-                                frame.MidV,
-                                out var refinedEastMidU))
-                        {
-                            eastBoundaryU = refinedEastMidU;
-                        }
-                        else
-                        {
-                            if (TryConvertQuarterWorldToLocal(frame, eastBoundarySegmentA, out var eastAu, out _) &&
-                                TryConvertQuarterWorldToLocal(frame, eastBoundarySegmentB, out var eastBu, out _))
-                            {
-                                eastBoundaryU = 0.5 * (eastAu + eastBu);
-                            }
-                        }
+                        eastBoundaryU = resolvedEastMidU;
 
                         if (emitQuarterVerify)
                         {
@@ -1927,7 +806,7 @@ namespace AtsBackgroundBuilder
                                 $"seg={eastBoundarySegmentA.X:0.###},{eastBoundarySegmentA.Y:0.###}->{eastBoundarySegmentB.X:0.###},{eastBoundarySegmentB.Y:0.###} source={eastSource}");
                         }
                     }
-                    else if (IsBlindSouthBoundarySectionForQuarterView(frame.SectionNumber) &&
+                    else if (isBlindSouthBoundarySection &&
                              hasSouthBoundarySegment &&
                              hasNorthBoundarySegment &&
                              emitQuarterVerify)
@@ -1936,135 +815,43 @@ namespace AtsBackgroundBuilder
                             $"VERIFY-QTR-EAST-SELECT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: found=False");
                     }
 
-                    var centerU = frame.MidU;
-                    var centerV = frame.MidV;
-                    if (TryIntersectBoundarySegmentsLocal(
-                            frame,
-                            frame.LeftAnchor,
-                            frame.RightAnchor,
-                            frame.BottomAnchor,
-                            frame.TopAnchor,
-                            out var resolvedCenterU,
-                            out var resolvedCenterV))
-                    {
-                        centerU = resolvedCenterU;
-                        centerV = resolvedCenterV;
-                    }
+                    ResolveQuarterViewCenterCoordinates(frame, out var centerU, out var centerV);
 
                     if (emitQuarterVerify)
                     {
-                        static (double U, double V) ToLocal(QuarterViewSectionFrame f, Point2d p)
-                        {
-                            var rel = p - f.Origin;
-                            return (rel.DotProduct(f.EastUnit), rel.DotProduct(f.NorthUnit));
-                        }
-
-                        if (hasSouthBoundarySegment)
-                        {
-                            var sA = ToLocal(frame, southBoundarySegmentA);
-                            var sB = ToLocal(frame, southBoundarySegmentB);
-                            var sMinU = Math.Min(sA.U, sB.U);
-                            var sMaxU = Math.Max(sA.U, sB.U);
-                            var sDividerGap = DistanceToClosedInterval(dividerPreferredU, sMinU, sMaxU);
-                            var sDividerLinked = TryIntersectLocalInfiniteLineWithBoundedSegmentExtension(
-                                frame,
-                                dividerLineA,
-                                dividerLineB,
-                                southBoundarySegmentA,
-                                southBoundarySegmentB,
-                                maxSegmentExtension: 80.0,
-                                out _,
-                                out _);
-                            logger?.WriteLine(
-                                $"VERIFY-QTR-SOUTH-SELECT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
-                                $"uRange={sMinU:0.###}..{sMaxU:0.###} dividerU={dividerPreferredU:0.###} dividerGap={sDividerGap:0.###} " +
-                                $"dividerLinked={sDividerLinked} seg={southBoundarySegmentA.X:0.###},{southBoundarySegmentA.Y:0.###}->{southBoundarySegmentB.X:0.###},{southBoundarySegmentB.Y:0.###} source={southSource}");
-                        }
-
-                        if (hasNorthBoundarySegment)
-                        {
-                            var nA = ToLocal(frame, northBoundarySegmentA);
-                            var nB = ToLocal(frame, northBoundarySegmentB);
-                            var nMinU = Math.Min(nA.U, nB.U);
-                            var nMaxU = Math.Max(nA.U, nB.U);
-                            var nDividerGap = DistanceToClosedInterval(dividerPreferredU, nMinU, nMaxU);
-                            var nWestLinked = hasWestBoundarySegment &&
-                                              TryIntersectLocalInfiniteLineWithBoundedSegmentExtension(
-                                                  frame,
-                                                  westBoundarySegmentA,
-                                                  westBoundarySegmentB,
-                                                  northBoundarySegmentA,
-                                                  northBoundarySegmentB,
-                                                  maxSegmentExtension: 80.0,
-                                                  out _,
-                                                  out _);
-                            logger?.WriteLine(
-                                $"VERIFY-QTR-NORTH-SELECT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
-                                $"uRange={nMinU:0.###}..{nMaxU:0.###} dividerU={dividerPreferredU:0.###} dividerGap={nDividerGap:0.###} " +
-                                $"westLinked={nWestLinked} seg={northBoundarySegmentA.X:0.###},{northBoundarySegmentA.Y:0.###}->{northBoundarySegmentB.X:0.###},{northBoundarySegmentB.Y:0.###} source={northSource}");
-                        }
-
-                        if (hasWestBoundarySegment)
-                        {
-                            var wA = ToLocal(frame, westBoundarySegmentA);
-                            var wB = ToLocal(frame, westBoundarySegmentB);
-                            var wMinV = Math.Min(wA.V, wB.V);
-                            var wMaxV = Math.Max(wA.V, wB.V);
-                            var wCenterGap = DistanceToClosedInterval(frame.MidV, wMinV, wMaxV);
-                            logger?.WriteLine(
-                                $"VERIFY-QTR-WEST-SELECT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
-                                $"vRange={wMinV:0.###}..{wMaxV:0.###} centerV={frame.MidV:0.###} centerGap={wCenterGap:0.###} dividerU={dividerPreferredU:0.###} " +
-                                $"seg={westBoundarySegmentA.X:0.###},{westBoundarySegmentA.Y:0.###}->{westBoundarySegmentB.X:0.###},{westBoundarySegmentB.Y:0.###} source={westSource}");
-                        }
-                    }
-
-                    var promotedCorrectionSouthBoundary = false;
-                    var promotedCorrectionSouthSource = string.Empty;
-                    var promotedCurrentSouthError = double.NaN;
-                    var promotedCorrectionSouthError = double.NaN;
-                    if (!string.Equals(southSource, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) &&
-                        TryResolveQuarterViewSouthMostCorrectionBoundarySegment(
+                        WriteQuarterBoundarySelectionDiagnostics(
+                            logger,
                             frame,
-                            correctionSouthBoundarySegments,
-                            out var promotedCorrectionSouthA,
-                            out var promotedCorrectionSouthB))
-                    {
-                        const double minPromotionImprovement = 0.15;
-                        double ResolveOutwardDistanceAtMidU(Point2d a, Point2d b, double fallbackV)
-                        {
-                            if (TryProjectBoundarySegmentVAtU(frame, a, b, centerU, out var projectedMidV))
-                            {
-                                return frame.SouthEdgeV - projectedMidV;
-                            }
-
-                            return frame.SouthEdgeV - fallbackV;
-                        }
-
-                        var candidateOutwardDistance = ResolveOutwardDistanceAtMidU(
-                            promotedCorrectionSouthA,
-                            promotedCorrectionSouthB,
-                            southBoundaryV);
-                        var currentOutwardDistance = hasSouthBoundarySegment
-                            ? ResolveOutwardDistanceAtMidU(southBoundarySegmentA, southBoundarySegmentB, southBoundaryV)
-                            : (frame.SouthEdgeV - southBoundaryV);
-                        var southPromotionTargetInset = southFallbackOffset > 0.5
-                            ? southFallbackOffset
-                            : RoadAllowanceSecWidthMeters;
-                        var candidateError = Math.Abs(candidateOutwardDistance - southPromotionTargetInset);
-                        var currentError = Math.Abs(currentOutwardDistance - southPromotionTargetInset);
-                        if (candidateError + minPromotionImprovement < currentError)
-                        {
-                            promotedCorrectionSouthBoundary = true;
-                            promotedCorrectionSouthSource = southSource;
-                            promotedCurrentSouthError = currentError;
-                            promotedCorrectionSouthError = candidateError;
-                            southBoundaryV = frame.SouthEdgeV - candidateOutwardDistance;
-                            southSource = LayerUsecCorrectionZero;
-                            southBoundarySegmentA = promotedCorrectionSouthA;
-                            southBoundarySegmentB = promotedCorrectionSouthB;
-                            hasSouthBoundarySegment = true;
-                        }
+                            dividerLineA,
+                            dividerLineB,
+                            dividerPreferredU,
+                            hasSouthBoundarySegment,
+                            southBoundarySegmentA,
+                            southBoundarySegmentB,
+                            southSource,
+                            hasNorthBoundarySegment,
+                            northBoundarySegmentA,
+                            northBoundarySegmentB,
+                            northSource,
+                            hasWestBoundarySegment,
+                            westBoundarySegmentA,
+                            westBoundarySegmentB,
+                            westSource);
                     }
+
+                    var promotedCorrectionSouthBoundary = TryPromoteQuarterViewSouthBoundaryFromCorrectionCandidate(
+                        frame,
+                        correctionSouthBoundarySegments,
+                        centerU,
+                        southFallbackOffset,
+                        ref southSource,
+                        ref hasSouthBoundarySegment,
+                        ref southBoundarySegmentA,
+                        ref southBoundarySegmentB,
+                        ref southBoundaryV,
+                        out var promotedCorrectionSouthSource,
+                        out var promotedCurrentSouthError,
+                        out var promotedCorrectionSouthError);
 
                     var westBoundaryLimitU = Math.Min(frame.WestEdgeU, centerU - minQuarterSpan);
                     var eastBoundaryLimitU = centerU + minQuarterSpan;
@@ -2073,15 +860,10 @@ namespace AtsBackgroundBuilder
                     var isCorrectionSouthBoundary = string.Equals(southSource, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
                     var isBlindNonCorrectionSouth = !isCorrectionSouthBoundary && southFallbackOffset <= 0.5;
                     var correctionSouthDividerU = dividerPreferredU;
-                    double ClampWestBoundaryU(double candidateU) => Math.Min(candidateU, westBoundaryLimitU);
-                    double ClampEastBoundaryU(double candidateU) => Math.Max(candidateU, eastBoundaryLimitU);
-                    double ClampSouthBoundaryV(double candidateV) => Math.Min(candidateV, southBoundaryLimitV);
-                    double ClampNorthBoundaryV(double candidateV) => Math.Max(candidateV, northBoundaryLimitV);
-
-                    westBoundaryU = ClampWestBoundaryU(westBoundaryU);
-                    eastBoundaryU = ClampEastBoundaryU(eastBoundaryU);
-                    southBoundaryV = ClampSouthBoundaryV(southBoundaryV);
-                    northBoundaryV = ClampNorthBoundaryV(northBoundaryV);
+                    westBoundaryU = ClampQuarterWestBoundaryUToLimit(westBoundaryU, westBoundaryLimitU);
+                    eastBoundaryU = ClampQuarterEastBoundaryUToLimit(eastBoundaryU, eastBoundaryLimitU);
+                    southBoundaryV = ClampQuarterSouthBoundaryVToLimit(southBoundaryV, southBoundaryLimitV);
+                    northBoundaryV = ClampQuarterNorthBoundaryVToLimit(northBoundaryV, northBoundaryLimitV);
 
                     if ((centerU - westBoundaryU) <= minQuarterSpan)
                     {
@@ -2101,63 +883,103 @@ namespace AtsBackgroundBuilder
                             $"promotedErr={promotedCorrectionSouthError:0.###}");
                     }
 
-                    double ResolveSouthBoundaryVAtU(double targetU)
-                    {
-                        if (hasSouthBoundarySegment &&
-                            TryProjectBoundarySegmentVAtU(frame, southBoundarySegmentA, southBoundarySegmentB, targetU, out var projectedV))
-                        {
-                            return ClampSouthBoundaryV(projectedV);
-                        }
-
-                        return ClampSouthBoundaryV(southBoundaryV);
-                    }
-
-                    double ResolveWestBoundaryUAtV(double targetV)
-                    {
-                        if (hasWestBoundarySegment &&
-                            TryProjectBoundarySegmentUAtV(frame, westBoundarySegmentA, westBoundarySegmentB, targetV, out var projectedU))
-                        {
-                            return ClampWestBoundaryU(projectedU);
-                        }
-
-                        return ClampWestBoundaryU(westBoundaryU);
-                    }
-
-                    double ResolveNorthBoundaryVAtU(double targetU)
-                    {
-                        if (hasNorthBoundarySegment &&
-                            TryProjectBoundarySegmentVAtU(frame, northBoundarySegmentA, northBoundarySegmentB, targetU, out var projectedV))
-                        {
-                            return ClampNorthBoundaryV(projectedV);
-                        }
-
-                        return ClampNorthBoundaryV(northBoundaryV);
-                    }
-
-                    double ResolveEastBoundaryUAtV(double targetV)
-                    {
-                        if (hasEastBoundarySegment &&
-                            TryProjectBoundarySegmentUAtV(frame, eastBoundarySegmentA, eastBoundarySegmentB, targetV, out var projectedU))
-                        {
-                            return ClampEastBoundaryU(projectedU);
-                        }
-
-                        return ClampEastBoundaryU(eastBoundaryU);
-                    }
-
-                    var westAtMidU = ResolveWestBoundaryUAtV(centerV);
-                    var eastAtMidU = ResolveEastBoundaryUAtV(centerV);
+                    var westAtMidU = ResolveQuarterWestBoundaryUAtV(
+                        frame,
+                        hasWestBoundarySegment,
+                        westBoundarySegmentA,
+                        westBoundarySegmentB,
+                        centerV,
+                        westBoundaryU,
+                        westBoundaryLimitU);
+                    var eastAtMidU = ResolveQuarterEastBoundaryUAtV(
+                        frame,
+                        hasEastBoundarySegment,
+                        eastBoundarySegmentA,
+                        eastBoundarySegmentB,
+                        centerV,
+                        eastBoundaryU,
+                        eastBoundaryLimitU);
                     var eastAtMidV = centerV;
-                    var southAtMidV = ResolveSouthBoundaryVAtU(centerU);
-                    var westAtSouthU = ResolveWestBoundaryUAtV(southAtMidV);
-                    var southAtWestV = ResolveSouthBoundaryVAtU(westAtSouthU);
-                    var southAtEastU = ResolveEastBoundaryUAtV(southAtMidV);
-                    var southAtEastV = ResolveSouthBoundaryVAtU(southAtEastU);
-                    var northAtMidV = ResolveNorthBoundaryVAtU(centerU);
-                    var westAtNorthU = ResolveWestBoundaryUAtV(northAtMidV);
-                    var northAtWestV = ResolveNorthBoundaryVAtU(westAtNorthU);
-                    var northAtEastU = ResolveEastBoundaryUAtV(northAtMidV);
-                    var northAtEastV = ResolveNorthBoundaryVAtU(northAtEastU);
+                    var southAtMidV = ResolveQuarterSouthBoundaryVAtU(
+                        frame,
+                        hasSouthBoundarySegment,
+                        southBoundarySegmentA,
+                        southBoundarySegmentB,
+                        centerU,
+                        southBoundaryV,
+                        southBoundaryLimitV);
+                    var westAtSouthU = ResolveQuarterWestBoundaryUAtV(
+                        frame,
+                        hasWestBoundarySegment,
+                        westBoundarySegmentA,
+                        westBoundarySegmentB,
+                        southAtMidV,
+                        westBoundaryU,
+                        westBoundaryLimitU);
+                    var southAtWestV = ResolveQuarterSouthBoundaryVAtU(
+                        frame,
+                        hasSouthBoundarySegment,
+                        southBoundarySegmentA,
+                        southBoundarySegmentB,
+                        westAtSouthU,
+                        southBoundaryV,
+                        southBoundaryLimitV);
+                    var southAtEastU = ResolveQuarterEastBoundaryUAtV(
+                        frame,
+                        hasEastBoundarySegment,
+                        eastBoundarySegmentA,
+                        eastBoundarySegmentB,
+                        southAtMidV,
+                        eastBoundaryU,
+                        eastBoundaryLimitU);
+                    var southAtEastV = ResolveQuarterSouthBoundaryVAtU(
+                        frame,
+                        hasSouthBoundarySegment,
+                        southBoundarySegmentA,
+                        southBoundarySegmentB,
+                        southAtEastU,
+                        southBoundaryV,
+                        southBoundaryLimitV);
+                    var northAtMidV = ResolveQuarterNorthBoundaryVAtU(
+                        frame,
+                        hasNorthBoundarySegment,
+                        northBoundarySegmentA,
+                        northBoundarySegmentB,
+                        centerU,
+                        northBoundaryV,
+                        northBoundaryLimitV);
+                    var westAtNorthU = ResolveQuarterWestBoundaryUAtV(
+                        frame,
+                        hasWestBoundarySegment,
+                        westBoundarySegmentA,
+                        westBoundarySegmentB,
+                        northAtMidV,
+                        westBoundaryU,
+                        westBoundaryLimitU);
+                    var northAtWestV = ResolveQuarterNorthBoundaryVAtU(
+                        frame,
+                        hasNorthBoundarySegment,
+                        northBoundarySegmentA,
+                        northBoundarySegmentB,
+                        westAtNorthU,
+                        northBoundaryV,
+                        northBoundaryLimitV);
+                    var northAtEastU = ResolveQuarterEastBoundaryUAtV(
+                        frame,
+                        hasEastBoundarySegment,
+                        eastBoundarySegmentA,
+                        eastBoundarySegmentB,
+                        northAtMidV,
+                        eastBoundaryU,
+                        eastBoundaryLimitU);
+                    var northAtEastV = ResolveQuarterNorthBoundaryVAtU(
+                        frame,
+                        hasNorthBoundarySegment,
+                        northBoundarySegmentA,
+                        northBoundarySegmentB,
+                        northAtEastU,
+                        northBoundaryV,
+                        northBoundaryLimitV);
                     var westAtMidV = centerV;
                     var southAtMidU = centerU;
                     var northAtMidU = centerU;
@@ -2174,7 +996,7 @@ namespace AtsBackgroundBuilder
                             out var westMidV) &&
                         Math.Abs(westMidV - centerV) <= dividerIntersectionDriftTolerance)
                     {
-                        westAtMidU = ClampWestBoundaryU(westMidU);
+                        westAtMidU = ClampQuarterWestBoundaryUToLimit(westMidU, westBoundaryLimitU);
                         westAtMidV = westMidV;
                     }
 
@@ -2189,7 +1011,7 @@ namespace AtsBackgroundBuilder
                             out var eastMidV) &&
                         Math.Abs(eastMidV - centerV) <= dividerIntersectionDriftTolerance)
                     {
-                        eastAtMidU = ClampEastBoundaryU(eastMidU);
+                        eastAtMidU = ClampQuarterEastBoundaryUToLimit(eastMidU, eastBoundaryLimitU);
                         eastAtMidV = eastMidV;
                     }
 
@@ -2253,7 +1075,7 @@ namespace AtsBackgroundBuilder
                         Math.Abs(northMidU - centerU) <= dividerIntersectionDriftTolerance)
                     {
                         northAtMidU = northMidU;
-                        northAtMidV = ClampNorthBoundaryV(northMidV);
+                        northAtMidV = ClampQuarterNorthBoundaryVToLimit(northMidV, northBoundaryLimitV);
                     }
 
                     if (IsOutsideRange(
@@ -2528,25 +1350,25 @@ namespace AtsBackgroundBuilder
                         northAtWestV = northWestV;
                     }
 
-                    westAtMidU = ClampWestBoundaryU(westAtMidU);
+                    westAtMidU = ClampQuarterWestBoundaryUToLimit(westAtMidU, westBoundaryLimitU);
                     if (!southWestLockedByApparentIntersection)
                     {
-                        westAtSouthU = ClampWestBoundaryU(westAtSouthU);
+                        westAtSouthU = ClampQuarterWestBoundaryUToLimit(westAtSouthU, westBoundaryLimitU);
                     }
 
                     if (!northWestLockedByApparentIntersection)
                     {
-                        westAtNorthU = ClampWestBoundaryU(westAtNorthU);
+                        westAtNorthU = ClampQuarterWestBoundaryUToLimit(westAtNorthU, westBoundaryLimitU);
                     }
                     var westSouthV = southAtWestV;
                     var westNorthV = northAtWestV;
                     if (!southWestLockedByApparentIntersection)
                     {
-                        westSouthV = ClampSouthBoundaryV(westSouthV);
+                        westSouthV = ClampQuarterSouthBoundaryVToLimit(westSouthV, southBoundaryLimitV);
                     }
                     if (!northWestLockedByApparentIntersection)
                     {
-                        westNorthV = ClampNorthBoundaryV(westNorthV);
+                        westNorthV = ClampQuarterNorthBoundaryVToLimit(westNorthV, northBoundaryLimitV);
                     }
                     southAtMidV = ClampQuarterSouthBoundaryV(
                         southAtMidV,
@@ -2554,7 +1376,7 @@ namespace AtsBackgroundBuilder
                         southBoundaryLimitV,
                         centerV,
                         minQuarterSpan);
-                    northAtMidV = ClampNorthBoundaryV(northAtMidV);
+                    northAtMidV = ClampQuarterNorthBoundaryVToLimit(northAtMidV, northBoundaryLimitV);
 
                     if (TryResolveSouthDividerCornerFromHardBoundaries(
                             frame,
@@ -2680,79 +1502,59 @@ namespace AtsBackgroundBuilder
                     var northEastLockedByApparentIntersection = false;
                     if (hasEastBoundarySegment)
                     {
-                        if (TryIntersectBoundarySegmentsLocal(
-                                frame,
-                                frame.LeftAnchor,
-                                frame.RightAnchor,
-                                eastBoundarySegmentA,
-                                eastBoundarySegmentB,
-                                out var eastMidUFinal,
-                                out var eastMidVFinal) &&
-                            Math.Abs(eastMidVFinal - centerV) <= dividerIntersectionDriftTolerance)
-                        {
-                            eastAtMidU = eastMidUFinal;
-                            eastAtMidV = eastMidVFinal;
-                        }
-                        else
-                        {
-                            eastAtMidU = ResolveEastBoundaryUAtV(centerV);
-                            eastAtMidV = centerV;
-                        }
+                        ResolveQuarterEastMidAtCenter(
+                            frame,
+                            hasEastBoundarySegment,
+                            eastBoundarySegmentA,
+                            eastBoundarySegmentB,
+                            centerV,
+                            eastBoundaryU,
+                            eastBoundaryLimitU,
+                            dividerIntersectionDriftTolerance,
+                            out eastAtMidU,
+                            out eastAtMidV);
 
                         if (hasSouthBoundarySegment)
                         {
-                            if (TryIntersectLocalInfiniteLines(
+                            if (TryResolveQuarterApparentEastCornerIntersection(
                                     frame,
                                     eastBoundarySegmentA,
                                     eastBoundarySegmentB,
                                     southBoundarySegmentA,
                                     southBoundarySegmentB,
+                                    northBand: false,
                                     out var apparentSouthEastU,
-                                    out var apparentSouthEastV))
+                                    out var apparentSouthEastV,
+                                    out var eastOffset,
+                                    out var southOffset))
                             {
-                                var eastOffset = apparentSouthEastU - frame.EastEdgeU;
-                                var southOffset = frame.SouthEdgeV - apparentSouthEastV;
-                                const double minOffset = -6.0;
-                                const double maxOffset = 90.0;
-                                if (eastOffset >= -maxOffset &&
-                                    eastOffset <= maxOffset &&
-                                    southOffset >= minOffset &&
-                                    southOffset <= maxOffset)
+                                southAtEastU = apparentSouthEastU;
+                                southAtEastV = apparentSouthEastV;
+                                southEastLockedByApparentIntersection = true;
+                                if (emitQuarterVerify)
                                 {
-                                    southAtEastU = apparentSouthEastU;
-                                    southAtEastV = apparentSouthEastV;
-                                    southEastLockedByApparentIntersection = true;
-                                    if (emitQuarterVerify)
-                                    {
-                                        logger?.WriteLine(
-                                            $"VERIFY-QTR-SE-SE-APP sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
-                                            $"u={southAtEastU:0.###} v={southAtEastV:0.###} eastOffset={eastOffset:0.###} southOffset={southOffset:0.###} " +
-                                            $"eastSource={eastSource} southSource={southSource}");
-                                    }
+                                    logger?.WriteLine(
+                                        $"VERIFY-QTR-SE-SE-APP sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                        $"u={southAtEastU:0.###} v={southAtEastV:0.###} eastOffset={eastOffset:0.###} southOffset={southOffset:0.###} " +
+                                        $"eastSource={eastSource} southSource={southSource}");
                                 }
                             }
 
-                            if (!southEastLockedByApparentIntersection &&
-                                TryIntersectBoundarySegmentsLocal(
-                                    frame,
-                                    eastBoundarySegmentA,
-                                    eastBoundarySegmentB,
-                                    southBoundarySegmentA,
-                                    southBoundarySegmentB,
-                                    out var southEastU,
-                                    out var southEastV))
-                            {
-                                southAtEastU = southEastU;
-                                southAtEastV = southEastV;
-                            }
+                            ResolveQuarterEastCornerFromBoundarySegments(
+                                frame,
+                                eastBoundarySegmentA,
+                                eastBoundarySegmentB,
+                                southBoundarySegmentA,
+                                southBoundarySegmentB,
+                                southEastLockedByApparentIntersection,
+                                ref southAtEastU,
+                                ref southAtEastV);
                         }
 
                         if (hasNorthBoundarySegment)
                         {
                             var correctionAdjoiningForNorthEast =
-                                isCorrectionSouthBoundary ||
-                                string.Equals(northSource, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(northSource, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
+                                IsQuarterNorthEastCorrectionAdjoining(isCorrectionSouthBoundary, northSource);
 
                             if (!correctionAdjoiningForNorthEast)
                             {
@@ -2783,59 +1585,46 @@ namespace AtsBackgroundBuilder
                             }
                             else
                             {
-                                if (TryIntersectLocalInfiniteLines(
+                                if (TryResolveQuarterApparentEastCornerIntersection(
                                         frame,
                                         eastBoundarySegmentA,
                                         eastBoundarySegmentB,
                                         northBoundarySegmentA,
                                         northBoundarySegmentB,
+                                        northBand: true,
                                         out var apparentNorthEastU,
-                                        out var apparentNorthEastV))
+                                        out var apparentNorthEastV,
+                                        out var eastOffset,
+                                        out var northOffset))
                                 {
-                                    var eastOffset = apparentNorthEastU - frame.EastEdgeU;
-                                    var northOffset = apparentNorthEastV - frame.NorthEdgeV;
-                                    const double minOffset = -6.0;
-                                    const double maxOffset = 90.0;
-                                    if (eastOffset >= -maxOffset &&
-                                        eastOffset <= maxOffset &&
-                                        northOffset >= minOffset &&
-                                        northOffset <= maxOffset)
+                                    northAtEastU = apparentNorthEastU;
+                                    northAtEastV = apparentNorthEastV;
+                                    northEastLockedByApparentIntersection = true;
+                                    if (emitQuarterVerify)
                                     {
-                                        northAtEastU = apparentNorthEastU;
-                                        northAtEastV = apparentNorthEastV;
-                                        northEastLockedByApparentIntersection = true;
-                                        if (emitQuarterVerify)
-                                        {
-                                            logger?.WriteLine(
-                                                $"VERIFY-QTR-NE-NE-APP sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
-                                                $"u={northAtEastU:0.###} v={northAtEastV:0.###} eastOffset={eastOffset:0.###} northOffset={northOffset:0.###} " +
-                                                $"eastSource={eastSource} northSource={northSource}");
-                                        }
+                                        logger?.WriteLine(
+                                            $"VERIFY-QTR-NE-NE-APP sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                            $"u={northAtEastU:0.###} v={northAtEastV:0.###} eastOffset={eastOffset:0.###} northOffset={northOffset:0.###} " +
+                                            $"eastSource={eastSource} northSource={northSource}");
                                     }
                                 }
 
-                                if (!northEastLockedByApparentIntersection &&
-                                    TryIntersectBoundarySegmentsLocal(
-                                        frame,
-                                        eastBoundarySegmentA,
-                                        eastBoundarySegmentB,
-                                        northBoundarySegmentA,
-                                        northBoundarySegmentB,
-                                        out var northEastU,
-                                        out var northEastV))
-                                {
-                                    northAtEastU = northEastU;
-                                    northAtEastV = northEastV;
-                                }
+                                ResolveQuarterEastCornerFromBoundarySegments(
+                                    frame,
+                                    eastBoundarySegmentA,
+                                    eastBoundarySegmentB,
+                                    northBoundarySegmentA,
+                                    northBoundarySegmentB,
+                                    northEastLockedByApparentIntersection,
+                                    ref northAtEastU,
+                                    ref northAtEastV);
                             }
                         }
 
                         if (isBlindNonCorrectionSouth && hasNorthBoundarySegment)
                         {
                             var isCorrectionAdjoiningSection =
-                                isCorrectionSouthBoundary ||
-                                string.Equals(northSource, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(northSource, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
+                                IsQuarterNorthEastCorrectionAdjoining(isCorrectionSouthBoundary, northSource);
                             var neSnapPreferredU = northAtEastU;
                             var hasRawNorthEastIntersection = false;
                             var neRawU = northAtEastU;
@@ -2981,19 +1770,19 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
-                    eastAtMidU = ClampEastBoundaryU(eastAtMidU);
-                    southAtEastU = ClampEastBoundaryU(southAtEastU);
-                    northAtEastU = ClampEastBoundaryU(northAtEastU);
+                    eastAtMidU = ClampQuarterEastBoundaryUToLimit(eastAtMidU, eastBoundaryLimitU);
+                    southAtEastU = ClampQuarterEastBoundaryUToLimit(southAtEastU, eastBoundaryLimitU);
+                    northAtEastU = ClampQuarterEastBoundaryUToLimit(northAtEastU, eastBoundaryLimitU);
                     var eastSouthV = southAtEastV;
                     var eastNorthV = northAtEastV;
                     if (!southEastLockedByApparentIntersection)
                     {
-                        eastSouthV = ClampSouthBoundaryV(eastSouthV);
+                        eastSouthV = ClampQuarterSouthBoundaryVToLimit(eastSouthV, southBoundaryLimitV);
                     }
 
                     if (!northEastLockedByApparentIntersection)
                     {
-                        eastNorthV = ClampNorthBoundaryV(eastNorthV);
+                        eastNorthV = ClampQuarterNorthBoundaryVToLimit(eastNorthV, northBoundaryLimitV);
                     }
 
                     var swNw = QuarterViewLocalToWorld(frame, westAtMidU, westAtMidV);
@@ -3099,50 +1888,6 @@ namespace AtsBackgroundBuilder
 
                 var snappedVertices = 0;
                 var snappedBoxes = 0;
-                bool TryGetProtectedQuarterCorner(Point2d point, out Point2d corner)
-                {
-                    corner = default;
-                    if (protectedSouthMidCorners.Count == 0 &&
-                        protectedWestBoundaryCorners.Count == 0 &&
-                        protectedEastBoundaryCorners.Count == 0)
-                    {
-                        return false;
-                    }
-
-                    const double tol = 0.05;
-                    for (var i = 0; i < protectedSouthMidCorners.Count; i++)
-                    {
-                        var candidate = protectedSouthMidCorners[i];
-                        if (point.GetDistanceTo(candidate) <= tol)
-                        {
-                            corner = candidate;
-                            return true;
-                        }
-                    }
-
-                    for (var i = 0; i < protectedWestBoundaryCorners.Count; i++)
-                    {
-                        var candidate = protectedWestBoundaryCorners[i];
-                        if (point.GetDistanceTo(candidate) <= tol)
-                        {
-                            corner = candidate;
-                            return true;
-                        }
-                    }
-
-                    for (var i = 0; i < protectedEastBoundaryCorners.Count; i++)
-                    {
-                        var candidate = protectedEastBoundaryCorners[i];
-                        if (point.GetDistanceTo(candidate) <= tol)
-                        {
-                            corner = candidate;
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
-
                 foreach (ObjectId id in modelSpace)
                 {
                     if (!(transaction.GetObject(id, OpenMode.ForWrite, false) is Polyline box) || box.IsErased || !box.Closed)
@@ -3165,7 +1910,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!ExtentsIntersectAnyQuarterWindow(extents) || box.NumberOfVertices < 3)
+                    if (!ExtentsIntersectAnyQuarterWindow(extents, frames) || box.NumberOfVertices < 3)
                     {
                         continue;
                     }
@@ -3174,7 +1919,12 @@ namespace AtsBackgroundBuilder
                     for (var vi = 0; vi < box.NumberOfVertices; vi++)
                     {
                         var vertex = box.GetPoint2dAt(vi);
-                        if (TryGetProtectedQuarterCorner(vertex, out var protectedCorner))
+                        if (TryGetProtectedQuarterCorner(
+                                protectedSouthMidCorners,
+                                protectedWestBoundaryCorners,
+                                protectedEastBoundaryCorners,
+                                vertex,
+                                out var protectedCorner))
                         {
                             if (vertex.GetDistanceTo(protectedCorner) > 0.01)
                             {
@@ -3218,6 +1968,997 @@ namespace AtsBackgroundBuilder
         private static bool IsOutsideRange(double value, double min, double max)
         {
             return value < min || value > max;
+        }
+
+        private static bool IsPointWithinExpandedSegmentBounds(
+            Point2d point,
+            Point2d segmentA,
+            Point2d segmentB,
+            double padding)
+        {
+            var minX = Math.Min(segmentA.X, segmentB.X) - padding;
+            var maxX = Math.Max(segmentA.X, segmentB.X) + padding;
+            var minY = Math.Min(segmentA.Y, segmentB.Y) - padding;
+            var maxY = Math.Max(segmentA.Y, segmentB.Y) + padding;
+            return point.X >= minX && point.X <= maxX && point.Y >= minY && point.Y <= maxY;
+        }
+
+        private static double ProjectPointToQuarterU(
+            Point2d point,
+            Point2d origin,
+            Vector2d eastUnit)
+        {
+            return (point - origin).DotProduct(eastUnit);
+        }
+
+        private static double ProjectPointToQuarterV(
+            Point2d point,
+            Point2d origin,
+            Vector2d northUnit)
+        {
+            return (point - origin).DotProduct(northUnit);
+        }
+
+        private static bool TryPickQuarterVertexSnapTarget(
+            Point2d vertex,
+            Point2d prev,
+            Point2d next,
+            IReadOnlyList<Point2d> hardBoundaryCornerEndpoints,
+            bool requireBothEdgeMatches,
+            double lineMatchTolerance,
+            double maxSnapDistance,
+            double minMove,
+            double relaxedSingleEdgeMissMaxDistance,
+            out Point2d picked)
+        {
+            picked = vertex;
+            var found = false;
+            var bestDistance = double.MaxValue;
+            for (var i = 0; i < hardBoundaryCornerEndpoints.Count; i++)
+            {
+                var candidate = hardBoundaryCornerEndpoints[i];
+                var moveDistance = vertex.GetDistanceTo(candidate);
+                if (moveDistance <= minMove || moveDistance > maxSnapDistance)
+                {
+                    continue;
+                }
+
+                if (prev.GetDistanceTo(vertex) <= 1e-6 || next.GetDistanceTo(vertex) <= 1e-6)
+                {
+                    continue;
+                }
+
+                var prevLineDistance = DistancePointToInfiniteLine(candidate, vertex, prev);
+                var nextLineDistance = DistancePointToInfiniteLine(candidate, vertex, next);
+                var prevMatch = prevLineDistance <= lineMatchTolerance;
+                var nextMatch = nextLineDistance <= lineMatchTolerance;
+                if (requireBothEdgeMatches)
+                {
+                    if (!prevMatch || !nextMatch)
+                    {
+                        continue;
+                    }
+                }
+                else if (!prevMatch && !nextMatch)
+                {
+                    continue;
+                }
+
+                if (!requireBothEdgeMatches && prevMatch != nextMatch)
+                {
+                    var unmatchedDistance = prevMatch ? nextLineDistance : prevLineDistance;
+                    if (unmatchedDistance > relaxedSingleEdgeMissMaxDistance)
+                    {
+                        continue;
+                    }
+                }
+
+                if (!found || moveDistance < bestDistance)
+                {
+                    found = true;
+                    bestDistance = moveDistance;
+                    picked = candidate;
+                }
+            }
+
+            return found;
+        }
+
+        private static bool SegmentIntersectsAnyQuarterWindow(
+            Point2d a,
+            Point2d b,
+            IReadOnlyList<QuarterViewSectionFrame> frames)
+        {
+            for (var i = 0; i < frames.Count; i++)
+            {
+                if (TryClipSegmentToWindow(a, b, frames[i].CleanupWindow, out _, out _))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool ExtentsIntersectAnyQuarterWindow(
+            Extents3d extents,
+            IReadOnlyList<QuarterViewSectionFrame> frames)
+        {
+            for (var i = 0; i < frames.Count; i++)
+            {
+                if (DoExtentsOverlapOrTouch(extents, frames[i].CleanupWindow, 0.01))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryFindQuarterVertexSnapTarget(
+            Point2d vertex,
+            Point2d prev,
+            Point2d next,
+            IReadOnlyList<Point2d> hardBoundaryCornerEndpoints,
+            out Point2d target)
+        {
+            target = vertex;
+            if (hardBoundaryCornerEndpoints == null || hardBoundaryCornerEndpoints.Count == 0)
+            {
+                return false;
+            }
+
+            const double strictMaxSnapDistance = 30.0;
+            const double strictLineMatchTolerance = 1.25;
+            const double relaxedMaxSnapDistance = 35.0;
+            const double relaxedLineMatchTolerance = 8.0;
+            const double relaxedSingleEdgeMissMaxDistance = 10.0;
+            const double nearestEdgeMissMaxDistance = 10.0;
+            const double minMove = 0.01;
+
+            if (TryPickQuarterVertexSnapTarget(
+                    vertex,
+                    prev,
+                    next,
+                    hardBoundaryCornerEndpoints,
+                    requireBothEdgeMatches: true,
+                    strictLineMatchTolerance,
+                    strictMaxSnapDistance,
+                    minMove,
+                    relaxedSingleEdgeMissMaxDistance,
+                    out var strictTarget))
+            {
+                target = strictTarget;
+                return true;
+            }
+
+            if (TryPickQuarterVertexSnapTarget(
+                    vertex,
+                    prev,
+                    next,
+                    hardBoundaryCornerEndpoints,
+                    requireBothEdgeMatches: false,
+                    relaxedLineMatchTolerance,
+                    relaxedMaxSnapDistance,
+                    minMove,
+                    relaxedSingleEdgeMissMaxDistance,
+                    out var relaxedTarget))
+            {
+                target = relaxedTarget;
+                return true;
+            }
+
+            var foundNearest = false;
+            var nearestDistance = double.MaxValue;
+            for (var i = 0; i < hardBoundaryCornerEndpoints.Count; i++)
+            {
+                var candidate = hardBoundaryCornerEndpoints[i];
+                var moveDistance = vertex.GetDistanceTo(candidate);
+                if (moveDistance <= minMove || moveDistance > strictMaxSnapDistance)
+                {
+                    continue;
+                }
+
+                if (prev.GetDistanceTo(vertex) <= 1e-6 || next.GetDistanceTo(vertex) <= 1e-6)
+                {
+                    continue;
+                }
+
+                var prevLineDistance = DistancePointToInfiniteLine(candidate, vertex, prev);
+                var nextLineDistance = DistancePointToInfiniteLine(candidate, vertex, next);
+                var edgeMatched = prevLineDistance <= relaxedLineMatchTolerance || nextLineDistance <= relaxedLineMatchTolerance;
+                if (!edgeMatched)
+                {
+                    continue;
+                }
+
+                if (Math.Max(prevLineDistance, nextLineDistance) > nearestEdgeMissMaxDistance)
+                {
+                    continue;
+                }
+
+                if (!foundNearest || moveDistance < nearestDistance)
+                {
+                    foundNearest = true;
+                    nearestDistance = moveDistance;
+                    target = candidate;
+                }
+            }
+
+            return foundNearest;
+        }
+
+        private static void AddBoundaryEndpointToCornerClusters(
+            List<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> hardBoundaryCornerClusters,
+            double cornerClusterTolerance,
+            Point2d endpoint,
+            bool isHorizontal,
+            bool isVertical,
+            int priority)
+        {
+            var bestIndex = -1;
+            var bestDistance = double.MaxValue;
+            for (var ci = 0; ci < hardBoundaryCornerClusters.Count; ci++)
+            {
+                var cluster = hardBoundaryCornerClusters[ci];
+                var distance = endpoint.GetDistanceTo(cluster.Rep);
+                if (distance > cornerClusterTolerance || distance >= bestDistance)
+                {
+                    continue;
+                }
+
+                bestIndex = ci;
+                bestDistance = distance;
+            }
+
+            if (bestIndex < 0)
+            {
+                hardBoundaryCornerClusters.Add((endpoint, 1, isHorizontal, isVertical, priority));
+                return;
+            }
+
+            var existing = hardBoundaryCornerClusters[bestIndex];
+            var replaceRep = priority < existing.Priority;
+            var newRep = replaceRep ? endpoint : existing.Rep;
+            var newPriority = replaceRep ? priority : existing.Priority;
+            hardBoundaryCornerClusters[bestIndex] = (
+                newRep,
+                existing.Count + 1,
+                existing.HasHorizontal || isHorizontal,
+                existing.HasVertical || isVertical,
+                newPriority);
+        }
+
+        private static bool IsPointInAnyQuarterWindow(
+            Point2d p,
+            double tol,
+            IReadOnlyList<QuarterViewSectionFrame> frames)
+        {
+            for (var i = 0; i < frames.Count; i++)
+            {
+                var w = frames[i].CleanupWindow;
+                if (p.X >= (w.MinPoint.X - tol) && p.X <= (w.MaxPoint.X + tol) &&
+                    p.Y >= (w.MinPoint.Y - tol) && p.Y <= (w.MaxPoint.Y + tol))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryFindApparentCornerIntersection(
+            Point2d firstA,
+            Point2d firstB,
+            Point2d secondA,
+            Point2d secondB,
+            IReadOnlyList<QuarterViewSectionFrame> frames,
+            out Point2d corner)
+        {
+            corner = default;
+            if (firstA.GetDistanceTo(firstB) <= 1e-6 || secondA.GetDistanceTo(secondB) <= 1e-6)
+            {
+                return false;
+            }
+
+            var r = firstB - firstA;
+            var s = secondB - secondA;
+            var denom = (r.X * s.Y) - (r.Y * s.X);
+            if (Math.Abs(denom) <= 1e-9)
+            {
+                return false;
+            }
+
+            var diff = secondA - firstA;
+            var t = ((diff.X * s.Y) - (diff.Y * s.X)) / denom;
+            var hit = new Point2d(firstA.X + (r.X * t), firstA.Y + (r.Y * t));
+
+            const double apparentIntersectionPadding = 80.0;
+            if (!IsPointWithinExpandedSegmentBounds(hit, firstA, firstB, apparentIntersectionPadding) ||
+                !IsPointWithinExpandedSegmentBounds(hit, secondA, secondB, apparentIntersectionPadding))
+            {
+                return false;
+            }
+
+            if (!IsPointInAnyQuarterWindow(hit, 0.01, frames))
+            {
+                return false;
+            }
+
+            corner = hit;
+            return true;
+        }
+
+        private static bool TryResolveSouthDividerCornerFromHardBoundaries(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
+            double dividerU,
+            Point2d currentLocal,
+            out Point2d resolvedLocal,
+            out int resolvedPriority)
+        {
+            resolvedLocal = currentLocal;
+            resolvedPriority = int.MaxValue;
+            if (cornerClusters == null || cornerClusters.Count == 0)
+            {
+                return false;
+            }
+
+            const double maxMove = 20.0;
+            const double dividerUTol = 8.0;
+            const double southBandPadding = 12.0;
+            var found = false;
+            var bestScore = double.MaxValue;
+            for (var i = 0; i < cornerClusters.Count; i++)
+            {
+                var cluster = cornerClusters[i];
+                if (!cluster.HasHorizontal || !cluster.HasVertical)
+                {
+                    continue;
+                }
+
+                if (!TryConvertQuarterWorldToLocal(frame, cluster.Rep, out var u, out var v))
+                {
+                    continue;
+                }
+
+                if (u < (frame.WestEdgeU - southBandPadding) || u > (frame.EastEdgeU + southBandPadding))
+                {
+                    continue;
+                }
+
+                if (v < (frame.SouthEdgeV - southBandPadding) || v > (frame.MidV + southBandPadding))
+                {
+                    continue;
+                }
+
+                var dividerGap = Math.Abs(u - dividerU);
+                if (dividerGap > dividerUTol)
+                {
+                    continue;
+                }
+
+                var move = new Point2d(u, v).GetDistanceTo(currentLocal);
+                if (move <= 1e-3 || move > maxMove)
+                {
+                    continue;
+                }
+
+                var score =
+                    (cluster.Priority * 100.0) +
+                    (dividerGap * 8.0) +
+                    Math.Abs(v - currentLocal.Y) -
+                    Math.Min(cluster.Count, 6);
+                if (!found || score < bestScore)
+                {
+                    found = true;
+                    bestScore = score;
+                    resolvedLocal = new Point2d(u, v);
+                    resolvedPriority = cluster.Priority;
+                }
+            }
+
+            return found;
+        }
+
+        private static bool TryResolveWestBandCornerFromHardBoundaries(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
+            double preferredWestU,
+            bool northBand,
+            Point2d currentLocal,
+            double maxMove,
+            out Point2d resolvedLocal,
+            out int resolvedPriority)
+        {
+            resolvedLocal = currentLocal;
+            resolvedPriority = int.MaxValue;
+            if (cornerClusters == null || cornerClusters.Count == 0)
+            {
+                return false;
+            }
+
+            const double westWindowPadding = 20.0;
+            const double verticalBandPadding = 20.0;
+            const double maxWestGap = 70.0;
+            var found = false;
+            var bestScore = double.MaxValue;
+            for (var i = 0; i < cornerClusters.Count; i++)
+            {
+                var cluster = cornerClusters[i];
+                if (!cluster.HasHorizontal || !cluster.HasVertical)
+                {
+                    continue;
+                }
+
+                if (!TryConvertQuarterWorldToLocal(frame, cluster.Rep, out var u, out var v))
+                {
+                    continue;
+                }
+
+                if (u < (frame.WestEdgeU - 90.0) || u > (frame.MidU + westWindowPadding))
+                {
+                    continue;
+                }
+
+                if (northBand)
+                {
+                    if (v < (frame.MidV - verticalBandPadding) || v > (frame.NorthEdgeV + verticalBandPadding))
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    if (v < (frame.SouthEdgeV - verticalBandPadding) || v > (frame.MidV + verticalBandPadding))
+                    {
+                        continue;
+                    }
+                }
+
+                var westGap = Math.Abs(u - preferredWestU);
+                if (westGap > maxWestGap)
+                {
+                    continue;
+                }
+
+                var edgeGap = northBand
+                    ? Math.Abs(v - frame.NorthEdgeV)
+                    : Math.Abs(v - frame.SouthEdgeV);
+                var move = new Point2d(u, v).GetDistanceTo(currentLocal);
+                if (move <= 1e-3 || move > maxMove)
+                {
+                    continue;
+                }
+
+                var score =
+                    (cluster.Priority * 100.0) +
+                    (westGap * 4.0) +
+                    (edgeGap * 3.0) +
+                    (move * 0.5) -
+                    Math.Min(cluster.Count, 6);
+                if (!found || score < bestScore)
+                {
+                    found = true;
+                    bestScore = score;
+                    resolvedLocal = new Point2d(u, v);
+                    resolvedPriority = cluster.Priority;
+                }
+            }
+
+            return found;
+        }
+
+        private static bool TryResolveEastBandCornerFromHardBoundaries(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
+            double preferredEastU,
+            bool northBand,
+            Point2d currentLocal,
+            double maxMove,
+            out Point2d resolvedLocal,
+            out int resolvedPriority)
+        {
+            resolvedLocal = currentLocal;
+            resolvedPriority = int.MaxValue;
+            if (cornerClusters == null || cornerClusters.Count == 0)
+            {
+                return false;
+            }
+
+            const double eastWindowPadding = 20.0;
+            const double verticalBandPadding = 20.0;
+            const double maxEastGap = 120.0;
+            var found = false;
+            var bestScore = double.MaxValue;
+            for (var i = 0; i < cornerClusters.Count; i++)
+            {
+                var cluster = cornerClusters[i];
+                if (!cluster.HasHorizontal || !cluster.HasVertical)
+                {
+                    continue;
+                }
+
+                if (!TryConvertQuarterWorldToLocal(frame, cluster.Rep, out var u, out var v))
+                {
+                    continue;
+                }
+
+                if (u < (frame.MidU - eastWindowPadding) || u > (frame.EastEdgeU + 220.0))
+                {
+                    continue;
+                }
+
+                if (northBand)
+                {
+                    if (v < (frame.MidV - verticalBandPadding) || v > (frame.NorthEdgeV + 220.0))
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    if (v < (frame.SouthEdgeV - verticalBandPadding) || v > (frame.MidV + verticalBandPadding))
+                    {
+                        continue;
+                    }
+                }
+
+                var eastGap = Math.Abs(u - preferredEastU);
+                if (eastGap > maxEastGap)
+                {
+                    continue;
+                }
+
+                var edgeGap = northBand
+                    ? Math.Abs(v - frame.NorthEdgeV)
+                    : Math.Abs(v - frame.SouthEdgeV);
+                var move = new Point2d(u, v).GetDistanceTo(currentLocal);
+                if (move <= 1e-3 || move > maxMove)
+                {
+                    continue;
+                }
+
+                var score =
+                    (cluster.Priority * 100.0) +
+                    (eastGap * 4.0) +
+                    (edgeGap * 3.0) +
+                    (move * 0.5) -
+                    Math.Min(cluster.Count, 6);
+                if (!found || score < bestScore)
+                {
+                    found = true;
+                    bestScore = score;
+                    resolvedLocal = new Point2d(u, v);
+                    resolvedPriority = cluster.Priority;
+                }
+            }
+
+            return found;
+        }
+
+        private static bool TryResolveNorthEastCornerFromEastHardNode(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> segments,
+            IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
+            Point2d eastBoundaryA,
+            Point2d eastBoundaryB,
+            Point2d currentLocal,
+            out Point2d resolvedLocal,
+            out int resolvedPriority,
+            out string resolvedLayer,
+            out double resolvedClusterDistance,
+            out double resolvedHorizontalReachGap)
+        {
+            resolvedLocal = currentLocal;
+            resolvedPriority = int.MaxValue;
+            resolvedLayer = string.Empty;
+            resolvedClusterDistance = double.MaxValue;
+            resolvedHorizontalReachGap = double.MaxValue;
+            if (segments == null || segments.Count == 0 || cornerClusters == null || cornerClusters.Count == 0)
+            {
+                return false;
+            }
+
+            if (!TryConvertQuarterWorldToLocal(frame, eastBoundaryA, out var eastAu, out var eastAv) ||
+                !TryConvertQuarterWorldToLocal(frame, eastBoundaryB, out var eastBu, out var eastBv))
+            {
+                return false;
+            }
+
+            var eastMinV = Math.Min(eastAv, eastBv);
+            var eastMaxV = Math.Max(eastAv, eastBv);
+            const double maxHorizontalReachGap = 80.0;
+            const double maxEastReachGap = 120.0;
+            const double maxClusterDistance = 6.0;
+            const double maxMove = 120.0;
+            var found = false;
+            var bestScore = double.MaxValue;
+            for (var i = 0; i < segments.Count; i++)
+            {
+                var seg = segments[i];
+                if (!IsQuarterViewBoundaryCandidateLayer(seg.Layer))
+                {
+                    continue;
+                }
+
+                var delta = seg.B - seg.A;
+                var eastComp = Math.Abs(delta.DotProduct(frame.EastUnit));
+                var northComp = Math.Abs(delta.DotProduct(frame.NorthUnit));
+                if (eastComp <= northComp)
+                {
+                    continue;
+                }
+
+                if (!TryIntersectLocalInfiniteLines(
+                        frame,
+                        eastBoundaryA,
+                        eastBoundaryB,
+                        seg.A,
+                        seg.B,
+                        out var u,
+                        out var v))
+                {
+                    continue;
+                }
+
+                if (u < (frame.MidU - 40.0) || u > (frame.EastEdgeU + 220.0) ||
+                    v < (frame.MidV - 40.0) || v > (frame.NorthEdgeV + 220.0))
+                {
+                    continue;
+                }
+
+                if (!TryConvertQuarterWorldToLocal(frame, seg.A, out var segAu, out var segAv) ||
+                    !TryConvertQuarterWorldToLocal(frame, seg.B, out var segBu, out var segBv))
+                {
+                    continue;
+                }
+
+                var segMinU = Math.Min(segAu, segBu);
+                var segMaxU = Math.Max(segAu, segBu);
+                var horizontalReachGap = DistanceToClosedInterval(u, segMinU, segMaxU);
+                if (horizontalReachGap > maxHorizontalReachGap)
+                {
+                    continue;
+                }
+
+                var eastReachGap = DistanceToClosedInterval(v, eastMinV, eastMaxV);
+                if (eastReachGap > maxEastReachGap)
+                {
+                    continue;
+                }
+
+                var candidateLocal = new Point2d(u, v);
+                var move = candidateLocal.GetDistanceTo(currentLocal);
+                if (move <= 1e-3 || move > maxMove)
+                {
+                    continue;
+                }
+
+                var candidateWorld = QuarterViewLocalToWorld(frame, u, v);
+                var bestClusterDistance = double.MaxValue;
+                var clusterPriority = int.MaxValue;
+                for (var ci = 0; ci < cornerClusters.Count; ci++)
+                {
+                    var cluster = cornerClusters[ci];
+                    if (!cluster.HasHorizontal || !cluster.HasVertical)
+                    {
+                        continue;
+                    }
+
+                    var dist = candidateWorld.GetDistanceTo(cluster.Rep);
+                    if (dist >= bestClusterDistance)
+                    {
+                        continue;
+                    }
+
+                    bestClusterDistance = dist;
+                    clusterPriority = cluster.Priority;
+                }
+
+                if (bestClusterDistance > maxClusterDistance)
+                {
+                    continue;
+                }
+
+                var layerPriority = GetQuarterViewBoundaryLayerPriority(seg.Layer);
+                var score =
+                    (clusterPriority * 100.0) +
+                    (layerPriority * 20.0) +
+                    (bestClusterDistance * 12.0) +
+                    (horizontalReachGap * 7.0) +
+                    (eastReachGap * 3.0) +
+                    (move * 0.5);
+                if (!found || score < bestScore)
+                {
+                    found = true;
+                    bestScore = score;
+                    resolvedLocal = candidateLocal;
+                    resolvedPriority = clusterPriority;
+                    resolvedLayer = seg.Layer ?? string.Empty;
+                    resolvedClusterDistance = bestClusterDistance;
+                    resolvedHorizontalReachGap = horizontalReachGap;
+                }
+            }
+
+            return found;
+        }
+
+        private static bool TryResolveNorthEastCornerFromEndpointCornerClusters(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> segments,
+            IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
+            Point2d currentLocal,
+            bool requireEndpointNode,
+            out Point2d resolvedLocal,
+            out int resolvedPriority,
+            out double resolvedMove,
+            out double resolvedEndpointDistance)
+        {
+            resolvedLocal = currentLocal;
+            resolvedPriority = int.MaxValue;
+            resolvedMove = double.MaxValue;
+            resolvedEndpointDistance = double.MaxValue;
+            if (segments == null || segments.Count == 0 || cornerClusters == null || cornerClusters.Count == 0)
+            {
+                return false;
+            }
+
+            const double maxMove = 140.0;
+            const double endpointTol = 0.55;
+            var found = false;
+            var bestScore = double.MaxValue;
+            for (var i = 0; i < cornerClusters.Count; i++)
+            {
+                var cluster = cornerClusters[i];
+                if (!cluster.HasHorizontal || !cluster.HasVertical)
+                {
+                    continue;
+                }
+
+                if (!TryConvertQuarterWorldToLocal(frame, cluster.Rep, out var u, out var v))
+                {
+                    continue;
+                }
+
+                if (u < (frame.MidU - 30.0) || u > (frame.EastEdgeU + 140.0) ||
+                    v < (frame.MidV - 30.0) || v > (frame.NorthEdgeV + 140.0))
+                {
+                    continue;
+                }
+
+                var candidateLocal = new Point2d(u, v);
+                var move = candidateLocal.GetDistanceTo(currentLocal);
+                if (move <= 1e-3 || move > maxMove)
+                {
+                    continue;
+                }
+
+                var hasEndpointNode = HasQuarterViewEndpointHorizontalAndVerticalEvidence(
+                    frame,
+                    segments,
+                    cluster.Rep,
+                    endpointTol,
+                    out var endpointDistance);
+                if (requireEndpointNode && !hasEndpointNode)
+                {
+                    continue;
+                }
+
+                var eastInset = frame.EastEdgeU - u;
+                var northInset = frame.NorthEdgeV - v;
+                var insetTarget = RoadAllowanceSecWidthMeters;
+                var insetScore = Math.Abs(eastInset - insetTarget) + Math.Abs(northInset - insetTarget);
+                var endpointPenalty = hasEndpointNode ? endpointDistance * 8.0 : 120.0;
+                var score =
+                    (cluster.Priority * 80.0) +
+                    endpointPenalty +
+                    (insetScore * 2.0) +
+                    (move * 0.5);
+                if (!found || score < bestScore)
+                {
+                    found = true;
+                    bestScore = score;
+                    resolvedLocal = candidateLocal;
+                    resolvedPriority = cluster.Priority;
+                    resolvedMove = move;
+                    resolvedEndpointDistance = endpointDistance;
+                }
+            }
+
+            return found;
+        }
+
+        private static bool TryReadOpenSegmentForDeferredLsd(Entity ent, out Point2d a, out Point2d b)
+        {
+            a = default;
+            b = default;
+            if (ent == null)
+            {
+                return false;
+            }
+
+            if (ent is Line ln)
+            {
+                a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            if (ent is Polyline pl)
+            {
+                if (pl.Closed || pl.NumberOfVertices < 2)
+                {
+                    return false;
+                }
+
+                a = pl.GetPoint2dAt(0);
+                b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            return false;
+        }
+
+        private static bool IsPointInAnyScopedQuarter(
+            Point2d p,
+            IReadOnlyList<(Polyline Polyline, Extents3d Extents)> scopedQuarterPolylines)
+        {
+            const double extPad = 0.50;
+            for (var i = 0; i < scopedQuarterPolylines.Count; i++)
+            {
+                var candidate = scopedQuarterPolylines[i];
+                if (p.X < (candidate.Extents.MinPoint.X - extPad) || p.X > (candidate.Extents.MaxPoint.X + extPad) ||
+                    p.Y < (candidate.Extents.MinPoint.Y - extPad) || p.Y > (candidate.Extents.MaxPoint.Y + extPad))
+                {
+                    continue;
+                }
+
+                if (GeometryUtils.IsPointInsidePolyline(candidate.Polyline, p))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsSegmentOwnedByScopedQuarters(
+            Point2d a,
+            Point2d b,
+            IReadOnlyList<(Polyline Polyline, Extents3d Extents)> scopedQuarterPolylines)
+        {
+            // Ownership for deferred redraw should follow the source quarter interior.
+            // Midpoint containment avoids deleting adjoining boundary-touching LSD lines.
+            var mid = Midpoint(a, b);
+            if (IsPointInAnyScopedQuarter(mid, scopedQuarterPolylines))
+            {
+                return true;
+            }
+
+            return IsPointInAnyScopedQuarter(a, scopedQuarterPolylines) &&
+                   IsPointInAnyScopedQuarter(b, scopedQuarterPolylines);
+        }
+
+        private static bool TryGetSectionAxes(
+            ObjectId sectionId,
+            Transaction transaction,
+            IDictionary<ObjectId, (Vector2d East, Vector2d North)> sectionAxisCache,
+            out Vector2d eastUnit,
+            out Vector2d northUnit)
+        {
+            eastUnit = new Vector2d(1.0, 0.0);
+            northUnit = new Vector2d(0.0, 1.0);
+            if (sectionId.IsNull || sectionId.IsErased)
+            {
+                return false;
+            }
+
+            if (sectionAxisCache.TryGetValue(sectionId, out var cached))
+            {
+                eastUnit = cached.East;
+                northUnit = cached.North;
+                return true;
+            }
+
+            if (!(transaction.GetObject(sectionId, OpenMode.ForRead, false) is Polyline section))
+            {
+                return false;
+            }
+
+            if (!TryGetQuarterAnchors(section, out var anchors))
+            {
+                anchors = GetFallbackAnchors(section);
+            }
+
+            eastUnit = GetUnitVector(anchors.Left, anchors.Right, new Vector2d(1, 0));
+            northUnit = GetUnitVector(anchors.Bottom, anchors.Top, new Vector2d(0, 1));
+            sectionAxisCache[sectionId] = (eastUnit, northUnit);
+            return true;
+        }
+
+        private static double ClampQuarterWestBoundaryUToLimit(double candidateU, double westBoundaryLimitU)
+        {
+            return Math.Min(candidateU, westBoundaryLimitU);
+        }
+
+        private static double ClampQuarterEastBoundaryUToLimit(double candidateU, double eastBoundaryLimitU)
+        {
+            return Math.Max(candidateU, eastBoundaryLimitU);
+        }
+
+        private static double ClampQuarterSouthBoundaryVToLimit(double candidateV, double southBoundaryLimitV)
+        {
+            return Math.Min(candidateV, southBoundaryLimitV);
+        }
+
+        private static double ClampQuarterNorthBoundaryVToLimit(double candidateV, double northBoundaryLimitV)
+        {
+            return Math.Max(candidateV, northBoundaryLimitV);
+        }
+
+        private static bool IsQuarterViewPolylineOwnedByAnyRebuiltSection(
+            Polyline poly,
+            IReadOnlyList<QuarterViewSectionFrame> frames)
+        {
+            if (poly == null || poly.NumberOfVertices < 3)
+            {
+                return false;
+            }
+
+            var sumX = 0.0;
+            var sumY = 0.0;
+            for (var vi = 0; vi < poly.NumberOfVertices; vi++)
+            {
+                var p = poly.GetPoint2dAt(vi);
+                sumX += p.X;
+                sumY += p.Y;
+            }
+
+            var centroid = new Point2d(sumX / poly.NumberOfVertices, sumY / poly.NumberOfVertices);
+            const double centroidTolerance = 0.75;
+            const double vertexTolerance = 0.35;
+            for (var i = 0; i < frames.Count; i++)
+            {
+                var frame = frames[i];
+                if (!IsPointInsideQuarterViewFrame(frame, centroid, centroidTolerance))
+                {
+                    continue;
+                }
+
+                var allVerticesInside = true;
+                for (var vi = 0; vi < poly.NumberOfVertices; vi++)
+                {
+                    if (IsPointInsideQuarterViewFrame(frame, poly.GetPoint2dAt(vi), vertexTolerance))
+                    {
+                        continue;
+                    }
+
+                    allVerticesInside = false;
+                    break;
+                }
+
+                if (allVerticesInside)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsPointInsideQuarterViewFrame(
+            QuarterViewSectionFrame frame,
+            Point2d worldPoint,
+            double tolerance)
+        {
+            if (!TryConvertQuarterWorldToLocal(frame, worldPoint, out var u, out var v))
+            {
+                return false;
+            }
+
+            return u >= (frame.WestEdgeU - tolerance) && u <= (frame.EastEdgeU + tolerance) &&
+                   v >= (frame.SouthEdgeV - tolerance) && v <= (frame.NorthEdgeV + tolerance);
         }
 
         private static bool TryConvertQuarterWorldToLocal(
@@ -3696,6 +3437,81 @@ namespace AtsBackgroundBuilder
             return eastComp > northComp;
         }
 
+        private static bool IsQuarterViewVerticalSegment(
+            QuarterViewSectionFrame frame,
+            Point2d a,
+            Point2d b)
+        {
+            var delta = b - a;
+            var eastComp = Math.Abs(delta.DotProduct(frame.EastUnit));
+            var northComp = Math.Abs(delta.DotProduct(frame.NorthUnit));
+            return northComp > eastComp;
+        }
+
+        private static bool HasQuarterViewEndpointHorizontalAndVerticalEvidence(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> segments,
+            Point2d worldPoint,
+            double tolerance,
+            out double bestEndpointDistance)
+        {
+            bestEndpointDistance = double.MaxValue;
+            var hasHorizontal = false;
+            var hasVertical = false;
+            for (var i = 0; i < segments.Count; i++)
+            {
+                var seg = segments[i];
+                if (!IsQuarterViewBoundaryCandidateLayer(seg.Layer))
+                {
+                    continue;
+                }
+
+                var segmentIsHorizontal = IsQuarterViewHorizontalSegment(frame, seg.A, seg.B);
+                var segmentIsVertical = IsQuarterViewVerticalSegment(frame, seg.A, seg.B);
+                if (!segmentIsHorizontal && !segmentIsVertical)
+                {
+                    continue;
+                }
+
+                var endpointDistanceA = worldPoint.GetDistanceTo(seg.A);
+                if (endpointDistanceA <= tolerance)
+                {
+                    bestEndpointDistance = Math.Min(bestEndpointDistance, endpointDistanceA);
+                    if (segmentIsHorizontal)
+                    {
+                        hasHorizontal = true;
+                    }
+
+                    if (segmentIsVertical)
+                    {
+                        hasVertical = true;
+                    }
+                }
+
+                var endpointDistanceB = worldPoint.GetDistanceTo(seg.B);
+                if (endpointDistanceB <= tolerance)
+                {
+                    bestEndpointDistance = Math.Min(bestEndpointDistance, endpointDistanceB);
+                    if (segmentIsHorizontal)
+                    {
+                        hasHorizontal = true;
+                    }
+
+                    if (segmentIsVertical)
+                    {
+                        hasVertical = true;
+                    }
+                }
+
+                if (hasHorizontal && hasVertical)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private static bool TryResolveQuarterViewVerticalDividerSegmentFromQsec(
             QuarterViewSectionFrame frame,
             IReadOnlyList<(Point2d A, Point2d B)> dividerSegments,
@@ -3786,6 +3602,778 @@ namespace AtsBackgroundBuilder
             return (sectionNumber >= 7 && sectionNumber <= 12) ||
                    (sectionNumber >= 19 && sectionNumber <= 24) ||
                    (sectionNumber >= 31 && sectionNumber <= 36);
+        }
+
+        private static bool TryResolvePreferredQuarterViewWestBoundary(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> candidates,
+            double expectedOffsetMeters,
+            double preferredDividerU,
+            bool allowInsetDowngrade,
+            out double resolvedU,
+            out string resolvedLayer,
+            out Point2d resolvedA,
+            out Point2d resolvedB)
+        {
+            resolvedU = default;
+            resolvedLayer = string.Empty;
+            resolvedA = default;
+            resolvedB = default;
+            if (candidates == null || candidates.Count == 0)
+            {
+                return false;
+            }
+
+            // First pass: keep prior expected inset behavior.
+            if (TryResolveQuarterViewWestBoundaryU(
+                    frame,
+                    candidates,
+                    expectedOffsetMeters,
+                    preferredDividerU,
+                    out resolvedU,
+                    out resolvedLayer,
+                    out resolvedA,
+                    out resolvedB))
+            {
+                return true;
+            }
+
+            if (!allowInsetDowngrade)
+            {
+                return false;
+            }
+
+            // Regression guard: if geometry has already shifted section edge inward,
+            // a zero expected offset still selects the intended 20.12-class boundary.
+            return TryResolveQuarterViewWestBoundaryU(
+                frame,
+                candidates,
+                0.0,
+                preferredDividerU,
+                out resolvedU,
+                out resolvedLayer,
+                out resolvedA,
+                out resolvedB);
+        }
+
+        private static bool TryResolveQuarterViewWestBoundaryWithInsetFallbacks(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> westResolutionSegments,
+            double expectedOffsetMeters,
+            double preferredDividerU,
+            bool allowInsetDowngrade,
+            out double resolvedU,
+            out string resolvedLayer,
+            out Point2d resolvedA,
+            out Point2d resolvedB)
+        {
+            resolvedU = default;
+            resolvedLayer = string.Empty;
+            resolvedA = default;
+            resolvedB = default;
+
+            var hasResolvedWest = TryResolveQuarterViewWestBoundaryU(
+                frame,
+                westResolutionSegments,
+                expectedOffsetMeters,
+                preferredDividerU,
+                out resolvedU,
+                out resolvedLayer,
+                out resolvedA,
+                out resolvedB);
+
+            if (!hasResolvedWest &&
+                expectedOffsetMeters >= (RoadAllowanceUsecWidthMeters - 0.5) &&
+                allowInsetDowngrade)
+            {
+                // Fallback to SEC-width ownership when USEC-width candidates are absent.
+                var secWidthInset = RoadAllowanceSecWidthMeters;
+                hasResolvedWest = TryResolveQuarterViewWestBoundaryU(
+                    frame,
+                    westResolutionSegments,
+                    secWidthInset,
+                    preferredDividerU,
+                    out resolvedU,
+                    out resolvedLayer,
+                    out resolvedA,
+                    out resolvedB);
+            }
+
+            if (!hasResolvedWest && expectedOffsetMeters > 0.5 && allowInsetDowngrade)
+            {
+                // Final fallback keeps legacy near-edge behavior when no offset-class candidate survives filters.
+                hasResolvedWest = TryResolveQuarterViewWestBoundaryU(
+                    frame,
+                    westResolutionSegments,
+                    0.0,
+                    preferredDividerU,
+                    out resolvedU,
+                    out resolvedLayer,
+                    out resolvedA,
+                    out resolvedB);
+            }
+
+            return hasResolvedWest;
+        }
+
+        private static bool TryResolvePreferredQuarterViewSouthBoundary(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> candidates,
+            double fallbackOffsetMeters,
+            double preferredDividerU,
+            Point2d dividerLineA,
+            Point2d dividerLineB,
+            out double resolvedV,
+            out string resolvedLayer,
+            out Point2d resolvedA,
+            out Point2d resolvedB)
+        {
+            resolvedV = default;
+            resolvedLayer = string.Empty;
+            resolvedA = default;
+            resolvedB = default;
+            if (candidates == null || candidates.Count == 0)
+            {
+                return false;
+            }
+
+            // First pass: keep prior expected inset behavior.
+            if (TryResolveQuarterViewSouthBoundaryV(
+                    frame,
+                    candidates,
+                    fallbackOffsetMeters,
+                    preferredDividerU,
+                    dividerLineA,
+                    dividerLineB,
+                    out resolvedV,
+                    out resolvedLayer,
+                    out resolvedA,
+                    out resolvedB))
+            {
+                return true;
+            }
+
+            // Regression guard: allow near-edge fallback for SEC-width ownership.
+            return TryResolveQuarterViewSouthBoundaryV(
+                frame,
+                candidates,
+                0.0,
+                preferredDividerU,
+                dividerLineA,
+                dividerLineB,
+                out resolvedV,
+                out resolvedLayer,
+                out resolvedA,
+                out resolvedB);
+        }
+
+        private static bool TryResolveQuarterViewPreferredWestBoundaryFromSections(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            string westSource,
+            double expectedOffsetMeters,
+            double preferredDividerU,
+            bool allowInsetDowngrade,
+            out double resolvedU,
+            out string resolvedLayer,
+            out Point2d resolvedA,
+            out Point2d resolvedB)
+        {
+            resolvedU = default;
+            resolvedLayer = string.Empty;
+            resolvedA = default;
+            resolvedB = default;
+
+            if (!string.Equals(westSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var preferredWestSegments = boundarySegments
+                .Where(s =>
+                    string.Equals(s.Layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(s.Layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(s.Layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(s.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(s.Layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            return TryResolvePreferredQuarterViewWestBoundary(
+                frame,
+                preferredWestSegments,
+                expectedOffsetMeters,
+                preferredDividerU,
+                allowInsetDowngrade,
+                out resolvedU,
+                out resolvedLayer,
+                out resolvedA,
+                out resolvedB);
+        }
+
+        private static bool TryResolveQuarterViewPreferredSouthBoundaryFromSections(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            string southSource,
+            double fallbackOffsetMeters,
+            double preferredDividerU,
+            Point2d dividerLineA,
+            Point2d dividerLineB,
+            out double resolvedV,
+            out string resolvedLayer,
+            out Point2d resolvedA,
+            out Point2d resolvedB)
+        {
+            resolvedV = default;
+            resolvedLayer = string.Empty;
+            resolvedA = default;
+            resolvedB = default;
+
+            if (IsBlindSouthBoundarySectionForQuarterView(frame.SectionNumber) ||
+                !string.Equals(southSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                fallbackOffsetMeters > (RoadAllowanceSecWidthMeters + 0.5))
+            {
+                return false;
+            }
+
+            var preferredSouthSegments = boundarySegments
+                .Where(s =>
+                    string.Equals(s.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(s.Layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            return TryResolvePreferredQuarterViewSouthBoundary(
+                frame,
+                preferredSouthSegments,
+                fallbackOffsetMeters,
+                preferredDividerU,
+                dividerLineA,
+                dividerLineB,
+                out resolvedV,
+                out resolvedLayer,
+                out resolvedA,
+                out resolvedB);
+        }
+
+        private static void WriteQuarterBoundarySelectionDiagnostics(
+            Logger? logger,
+            QuarterViewSectionFrame frame,
+            Point2d dividerLineA,
+            Point2d dividerLineB,
+            double dividerPreferredU,
+            bool hasSouthBoundarySegment,
+            Point2d southBoundarySegmentA,
+            Point2d southBoundarySegmentB,
+            string southSource,
+            bool hasNorthBoundarySegment,
+            Point2d northBoundarySegmentA,
+            Point2d northBoundarySegmentB,
+            string northSource,
+            bool hasWestBoundarySegment,
+            Point2d westBoundarySegmentA,
+            Point2d westBoundarySegmentB,
+            string westSource)
+        {
+            static (double U, double V) ToLocal(QuarterViewSectionFrame sectionFrame, Point2d point)
+            {
+                var rel = point - sectionFrame.Origin;
+                return (rel.DotProduct(sectionFrame.EastUnit), rel.DotProduct(sectionFrame.NorthUnit));
+            }
+
+            if (hasSouthBoundarySegment)
+            {
+                var sA = ToLocal(frame, southBoundarySegmentA);
+                var sB = ToLocal(frame, southBoundarySegmentB);
+                var sMinU = Math.Min(sA.U, sB.U);
+                var sMaxU = Math.Max(sA.U, sB.U);
+                var sDividerGap = DistanceToClosedInterval(dividerPreferredU, sMinU, sMaxU);
+                var sDividerLinked = TryIntersectLocalInfiniteLineWithBoundedSegmentExtension(
+                    frame,
+                    dividerLineA,
+                    dividerLineB,
+                    southBoundarySegmentA,
+                    southBoundarySegmentB,
+                    maxSegmentExtension: 80.0,
+                    out _,
+                    out _);
+                logger?.WriteLine(
+                    $"VERIFY-QTR-SOUTH-SELECT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                    $"uRange={sMinU:0.###}..{sMaxU:0.###} dividerU={dividerPreferredU:0.###} dividerGap={sDividerGap:0.###} " +
+                    $"dividerLinked={sDividerLinked} seg={southBoundarySegmentA.X:0.###},{southBoundarySegmentA.Y:0.###}->{southBoundarySegmentB.X:0.###},{southBoundarySegmentB.Y:0.###} source={southSource}");
+            }
+
+            if (hasNorthBoundarySegment)
+            {
+                var nA = ToLocal(frame, northBoundarySegmentA);
+                var nB = ToLocal(frame, northBoundarySegmentB);
+                var nMinU = Math.Min(nA.U, nB.U);
+                var nMaxU = Math.Max(nA.U, nB.U);
+                var nDividerGap = DistanceToClosedInterval(dividerPreferredU, nMinU, nMaxU);
+                var nWestLinked = hasWestBoundarySegment &&
+                                  TryIntersectLocalInfiniteLineWithBoundedSegmentExtension(
+                                      frame,
+                                      westBoundarySegmentA,
+                                      westBoundarySegmentB,
+                                      northBoundarySegmentA,
+                                      northBoundarySegmentB,
+                                      maxSegmentExtension: 80.0,
+                                      out _,
+                                      out _);
+                logger?.WriteLine(
+                    $"VERIFY-QTR-NORTH-SELECT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                    $"uRange={nMinU:0.###}..{nMaxU:0.###} dividerU={dividerPreferredU:0.###} dividerGap={nDividerGap:0.###} " +
+                    $"westLinked={nWestLinked} seg={northBoundarySegmentA.X:0.###},{northBoundarySegmentA.Y:0.###}->{northBoundarySegmentB.X:0.###},{northBoundarySegmentB.Y:0.###} source={northSource}");
+            }
+
+            if (hasWestBoundarySegment)
+            {
+                var wA = ToLocal(frame, westBoundarySegmentA);
+                var wB = ToLocal(frame, westBoundarySegmentB);
+                var wMinV = Math.Min(wA.V, wB.V);
+                var wMaxV = Math.Max(wA.V, wB.V);
+                var wCenterGap = DistanceToClosedInterval(frame.MidV, wMinV, wMaxV);
+                logger?.WriteLine(
+                    $"VERIFY-QTR-WEST-SELECT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                    $"vRange={wMinV:0.###}..{wMaxV:0.###} centerV={frame.MidV:0.###} centerGap={wCenterGap:0.###} dividerU={dividerPreferredU:0.###} " +
+                    $"seg={westBoundarySegmentA.X:0.###},{westBoundarySegmentA.Y:0.###}->{westBoundarySegmentB.X:0.###},{westBoundarySegmentB.Y:0.###} source={westSource}");
+            }
+        }
+
+        private static void ResolveQuarterViewCenterCoordinates(
+            QuarterViewSectionFrame frame,
+            out double centerU,
+            out double centerV)
+        {
+            centerU = frame.MidU;
+            centerV = frame.MidV;
+            if (TryIntersectBoundarySegmentsLocal(
+                    frame,
+                    frame.LeftAnchor,
+                    frame.RightAnchor,
+                    frame.BottomAnchor,
+                    frame.TopAnchor,
+                    out var resolvedCenterU,
+                    out var resolvedCenterV))
+            {
+                centerU = resolvedCenterU;
+                centerV = resolvedCenterV;
+            }
+        }
+
+        private static bool TryPromoteQuarterViewSouthBoundaryFromCorrectionCandidate(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B)> correctionSouthBoundarySegments,
+            double centerU,
+            double southFallbackOffset,
+            ref string southSource,
+            ref bool hasSouthBoundarySegment,
+            ref Point2d southBoundarySegmentA,
+            ref Point2d southBoundarySegmentB,
+            ref double southBoundaryV,
+            out string promotedFromSource,
+            out double currentError,
+            out double promotedError)
+        {
+            promotedFromSource = string.Empty;
+            currentError = double.NaN;
+            promotedError = double.NaN;
+
+            if (string.Equals(southSource, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
+                !TryResolveQuarterViewSouthMostCorrectionBoundarySegment(
+                    frame,
+                    correctionSouthBoundarySegments,
+                    out var promotedCorrectionSouthA,
+                    out var promotedCorrectionSouthB))
+            {
+                return false;
+            }
+
+            const double minPromotionImprovement = 0.15;
+
+            var candidateOutwardDistance = ResolveOutwardDistanceAtMidU(
+                frame,
+                promotedCorrectionSouthA,
+                promotedCorrectionSouthB,
+                centerU,
+                southBoundaryV);
+            var currentOutwardDistance = hasSouthBoundarySegment
+                ? ResolveOutwardDistanceAtMidU(frame, southBoundarySegmentA, southBoundarySegmentB, centerU, southBoundaryV)
+                : (frame.SouthEdgeV - southBoundaryV);
+            var southPromotionTargetInset = southFallbackOffset > 0.5
+                ? southFallbackOffset
+                : RoadAllowanceSecWidthMeters;
+            var candidateError = Math.Abs(candidateOutwardDistance - southPromotionTargetInset);
+            var localCurrentError = Math.Abs(currentOutwardDistance - southPromotionTargetInset);
+            if (candidateError + minPromotionImprovement >= localCurrentError)
+            {
+                return false;
+            }
+
+            promotedFromSource = southSource;
+            currentError = localCurrentError;
+            promotedError = candidateError;
+            southBoundaryV = frame.SouthEdgeV - candidateOutwardDistance;
+            southSource = LayerUsecCorrectionZero;
+            southBoundarySegmentA = promotedCorrectionSouthA;
+            southBoundarySegmentB = promotedCorrectionSouthB;
+            hasSouthBoundarySegment = true;
+            return true;
+        }
+
+        private static double ResolveOutwardDistanceAtMidU(
+            QuarterViewSectionFrame frame,
+            Point2d a,
+            Point2d b,
+            double centerU,
+            double fallbackV)
+        {
+            if (TryProjectBoundarySegmentVAtU(frame, a, b, centerU, out var projectedMidV))
+            {
+                return frame.SouthEdgeV - projectedMidV;
+            }
+
+            return frame.SouthEdgeV - fallbackV;
+        }
+
+        private static void ResolveQuarterEastMidAtCenter(
+            QuarterViewSectionFrame frame,
+            bool hasEastBoundarySegment,
+            Point2d eastBoundarySegmentA,
+            Point2d eastBoundarySegmentB,
+            double centerV,
+            double fallbackEastBoundaryU,
+            double eastBoundaryLimitU,
+            double dividerIntersectionDriftTolerance,
+            out double eastMidU,
+            out double eastMidV)
+        {
+            if (hasEastBoundarySegment &&
+                TryIntersectBoundarySegmentsLocal(
+                    frame,
+                    frame.LeftAnchor,
+                    frame.RightAnchor,
+                    eastBoundarySegmentA,
+                    eastBoundarySegmentB,
+                    out var eastMidUFinal,
+                    out var eastMidVFinal) &&
+                Math.Abs(eastMidVFinal - centerV) <= dividerIntersectionDriftTolerance)
+            {
+                eastMidU = eastMidUFinal;
+                eastMidV = eastMidVFinal;
+                return;
+            }
+
+            eastMidU = ResolveQuarterEastBoundaryUAtV(
+                frame,
+                hasEastBoundarySegment,
+                eastBoundarySegmentA,
+                eastBoundarySegmentB,
+                centerV,
+                fallbackEastBoundaryU,
+                eastBoundaryLimitU);
+            eastMidV = centerV;
+        }
+
+        private static bool IsQuarterNorthEastCorrectionAdjoining(
+            bool isCorrectionSouthBoundary,
+            string northSource)
+        {
+            return isCorrectionSouthBoundary ||
+                   string.Equals(northSource, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(northSource, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryResolveQuarterApparentEastCornerIntersection(
+            QuarterViewSectionFrame frame,
+            Point2d eastBoundarySegmentA,
+            Point2d eastBoundarySegmentB,
+            Point2d sideBoundarySegmentA,
+            Point2d sideBoundarySegmentB,
+            bool northBand,
+            out double resolvedU,
+            out double resolvedV,
+            out double eastOffset,
+            out double sideOffset)
+        {
+            resolvedU = default;
+            resolvedV = default;
+            eastOffset = default;
+            sideOffset = default;
+
+            if (!TryIntersectLocalInfiniteLines(
+                    frame,
+                    eastBoundarySegmentA,
+                    eastBoundarySegmentB,
+                    sideBoundarySegmentA,
+                    sideBoundarySegmentB,
+                    out resolvedU,
+                    out resolvedV))
+            {
+                return false;
+            }
+
+            eastOffset = resolvedU - frame.EastEdgeU;
+            sideOffset = northBand
+                ? (resolvedV - frame.NorthEdgeV)
+                : (frame.SouthEdgeV - resolvedV);
+
+            const double minOffset = -6.0;
+            const double maxOffset = 90.0;
+            return eastOffset >= -maxOffset &&
+                   eastOffset <= maxOffset &&
+                   sideOffset >= minOffset &&
+                   sideOffset <= maxOffset;
+        }
+
+        private static void ResolveQuarterEastCornerFromBoundarySegments(
+            QuarterViewSectionFrame frame,
+            Point2d eastBoundarySegmentA,
+            Point2d eastBoundarySegmentB,
+            Point2d sideBoundarySegmentA,
+            Point2d sideBoundarySegmentB,
+            bool cornerLockedByApparentIntersection,
+            ref double cornerU,
+            ref double cornerV)
+        {
+            if (cornerLockedByApparentIntersection)
+            {
+                return;
+            }
+
+            if (TryIntersectBoundarySegmentsLocal(
+                    frame,
+                    eastBoundarySegmentA,
+                    eastBoundarySegmentB,
+                    sideBoundarySegmentA,
+                    sideBoundarySegmentB,
+                    out var resolvedCornerU,
+                    out var resolvedCornerV))
+            {
+                cornerU = resolvedCornerU;
+                cornerV = resolvedCornerV;
+            }
+        }
+
+        private static bool TryGetProtectedQuarterCorner(
+            IReadOnlyList<Point2d> protectedSouthMidCorners,
+            IReadOnlyList<Point2d> protectedWestBoundaryCorners,
+            IReadOnlyList<Point2d> protectedEastBoundaryCorners,
+            Point2d point,
+            out Point2d corner)
+        {
+            corner = default;
+            if (protectedSouthMidCorners.Count == 0 &&
+                protectedWestBoundaryCorners.Count == 0 &&
+                protectedEastBoundaryCorners.Count == 0)
+            {
+                return false;
+            }
+
+            const double tolerance = 0.05;
+            return TryFindQuarterCornerWithinTolerance(protectedSouthMidCorners, point, tolerance, out corner) ||
+                   TryFindQuarterCornerWithinTolerance(protectedWestBoundaryCorners, point, tolerance, out corner) ||
+                   TryFindQuarterCornerWithinTolerance(protectedEastBoundaryCorners, point, tolerance, out corner);
+        }
+
+        private static bool TryFindQuarterCornerWithinTolerance(
+            IReadOnlyList<Point2d> corners,
+            Point2d point,
+            double tolerance,
+            out Point2d corner)
+        {
+            corner = default;
+            for (var i = 0; i < corners.Count; i++)
+            {
+                var candidate = corners[i];
+                if (point.GetDistanceTo(candidate) > tolerance)
+                {
+                    continue;
+                }
+
+                corner = candidate;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static double ResolveQuarterSouthBoundaryVAtU(
+            QuarterViewSectionFrame frame,
+            bool hasSouthBoundarySegment,
+            Point2d southBoundarySegmentA,
+            Point2d southBoundarySegmentB,
+            double targetU,
+            double fallbackSouthBoundaryV,
+            double southBoundaryLimitV)
+        {
+            if (hasSouthBoundarySegment &&
+                TryProjectBoundarySegmentVAtU(frame, southBoundarySegmentA, southBoundarySegmentB, targetU, out var projectedV))
+            {
+                return Math.Min(projectedV, southBoundaryLimitV);
+            }
+
+            return Math.Min(fallbackSouthBoundaryV, southBoundaryLimitV);
+        }
+
+        private static double ResolveQuarterWestBoundaryUAtV(
+            QuarterViewSectionFrame frame,
+            bool hasWestBoundarySegment,
+            Point2d westBoundarySegmentA,
+            Point2d westBoundarySegmentB,
+            double targetV,
+            double fallbackWestBoundaryU,
+            double westBoundaryLimitU)
+        {
+            if (hasWestBoundarySegment &&
+                TryProjectBoundarySegmentUAtV(frame, westBoundarySegmentA, westBoundarySegmentB, targetV, out var projectedU))
+            {
+                return Math.Min(projectedU, westBoundaryLimitU);
+            }
+
+            return Math.Min(fallbackWestBoundaryU, westBoundaryLimitU);
+        }
+
+        private static double ResolveQuarterNorthBoundaryVAtU(
+            QuarterViewSectionFrame frame,
+            bool hasNorthBoundarySegment,
+            Point2d northBoundarySegmentA,
+            Point2d northBoundarySegmentB,
+            double targetU,
+            double fallbackNorthBoundaryV,
+            double northBoundaryLimitV)
+        {
+            if (hasNorthBoundarySegment &&
+                TryProjectBoundarySegmentVAtU(frame, northBoundarySegmentA, northBoundarySegmentB, targetU, out var projectedV))
+            {
+                return Math.Max(projectedV, northBoundaryLimitV);
+            }
+
+            return Math.Max(fallbackNorthBoundaryV, northBoundaryLimitV);
+        }
+
+        private static double ResolveQuarterEastBoundaryUAtV(
+            QuarterViewSectionFrame frame,
+            bool hasEastBoundarySegment,
+            Point2d eastBoundarySegmentA,
+            Point2d eastBoundarySegmentB,
+            double targetV,
+            double fallbackEastBoundaryU,
+            double eastBoundaryLimitU)
+        {
+            if (hasEastBoundarySegment &&
+                TryProjectBoundarySegmentUAtV(frame, eastBoundarySegmentA, eastBoundarySegmentB, targetV, out var projectedU))
+            {
+                return Math.Max(projectedU, eastBoundaryLimitU);
+            }
+
+            return Math.Max(fallbackEastBoundaryU, eastBoundaryLimitU);
+        }
+
+        private static bool TryResolvePreferredQuarterViewEastBoundarySegment(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            double expectedOffsetMeters,
+            out Point2d resolvedEastA,
+            out Point2d resolvedEastB,
+            out string resolvedEastLayer)
+        {
+            resolvedEastA = default;
+            resolvedEastB = default;
+            resolvedEastLayer = string.Empty;
+
+            // Prefer explicit quarter/section hard boundaries before broad fallback.
+            var preferredEastLayers = new[]
+            {
+                LayerUsecTwenty,
+                "L-USEC-2012",
+                LayerUsecBase,
+                "L-SEC",
+                "L-SEC-2012",
+                LayerUsecZero
+            };
+
+            // First pass: prefer a full-width inward road-allowance candidate.
+            for (var li = 0; li < preferredEastLayers.Length; li++)
+            {
+                var layer = preferredEastLayers[li];
+                if (!TryResolveQuarterViewEastBoundarySegmentOnLayer(
+                        frame,
+                        boundarySegments,
+                        layer,
+                        expectedOffsetMeters,
+                        out resolvedEastA,
+                        out resolvedEastB))
+                {
+                    continue;
+                }
+
+                resolvedEastLayer = layer;
+                return true;
+            }
+
+            // Fallback: preserve legacy near-edge behavior when full-width geometry is unavailable.
+            if (expectedOffsetMeters > 0.5)
+            {
+                for (var li = 0; li < preferredEastLayers.Length; li++)
+                {
+                    var layer = preferredEastLayers[li];
+                    if (!TryResolveQuarterViewEastBoundarySegmentOnLayer(
+                            frame,
+                            boundarySegments,
+                            layer,
+                            0.0,
+                            out resolvedEastA,
+                            out resolvedEastB))
+                    {
+                        continue;
+                    }
+
+                    resolvedEastLayer = layer;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryResolvePreferredQuarterViewEastBoundary(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            double expectedOffsetMeters,
+            out double resolvedEastMidU,
+            out Point2d resolvedEastA,
+            out Point2d resolvedEastB,
+            out string resolvedEastLayer)
+        {
+            resolvedEastMidU = default;
+            resolvedEastA = default;
+            resolvedEastB = default;
+            resolvedEastLayer = string.Empty;
+
+            if (!TryResolvePreferredQuarterViewEastBoundarySegment(
+                    frame,
+                    boundarySegments,
+                    expectedOffsetMeters,
+                    out resolvedEastA,
+                    out resolvedEastB,
+                    out resolvedEastLayer))
+            {
+                return false;
+            }
+
+            var relEastA = resolvedEastA - frame.Origin;
+            var relEastB = resolvedEastB - frame.Origin;
+            resolvedEastMidU = 0.5 * (
+                relEastA.DotProduct(frame.EastUnit) +
+                relEastB.DotProduct(frame.EastUnit));
+            if (TryProjectBoundarySegmentUAtV(
+                    frame,
+                    resolvedEastA,
+                    resolvedEastB,
+                    frame.MidV,
+                    out var projectedEastMidU))
+            {
+                resolvedEastMidU = projectedEastMidU;
+            }
+
+            return true;
         }
 
         private static bool TryResolveQuarterViewWestBoundaryU(
@@ -4112,6 +4700,136 @@ namespace AtsBackgroundBuilder
             }
 
             return false;
+        }
+
+        private static bool TryResolvePreferredQuarterViewSouthBoundaryWithCorrection(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> southResolutionSegments,
+            IReadOnlyList<(Point2d A, Point2d B)> correctionSouthBoundarySegments,
+            bool isBlindSouthBoundarySection,
+            double southFallbackOffset,
+            double preferredDividerU,
+            Point2d dividerLineA,
+            Point2d dividerLineB,
+            out double resolvedV,
+            out string resolvedLayer,
+            out Point2d resolvedA,
+            out Point2d resolvedB)
+        {
+            resolvedV = default;
+            resolvedLayer = string.Empty;
+            resolvedA = default;
+            resolvedB = default;
+
+            if (TryResolveQuarterViewSouthCorrectionBoundaryV(
+                    frame,
+                    correctionSouthBoundarySegments,
+                    out var correctionSouthV,
+                    out var correctionSouthA,
+                    out var correctionSouthB))
+            {
+                resolvedV = correctionSouthV;
+                resolvedLayer = LayerUsecCorrectionZero;
+                resolvedA = correctionSouthA;
+                resolvedB = correctionSouthB;
+                return true;
+            }
+
+            var hasResolvedSouth = TryResolveQuarterViewSouthBoundaryV(
+                frame,
+                southResolutionSegments,
+                southFallbackOffset,
+                preferredDividerU,
+                dividerLineA,
+                dividerLineB,
+                out resolvedV,
+                out resolvedLayer,
+                out resolvedA,
+                out resolvedB);
+
+            if (!hasResolvedSouth &&
+                !isBlindSouthBoundarySection &&
+                southFallbackOffset <= (RoadAllowanceSecWidthMeters + 0.5))
+            {
+                // If SEC-width matching misses, allow a USEC-width retry for mixed/tight geometry.
+                hasResolvedSouth = TryResolveQuarterViewSouthBoundaryV(
+                    frame,
+                    southResolutionSegments,
+                    RoadAllowanceUsecWidthMeters,
+                    preferredDividerU,
+                    dividerLineA,
+                    dividerLineB,
+                    out resolvedV,
+                    out resolvedLayer,
+                    out resolvedA,
+                    out resolvedB);
+            }
+
+            if (!hasResolvedSouth &&
+                !isBlindSouthBoundarySection &&
+                southFallbackOffset >= (RoadAllowanceUsecWidthMeters - 0.5))
+            {
+                // Symmetric retry back to SEC-width when USEC-width detection is noisy.
+                hasResolvedSouth = TryResolveQuarterViewSouthBoundaryV(
+                    frame,
+                    southResolutionSegments,
+                    RoadAllowanceSecWidthMeters,
+                    preferredDividerU,
+                    dividerLineA,
+                    dividerLineB,
+                    out resolvedV,
+                    out resolvedLayer,
+                    out resolvedA,
+                    out resolvedB);
+            }
+
+            return hasResolvedSouth;
+        }
+
+        private static bool TryResolvePreferredQuarterViewNorthBoundary(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> correctionNorthBoundarySegments,
+            double preferredDividerU,
+            bool preferWestLinkedCandidate,
+            Point2d westBoundarySegmentA,
+            Point2d westBoundarySegmentB,
+            out double resolvedV,
+            out string resolvedLayer,
+            out Point2d resolvedA,
+            out Point2d resolvedB)
+        {
+            resolvedV = default;
+            resolvedLayer = string.Empty;
+            resolvedA = default;
+            resolvedB = default;
+
+            if (TryResolveQuarterViewNorthCorrectionBoundaryV(
+                    frame,
+                    correctionNorthBoundarySegments,
+                    out var correctionNorthV,
+                    out var correctionNorthLayer,
+                    out var correctionNorthA,
+                    out var correctionNorthB))
+            {
+                resolvedV = correctionNorthV;
+                resolvedLayer = correctionNorthLayer;
+                resolvedA = correctionNorthA;
+                resolvedB = correctionNorthB;
+                return true;
+            }
+
+            return TryResolveQuarterViewNorthBoundaryV(
+                frame,
+                boundarySegments,
+                preferredDividerU,
+                preferWestLinkedCandidate,
+                westBoundarySegmentA,
+                westBoundarySegmentB,
+                out resolvedV,
+                out resolvedLayer,
+                out resolvedA,
+                out resolvedB);
         }
 
         private static bool TryResolveQuarterViewNorthBoundaryV(
@@ -4645,6 +5363,65 @@ namespace AtsBackgroundBuilder
             }
 
             return found;
+        }
+
+        private static bool TryResolveQuarterViewBlindEastBoundaryFromNorthSouth(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> segments,
+            double fallbackEastBoundaryU,
+            Point2d southBoundarySegmentA,
+            Point2d southBoundarySegmentB,
+            Point2d northBoundarySegmentA,
+            Point2d northBoundarySegmentB,
+            out Point2d segmentA,
+            out Point2d segmentB,
+            out string sourceLayer,
+            out double resolvedEastMidU,
+            out double eastOffset,
+            out double southOffset,
+            out double northOffset)
+        {
+            segmentA = default;
+            segmentB = default;
+            sourceLayer = string.Empty;
+            resolvedEastMidU = fallbackEastBoundaryU;
+            eastOffset = default;
+            southOffset = default;
+            northOffset = default;
+
+            if (!TryResolveQuarterViewEastBoundarySegmentFromNorthSouth(
+                    frame,
+                    segments,
+                    southBoundarySegmentA,
+                    southBoundarySegmentB,
+                    northBoundarySegmentA,
+                    northBoundarySegmentB,
+                    out segmentA,
+                    out segmentB,
+                    out sourceLayer,
+                    out eastOffset,
+                    out southOffset,
+                    out northOffset))
+            {
+                return false;
+            }
+
+            if (TryProjectBoundarySegmentUAtV(
+                    frame,
+                    segmentA,
+                    segmentB,
+                    frame.MidV,
+                    out var projectedEastMidU))
+            {
+                resolvedEastMidU = projectedEastMidU;
+            }
+            else if (TryConvertQuarterWorldToLocal(frame, segmentA, out var eastAu, out _) &&
+                     TryConvertQuarterWorldToLocal(frame, segmentB, out var eastBu, out _))
+            {
+                resolvedEastMidU = 0.5 * (eastAu + eastBu);
+            }
+
+            return true;
         }
 
         private static bool TryResolveQuarterViewEastBoundarySegmentFromNorthSouth(
@@ -5209,16 +5986,9 @@ namespace AtsBackgroundBuilder
             var vHit = p.Y + (r.Y * t);
 
             const double apparentIntersectionPadding = 80.0;
-            bool WithinExpandedBounds(Point2d a, Point2d b, double testU, double testV)
-            {
-                var minU = Math.Min(a.X, b.X) - apparentIntersectionPadding;
-                var maxU = Math.Max(a.X, b.X) + apparentIntersectionPadding;
-                var minV = Math.Min(a.Y, b.Y) - apparentIntersectionPadding;
-                var maxV = Math.Max(a.Y, b.Y) + apparentIntersectionPadding;
-                return testU >= minU && testU <= maxU && testV >= minV && testV <= maxV;
-            }
-
-            if (!WithinExpandedBounds(p, p2, uHit, vHit) || !WithinExpandedBounds(q, q2, uHit, vHit))
+            var hit = new Point2d(uHit, vHit);
+            if (!IsPointWithinExpandedSegmentBounds(hit, p, p2, apparentIntersectionPadding) ||
+                !IsPointWithinExpandedSegmentBounds(hit, q, q2, apparentIntersectionPadding))
             {
                 return false;
             }
@@ -5441,37 +6211,6 @@ namespace AtsBackgroundBuilder
                 .Distinct()
                 .ToList();
 
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
-            }
-
             using (var transaction = database.TransactionManager.StartTransaction())
             {
                 var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
@@ -5502,39 +6241,6 @@ namespace AtsBackgroundBuilder
                 }
 
                 var erased = 0;
-                bool IsPointInAnyScopedQuarter(Point2d p)
-                {
-                    const double extPad = 0.50;
-                    for (var i = 0; i < scopedQuarterPolylines.Count; i++)
-                    {
-                        var candidate = scopedQuarterPolylines[i];
-                        if (p.X < (candidate.Extents.MinPoint.X - extPad) || p.X > (candidate.Extents.MaxPoint.X + extPad) ||
-                            p.Y < (candidate.Extents.MinPoint.Y - extPad) || p.Y > (candidate.Extents.MaxPoint.Y + extPad))
-                        {
-                            continue;
-                        }
-
-                        if (GeometryUtils.IsPointInsidePolyline(candidate.Polyline, p))
-                        {
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
-
-                bool IsSegmentOwnedByScopedQuarters(Point2d a, Point2d b)
-                {
-                    // Ownership for deferred redraw should follow the source quarter interior.
-                    // Midpoint containment avoids deleting adjoining boundary-touching LSD lines.
-                    var mid = Midpoint(a, b);
-                    if (IsPointInAnyScopedQuarter(mid))
-                    {
-                        return true;
-                    }
-
-                    return IsPointInAnyScopedQuarter(a) && IsPointInAnyScopedQuarter(b);
-                }
 
                 foreach (ObjectId id in modelSpace)
                 {
@@ -5548,7 +6254,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(existing, out var existingA, out var existingB))
+                    if (!TryReadOpenSegmentForDeferredLsd(existing, out var existingA, out var existingB))
                     {
                         continue;
                     }
@@ -5558,7 +6264,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!IsSegmentOwnedByScopedQuarters(existingA, existingB))
+                    if (!IsSegmentOwnedByScopedQuarters(existingA, existingB, scopedQuarterPolylines))
                     {
                         continue;
                     }
@@ -5574,38 +6280,6 @@ namespace AtsBackgroundBuilder
                 var skipped = 0;
                 var drawn = 0;
 
-                bool TryGetSectionAxes(ObjectId sectionId, out Vector2d eastUnit, out Vector2d northUnit)
-                {
-                    eastUnit = new Vector2d(1.0, 0.0);
-                    northUnit = new Vector2d(0.0, 1.0);
-                    if (sectionId.IsNull || sectionId.IsErased)
-                    {
-                        return false;
-                    }
-
-                    if (sectionAxisCache.TryGetValue(sectionId, out var cached))
-                    {
-                        eastUnit = cached.East;
-                        northUnit = cached.North;
-                        return true;
-                    }
-
-                    if (!(transaction.GetObject(sectionId, OpenMode.ForRead, false) is Polyline section))
-                    {
-                        return false;
-                    }
-
-                    if (!TryGetQuarterAnchors(section, out var anchors))
-                    {
-                        anchors = GetFallbackAnchors(section);
-                    }
-
-                    eastUnit = GetUnitVector(anchors.Left, anchors.Right, new Vector2d(1, 0));
-                    northUnit = GetUnitVector(anchors.Bottom, anchors.Top, new Vector2d(0, 1));
-                    sectionAxisCache[sectionId] = (eastUnit, northUnit);
-                    return true;
-                }
-
                 foreach (var info in uniqueQuarterInfos)
                 {
                     if (!(transaction.GetObject(info.QuarterId, OpenMode.ForRead, false) is Polyline quarter))
@@ -5616,7 +6290,12 @@ namespace AtsBackgroundBuilder
 
                     Vector2d eastUnit;
                     Vector2d northUnit;
-                    if (!TryGetSectionAxes(info.SectionPolylineId, out eastUnit, out northUnit))
+                    if (!TryGetSectionAxes(
+                            info.SectionPolylineId,
+                            transaction,
+                            sectionAxisCache,
+                            out eastUnit,
+                            out northUnit))
                     {
                         if (!TryGetQuarterAnchors(quarter, out var quarterAnchors))
                         {

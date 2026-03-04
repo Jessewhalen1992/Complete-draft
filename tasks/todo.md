@@ -3310,3 +3310,851 @@
   - Added side-specific USEC-zero detection to choose 30.16 vs 20.11 ownership target per side instead of one global inset.
   - Prevented forced zero-layer demotion on sides already classified as USEC-width ownership.
   - Rebuilt and redeployed ATS DLL/PDB for immediate retest.
+
+# Follow-up (ATS Quarter Ownership Policy Extraction, 2026-03-04)
+
+- [x] Extract west/south quarter ownership target computation into a pure policy helper.
+- [x] Wire `SectionDrawingLsd` quarter-view boundary setup to consume the policy output.
+- [x] Add decision tests for blind/surveyed ownership combinations and `L-USEC-0` candidate signals.
+- [x] Rebuild ATS and run decision tests.
+
+## Review (ATS Quarter Ownership Policy Extraction, 2026-03-04)
+
+- Added `src/AtsBackgroundBuilder/Core/QuarterBoundaryOwnershipPolicy.cs`:
+  - pure policy helper for:
+    - west expected ownership offset (`SEC` vs `USEC`),
+    - south fallback offset (including blind-south forced zero behavior),
+    - west inset downgrade gating,
+    - fallback source labels (`fallback-20.12`, `fallback-30.16`, `fallback-blind`).
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - replaced inline west/south ownership-offset computation with `QuarterBoundaryOwnershipPolicy.Create(...)`.
+  - preserved existing downstream boundary resolution flow and fallback retries.
+- Updated decision tests:
+  - linked new helper in `src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj`.
+  - added tests in `src/AtsBackgroundBuilder.DecisionTests/Program.cs`:
+    - `TestQuarterBoundaryOwnershipPolicySurveyedSecFallback`
+    - `TestQuarterBoundaryOwnershipPolicySurveyedUsecOwnership`
+    - `TestQuarterBoundaryOwnershipPolicyBlindSouthForcesZeroSouthOffset`
+- Verification:
+  - `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n`
+  - `dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - build and tests succeeded.
+
+# Follow-up (ATS Preferred Boundary Helper Extraction, 2026-03-04)
+
+- [x] Extract preferred west-boundary resolution local function into a dedicated section helper.
+- [x] Extract preferred south-boundary resolution local function into a dedicated section helper.
+- [x] Wire `SectionDrawingLsd` to the extracted helpers without behavior changes.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS Preferred Boundary Helper Extraction, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - extracted local preferred-west resolver into:
+    - `TryResolvePreferredQuarterViewWestBoundary(...)`
+  - extracted local preferred-south resolver into:
+    - `TryResolvePreferredQuarterViewSouthBoundary(...)`
+  - replaced in-method local-function calls with calls to the new helper methods.
+  - preserved all existing fallback behavior:
+    - first pass at expected inset,
+    - zero-offset regression fallback when applicable.
+- Verification:
+  - `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n`
+  - `dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - build and tests succeeded.
+
+# Follow-up (ATS East Boundary Helper Extraction, 2026-03-04)
+
+- [x] Extract preferred east-boundary resolution local function into a dedicated section helper.
+- [x] Wire `SectionDrawingLsd` to the extracted east helper without behavior changes.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS East Boundary Helper Extraction, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - extracted local preferred-east resolver into:
+    - `TryResolvePreferredQuarterViewEastBoundarySegment(...)`
+  - replaced in-method local-function call with helper invocation.
+  - preserved existing fallback behavior:
+    - preferred layer pass at expected inset,
+    - near-edge fallback pass at `0.0` inset.
+- Verification:
+  - `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n`
+  - `dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - build and tests succeeded.
+
+# Follow-up (Sync main + Re-apply WLS Quarter Visibility Refactor, 2026-03-04)
+
+- [x] Pull latest `origin/main` into local `main`.
+- [x] Re-apply WLS `L-QUARTER` visibility-off cleanup and ATS assembly diagnostics on top of pulled code.
+- [x] Build `WildlifeSweeps` in Release to verify compile after rebase.
+- [x] Build `AtsBackgroundBuilder` in Release to verify latest ATS fixes are compiled locally.
+- [ ] User retest in AutoCAD: run with `1/4 Definitions` off and confirm quarter linework is hidden after completion.
+
+## Review (Sync main + Re-apply WLS Quarter Visibility Refactor, 2026-03-04)
+
+- Pulled latest `origin/main` via `git pull --rebase origin main` (fast-forward to `089c2fc`).
+- Re-applied in `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`:
+  - post-run `finally` enforcement for quarter linework visibility when `1/4 Definitions` is off.
+  - layer visibility helpers for `L-QUARTER`/legacy validation layer handling.
+  - ATS fallback assembly diagnostic line that reports resolved assembly name/version/source path.
+- Verification:
+  - `dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath="C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\wls_alt_20260304_rebased\"`
+  - `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n`
+  - both succeeded (`0 Warning(s)`, `0 Error(s)`).
+
+# Follow-up (ATS Blind-South East Refinement Helper Extraction, 2026-03-04)
+
+- [x] Extract blind-south east-boundary north/south refinement block into a dedicated helper.
+- [x] Preserve east mid-U projection fallback behavior inside the extracted helper.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS Blind-South East Refinement Helper Extraction, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - added `TryResolveQuarterViewBlindEastBoundaryFromNorthSouth(...)`.
+  - moved blind-south east-boundary refinement + mid-U projection/fallback logic into the helper.
+  - callsite now consumes helper output `resolvedEastMidU` and keeps existing verify logging/counters unchanged.
+- Verification:
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - build and tests succeeded.
+
+# Follow-up (ATS West Boundary Fallback Ladder Extraction, 2026-03-04)
+
+- [x] Extract west-boundary offset fallback ladder into a dedicated helper.
+- [x] Rewire section drawing callsite to use helper output only.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS West Boundary Fallback Ladder Extraction, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - added `TryResolveQuarterViewWestBoundaryWithInsetFallbacks(...)`.
+  - moved west boundary fallback sequence into helper:
+    - expected ownership inset attempt,
+    - SEC-width retry when USEC-width candidate path misses,
+    - near-edge `0.0` fallback when downgrade is allowed.
+  - simplified callsite to assign resolved west boundary fields from helper output.
+- Verification:
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - build and tests succeeded.
+
+# Follow-up (ATS East Mid-U Helper Extraction, 2026-03-04)
+
+- [x] Extract preferred east-boundary selection + mid-U derivation into a dedicated helper.
+- [x] Keep existing mid-U fallback order (segment midpoint, then projection at frame mid-V).
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS East Mid-U Helper Extraction, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - added `TryResolvePreferredQuarterViewEastBoundary(...)`.
+  - moved the callsite�s inline east mid-U calculation into the helper while reusing existing `TryResolvePreferredQuarterViewEastBoundarySegment(...)` behavior.
+  - preserved assignment/logging behavior at the callsite (now consumes `preferredEastMidU`).
+- Verification:
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - build and tests succeeded.
+
+# Follow-up (ATS Preferred Boundary Promotion Helper Extraction, 2026-03-04)
+
+- [x] Extract west `L-USEC-0` promotion-to-preferred-layers block into a helper.
+- [x] Extract surveyed-south `L-USEC-0` promotion-to-SEC block into a helper.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS Preferred Boundary Promotion Helper Extraction, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - added `TryResolveQuarterViewPreferredWestBoundaryFromSections(...)`.
+  - added `TryResolveQuarterViewPreferredSouthBoundaryFromSections(...)`.
+  - replaced inline west/south promotion condition + candidate filtering + resolve calls with helper invocations.
+  - preserved promotion gates and layer preferences:
+    - west: only when current source is `L-USEC-0`.
+    - south: only when non-blind section, `L-USEC-0` source, and SEC-width ownership class.
+- Verification:
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - build and tests succeeded.
+
+# Follow-up (ATS Quarter Verify Diagnostics Helper Extraction, 2026-03-04)
+
+- [x] Extract quarter boundary selection verify logging block into a dedicated helper.
+- [x] Keep log wording, metrics, and conditions unchanged.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS Quarter Verify Diagnostics Helper Extraction, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - added `WriteQuarterBoundarySelectionDiagnostics(...)`.
+  - moved inline `emitQuarterVerify` diagnostics for south/north/west boundary selection into helper.
+  - preserved existing log lines/fields:
+    - `VERIFY-QTR-SOUTH-SELECT`
+    - `VERIFY-QTR-NORTH-SELECT`
+    - `VERIFY-QTR-WEST-SELECT`
+- Verification:
+  - initial standard Release build failed due locked output DLL (`MSB3027/MSB3021`) from active process.
+  - rebuilt to fresh alternate output path and succeeded:
+    - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath="C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\ats_alt_20260304_114100\"`
+  - decision tests passed:
+    - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+
+# Follow-up (ATS Quarter Resolver Helper Continuation, 2026-03-04)
+
+- [ ] Fix stale local resolver call after quarter resolver helper extraction.
+- [ ] Rebuild ATS in Release to fresh alternate output path and rerun decision tests.
+- [ ] Extract one more low-risk quarter helper from `SectionDrawingLsd` (ATS-only, behavior-preserving).
+- [ ] Rebuild ATS in Release to fresh alternate output path and rerun decision tests.
+- [ ] Append review notes and verification commands/results.
+
+## Review (ATS Quarter Resolver Helper Continuation, 2026-03-04)
+
+- [x] Fix stale local resolver call after quarter resolver helper extraction.
+- [x] Rebuild ATS in Release to fresh alternate output path and rerun decision tests.
+- [x] Extract one more low-risk quarter helper from `SectionDrawingLsd` (ATS-only, behavior-preserving).
+- [x] Rebuild ATS in Release to fresh alternate output path and rerun decision tests.
+- [x] Append review notes and verification commands/results.
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - fixed remaining stale call: `ResolveEastBoundaryUAtV(...)` -> `ResolveQuarterEastBoundaryUAtV(...)`.
+  - extracted `ResolveQuarterEastMidAtCenter(...)` from inline east-midpoint-at-center logic.
+  - extracted `IsQuarterNorthEastCorrectionAdjoining(...)` and replaced repeated inline north-source correction checks.
+- Verification:
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\\ats_alt_20260304_114910\\"`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\\ats_alt_20260304_115031\\"`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and tests succeeded in both passes.
+
+## Review Addendum (ATS Quarter Resolver Helper Continuation, 2026-03-04)
+
+- Added `TryResolveQuarterApparentEastCornerIntersection(...)` and rewired both apparent east-corner callsites:
+  - south-east apparent lock path (`VERIFY-QTR-SE-SE-APP`)
+  - correction-adjoining north-east apparent lock path (`VERIFY-QTR-NE-NE-APP`)
+- Preserved the same offset acceptance bounds (`east: [-90, +90]`, side offset: `[-6, +90]`) while removing duplicated inline gating logic.
+- Verification:
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\\ats_alt_20260304_115250\\"`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and tests succeeded.
+
+# Follow-up (ATS SectionDrawingLsd Local Helper Exhaustion, 2026-03-04)
+
+- [x] Re-verify current ATS baseline build and decision tests before additional refactor.
+- [x] Extract remaining low-risk local helpers from `SectionDrawingLsd` to class-level methods.
+- [x] Remove remaining local resolver helpers in quarter-view draw loop by promoting them to class-level methods with unchanged signatures.
+- [x] Rebuild ATS and rerun decision tests after extraction batch.
+
+## Review (ATS SectionDrawingLsd Local Helper Exhaustion, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - promoted quarter-window/corner helper locals to class-level helpers:
+    - `SegmentIntersectsAnyQuarterWindow(...)`
+    - `ExtentsIntersectAnyQuarterWindow(...)`
+    - `TryFindQuarterVertexSnapTarget(...)`
+    - `AddBoundaryEndpointToCornerClusters(...)`
+    - `IsPointInAnyQuarterWindow(...)`
+    - `TryFindApparentCornerIntersection(...)`
+  - promoted deferred-LSD scoped ownership/axis locals to class-level helpers:
+    - `TryReadOpenSegmentForDeferredLsd(...)`
+    - `IsPointInAnyScopedQuarter(...)`
+    - `IsSegmentOwnedByScopedQuarters(...)`
+    - `TryGetSectionAxes(...)`
+  - promoted remaining quarter resolver locals to class-level helpers:
+    - `TryResolveSouthDividerCornerFromHardBoundaries(...)`
+    - `TryResolveWestBandCornerFromHardBoundaries(...)`
+    - `TryResolveEastBandCornerFromHardBoundaries(...)`
+    - `TryResolveNorthEastCornerFromEastHardNode(...)`
+    - `TryResolveNorthEastCornerFromEndpointCornerClusters(...)`
+  - removed local `WithinExpandedBounds(...)` in `TryIntersectBoundarySegmentsLocal(...)` and reused `IsPointWithinExpandedSegmentBounds(...)`.
+  - callsites were rewired to the extracted helpers without algorithm changes.
+- Verification:
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\\ats_alt_20260304_124500\\"`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\\ats_alt_20260304_121200\\"`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\\ats_alt_20260304_121920\\"`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - all builds/tests succeeded.
+
+# Follow-up (ATS LsdPostProcessing Helper Consolidation, 2026-03-04)
+
+- [x] Extract duplicated local helper functions in `LsdPostProcessing` to class-level reusable helpers.
+- [x] Rewire all three LSD post-processing methods to use extracted helpers with no behavior changes.
+- [x] Rebuild ATS and run decision tests.
+
+## Review (ATS LsdPostProcessing Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.LsdPostProcessing.cs`:
+  - removed method-local helper functions and introduced class-level helpers:
+    - `IsPointInLsdClipWindows(...)`
+    - `DoesSegmentIntersectLsdClipWindows(...)`
+    - `TryReadOpenTwoVertexSegmentForLsd(...)`
+    - `TryReadOpenCollinearSegmentForLsd(...)`
+    - `TryGetEntityCenterForLsd(...)`
+    - `IsLsdHorizontalLike(...)`
+    - `IsLsdVerticalLike(...)`
+    - `TryIntersectLsdSegments(...)`
+    - `TryIntersectLsdInfiniteLines(...)`
+    - `IsPointInExpandedExtentsForLsd(...)`
+  - rewired callsites in:
+    - `RebuildLsdLabelsAtFinalIntersections(...)`
+    - `SnapQuarterLsdLinesToSectionBoundaries(...)`
+    - `RecenterExplodedLsdLabelsToFinalLinework(...)`
+  - intent: reduce duplication and keep behavior equivalent for no-AutoCAD-safe refactor.
+- Verification:
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\\ats_alt_20260304_123610\\"`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded.
+
+# Follow-up (ATS SectionTypeInference Neighbor Helper Extraction, 2026-03-04)
+
+- [x] Extract quarter-neighbor evidence and grid lookup local helpers from `SectionTypeInference`.
+- [x] Rewire `InferQuarterSectionTypes(...)` to call extracted class-level helpers.
+- [x] Resolve duplicate grid-position helper conflict by reusing existing shared implementation.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS SectionTypeInference Neighbor Helper Extraction, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionTypeInference.cs`:
+  - extracted helper methods:
+    - `AddQuarterGapSample(...)`
+    - `MeasureQuarterGapFromBaseSample(...)`
+    - `TryAddQuarterEvidenceFromPair(...)`
+    - `BuildSectionGridLookupKey(...)`
+    - `TryGetNeighborGeometryIndex(...)`
+    - `IsSectionNeighborPairEligible(...)`
+  - rewired `InferQuarterSectionTypes(...)` callsites to use extracted helpers.
+  - removed duplicate `TryGetAtsSectionGridPosition(...)` from this file and reused existing shared implementation to resolve `CS0111` duplicate member error.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\ats_alt_20260304_124950\"`
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded.
+
+# Follow-up (ATS Cross-File Helper Consolidation, 2026-03-04)
+
+- [x] Extract duplicated local helper lambdas/functions from ATS files that do not require AutoCAD behavior validation.
+- [x] Rewire callsites to shared class-level helpers without algorithm changes.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS Cross-File Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - extracted `ArePointsNearWithTolerance(...)` and removed duplicated local `Near(...)` lambdas from:
+    - `DoSegmentsShareEndpoint(...)`
+    - `AreSegmentsDuplicateOrCollinearOverlap(...)`
+- Updated `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`:
+  - extracted `IsPointInRectBounds(...)` and removed local `PointInRect(...)` from `RectangleIntersectsPolyline(...)`.
+- Updated `src/AtsBackgroundBuilder/Geometry/Plugin.Geometry.QuarterUtilities.cs`:
+  - extracted `CreatePointFromAxesEN(...)` and removed local `FromEN(...)` in quarter fallback corner reconstruction.
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs`:
+  - extracted shared logging format helpers:
+    - `FormatLsdEndpointTracePoint(...)`
+    - `FormatLsdEndpointTraceId(...)`
+  - removed duplicated local formatter functions and rewired callsites.
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs`:
+  - extracted axis projection helpers:
+    - `ProjectPointToSectionU(...)`
+    - `ProjectPointToSectionV(...)`
+  - removed duplicated local `ToU(...)`/`ToV(...)` functions and rewired callsites.
+- Updated `src/AtsBackgroundBuilder/SurfaceImpact/Plugin.SurfaceImpact.cs`:
+  - extracted local helpers in duplicate-land filtering:
+    - `NormalizeSurfaceImpactLandLocation(...)`
+    - `GetSurfaceImpactReportDate(...)`
+    - `HasRealSurfaceImpactLandLocation(...)`
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\ats_alt_20260304_133900\"`
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded.
+
+# Follow-up (ATS RoadAllowance Cleanup Shared Segment Helpers, 2026-03-04)
+
+- [x] Consolidate repeated `TryReadOpenSegment`/`TryWriteOpenSegment`/orientation local helpers in `RoadAllowance.Cleanup`.
+- [x] Rewire all callsites in `RoadAllowance.Cleanup` to shared helper methods.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS RoadAllowance Cleanup Shared Segment Helpers, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs`:
+  - extracted file-level shared helpers:
+    - `TryReadOpenSegmentForCleanup(...)`
+    - `TryWriteOpenSegmentForCleanup(...)`
+    - `IsHorizontalLikeForCleanup(...)`
+    - `IsVerticalLikeForCleanup(...)`
+  - replaced repeated local helper definitions across cleanup routines with shared helper calls.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\ats_alt_20260304_141000\"`
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded.
+
+# Follow-up (ATS LabelPlacer Intersection/Candidate Helper Extraction, 2026-03-04)
+
+- [x] Remove local segment-intersection math helpers in `LabelPlacer` and promote to class-level helpers.
+- [x] Remove local candidate-dedupe helper in leader target selection and promote to class-level helper.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS LabelPlacer Intersection/Candidate Helper Extraction, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`:
+  - `SegmentsIntersect(...)` now uses extracted helpers:
+    - `CrossForSegmentIntersection(...)`
+    - `IsPointOnSegmentForIntersection(...)`
+  - `ChooseLeaderTargetAvoidingOtherDispositions(...)` now uses:
+    - `AddUniqueCandidatePoint(...)`
+  - removed corresponding local helper functions.
+- Verification:
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\ats_alt_20260304_141620\"`
+  - `$env:DOTNET_CLI_HOME='C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded.
+
+# Follow-up (ATS Core Plugin Window/Segment Helper Consolidation, 2026-03-04)
+
+- [x] Extract repeated local window/segment predicates in `Core/Plugin.cs` to class-level helpers.
+- [x] Keep method-local semantics where needed via wrapper flags (no-window match, 2-vertex-only vs collinear open polyline).
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS Core Plugin Window/Segment Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - added shared helpers:
+    - `IsPointInAnyWindowForPlugin(...)`
+    - `IsPointOnAnyWindowBoundaryForPlugin(...)`
+    - `DoesSegmentIntersectAnyWindowForPlugin(...)`
+    - `TryReadOpenSegmentForPlugin(...)`
+    - `TryMoveEndpointForPlugin(...)`
+    - `IsZeroTwentyLayerForPlugin(...)`
+  - rewired repeated method-local helpers across core cleanup/connect flows to call these shared helpers.
+  - preserved existing behavior by passing explicit flags per callsite:
+    - empty-window match behavior where required,
+    - two-vertex-only vs collinear-open polyline read behavior,
+    - two-vertex-only vs open-endpoint move behavior.
+- Verification:
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\ats_alt_20260304_174050\"`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+
+# Follow-up (ATS CorrectionLinePostProcessing Helper Consolidation, 2026-03-04)
+
+- [x] Extract duplicated local window/orientation/endpoint-move helpers from correction post-processing to class-level helpers.
+- [x] Rewire both correction post-processing methods to shared helpers with no algorithm changes.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS CorrectionLinePostProcessing Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs`:
+  - added shared helpers:
+    - `IsPointInAnyWindowForCorrectionLinePost(...)`
+    - `DoesSegmentIntersectAnyWindowForCorrectionLinePost(...)`
+    - `IsHorizontalLikeForCorrectionLinePost(...)`
+    - `IsVerticalLikeForCorrectionLinePost(...)`
+    - `TryMoveEndpointForCorrectionLinePost(...)`
+  - rewired duplicated local helper bodies in:
+    - `EnforceFinalCorrectionOuterLayerConsistency(...)`
+    - `ConnectCorrectionInnerEndpointsToVerticalUsecBoundaries(...)`
+- Verification:
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\ats_alt_20260304_174640\"`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+
+# Follow-up (ATS QuarterExtensionsConnectivity Window/Segment Helper Consolidation, 2026-03-04)
+
+- [x] Extract repeated local window/segment/read/move helper bodies in quarter extensions connectivity to class-level helpers.
+- [x] Preserve mixed semantics for read/move helpers via explicit flags (collinear-open support, two-vertex-only endpoint moves).
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS QuarterExtensionsConnectivity Window/Segment Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs`:
+  - added shared helpers:
+    - `IsPointInAnyWindowForQuarterExtensionsConnectivity(...)`
+    - `DoesSegmentIntersectAnyWindowForQuarterExtensionsConnectivity(...)`
+    - `TryReadOpenSegmentForQuarterExtensionsConnectivity(...)`
+    - `TryMoveEndpointForQuarterExtensionsConnectivity(...)`
+  - rewired repeated local helper definitions to shared helper wrappers across all quarter-extension connectivity passes.
+  - retained behavior-specific modes using explicit flags:
+    - `allowCollinearOpenPolyline: true/false`
+    - `requireTwoVertexPolyline: true/false`
+- Verification:
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n /p:BaseOutputPath=".artifacts\ats_alt_20260304_180120\"`
+  - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+# Follow-up (ATS Cleanup Move/Projection Helper Completion, 2026-03-04)
+
+- [x] Add missing shared helper methods referenced by `Cleanup` wrapper refactors.
+- [x] Preserve previous move-endpoint behavior variants with explicit mode flags.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS Cleanup Move/Projection Helper Completion, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs`:
+  - added missing helpers:
+    - `TryMoveEndpointByIndexForCleanup(...)`
+    - `ClosestPointOnSegmentForCleanup(...)`
+  - `TryMoveEndpointByIndexForCleanup(...)` preserves both prior local behaviors via `requireTwoVertexPolyline`:
+    - `true`: only open 2-vertex polylines
+    - `false`: open polylines with 2+ vertices (first/last endpoint move)
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+
+# Follow-up (ATS EndpointEnforcement Window/Boundary/Move Helper Consolidation, 2026-03-04)
+
+- [x] Consolidate repeated window-point, boundary, and segment-window local helpers in endpoint enforcement.
+- [x] Consolidate repeated endpoint-move local helper in endpoint enforcement.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS EndpointEnforcement Window/Boundary/Move Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs`:
+  - added shared helpers:
+    - `IsPointInAnyWindowForEndpointEnforcement(...)`
+    - `IsPointOnAnyWindowBoundaryForEndpointEnforcement(...)`
+    - `DoesSegmentIntersectAnyWindowForEndpointEnforcement(...)`
+    - `TryMoveEndpointForEndpointEnforcement(...)`
+  - rewired repeated method-local helpers to wrappers using shared helpers in endpoint-enforcement flows.
+  - removed redundant local wrappers that became unused to keep the build warning-free.
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+# Follow-up (ATS Cleanup Clip-Window Predicate Consolidation, 2026-03-04)
+
+- [x] Remove repeated local `IsPointInAnyWindow(...)` definitions in `Cleanup`.
+- [x] Rewire repeated local `DoesSegmentIntersectAnyWindow(...)` definitions to shared clip-window helper.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS Cleanup Clip-Window Predicate Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs`:
+  - removed duplicated method-local `IsPointInAnyWindow(...)` helpers.
+  - standardized all local `DoesSegmentIntersectAnyWindow(...)` helpers to:
+    - `DoesSegmentIntersectAnyClipWindow(clipWindows, a, b)`
+  - intent: behavior-neutral dedupe using existing shared clip-window predicates already present in file.
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+# Follow-up (ATS EndpointEnforcement/QuarterExtensions Local Geometry Helper Consolidation, 2026-03-04)
+
+- [x] Consolidate duplicated local closest-point segment math in `EndpointEnforcement`.
+- [x] Consolidate duplicated local window-intersection helpers in `QuarterExtensionsConnectivity`.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS EndpointEnforcement/QuarterExtensions Local Geometry Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs`:
+  - replaced two duplicated local `ClosestPointOnSegment(...)` bodies with wrapper calls.
+  - added shared helper:
+    - `ClosestPointOnSegmentForEndpointEnforcement(...)`
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs`:
+  - replaced duplicated local window-intersection bodies with shared helper wrappers.
+  - added shared helpers:
+    - `IsPointInWindowForQuarterExtensionsConnectivity(...)`
+    - `DoesSegmentIntersectWindowForQuarterExtensionsConnectivity(...)`
+  - preserved existing method-local call structure with thin wrappers where direct `IsPointInWindow(...)` calls are still used.
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+# Follow-up (ATS QuarterExtensions Infinite-Line Helper Consolidation, 2026-03-04)
+
+- [x] Consolidate repeated local infinite-line intersection helper bodies in `QuarterExtensionsConnectivity`.
+- [x] Rewire all local callsites to a single shared helper.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS QuarterExtensions Infinite-Line Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs`:
+  - replaced four duplicated local `TryIntersectInfiniteLines(...)` bodies with wrappers.
+  - added shared helper:
+    - `TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(...)`
+  - no algorithm changes; only helper-body dedupe.
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+# Follow-up (ATS Cleanup Window-Point Helper Finalization, 2026-03-04)
+
+- [x] Consolidate remaining local window-point helper body in `Cleanup`.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS Cleanup Window-Point Helper Finalization, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs`:
+  - replaced remaining local `IsPointInWindow(...)` body with a wrapper call.
+  - added shared helper:
+    - `IsPointInWindowForCleanup(...)`
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+# Follow-up (ATS Cleanup Blind-South Boundary Helper Consolidation, 2026-03-04)
+
+- [x] Consolidate duplicated blind-south boundary helper bodies in `Cleanup`.
+- [x] Rewire all local callsites to shared helper wrappers.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS Cleanup Blind-South Boundary Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs`:
+  - replaced three duplicated local definitions with wrappers:
+    - `IsBlindSouthBoundarySection(...)`
+    - `IsSegmentOnBlindSouthBoundary(...)`
+  - added shared helpers:
+    - `IsBlindSouthBoundarySectionForCleanup(...)`
+    - `IsSegmentOnBlindSouthBoundaryForCleanup(...)`
+  - helper logic is unchanged; refactor is body dedupe only.
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+# Follow-up (ATS Normalization Seam/Overlap/RangeEdge Helper Consolidation, 2026-03-04)
+
+- [x] Consolidate duplicated `IsSeamLayer` local helpers in `Normalization` using a shared helper with a base-layer mode flag.
+- [x] Consolidate duplicated `HorizontalOverlaps` local helper bodies in `Normalization`.
+- [x] Consolidate duplicated `IsRangeEdgeCandidate` helper bodies in `Normalization`.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS Normalization Seam/Overlap/RangeEdge Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Normalization.cs`:
+  - replaced duplicated local helper bodies with wrappers:
+    - `IsSeamLayer(...)` now routes to `IsSeamLayerForNormalization(..., includeUsecBaseLayer: true/false)`
+    - `HorizontalOverlaps(...)` now routes to `HorizontalOverlapsForNormalization(...)`
+    - `IsRangeEdgeCandidate(...)` variants now route to `IsRangeEdgeCandidateForNormalization(...)`
+  - added shared helpers:
+    - `IsSeamLayerForNormalization(...)`
+    - `HorizontalOverlapsForNormalization(...)`
+    - `IsRangeEdgeCandidateForNormalization(...)`
+  - behavior preserved by explicit mode flag for the second seam-layer pass that includes `LayerUsecBase`.
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+# Follow-up (ATS EndpointEnforcement Hard-Boundary Layer Helper Consolidation, 2026-03-04)
+
+- [x] Consolidate duplicated hard-boundary layer predicate bodies in `EndpointEnforcement`.
+- [x] Preserve per-callsite alias behavior with an explicit mode flag.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS EndpointEnforcement Hard-Boundary Layer Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs`:
+  - replaced duplicated local `IsHardBoundaryLayer(...)` bodies with wrappers.
+  - added shared helper:
+    - `IsHardBoundaryLayerForEndpointEnforcement(string layer, bool includeSecAliases)`
+  - behavior preserved by callsite mode:
+    - first pass: `includeSecAliases: false`
+    - blind-line pass: `includeSecAliases: true`
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+# Follow-up (ATS Cross-File Infinite-Line Intersection Helper Consolidation, 2026-03-04)
+
+- [x] Consolidate duplicated local infinite-line intersection helper bodies across ATS files.
+- [x] Route all affected local callsites to one shared class-level helper.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS Cross-File Infinite-Line Intersection Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - replaced local `TryIntersectInfiniteLines(...)` body with wrapper call.
+  - added shared helper:
+    - `TryIntersectInfiniteLinesForPluginGeometry(...)`
+- Updated callsites in:
+  - `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs`
+  - `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs`
+  - `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs`
+  - each now uses local wrapper delegating to `TryIntersectInfiniteLinesForPluginGeometry(...)`.
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+# Follow-up (ATS EndpointEnforcement Thirty-Layer/Correction-Proximity Helper Consolidation, 2026-03-04)
+
+- [x] Consolidate duplicated `IsThirtyEighteenLayer` helper bodies in endpoint enforcement.
+- [x] Consolidate duplicated correction-boundary proximity helper bodies in endpoint enforcement.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS EndpointEnforcement Thirty-Layer/Correction-Proximity Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs`:
+  - replaced duplicated local `IsThirtyEighteenLayer(...)` bodies with wrappers.
+  - added shared helper:
+    - `IsThirtyEighteenLayerForEndpointEnforcement(...)`
+  - replaced duplicated local `IsEndpointNearCorrectionBoundary(...)` bodies with wrappers.
+  - added shared helper:
+    - `IsEndpointNearBoundarySegmentsForEndpointEnforcement(...)`
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+# Follow-up (ATS EndpointEnforcement Hard-Boundary Endpoint Check Consolidation, 2026-03-04)
+
+- [x] Consolidate duplicated hard-boundary endpoint check helper bodies in endpoint enforcement.
+- [x] Preserve all tuple-shape variants used by different passes.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS EndpointEnforcement Hard-Boundary Endpoint Check Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs`:
+  - replaced three duplicated local `IsEndpointOnHardBoundary(...)` bodies with wrapper calls.
+  - added shared helpers:
+    - `IsEndpointOnBoundarySegmentsForEndpointEnforcement(Point2d, IReadOnlyList<(Point2d A, Point2d B)>, double)`
+    - `IsEndpointOnBoundarySegmentsForEndpointEnforcement(Point2d, IReadOnlyList<(Point2d A, Point2d B, bool IsZero)>, double)`
+    - `IsEndpointOnBoundarySegmentsForEndpointEnforcement(Point2d, ObjectId, IReadOnlyList<(ObjectId Id, Point2d A, Point2d B)>, double)`
+  - behavior preserved including source-segment exclusion and tuple-shape-specific passes.
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+
+# Follow-up (ATS QuarterExtensions LSD Midpoint Helper Consolidation, 2026-03-04)
+
+- [x] Consolidate duplicated `TryBestMidpoint(...)` local helper bodies in `QuarterExtensionsConnectivity`.
+- [x] Route both callsites to one shared helper while preserving threshold behavior per pass.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS QuarterExtensions LSD Midpoint Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs`:
+  - replaced two duplicated local `TryBestMidpoint(...)` bodies with wrappers.
+  - added shared helper:
+    - `TrySelectBestLsdMidpointForQuarterExtensionsConnectivity(...)`
+  - preserved prior tie-break order:
+    - segment distance first, then old-midpoint distance, then move distance.
+  - preserved per-pass thresholds by parameterizing:
+    - `lsdOldSegmentTol`, `lsdOldMidpointTol`, `endpointMoveTol`, `lsdMaxMove`.
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+
+# Follow-up (ATS QuarterExtensions Owning-Section Index Helper Consolidation, 2026-03-04)
+
+- [x] Consolidate duplicated `TryGetOwningSectionIndex(...)` local helper bodies in `QuarterExtensionsConnectivity`.
+- [x] Preserve both ownership modes (with V-range constraints and U-only constraints) via typed shared overloads.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS QuarterExtensions Owning-Section Index Helper Consolidation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs`:
+  - replaced two local `TryGetOwningSectionIndex(...)` bodies with wrappers.
+  - added shared overloads:
+    - `TryGetOwningSectionIndexForQuarterExtensionsConnectivity(...)` for `(Width, Height, Window)` targets with V-range gating.
+    - `TryGetOwningSectionIndexForQuarterExtensionsConnectivity(...)` for `(Window, EastEdgeU, OriginalSeCorner, HasOriginalSeCorner)` targets with U-only gating.
+  - kept ownership ranking identical:
+    - nearest `SwCorner` distance among valid candidates.
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+
+# Follow-up (ATS QuarterExtensions Local Wrapper Removal Cleanup, 2026-03-04)
+
+- [x] Remove now-redundant local `TryBestMidpoint(...)` wrappers and call the shared midpoint helper directly.
+- [x] Remove now-redundant local `TryGetOwningSectionIndex(...)` wrappers and call shared owning-section helpers directly.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (ATS QuarterExtensions Local Wrapper Removal Cleanup, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs`:
+  - removed local `TryBestMidpoint(...)` wrappers in both SW/NW extension passes.
+  - rewired endpoint midpoint selection calls directly to:
+    - `TrySelectBestLsdMidpointForQuarterExtensionsConnectivity(...)`
+  - removed local `TryGetOwningSectionIndex(...)` wrappers in both ownership passes.
+  - rewired ownership checks directly to:
+    - `TryGetOwningSectionIndexForQuarterExtensionsConnectivity(...)` overloads.
+  - no decision logic changes; this is callsite simplification only.
+- Verification:
+  - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -o .artifacts\\build-verify\\AtsBackgroundBuilder`
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - build and decision tests succeeded (0 warnings, 0 errors).
+
+# Follow-up (WLS Shared EXIF GPS Reader Consolidation, 2026-03-04)
+
+- [x] Extract shared JPG EXIF GPS loading/parsing helper for WLS services.
+- [x] Rewire `CompleteFromPhotosService`, `PhotoToTextCheckService`, and `SortBufferPhotosService` to use shared helper.
+- [x] Build WildlifeSweeps to verify no compile regressions.
+
+## Review (WLS Shared EXIF GPS Reader Consolidation, 2026-03-04)
+
+- Added shared helper:
+  - `wls_program/src/WildlifeSweeps/PhotoGpsMetadataReader.cs`
+  - centralizes:
+    - JPG/JPEG file enumeration
+    - EXIF GPS property parsing (`GPSLatitudeRef/GPSLatitude/GPSLongitudeRef/GPSLongitude`)
+    - optional coordinate de-duplication (rounded 6 decimals)
+    - consistent skipped/duplicate logging and per-file read-failure logging
+- Updated callsites:
+  - `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`
+    - `LoadGpsPhotos(...)` now maps from shared helper output with dedupe enabled.
+    - removed duplicated EXIF constants and helper methods.
+  - `wls_program/src/WildlifeSweeps/PhotoToTextCheckService.cs`
+    - `LoadGpsPhotos(...)` now maps from shared helper output with dedupe enabled.
+    - removed duplicated EXIF constants and helper methods.
+  - `wls_program/src/WildlifeSweeps/SortBufferPhotosService.cs`
+    - `LoadGpsPhotos(...)` now maps from shared helper output with dedupe disabled (preserves per-photo behavior).
+    - removed duplicated EXIF constants and helper methods.
+- Verification:
+  - `dotnet build wls_program\\src\\WildlifeSweeps\\WildlifeSweeps.csproj -c Release --no-restore -o .artifacts\\build-verify\\WildlifeSweeps`
+  - build succeeded (0 warnings, 0 errors).
+
+# Follow-up (WLS Prompt/Boundary Sampler Helper Consolidation, 2026-03-04)
+
+- [x] Consolidate repeated UTM/JPG prompt helpers across WLS services.
+- [x] Consolidate duplicated boundary polyline sampling helpers across CompleteFromPhotos and SortBufferPhotos.
+- [x] Build WildlifeSweeps to verify compile stability.
+
+## Review (WLS Prompt/Boundary Sampler Helper Consolidation, 2026-03-04)
+
+- Added prompt helper:
+  - `wls_program/src/WildlifeSweeps/WildlifePromptHelper.cs`
+  - centralized:
+    - UTM 11/12 keyword prompt and normalization
+    - JPG picker dialog wrapper
+- Added boundary helpers:
+  - `wls_program/src/WildlifeSweeps/BoundarySamplingHelper.cs`
+    - shared polyline vertex sampling with configurable step/merge tolerances
+  - `wls_program/src/WildlifeSweeps/BoundaryContainmentHelper.cs`
+    - shared point-in-polygon and boundary-distance math with configurable degenerate-segment distance mode
+- Updated callsites:
+  - `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`
+    - uses `WildlifePromptHelper` for UTM + JPG prompts
+    - uses `BoundarySamplingHelper` for boundary vertex generation
+    - `BufferBoundary` now delegates containment/distance logic to `BoundaryContainmentHelper`
+  - `wls_program/src/WildlifeSweeps/PhotoToTextCheckService.cs`
+    - uses `WildlifePromptHelper` for UTM + JPG prompts
+  - `wls_program/src/WildlifeSweeps/SortBufferPhotosService.cs`
+    - uses `WildlifePromptHelper` for UTM prompt
+    - uses `BoundarySamplingHelper` for boundary vertex generation
+    - `BufferBoundary` now delegates containment logic to `BoundaryContainmentHelper`
+- Verification:
+  - `dotnet build wls_program\\src\\WildlifeSweeps\\WildlifeSweeps.csproj -c Release --no-restore -o .artifacts\\build-verify\\WildlifeSweeps`
+  - build succeeded (0 warnings, 0 errors).
+
+# Follow-up (WLS Other-Value/LSD Helper Consolidation, 2026-03-04)
+
+- [x] Consolidate duplicated `Other`-value normalization logic used by findings standardization flows.
+- [x] Consolidate duplicated LSD row/column-to-number logic used by ATS resolver + Complete From Photos.
+- [x] Build WildlifeSweeps to verify compile stability.
+
+## Review (WLS Other-Value/LSD Helper Consolidation, 2026-03-04)
+
+- Added `wls_program/src/WildlifeSweeps/FindingOtherValueHelper.cs`:
+  - centralizes:
+    - `IsOtherValue(value, otherValue)`
+    - `NormalizeOtherValue(value, otherValue)`
+- Updated:
+  - `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs`
+  - `wls_program/src/WildlifeSweeps/FindingsStandardizationHelper.cs`
+  - callsites now use the shared helper directly and redundant local methods were removed.
+- Added `wls_program/src/WildlifeSweeps/LsdNumberingHelper.cs`:
+  - centralizes LSD numbering from (rowFromSouth, colFromWest).
+- Updated:
+  - `wls_program/src/WildlifeSweeps/AtsQuarterLocationResolver.cs`
+  - `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`
+  - now call `LsdNumberingHelper.GetLsdNumber(...)` and removed duplicated local implementations.
+- Verification:
+  - `dotnet build wls_program\\src\\WildlifeSweeps\\WildlifeSweeps.csproj -c Release --no-restore -o .artifacts\\build-verify\\WildlifeSweeps`
+  - build succeeded (0 warnings, 0 errors).

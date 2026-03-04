@@ -149,3 +149,5 @@
 - For quarter-definition ownership, use the full SEC-width inset (`RoadAllowanceSecWidthMeters` ~= 20.11), not `RoadAllowanceUsecWidthMeters` (~30.16); switching to USEC-width over-shifts south/west/east by about 10.05m.
 - Quarter ownership inset is side-dependent in mixed surveyed/unsurveyed contexts: south/east can be SEC-width while west may still require USEC-width; avoid applying one global inset constant to all sides.
 - For west/south quarter ownership, use layer intent to choose class per side: `L-USEC-0` indicates USEC-width ownership, while `L-SEC`/`L-SEC-2012` indicate SEC-width ownership; do not resolve these sides from broad mixed-layer pools first.
+- When users report "old ATS behavior" after a pull, always verify `main` is fast-forwarded to `origin/main`, rebuild both `WildlifeSweeps` and `AtsBackgroundBuilder`, and log the resolved ATS assembly version/path at runtime before further geometry changes.
+- When AutoCAD is unavailable/locked, prioritize ATS-only refactors that are behavior-preserving and provable by local build + decision tests; defer any refactor that needs in-drawing validation until user test windows reopen.

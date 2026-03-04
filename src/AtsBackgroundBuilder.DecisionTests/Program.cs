@@ -47,6 +47,9 @@ internal static class Program
         TestNoIntentSnapshotUnavailableUsesAutoClosePrefix();
 
         TestQuarterVisibilityPolicyMatrix();
+        TestQuarterBoundaryOwnershipPolicySurveyedSecFallback();
+        TestQuarterBoundaryOwnershipPolicySurveyedUsecOwnership();
+        TestQuarterBoundaryOwnershipPolicyBlindSouthForcesZeroSouthOffset();
         TestCleanupPlanMatrix();
         TestBuildExecutionPlanDefaults();
         TestBuildExecutionPlanQuarterVisibility();
@@ -415,6 +418,60 @@ internal static class Program
             enableQuarterViewByEnvironment: true);
         AssertEqual(true, envOnly.ShowQuarterDefinitionView, nameof(TestQuarterVisibilityPolicyMatrix));
         AssertEqual(true, envOnly.KeepQuarterHelperLinework, nameof(TestQuarterVisibilityPolicyMatrix));
+    }
+
+    private static void TestQuarterBoundaryOwnershipPolicySurveyedSecFallback()
+    {
+        const double secWidth = 20.11;
+        const double usecWidth = 30.16;
+        var policy = QuarterBoundaryOwnershipPolicy.Create(
+            isBlindSouthBoundarySection: false,
+            hasWestUsecZeroOwnershipCandidate: false,
+            hasSouthUsecZeroOwnershipCandidate: false,
+            roadAllowanceSecWidthMeters: secWidth,
+            roadAllowanceUsecWidthMeters: usecWidth);
+
+        AssertEqual(secWidth, policy.WestExpectedOffset, nameof(TestQuarterBoundaryOwnershipPolicySurveyedSecFallback));
+        AssertEqual(secWidth, policy.SouthFallbackOffset, nameof(TestQuarterBoundaryOwnershipPolicySurveyedSecFallback));
+        AssertEqual(true, policy.AllowWestInsetDowngrade, nameof(TestQuarterBoundaryOwnershipPolicySurveyedSecFallback));
+        AssertEqual("fallback-20.12", policy.WestFallbackSource, nameof(TestQuarterBoundaryOwnershipPolicySurveyedSecFallback));
+        AssertEqual("fallback-20.12", policy.SouthFallbackSource, nameof(TestQuarterBoundaryOwnershipPolicySurveyedSecFallback));
+    }
+
+    private static void TestQuarterBoundaryOwnershipPolicySurveyedUsecOwnership()
+    {
+        const double secWidth = 20.11;
+        const double usecWidth = 30.16;
+        var policy = QuarterBoundaryOwnershipPolicy.Create(
+            isBlindSouthBoundarySection: false,
+            hasWestUsecZeroOwnershipCandidate: true,
+            hasSouthUsecZeroOwnershipCandidate: true,
+            roadAllowanceSecWidthMeters: secWidth,
+            roadAllowanceUsecWidthMeters: usecWidth);
+
+        AssertEqual(usecWidth, policy.WestExpectedOffset, nameof(TestQuarterBoundaryOwnershipPolicySurveyedUsecOwnership));
+        AssertEqual(usecWidth, policy.SouthFallbackOffset, nameof(TestQuarterBoundaryOwnershipPolicySurveyedUsecOwnership));
+        AssertEqual(false, policy.AllowWestInsetDowngrade, nameof(TestQuarterBoundaryOwnershipPolicySurveyedUsecOwnership));
+        AssertEqual("fallback-30.16", policy.WestFallbackSource, nameof(TestQuarterBoundaryOwnershipPolicySurveyedUsecOwnership));
+        AssertEqual("fallback-30.16", policy.SouthFallbackSource, nameof(TestQuarterBoundaryOwnershipPolicySurveyedUsecOwnership));
+    }
+
+    private static void TestQuarterBoundaryOwnershipPolicyBlindSouthForcesZeroSouthOffset()
+    {
+        const double secWidth = 20.11;
+        const double usecWidth = 30.16;
+        var policy = QuarterBoundaryOwnershipPolicy.Create(
+            isBlindSouthBoundarySection: true,
+            hasWestUsecZeroOwnershipCandidate: true,
+            hasSouthUsecZeroOwnershipCandidate: true,
+            roadAllowanceSecWidthMeters: secWidth,
+            roadAllowanceUsecWidthMeters: usecWidth);
+
+        AssertEqual(usecWidth, policy.WestExpectedOffset, nameof(TestQuarterBoundaryOwnershipPolicyBlindSouthForcesZeroSouthOffset));
+        AssertEqual(0.0, policy.SouthFallbackOffset, nameof(TestQuarterBoundaryOwnershipPolicyBlindSouthForcesZeroSouthOffset));
+        AssertEqual(false, policy.AllowWestInsetDowngrade, nameof(TestQuarterBoundaryOwnershipPolicyBlindSouthForcesZeroSouthOffset));
+        AssertEqual("fallback-30.16", policy.WestFallbackSource, nameof(TestQuarterBoundaryOwnershipPolicyBlindSouthForcesZeroSouthOffset));
+        AssertEqual("fallback-blind", policy.SouthFallbackSource, nameof(TestQuarterBoundaryOwnershipPolicyBlindSouthForcesZeroSouthOffset));
     }
 
     private static void TestCleanupPlanMatrix()

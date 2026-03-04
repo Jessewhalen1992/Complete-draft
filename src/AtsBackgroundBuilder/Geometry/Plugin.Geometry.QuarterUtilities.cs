@@ -839,16 +839,21 @@ namespace AtsBackgroundBuilder
             if (Math.Abs(Emid - 0.5 * (minE + maxE)) > 0.25 * spanE ||
                 Math.Abs(Nmid - 0.5 * (minN + maxN)) > 0.25 * spanN)
             {
-                Point3d FromEN(double e, double nCoord) =>
-                    new Point3d(east.X * e + north.X * nCoord, east.Y * e + north.Y * nCoord, 0);
-
-                topV = FromEN(0.5 * (minE + maxE), maxN);
-                bottomV = FromEN(0.5 * (minE + maxE), minN);
-                leftV = FromEN(minE, 0.5 * (minN + maxN));
-                rightV = FromEN(maxE, 0.5 * (minN + maxN));
+                topV = CreatePointFromAxesEN(east, north, 0.5 * (minE + maxE), maxN);
+                bottomV = CreatePointFromAxesEN(east, north, 0.5 * (minE + maxE), minN);
+                leftV = CreatePointFromAxesEN(east, north, minE, 0.5 * (minN + maxN));
+                rightV = CreatePointFromAxesEN(east, north, maxE, 0.5 * (minN + maxN));
             }
 
             return true;
+        }
+
+        private static Point3d CreatePointFromAxesEN(Vector3d east, Vector3d north, double e, double nCoord)
+        {
+            return new Point3d(
+                (east.X * e) + (north.X * nCoord),
+                (east.Y * e) + (north.Y * nCoord),
+                0);
         }
 
         private static List<ChainInfo> BuildChainsClosest(List<EdgeInfo> edges, Vector3d primary, Vector3d other)

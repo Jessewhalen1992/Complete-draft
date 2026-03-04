@@ -498,17 +498,7 @@ namespace WildlifeSweeps
             col = Math.Max(0, Math.Min(3, col));
             row = Math.Max(0, Math.Min(3, row));
 
-            return GetLsdNumber(row, col);
-        }
-
-        private static int GetLsdNumber(int rowFromSouth, int colFromWest)
-        {
-            if ((rowFromSouth % 2) == 0)
-            {
-                return (rowFromSouth * 4) + (4 - colFromWest);
-            }
-
-            return (rowFromSouth * 4) + (colFromWest + 1);
+            return LsdNumberingHelper.GetLsdNumber(row, col);
         }
 
         private static IReadOnlyList<Point2d> BuildQuarterVertices(SectionSpatialFrame section, QuarterBounds quarter)

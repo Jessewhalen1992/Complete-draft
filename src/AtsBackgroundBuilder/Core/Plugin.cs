@@ -3611,97 +3611,9 @@ namespace AtsBackgroundBuilder
                 return segments ?? new List<(Point2d A, Point2d B, string Tag, string Layer)>();
             }
 
-            bool IsPointInAnyWindow(Point2d point)
-            {
-                if (clipWindows == null || clipWindows.Count == 0)
-                {
-                    return true;
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForPlugin(a, b, clipWindows, matchWhenNoWindows: true);
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (point.X >= w.MinPoint.X && point.X <= w.MaxPoint.X &&
-                        point.Y >= w.MinPoint.Y && point.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (clipWindows == null || clipWindows.Count == 0)
-                {
-                    return true;
-                }
-
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForPlugin(ent, allowCollinearOpenPolyline: true, out a, out b);
 
             var boundarySegments = new List<(Point2d A, Point2d B)>();
             foreach (ObjectId id in modelSpace)
@@ -5080,151 +4992,18 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool IsPointInAnyWindow(Point2d p) => IsPointInAnyWindowForPlugin(p, clipWindows);
 
-                return false;
-            }
+            bool IsPointOnAnyWindowBoundary(Point2d p, double tol) => IsPointOnAnyWindowBoundaryForPlugin(p, tol, clipWindows);
 
-            bool IsPointOnAnyWindowBoundary(Point2d p, double tol)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    var withinX = p.X >= (w.MinPoint.X - tol) && p.X <= (w.MaxPoint.X + tol);
-                    var withinY = p.Y >= (w.MinPoint.Y - tol) && p.Y <= (w.MaxPoint.Y + tol);
-                    if (!withinX || !withinY)
-                    {
-                        continue;
-                    }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForPlugin(a, b, clipWindows);
 
-                    var onLeft = Math.Abs(p.X - w.MinPoint.X) <= tol;
-                    var onRight = Math.Abs(p.X - w.MaxPoint.X) <= tol;
-                    var onBottom = Math.Abs(p.Y - w.MinPoint.Y) <= tol;
-                    var onTop = Math.Abs(p.Y - w.MaxPoint.Y) <= tol;
-                    if (onLeft || onRight || onBottom || onTop)
-                    {
-                        return true;
-                    }
-                }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForPlugin(ent, allowCollinearOpenPolyline: false, out a, out b);
 
-                return false;
-            }
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForPlugin(writable, moveStart, target, moveTol, allowAnyOpenPolylineEndpoint: false);
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices != 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(1);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
-            }
-
-            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
-            {
-                if (writable is Line ln)
-                {
-                    var old = moveStart
-                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
-                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    if (moveStart)
-                    {
-                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
-                    }
-                    else
-                    {
-                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
-                    }
-
-                    return true;
-                }
-
-                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices == 2)
-                {
-                    var index = moveStart ? 0 : 1;
-                    var old = pl.GetPoint2dAt(index);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    pl.SetPointAt(index, target);
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
-            {
-                intersection = default;
-                var da = a1 - a0;
-                var db = b1 - b0;
-                var denom = Cross2d(da, db);
-                if (Math.Abs(denom) <= 1e-9)
-                {
-                    return false;
-                }
-
-                var diff = b0 - a0;
-                var t = Cross2d(diff, db) / denom;
-                intersection = a0 + (da * t);
-                return true;
-            }
+            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
+                TryIntersectInfiniteLinesForPluginGeometry(a0, a1, b0, b1, out intersection);
 
             bool IsHorizontalLike(Point2d a, Point2d b)
             {
@@ -6078,87 +5857,9 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForPlugin(a, b, clipWindows);
 
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForPlugin(ent, allowCollinearOpenPolyline: true, out a, out b);
 
             bool IsHorizontalLike(Point2d a, Point2d b)
             {
@@ -6172,11 +5873,7 @@ namespace AtsBackgroundBuilder
                 return Math.Abs(d.Y) > Math.Abs(d.X);
             }
 
-            bool IsZeroTwentyLayer(string layer)
-            {
-                return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase);
-            }
+            bool IsZeroTwentyLayer(string layer) => IsZeroTwentyLayerForPlugin(layer);
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -6342,127 +6039,11 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForPlugin(a, b, clipWindows);
 
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForPlugin(ent, allowCollinearOpenPolyline: true, out a, out b);
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
-            {
-                if (writable is Line ln)
-                {
-                    var old = moveStart
-                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
-                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    if (moveStart)
-                    {
-                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
-                    }
-                    else
-                    {
-                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
-                    }
-
-                    return true;
-                }
-
-                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
-                {
-                    var index = moveStart ? 0 : pl.NumberOfVertices - 1;
-                    var old = pl.GetPoint2dAt(index);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    pl.SetPointAt(index, target);
-                    return true;
-                }
-
-                return false;
-            }
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForPlugin(writable, moveStart, target, moveTol, allowAnyOpenPolylineEndpoint: true);
 
             bool IsSectionTypeLayer(string layer)
             {
@@ -6473,11 +6054,7 @@ namespace AtsBackgroundBuilder
                        string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase);
             }
 
-            bool IsZeroTwentyLayer(string layer)
-            {
-                return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase);
-            }
+            bool IsZeroTwentyLayer(string layer) => IsZeroTwentyLayerForPlugin(layer);
 
             bool IsThirtyLayer(string layer)
             {
@@ -6821,158 +6398,15 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool IsPointOnAnyWindowBoundary(Point2d p, double tol) => IsPointOnAnyWindowBoundaryForPlugin(p, tol, clipWindows);
 
-                return false;
-            }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForPlugin(a, b, clipWindows);
 
-            bool IsPointOnAnyWindowBoundary(Point2d p, double tol)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    var withinX = p.X >= (w.MinPoint.X - tol) && p.X <= (w.MaxPoint.X + tol);
-                    var withinY = p.Y >= (w.MinPoint.Y - tol) && p.Y <= (w.MaxPoint.Y + tol);
-                    if (!withinX || !withinY)
-                    {
-                        continue;
-                    }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForPlugin(ent, allowCollinearOpenPolyline: true, out a, out b);
 
-                    var onLeft = Math.Abs(p.X - w.MinPoint.X) <= tol;
-                    var onRight = Math.Abs(p.X - w.MaxPoint.X) <= tol;
-                    var onBottom = Math.Abs(p.Y - w.MinPoint.Y) <= tol;
-                    var onTop = Math.Abs(p.Y - w.MaxPoint.Y) <= tol;
-                    if (onLeft || onRight || onBottom || onTop)
-                    {
-                        return true;
-                    }
-                }
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForPlugin(writable, moveStart, target, moveTol, allowAnyOpenPolylineEndpoint: true);
 
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
-            {
-                if (writable is Line ln)
-                {
-                    var old = moveStart
-                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
-                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    if (moveStart)
-                    {
-                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
-                    }
-                    else
-                    {
-                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
-                    }
-
-                    return true;
-                }
-
-                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
-                {
-                    var index = moveStart ? 0 : pl.NumberOfVertices - 1;
-                    var old = pl.GetPoint2dAt(index);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    pl.SetPointAt(index, target);
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool IsZeroTwentyLayer(string layer)
-            {
-                return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase);
-            }
+            bool IsZeroTwentyLayer(string layer) => IsZeroTwentyLayerForPlugin(layer);
 
             bool TryIntersectSegments(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection, out double tA, out double tB)
             {
@@ -7246,158 +6680,15 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool IsPointOnAnyWindowBoundary(Point2d p, double tol) => IsPointOnAnyWindowBoundaryForPlugin(p, tol, clipWindows);
 
-                return false;
-            }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForPlugin(a, b, clipWindows);
 
-            bool IsPointOnAnyWindowBoundary(Point2d p, double tol)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    var withinX = p.X >= (w.MinPoint.X - tol) && p.X <= (w.MaxPoint.X + tol);
-                    var withinY = p.Y >= (w.MinPoint.Y - tol) && p.Y <= (w.MaxPoint.Y + tol);
-                    if (!withinX || !withinY)
-                    {
-                        continue;
-                    }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForPlugin(ent, allowCollinearOpenPolyline: true, out a, out b);
 
-                    var onLeft = Math.Abs(p.X - w.MinPoint.X) <= tol;
-                    var onRight = Math.Abs(p.X - w.MaxPoint.X) <= tol;
-                    var onBottom = Math.Abs(p.Y - w.MinPoint.Y) <= tol;
-                    var onTop = Math.Abs(p.Y - w.MaxPoint.Y) <= tol;
-                    if (onLeft || onRight || onBottom || onTop)
-                    {
-                        return true;
-                    }
-                }
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForPlugin(writable, moveStart, target, moveTol, allowAnyOpenPolylineEndpoint: true);
 
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
-            {
-                if (writable is Line ln)
-                {
-                    var old = moveStart
-                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
-                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    if (moveStart)
-                    {
-                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
-                    }
-                    else
-                    {
-                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
-                    }
-
-                    return true;
-                }
-
-                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
-                {
-                    var index = moveStart ? 0 : pl.NumberOfVertices - 1;
-                    var old = pl.GetPoint2dAt(index);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    pl.SetPointAt(index, target);
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool IsZeroTwentyLayer(string layer)
-            {
-                return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase);
-            }
+            bool IsZeroTwentyLayer(string layer) => IsZeroTwentyLayerForPlugin(layer);
 
             bool TryIntersectSegments(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection, out double tA, out double tB)
             {
@@ -7560,6 +6851,218 @@ namespace AtsBackgroundBuilder
             }
         }
 
+        private static bool IsPointInAnyWindowForPlugin(
+            Point2d point,
+            IReadOnlyList<Extents3d>? clipWindows,
+            bool matchWhenNoWindows = false)
+        {
+            if (clipWindows == null || clipWindows.Count == 0)
+            {
+                return matchWhenNoWindows;
+            }
+
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                var window = clipWindows[i];
+                if (point.X >= window.MinPoint.X && point.X <= window.MaxPoint.X &&
+                    point.Y >= window.MinPoint.Y && point.Y <= window.MaxPoint.Y)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsPointOnAnyWindowBoundaryForPlugin(Point2d point, double tolerance, IReadOnlyList<Extents3d> clipWindows)
+        {
+            if (clipWindows == null || clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                var window = clipWindows[i];
+                var withinX = point.X >= (window.MinPoint.X - tolerance) && point.X <= (window.MaxPoint.X + tolerance);
+                var withinY = point.Y >= (window.MinPoint.Y - tolerance) && point.Y <= (window.MaxPoint.Y + tolerance);
+                if (!withinX || !withinY)
+                {
+                    continue;
+                }
+
+                var onLeft = Math.Abs(point.X - window.MinPoint.X) <= tolerance;
+                var onRight = Math.Abs(point.X - window.MaxPoint.X) <= tolerance;
+                var onBottom = Math.Abs(point.Y - window.MinPoint.Y) <= tolerance;
+                var onTop = Math.Abs(point.Y - window.MaxPoint.Y) <= tolerance;
+                if (onLeft || onRight || onBottom || onTop)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool DoesSegmentIntersectAnyWindowForPlugin(
+            Point2d a,
+            Point2d b,
+            IReadOnlyList<Extents3d>? clipWindows,
+            bool matchWhenNoWindows = false)
+        {
+            if (clipWindows == null || clipWindows.Count == 0)
+            {
+                return matchWhenNoWindows;
+            }
+
+            if (IsPointInAnyWindowForPlugin(a, clipWindows) || IsPointInAnyWindowForPlugin(b, clipWindows))
+            {
+                return true;
+            }
+
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryReadOpenSegmentForPlugin(Entity ent, bool allowCollinearOpenPolyline, out Point2d a, out Point2d b)
+        {
+            a = default;
+            b = default;
+            if (ent == null)
+            {
+                return false;
+            }
+
+            if (ent is Line line)
+            {
+                a = new Point2d(line.StartPoint.X, line.StartPoint.Y);
+                b = new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            if (ent is Polyline polyline)
+            {
+                if (polyline.Closed || polyline.NumberOfVertices < 2)
+                {
+                    return false;
+                }
+
+                if (!allowCollinearOpenPolyline && polyline.NumberOfVertices != 2)
+                {
+                    return false;
+                }
+
+                a = polyline.GetPoint2dAt(0);
+                b = polyline.GetPoint2dAt(polyline.NumberOfVertices - 1);
+                if (a.GetDistanceTo(b) <= 1e-4)
+                {
+                    return false;
+                }
+
+                if (allowCollinearOpenPolyline && polyline.NumberOfVertices > 2)
+                {
+                    const double collinearTol = 0.35;
+                    for (var vi = 1; vi < polyline.NumberOfVertices - 1; vi++)
+                    {
+                        var point = polyline.GetPoint2dAt(vi);
+                        if (DistancePointToInfiniteLine(point, a, b) > collinearTol)
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryMoveEndpointForPlugin(
+            Entity writable,
+            bool moveStart,
+            Point2d target,
+            double moveTol,
+            bool allowAnyOpenPolylineEndpoint)
+        {
+            if (writable is Line line)
+            {
+                var old = moveStart
+                    ? new Point2d(line.StartPoint.X, line.StartPoint.Y)
+                    : new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                if (old.GetDistanceTo(target) <= moveTol)
+                {
+                    return false;
+                }
+
+                if (moveStart)
+                {
+                    line.StartPoint = new Point3d(target.X, target.Y, line.StartPoint.Z);
+                }
+                else
+                {
+                    line.EndPoint = new Point3d(target.X, target.Y, line.EndPoint.Z);
+                }
+
+                return true;
+            }
+
+            if (writable is Polyline polyline && !polyline.Closed && polyline.NumberOfVertices >= 2)
+            {
+                if (!allowAnyOpenPolylineEndpoint && polyline.NumberOfVertices != 2)
+                {
+                    return false;
+                }
+
+                var index = moveStart ? 0 : polyline.NumberOfVertices - 1;
+                var old = polyline.GetPoint2dAt(index);
+                if (old.GetDistanceTo(target) <= moveTol)
+                {
+                    return false;
+                }
+
+                polyline.SetPointAt(index, target);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsZeroTwentyLayerForPlugin(string layer)
+        {
+            return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryIntersectInfiniteLinesForPluginGeometry(
+            Point2d a0,
+            Point2d a1,
+            Point2d b0,
+            Point2d b1,
+            out Point2d intersection)
+        {
+            intersection = default;
+            var da = a1 - a0;
+            var db = b1 - b0;
+            var denom = Cross2d(da, db);
+            if (Math.Abs(denom) <= 1e-9)
+            {
+                return false;
+            }
+
+            var diff = b0 - a0;
+            var t = Cross2d(diff, db) / denom;
+            intersection = a0 + (da * t);
+            return true;
+        }
+
         private static bool TryIntersectInfiniteLineWithSegment(Point2d linePoint, Vector2d lineDir, Point2d segA, Point2d segB, out double tOnLine)
         {
             tOnLine = 0.0;
@@ -7608,14 +7111,21 @@ namespace AtsBackgroundBuilder
         {
             GetCanonicalSegmentEndpoints(a0, a1, out var aFirst, out var aSecond);
             GetCanonicalSegmentEndpoints(b0, b1, out var bFirst, out var bSecond);
-            return aFirst.GetDistanceTo(bFirst) <= endpointTol &&
-                   aSecond.GetDistanceTo(bSecond) <= endpointTol;
+            return ArePointsNearWithTolerance(aFirst, bFirst, endpointTol) &&
+                   ArePointsNearWithTolerance(aSecond, bSecond, endpointTol);
+        }
+
+        private static bool ArePointsNearWithTolerance(Point2d a, Point2d b, double tolerance)
+        {
+            return a.GetDistanceTo(b) <= tolerance;
         }
 
         private static bool DoSegmentsShareEndpoint(Point2d a0, Point2d a1, Point2d b0, Point2d b1, double endpointTol)
         {
-            bool Near(Point2d p, Point2d q) => p.GetDistanceTo(q) <= endpointTol;
-            return Near(a0, b0) || Near(a0, b1) || Near(a1, b0) || Near(a1, b1);
+            return ArePointsNearWithTolerance(a0, b0, endpointTol) ||
+                   ArePointsNearWithTolerance(a0, b1, endpointTol) ||
+                   ArePointsNearWithTolerance(a1, b0, endpointTol) ||
+                   ArePointsNearWithTolerance(a1, b1, endpointTol);
         }
 
         private static bool AreSegmentsDuplicateOrCollinearOverlap(Point2d a0, Point2d a1, Point2d b0, Point2d b1)
@@ -7625,8 +7135,8 @@ namespace AtsBackgroundBuilder
             const double distanceTol = 0.25;
             const double overlapTol = 0.20;
 
-            bool Near(Point2d p, Point2d q) => p.GetDistanceTo(q) <= endpointTol;
-            if ((Near(a0, b0) && Near(a1, b1)) || (Near(a0, b1) && Near(a1, b0)))
+            if ((ArePointsNearWithTolerance(a0, b0, endpointTol) && ArePointsNearWithTolerance(a1, b1, endpointTol)) ||
+                (ArePointsNearWithTolerance(a0, b1, endpointTol) && ArePointsNearWithTolerance(a1, b0, endpointTol)))
             {
                 return true;
             }

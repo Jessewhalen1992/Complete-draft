@@ -35,11 +35,11 @@ namespace WildlifeSweeps
 
                 if (result == System.Windows.Forms.DialogResult.OK)
                 {
-                    var description = NormalizeOtherValue(dialog.StandardizedDescription);
-                    var species = NormalizeOtherValue(dialog.SelectedSpecies);
-                    var findingType = NormalizeOtherValue(dialog.SelectedFindingType);
+                    var description = FindingOtherValueHelper.NormalizeOtherValue(dialog.StandardizedDescription, OtherValue);
+                    var species = FindingOtherValueHelper.NormalizeOtherValue(dialog.SelectedSpecies, OtherValue);
+                    var findingType = FindingOtherValueHelper.NormalizeOtherValue(dialog.SelectedFindingType, OtherValue);
 
-                    if (IsOtherValue(description))
+                    if (FindingOtherValueHelper.IsOtherValue(description, OtherValue))
                     {
                         if (string.IsNullOrWhiteSpace(species))
                         {
@@ -78,7 +78,8 @@ namespace WildlifeSweeps
 
                     if (!standardizer.IsValidPair(species, findingType))
                     {
-                        if (IsOtherValue(species) || IsOtherValue(findingType))
+                        if (FindingOtherValueHelper.IsOtherValue(species, OtherValue) ||
+                            FindingOtherValueHelper.IsOtherValue(findingType, OtherValue))
                         {
                             if (string.IsNullOrWhiteSpace(description))
                             {
@@ -112,7 +113,8 @@ namespace WildlifeSweeps
 
                     if (string.IsNullOrWhiteSpace(description))
                     {
-                        if (IsOtherValue(species) || IsOtherValue(findingType))
+                        if (FindingOtherValueHelper.IsOtherValue(species, OtherValue) ||
+                            FindingOtherValueHelper.IsOtherValue(findingType, OtherValue))
                         {
                             description = OtherValue;
                         }
@@ -202,23 +204,5 @@ namespace WildlifeSweeps
             return logPath;
         }
 
-        private static bool IsOtherValue(string? value)
-        {
-            return string.Equals(value, OtherValue, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static string NormalizeOtherValue(string? value)
-        {
-            var trimmed = value?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(trimmed))
-            {
-                return string.Empty;
-            }
-
-            var normalized = trimmed.TrimEnd('.');
-            return string.Equals(normalized, OtherValue, StringComparison.OrdinalIgnoreCase)
-                ? OtherValue
-                : trimmed;
-        }
     }
 }

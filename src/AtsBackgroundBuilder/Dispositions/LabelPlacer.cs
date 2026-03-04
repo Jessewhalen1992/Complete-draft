@@ -1275,6 +1275,14 @@ namespace AtsBackgroundBuilder.Dispositions
             return count;
         }
 
+        private static bool IsPointInRectBounds(Point2d point, Point2d min, Point2d max)
+        {
+            return point.X >= min.X &&
+                   point.X <= max.X &&
+                   point.Y >= min.Y &&
+                   point.Y <= max.Y;
+        }
+
         private static bool RectangleIntersectsPolyline(Extents3d rect, Polyline polyline)
         {
             if (polyline == null || polyline.NumberOfVertices < 2)
@@ -1289,8 +1297,6 @@ namespace AtsBackgroundBuilder.Dispositions
             var rtr = new Point2d(rmax.X, rmax.Y);
             var rtl = new Point2d(rmin.X, rmax.Y);
 
-            bool PointInRect(Point2d p) => p.X >= rmin.X && p.X <= rmax.X && p.Y >= rmin.Y && p.Y <= rmax.Y;
-
             int last = polyline.Closed ? polyline.NumberOfVertices : polyline.NumberOfVertices - 1;
             for (int i = 0; i < last; i++)
             {
@@ -1298,7 +1304,7 @@ namespace AtsBackgroundBuilder.Dispositions
                 var a = polyline.GetPoint2dAt(i);
                 var b = polyline.GetPoint2dAt(j);
 
-                if (PointInRect(a) || PointInRect(b))
+                if (IsPointInRectBounds(a, rmin, rmax) || IsPointInRectBounds(b, rmin, rmax))
                     return true;
 
                 if (SegmentsIntersect(a, b, rbl, rbr) ||
@@ -1321,30 +1327,19 @@ namespace AtsBackgroundBuilder.Dispositions
 
         private static bool SegmentsIntersect(Point2d p1, Point2d p2, Point2d q1, Point2d q2)
         {
-            static double Cross(Point2d a, Point2d b, Point2d c)
-            {
-                return (b.X - a.X) * (c.Y - a.Y) - (b.Y - a.Y) * (c.X - a.X);
-            }
-
-            static bool OnSegment(Point2d a, Point2d b, Point2d p)
-            {
-                return p.X >= Math.Min(a.X, b.X) - 1e-9 && p.X <= Math.Max(a.X, b.X) + 1e-9 &&
-                       p.Y >= Math.Min(a.Y, b.Y) - 1e-9 && p.Y <= Math.Max(a.Y, b.Y) + 1e-9;
-            }
-
-            var d1 = Cross(p1, p2, q1);
-            var d2 = Cross(p1, p2, q2);
-            var d3 = Cross(q1, q2, p1);
-            var d4 = Cross(q1, q2, p2);
+            var d1 = CrossForSegmentIntersection(p1, p2, q1);
+            var d2 = CrossForSegmentIntersection(p1, p2, q2);
+            var d3 = CrossForSegmentIntersection(q1, q2, p1);
+            var d4 = CrossForSegmentIntersection(q1, q2, p2);
 
             if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
                 ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0)))
                 return true;
 
-            if (Math.Abs(d1) <= 1e-9 && OnSegment(p1, p2, q1)) return true;
-            if (Math.Abs(d2) <= 1e-9 && OnSegment(p1, p2, q2)) return true;
-            if (Math.Abs(d3) <= 1e-9 && OnSegment(q1, q2, p1)) return true;
-            if (Math.Abs(d4) <= 1e-9 && OnSegment(q1, q2, p2)) return true;
+            if (Math.Abs(d1) <= 1e-9 && IsPointOnSegmentForIntersection(p1, p2, q1)) return true;
+            if (Math.Abs(d2) <= 1e-9 && IsPointOnSegmentForIntersection(p1, p2, q2)) return true;
+            if (Math.Abs(d3) <= 1e-9 && IsPointOnSegmentForIntersection(q1, q2, p1)) return true;
+            if (Math.Abs(d4) <= 1e-9 && IsPointOnSegmentForIntersection(q1, q2, p2)) return true;
 
             return false;
         }
@@ -1358,27 +1353,17 @@ namespace AtsBackgroundBuilder.Dispositions
             List<DispositionInfo> allDispositions)
         {
             var candidates = new List<Point2d>();
-            void AddCandidate(Point2d p)
-            {
-                foreach (var c in candidates)
-                {
-                    if (Math.Abs(c.X - p.X) < 1e-6 && Math.Abs(c.Y - p.Y) < 1e-6)
-                        return;
-                }
-                candidates.Add(p);
-            }
-
-            AddCandidate(preferred);
-            AddCandidate(intersectionTarget);
+            AddUniqueCandidatePoint(candidates, preferred);
+            AddUniqueCandidatePoint(candidates, intersectionTarget);
 
             var safe = GeometryUtils.GetSafeInteriorPoint(targetCorridor);
-            AddCandidate(safe);
+            AddUniqueCandidatePoint(candidates, safe);
 
             if (GeometryUtils.TryGetCrossSectionMidpoint(targetCorridor, intersectionTarget, out var mid, out _))
-                AddCandidate(mid);
+                AddUniqueCandidatePoint(candidates, mid);
 
             if (GeometryUtils.TryFindPointInsideBoth(quarter, targetCorridor, out var overlapPoint))
-                AddCandidate(overlapPoint);
+                AddUniqueCandidatePoint(candidates, overlapPoint);
 
             foreach (var p in candidates)
             {
@@ -1395,6 +1380,33 @@ namespace AtsBackgroundBuilder.Dispositions
             }
 
             return preferred;
+        }
+
+        private static double CrossForSegmentIntersection(Point2d a, Point2d b, Point2d c)
+        {
+            return ((b.X - a.X) * (c.Y - a.Y)) - ((b.Y - a.Y) * (c.X - a.X));
+        }
+
+        private static bool IsPointOnSegmentForIntersection(Point2d a, Point2d b, Point2d p)
+        {
+            return p.X >= Math.Min(a.X, b.X) - 1e-9 &&
+                   p.X <= Math.Max(a.X, b.X) + 1e-9 &&
+                   p.Y >= Math.Min(a.Y, b.Y) - 1e-9 &&
+                   p.Y <= Math.Max(a.Y, b.Y) + 1e-9;
+        }
+
+        private static void AddUniqueCandidatePoint(ICollection<Point2d> candidates, Point2d point)
+        {
+            foreach (var candidate in candidates)
+            {
+                if (Math.Abs(candidate.X - point.X) < 1e-6 &&
+                    Math.Abs(candidate.Y - point.Y) < 1e-6)
+                {
+                    return;
+                }
+            }
+
+            candidates.Add(point);
         }
 
         private static bool IsPointInsideAnyOtherDisposition(

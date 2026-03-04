@@ -229,13 +229,13 @@ namespace WildlifeSweeps
                     StandardizationSource.Skipped);
             }
 
-            var species = NormalizeOtherValue(promptResult.Species);
-            var findingType = NormalizeOtherValue(promptResult.FindingType);
-            var description = NormalizeOtherValue(promptResult.StandardDescription);
+            var species = FindingOtherValueHelper.NormalizeOtherValue(promptResult.Species, OtherValue);
+            var findingType = FindingOtherValueHelper.NormalizeOtherValue(promptResult.FindingType, OtherValue);
+            var description = FindingOtherValueHelper.NormalizeOtherValue(promptResult.StandardDescription, OtherValue);
 
             if (string.IsNullOrWhiteSpace(species) || string.IsNullOrWhiteSpace(findingType))
             {
-                if (IsOtherValue(description))
+                if (FindingOtherValueHelper.IsOtherValue(description, OtherValue))
                 {
                     if (string.IsNullOrWhiteSpace(species))
                     {
@@ -254,7 +254,9 @@ namespace WildlifeSweeps
                 }
             }
 
-            if (!IsValidPair(species, findingType) && !IsOtherValue(species) && !IsOtherValue(findingType))
+            if (!IsValidPair(species, findingType) &&
+                !FindingOtherValueHelper.IsOtherValue(species, OtherValue) &&
+                !FindingOtherValueHelper.IsOtherValue(findingType, OtherValue))
             {
                 var retry = promptForUnmapped(new PromptContext(preprocess.CleanedOriginal, preprocess.NormalizedText));
                 return ResolvePromptResult(preprocess, retry, promptForUnmapped);
@@ -262,7 +264,8 @@ namespace WildlifeSweeps
 
             if (string.IsNullOrWhiteSpace(description))
             {
-                if (IsOtherValue(species) || IsOtherValue(findingType))
+                if (FindingOtherValueHelper.IsOtherValue(species, OtherValue) ||
+                    FindingOtherValueHelper.IsOtherValue(findingType, OtherValue))
                 {
                     description = OtherValue;
                 }
@@ -416,25 +419,6 @@ namespace WildlifeSweeps
             species = resolved.Species;
             findingType = resolved.FindingType;
             return !string.IsNullOrWhiteSpace(species) && !string.IsNullOrWhiteSpace(findingType);
-        }
-
-        private static bool IsOtherValue(string? value)
-        {
-            return string.Equals(value, OtherValue, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static string NormalizeOtherValue(string? value)
-        {
-            var trimmed = value?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(trimmed))
-            {
-                return string.Empty;
-            }
-
-            var normalized = trimmed.TrimEnd('.');
-            return string.Equals(normalized, OtherValue, StringComparison.OrdinalIgnoreCase)
-                ? OtherValue
-                : trimmed;
         }
 
         internal readonly record struct StandardizedFinding(

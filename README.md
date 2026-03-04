@@ -33,6 +33,28 @@ Run the command:
 ATSBUILD
 ```
 
+## WLS Program Module
+
+This repository now also contains the Wildlife Sweeps codebase as a separate module:
+
+```
+wls_program/
+```
+
+Standalone WLS solution entry point:
+
+```
+wls_program/src/WildlifeSweeps/WildlifeSweeps.sln
+```
+
+Build from repository root:
+
+```powershell
+dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release
+```
+
+This keeps WLS isolated as its own project while allowing selective code/function reuse from the main ATS plugin when needed.
+
 ## Pre-AutoCAD Ops Gate
 
 Run the calibrated section-validation gate in one step:

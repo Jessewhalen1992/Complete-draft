@@ -27,100 +27,11 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForQuarterExtensionsConnectivity(a, b, clipWindows);
 
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForQuarterExtensionsConnectivity(ent, allowCollinearOpenPolyline: true, out a, out b);
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    // Accept multi-vertex open polylines only when effectively collinear.
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
-            }
 
             var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
             using (var tr = database.TransactionManager.StartTransaction())
@@ -159,7 +70,7 @@ namespace AtsBackgroundBuilder
 
                     if (string.Equals(ent.Layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
                     {
-                        if (IsVerticalLike(a, b))
+                        if (IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
                         {
                             qsecVerticalSegments.Add((a, b));
                         }
@@ -173,7 +84,7 @@ namespace AtsBackgroundBuilder
                         secTargetSegments.Add((a, b));
                         var isUsecLayer = string.Equals(ent.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase);
                         var isSecLayer = string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase);
-                        if ((isUsecLayer || isSecLayer) && IsVerticalLike(a, b))
+                        if ((isUsecLayer || isSecLayer) && IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
                         {
                             generatedVerticalUsecTargets.Add((a, b));
                         }
@@ -184,7 +95,7 @@ namespace AtsBackgroundBuilder
                     if (string.Equals(ent.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase))
                     {
                         usecBoundarySegments.Add((a, b));
-                        if (IsVerticalLike(a, b))
+                        if (IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
                         {
                             sourceVerticalUsecSegments.Add((a, b));
                         }
@@ -222,7 +133,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    var isVerticalQsec = IsVerticalLike(p0, p1);
+                    var isVerticalQsec = IsVerticalLikeForQuarterExtensionsConnectivity(p0, p1);
                     // Apply explicit rule:
                     // - Vertical 1/4 line: extend only S.1/4 endpoint (south end)
                     // - Horizontal 1/4 line: extend only W.1/4 endpoint (west end)
@@ -249,12 +160,12 @@ namespace AtsBackgroundBuilder
                     for (var si = 0; si < usecBoundarySegments.Count; si++)
                     {
                         var boundary = usecBoundarySegments[si];
-                        if (isVerticalQsec && !IsHorizontalLike(boundary.A, boundary.B))
+                        if (isVerticalQsec && !IsHorizontalLikeForQuarterExtensionsConnectivity(boundary.A, boundary.B))
                         {
                             continue;
                         }
 
-                        if (!isVerticalQsec && !IsVerticalLike(boundary.A, boundary.B))
+                        if (!isVerticalQsec && !IsVerticalLikeForQuarterExtensionsConnectivity(boundary.A, boundary.B))
                         {
                             continue;
                         }
@@ -283,12 +194,12 @@ namespace AtsBackgroundBuilder
                     for (var ti = 0; ti < secTargetSegments.Count; ti++)
                     {
                         var target = secTargetSegments[ti];
-                        if (isVerticalQsec && !IsHorizontalLike(target.A, target.B))
+                        if (isVerticalQsec && !IsHorizontalLikeForQuarterExtensionsConnectivity(target.A, target.B))
                         {
                             continue;
                         }
 
-                        if (!isVerticalQsec && !IsVerticalLike(target.A, target.B))
+                        if (!isVerticalQsec && !IsVerticalLikeForQuarterExtensionsConnectivity(target.A, target.B))
                         {
                             continue;
                         }
@@ -519,7 +430,7 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!IsAdjustableLsdLineSegment(p0, p1) || !IsHorizontalLike(p0, p1))
+                        if (!IsAdjustableLsdLineSegment(p0, p1) || !IsHorizontalLikeForQuarterExtensionsConnectivity(p0, p1))
                         {
                             continue;
                         }
@@ -662,81 +573,11 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForQuarterExtensionsConnectivity(a, b, clipWindows);
 
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForQuarterExtensionsConnectivity(ent, allowCollinearOpenPolyline: false, out a, out b);
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices != 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(1);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
-            }
 
             bool Near(Point2d p, Point2d q, double tol)
             {
@@ -773,7 +614,7 @@ namespace AtsBackgroundBuilder
                     {
                         var isUsecGeneratedLayer = string.Equals(ent.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase);
                         var isSecGeneratedLayer = string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase);
-                        if ((isUsecGeneratedLayer || isSecGeneratedLayer) && IsVerticalLike(a, b))
+                        if ((isUsecGeneratedLayer || isSecGeneratedLayer) && IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
                         {
                             generatedUsecVerticalTargets.Add((a, b, isUsecGeneratedLayer));
                         }
@@ -806,7 +647,7 @@ namespace AtsBackgroundBuilder
                     var isUsecLayer = string.Equals(ent.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase);
                     var isSecLayer = string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase);
                     sourceSegments.Add((id, a, b, isUsecLayer, isSecLayer));
-                    if (isUsecLayer && IsVerticalLike(a, b))
+                    if (isUsecLayer && IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
                     {
                         verticalUsecBoundaries.Add((a, b));
                     }
@@ -840,7 +681,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!IsHorizontalLike(src.A, src.B))
+                    if (!IsHorizontalLikeForQuarterExtensionsConnectivity(src.A, src.B))
                     {
                         continue;
                     }
@@ -859,7 +700,7 @@ namespace AtsBackgroundBuilder
                     var hasEastContinuation = false;
                     foreach (var other in sourceSegments)
                     {
-                        if (other.Id == src.Id || !IsHorizontalLike(other.A, other.B))
+                        if (other.Id == src.Id || !IsHorizontalLikeForQuarterExtensionsConnectivity(other.A, other.B))
                         {
                             continue;
                         }
@@ -1069,7 +910,7 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!TryReadOpenSegment(sibling, out var aSibling, out var bSibling) || !IsHorizontalLike(aSibling, bSibling))
+                        if (!TryReadOpenSegment(sibling, out var aSibling, out var bSibling) || !IsHorizontalLikeForQuarterExtensionsConnectivity(aSibling, bSibling))
                         {
                             continue;
                         }
@@ -1114,53 +955,6 @@ namespace AtsBackgroundBuilder
                     const double lsdOldMidpointTol = 8.5;
                     const double lsdMaxMove = 80.0;
 
-                    bool TryBestMidpoint(Point2d endpoint, out Point2d midpoint, out double bestDistance, out double moveDistance)
-                    {
-                        midpoint = endpoint;
-                        bestDistance = double.MaxValue;
-                        moveDistance = double.MaxValue;
-                        var bestSegDistance = double.MaxValue;
-
-                        for (var ei = 0; ei < lsdMidpointAdjustments.Count; ei++)
-                        {
-                            var adj = lsdMidpointAdjustments[ei];
-                            var segDistance = DistancePointToSegment(endpoint, adj.OldA, adj.OldB);
-                            if (segDistance > lsdOldSegmentTol)
-                            {
-                                continue;
-                            }
-
-                            var d = endpoint.GetDistanceTo(adj.OldMid);
-                            if (d > lsdOldMidpointTol)
-                            {
-                                continue;
-                            }
-
-                            var move = endpoint.GetDistanceTo(adj.NewMid);
-                            if (move <= endpointMoveTol || move > lsdMaxMove)
-                            {
-                                continue;
-                            }
-
-                            var isBetterSegment = segDistance < (bestSegDistance - 1e-6);
-                            var isTiedSegment = Math.Abs(segDistance - bestSegDistance) <= 1e-6;
-                            var isBetterMidDistance = isTiedSegment && d < (bestDistance - 1e-6);
-                            var isTiedMidDistance = isTiedSegment && Math.Abs(d - bestDistance) <= 1e-6;
-                            var isBetterMoveOnTie = isTiedMidDistance && move < moveDistance;
-                            if (!isBetterSegment && !isBetterMidDistance && !isBetterMoveOnTie)
-                            {
-                                continue;
-                            }
-
-                            bestSegDistance = segDistance;
-                            bestDistance = d;
-                            moveDistance = move;
-                            midpoint = adj.NewMid;
-                        }
-
-                        return bestDistance < double.MaxValue;
-                    }
-
                     foreach (var lsd in lsdSegments)
                     {
                         if (!(tr.GetObject(lsd.Id, OpenMode.ForWrite, false) is Entity writableLsd) || writableLsd.IsErased)
@@ -1178,8 +972,26 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var has0 = TryBestMidpoint(p0, out var mid0, out var d0, out _);
-                        var has1 = TryBestMidpoint(p1, out var mid1, out var d1, out _);
+                        var has0 = TrySelectBestLsdMidpointForQuarterExtensionsConnectivity(
+                            p0,
+                            lsdMidpointAdjustments,
+                            lsdOldSegmentTol,
+                            lsdOldMidpointTol,
+                            endpointMoveTol,
+                            lsdMaxMove,
+                            out var mid0,
+                            out var d0,
+                            out _);
+                        var has1 = TrySelectBestLsdMidpointForQuarterExtensionsConnectivity(
+                            p1,
+                            lsdMidpointAdjustments,
+                            lsdOldSegmentTol,
+                            lsdOldMidpointTol,
+                            endpointMoveTol,
+                            lsdMaxMove,
+                            out var mid1,
+                            out var d1,
+                            out _);
                         if (!has0 && !has1)
                         {
                             continue;
@@ -1264,98 +1076,14 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForQuarterExtensionsConnectivity(a, b, clipWindows);
 
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForQuarterExtensionsConnectivity(ent, allowCollinearOpenPolyline: false, out a, out b);
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
 
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices != 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(1);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
-            }
-
-            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
-            {
-                intersection = default;
-                var da = a1 - a0;
-                var db = b1 - b0;
-                var denom = Cross2d(da, db);
-                if (Math.Abs(denom) <= 1e-9)
-                {
-                    return false;
-                }
-
-                var diff = b0 - a0;
-                var t = Cross2d(diff, db) / denom;
-                intersection = a0 + (da * t);
-                return true;
-            }
+            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
+                TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(a0, a1, b0, b1, out intersection);
 
             var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
             using (var tr = database.TransactionManager.StartTransaction())
@@ -1404,22 +1132,22 @@ namespace AtsBackgroundBuilder
                     }
 
                     var generated = generatedSet.Contains(id);
-                    if (isUsec && generated && IsHorizontalLike(a, b))
+                    if (isUsec && generated && IsHorizontalLikeForQuarterExtensionsConnectivity(a, b))
                     {
                         horizontalSources.Add((id, a, b, generated));
                     }
-                    if (IsHorizontalLike(a, b))
+                    if (IsHorizontalLikeForQuarterExtensionsConnectivity(a, b))
                     {
                         horizontalRoadBoundaries.Add((id, a, b, isSec, isUsec, generated));
                     }
 
-                    if ((isUsec || isSec) && IsVerticalLike(a, b))
+                    if ((isUsec || isSec) && IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
                     {
                         verticalRoadBoundaries.Add((id, a, b));
                         verticalRoadCandidates.Add((id, a, b, isSec, isUsec, generated));
                     }
 
-                    if (isUsec && generated && IsVerticalLike(a, b))
+                    if (isUsec && generated && IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
                     {
                         var north = a;
                         var south = b;
@@ -1641,7 +1369,7 @@ namespace AtsBackgroundBuilder
                         return true;
                     }
 
-                    if (!IsHorizontalLike(sourceA, sourceB) || !IsVerticalLike(targetA, targetB))
+                    if (!IsHorizontalLikeForQuarterExtensionsConnectivity(sourceA, sourceB) || !IsVerticalLikeForQuarterExtensionsConnectivity(targetA, targetB))
                     {
                         return true;
                     }
@@ -1908,7 +1636,7 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!TryReadOpenSegment(sibling, out var aSibling, out var bSibling) || !IsHorizontalLike(aSibling, bSibling))
+                        if (!TryReadOpenSegment(sibling, out var aSibling, out var bSibling) || !IsHorizontalLikeForQuarterExtensionsConnectivity(aSibling, bSibling))
                         {
                             continue;
                         }
@@ -1953,53 +1681,6 @@ namespace AtsBackgroundBuilder
                     const double lsdOldMidpointTol = 12.0;
                     const double lsdMaxMove = 40.0;
 
-                    bool TryBestMidpoint(Point2d endpoint, out Point2d midpoint, out double bestDistance)
-                    {
-                        midpoint = endpoint;
-                        bestDistance = double.MaxValue;
-                        var bestSegDistance = double.MaxValue;
-                        var bestMoveDistance = double.MaxValue;
-
-                        for (var i = 0; i < lsdMidpointAdjustments.Count; i++)
-                        {
-                            var adj = lsdMidpointAdjustments[i];
-                            var segDistance = DistancePointToSegment(endpoint, adj.OldA, adj.OldB);
-                            if (segDistance > lsdOldSegmentTol)
-                            {
-                                continue;
-                            }
-
-                            var d = endpoint.GetDistanceTo(adj.OldMid);
-                            if (d > lsdOldMidpointTol)
-                            {
-                                continue;
-                            }
-
-                            var move = endpoint.GetDistanceTo(adj.NewMid);
-                            if (move <= endpointMoveTol || move > lsdMaxMove)
-                            {
-                                continue;
-                            }
-
-                            var betterSeg = segDistance < (bestSegDistance - 1e-6);
-                            var tiedSeg = Math.Abs(segDistance - bestSegDistance) <= 1e-6;
-                            var betterMid = tiedSeg && d < (bestDistance - 1e-6);
-                            var tiedMid = tiedSeg && Math.Abs(d - bestDistance) <= 1e-6;
-                            var betterMove = tiedMid && move < bestMoveDistance;
-                            if (!betterSeg && !betterMid && !betterMove)
-                            {
-                                continue;
-                            }
-
-                            bestSegDistance = segDistance;
-                            bestDistance = d;
-                            bestMoveDistance = move;
-                            midpoint = adj.NewMid;
-                        }
-
-                        return bestDistance < double.MaxValue;
-                    }
-
                     for (var i = 0; i < lsdSegments.Count; i++)
                     {
                         var lsd = lsdSegments[i];
@@ -2018,8 +1699,26 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var has0 = TryBestMidpoint(p0, out var mid0, out var d0);
-                        var has1 = TryBestMidpoint(p1, out var mid1, out var d1);
+                        var has0 = TrySelectBestLsdMidpointForQuarterExtensionsConnectivity(
+                            p0,
+                            lsdMidpointAdjustments,
+                            lsdOldSegmentTol,
+                            lsdOldMidpointTol,
+                            endpointMoveTol,
+                            lsdMaxMove,
+                            out var mid0,
+                            out var d0,
+                            out _);
+                        var has1 = TrySelectBestLsdMidpointForQuarterExtensionsConnectivity(
+                            p1,
+                            lsdMidpointAdjustments,
+                            lsdOldSegmentTol,
+                            lsdOldMidpointTol,
+                            endpointMoveTol,
+                            lsdMaxMove,
+                            out var mid1,
+                            out var d1,
+                            out _);
                         if (!has0 && !has1)
                         {
                             continue;
@@ -2223,7 +1922,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(readableWestSec, out var v0, out var v1) || !IsVerticalLike(v0, v1))
+                    if (!TryReadOpenSegment(readableWestSec, out var v0, out var v1) || !IsVerticalLikeForQuarterExtensionsConnectivity(v0, v1))
                     {
                         continue;
                     }
@@ -2439,67 +2138,12 @@ namespace AtsBackgroundBuilder
                 ? new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull))
                 : new HashSet<ObjectId>();
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForQuarterExtensionsConnectivity(a, b, clipWindows);
 
-                return false;
-            }
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
-            }
-
-            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
-            {
-                intersection = default;
-                var da = a1 - a0;
-                var db = b1 - b0;
-                var denom = Cross2d(da, db);
-                if (Math.Abs(denom) <= 1e-9)
-                {
-                    return false;
-                }
-
-                var diff = b0 - a0;
-                var t = Cross2d(diff, db) / denom;
-                intersection = a0 + (da * t);
-                    return true;
-                }
+            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
+                TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(a0, a1, b0, b1, out intersection);
 
                 bool TryGetUnitDirection(Point2d a, Point2d b, out Vector2d unit)
                 {
@@ -2559,8 +2203,8 @@ namespace AtsBackgroundBuilder
                         return;
                     }
 
-                    var horizontal = IsHorizontalLike(a, b);
-                    var vertical = IsVerticalLike(a, b);
+                    var horizontal = IsHorizontalLikeForQuarterExtensionsConnectivity(a, b);
+                    var vertical = IsVerticalLikeForQuarterExtensionsConnectivity(a, b);
                     if (!horizontal && !vertical)
                     {
                         return;
@@ -3122,8 +2766,8 @@ namespace AtsBackgroundBuilder
                         return false;
                     }
 
-                    var horizontal = IsHorizontalLike(newA, newB);
-                    var vertical = IsVerticalLike(newA, newB);
+                    var horizontal = IsHorizontalLikeForQuarterExtensionsConnectivity(newA, newB);
+                    var vertical = IsVerticalLikeForQuarterExtensionsConnectivity(newA, newB);
                     var axis = horizontal
                         ? 0.5 * (newA.Y + newB.Y)
                         : 0.5 * (newA.X + newB.X);
@@ -3397,154 +3041,25 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForQuarterExtensionsConnectivity(a, b, clipWindows);
 
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForQuarterExtensionsConnectivity(ent, allowCollinearOpenPolyline: false, out a, out b);
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForQuarterExtensionsConnectivity(writable, moveStart, target, moveTol);
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
 
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices != 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(1);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
-            }
-
-            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
-            {
-                if (writable is Line ln)
-                {
-                    var old = moveStart
-                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
-                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    if (moveStart)
-                    {
-                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
-                    }
-                    else
-                    {
-                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
-                    }
-
-                    return true;
-                }
-
-                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
-                {
-                    var index = moveStart ? 0 : pl.NumberOfVertices - 1;
-                    var old = pl.GetPoint2dAt(index);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    pl.SetPointAt(index, target);
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
 
             var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                bool IsPointInWindow(Point2d p, Extents3d window)
-                {
-                    return p.X >= window.MinPoint.X && p.X <= window.MaxPoint.X &&
-                           p.Y >= window.MinPoint.Y && p.Y <= window.MaxPoint.Y;
-                }
+                bool IsPointInWindow(Point2d p, Extents3d window) =>
+                    IsPointInWindowForQuarterExtensionsConnectivity(p, window);
 
-                bool DoesSegmentIntersectWindow(Point2d a, Point2d b, Extents3d window)
-                {
-                    return IsPointInWindow(a, window) ||
-                           IsPointInWindow(b, window) ||
-                           TryClipSegmentToWindow(a, b, window, out _, out _);
-                }
+                bool DoesSegmentIntersectWindow(Point2d a, Point2d b, Extents3d window) =>
+                    DoesSegmentIntersectWindowForQuarterExtensionsConnectivity(a, b, window);
 
-                bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
-                {
-                    intersection = default;
-                    var da = a1 - a0;
-                    var db = b1 - b0;
-                    var denom = Cross2d(da, db);
-                    if (Math.Abs(denom) <= 1e-9)
-                    {
-                        return false;
-                    }
-
-                    var diff = b0 - a0;
-                    var t = Cross2d(diff, db) / denom;
-                    intersection = a0 + (da * t);
-                    return true;
-                }
+                bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
+                    TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(a0, a1, b0, b1, out intersection);
 
                 // Ownership note for 30.16/20.11 logic:
                 // - west-side road allowances belong to the section on their west (left)
@@ -3632,8 +3147,6 @@ namespace AtsBackgroundBuilder
                     var eastUnit = sectionTarget.EastUnit;
                     var northUnit = sectionTarget.NorthUnit;
 
-                    double ToU(Point2d p) => (p - swCorner).DotProduct(eastUnit);
-                    double ToV(Point2d p) => (p - swCorner).DotProduct(northUnit);
                     bool EndpointTouchesHardConnector(Point2d endpoint, ObjectId sourceId)
                     {
                         const double connectorTol = 0.35;
@@ -3681,10 +3194,10 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
 
-                            var uA = ToU(seg.A);
-                            var vA = ToV(seg.A);
-                            var uB = ToU(seg.B);
-                            var vB = ToV(seg.B);
+                            var uA = ProjectPointToSectionU(swCorner, eastUnit, seg.A);
+                            var vA = ProjectPointToSectionV(swCorner, northUnit, seg.A);
+                            var uB = ProjectPointToSectionU(swCorner, eastUnit, seg.B);
+                            var vB = ProjectPointToSectionV(swCorner, northUnit, seg.B);
                             var eastComp = Math.Abs(d.DotProduct(eastUnit));
                             var northComp = Math.Abs(d.DotProduct(northUnit));
                             if (eastComp >= northComp)
@@ -3871,7 +3384,7 @@ namespace AtsBackgroundBuilder
                             var allowForceV = forcedVertical.IsUsecLayer && forceVMove <= maxEndpointGap;
                             if (allowForceV &&
                                 (EndpointTouchesHardConnector(forcedVertical.SouthPoint, forcedVertical.Id) ||
-                                 ToV(forcedTarget) > (forcedVertical.SouthV + 0.25)))
+                                 ProjectPointToSectionV(swCorner, northUnit, forcedTarget) > (forcedVertical.SouthV + 0.25)))
                             {
                                 allowForceV = false;
                             }
@@ -4007,7 +3520,7 @@ namespace AtsBackgroundBuilder
                             var vOldMoved = v.SouthPoint;
                             var vOldFixed = v.NorthPoint;
                             var vMove = v.SouthPoint.GetDistanceTo(target);
-                            var targetV = ToV(target);
+                            var targetV = ProjectPointToSectionV(swCorner, northUnit, target);
                             if (targetV > (v.SouthV + 0.25))
                             {
                                 continue;
@@ -4168,43 +3681,6 @@ namespace AtsBackgroundBuilder
                     const double maxWestwardDelta = 70.0;
                     const double ownershipUTol = 40.0;
                     const double ownershipVTol = 55.0;
-
-                    bool TryGetOwningSectionIndex(Point2d a, Point2d b, out int sectionIndex)
-                    {
-                        sectionIndex = -1;
-                        var mid = Midpoint(a, b);
-                        var bestDistance = double.MaxValue;
-                        for (var si = 0; si < owningSectionTargets.Count; si++)
-                        {
-                            var sectionTarget = owningSectionTargets[si];
-                            if (!DoesSegmentIntersectWindow(a, b, sectionTarget.Window) &&
-                                !IsPointInWindow(mid, sectionTarget.Window))
-                            {
-                                continue;
-                            }
-
-                            var midU = (mid - sectionTarget.SwCorner).DotProduct(sectionTarget.EastUnit);
-                            if (midU < -ownershipUTol || midU > (sectionTarget.Width + ownershipUTol))
-                            {
-                                continue;
-                            }
-
-                            var midV = (mid - sectionTarget.SwCorner).DotProduct(sectionTarget.NorthUnit);
-                            if (midV < -(primaryExpectedOffset + ownershipVTol) || midV > (sectionTarget.Height + ownershipVTol))
-                            {
-                                continue;
-                            }
-
-                            var d = mid.GetDistanceTo(sectionTarget.SwCorner);
-                            if (d < bestDistance)
-                            {
-                                bestDistance = d;
-                                sectionIndex = si;
-                            }
-                        }
-
-                        return sectionIndex >= 0;
-                    }
 
                     bool TrySelectSouthTargetMidpoint(
                         Point2d southEndpoint,
@@ -4458,7 +3934,14 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!TryGetOwningSectionIndex(p0, p1, out var sectionIndex))
+                        if (!TryGetOwningSectionIndexForQuarterExtensionsConnectivity(
+                                p0,
+                                p1,
+                                owningSectionTargets,
+                                ownershipUTol,
+                                -(primaryExpectedOffset + ownershipVTol),
+                                ownershipVTol,
+                                out var sectionIndex))
                         {
                             continue;
                         }
@@ -4467,7 +3950,7 @@ namespace AtsBackgroundBuilder
                         var moveStart = false;
                         var targetMid = default(Point2d);
                         var usedFallback = false;
-                        if (IsVerticalLike(p0, p1))
+                        if (IsVerticalLikeForQuarterExtensionsConnectivity(p0, p1))
                         {
                             var v0 = (p0 - sectionTarget.SwCorner).DotProduct(sectionTarget.NorthUnit);
                             var v1 = (p1 - sectionTarget.SwCorner).DotProduct(sectionTarget.NorthUnit);
@@ -4482,7 +3965,7 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
                         }
-                        else if (IsHorizontalLike(p0, p1))
+                        else if (IsHorizontalLikeForQuarterExtensionsConnectivity(p0, p1))
                         {
                             var u0 = (p0 - sectionTarget.SwCorner).DotProduct(sectionTarget.EastUnit);
                             var u1 = (p1 - sectionTarget.SwCorner).DotProduct(sectionTarget.EastUnit);
@@ -4690,153 +4173,25 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForQuarterExtensionsConnectivity(a, b, clipWindows);
 
-                return false;
-            }
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForQuarterExtensionsConnectivity(ent, allowCollinearOpenPolyline: false, out a, out b);
 
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForQuarterExtensionsConnectivity(writable, moveStart, target, moveTol, requireTwoVertexPolyline: true);
 
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
 
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices != 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(1);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                return false;
-            }
-
-            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol)
-            {
-                if (writable is Line ln)
-                {
-                    var old = moveStart
-                        ? new Point2d(ln.StartPoint.X, ln.StartPoint.Y)
-                        : new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    if (moveStart)
-                    {
-                        ln.StartPoint = new Point3d(target.X, target.Y, ln.StartPoint.Z);
-                    }
-                    else
-                    {
-                        ln.EndPoint = new Point3d(target.X, target.Y, ln.EndPoint.Z);
-                    }
-
-                    return true;
-                }
-
-                if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices == 2)
-                {
-                    var old = pl.GetPoint2dAt(moveStart ? 0 : 1);
-                    if (old.GetDistanceTo(target) <= moveTol)
-                    {
-                        return false;
-                    }
-
-                    pl.SetPointAt(moveStart ? 0 : 1, target);
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
-            }
 
             var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                bool IsPointInWindow(Point2d p, Extents3d window)
-                {
-                    return p.X >= window.MinPoint.X && p.X <= window.MaxPoint.X &&
-                           p.Y >= window.MinPoint.Y && p.Y <= window.MaxPoint.Y;
-                }
+                bool IsPointInWindow(Point2d p, Extents3d window) =>
+                    IsPointInWindowForQuarterExtensionsConnectivity(p, window);
 
-                bool DoesSegmentIntersectWindow(Point2d a, Point2d b, Extents3d window)
-                {
-                    return IsPointInWindow(a, window) ||
-                           IsPointInWindow(b, window) ||
-                           TryClipSegmentToWindow(a, b, window, out _, out _);
-                }
+                bool DoesSegmentIntersectWindow(Point2d a, Point2d b, Extents3d window) =>
+                    DoesSegmentIntersectWindowForQuarterExtensionsConnectivity(a, b, window);
 
-                bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
-                {
-                    intersection = default;
-                    var da = a1 - a0;
-                    var db = b1 - b0;
-                    var denom = Cross2d(da, db);
-                    if (Math.Abs(denom) <= 1e-9)
-                    {
-                        return false;
-                    }
-
-                    var diff = b0 - a0;
-                    var t = Cross2d(diff, db) / denom;
-                    intersection = a0 + (da * t);
-                    return true;
-                }
+                bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
+                    TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(a0, a1, b0, b1, out intersection);
 
                 var usecHorizontals = new List<(ObjectId Id, Point2d A, Point2d B, bool IsGenerated, bool IsUsecTwentyLayer, bool IsUsecBaseLayer)>();
                 var originalVerticals = new List<(ObjectId Id, Point2d A, Point2d B, bool IsSecLayer, bool IsGenerated, bool IsUsecZeroLayer)>();
@@ -4876,7 +4231,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (IsHorizontalLike(a, b))
+                    if (IsHorizontalLikeForQuarterExtensionsConnectivity(a, b))
                     {
                         if (isUsecLayer)
                         {
@@ -4884,7 +4239,7 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
-                    if (IsVerticalLike(a, b))
+                    if (IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
                     {
                         originalVerticals.Add((id, a, b, isSecLayer, generatedSet.Contains(id), isUsecZeroLayer));
                     }
@@ -4926,8 +4281,6 @@ namespace AtsBackgroundBuilder
                     var eastUnit = sectionTarget.EastUnit;
                     var northUnit = sectionTarget.NorthUnit;
 
-                    double ToU(Point2d p) => (p - swCorner).DotProduct(eastUnit);
-                    double ToV(Point2d p) => (p - swCorner).DotProduct(northUnit);
                     bool FirstPointIsSouth(Point2d p0, Point2d p1)
                     {
                         // Prefer world-Y south for endpoint selection; fall back to local-V only when nearly flat in Y.
@@ -4936,7 +4289,7 @@ namespace AtsBackgroundBuilder
                             return p0.Y <= p1.Y;
                         }
 
-                        return ToV(p0) <= ToV(p1);
+                        return ProjectPointToSectionV(swCorner, northUnit, p0) <= ProjectPointToSectionV(swCorner, northUnit, p1);
                     }
 
                     var southBandHorizontalSpans = new List<(double MinU, double MaxU)>();
@@ -4956,16 +4309,16 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var hVa = ToV(h.A);
-                        var hVb = ToV(h.B);
+                        var hVa = ProjectPointToSectionV(swCorner, northUnit, h.A);
+                        var hVb = ProjectPointToSectionV(swCorner, northUnit, h.B);
                         var hVLine = 0.5 * (hVa + hVb);
                         if (Math.Abs(Math.Abs(hVLine) - expectedSouthOffset) > southOffsetTol)
                         {
                             continue;
                         }
 
-                        var hUa = ToU(h.A);
-                        var hUb = ToU(h.B);
+                        var hUa = ProjectPointToSectionU(swCorner, eastUnit, h.A);
+                        var hUb = ProjectPointToSectionU(swCorner, eastUnit, h.B);
                         southBandHorizontalSpans.Add((Math.Min(hUa, hUb), Math.Max(hUa, hUb)));
                     }
 
@@ -5033,10 +4386,10 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var uA = ToU(seg.A);
-                        var uB = ToU(seg.B);
-                        var vA = ToV(seg.A);
-                        var vB = ToV(seg.B);
+                        var uA = ProjectPointToSectionU(swCorner, eastUnit, seg.A);
+                        var uB = ProjectPointToSectionU(swCorner, eastUnit, seg.B);
+                        var vA = ProjectPointToSectionV(swCorner, northUnit, seg.A);
+                        var vB = ProjectPointToSectionV(swCorner, northUnit, seg.B);
                         var uLine = 0.5 * (uA + uB);
                         var minV = Math.Min(vA, vB);
                         var maxV = Math.Max(vA, vB);
@@ -5178,8 +4531,8 @@ namespace AtsBackgroundBuilder
                     for (var bi = 0; bi < orderedBoundaryCandidates.Count; bi++)
                     {
                         var boundaryCandidate = orderedBoundaryCandidates[bi];
-                        var boundaryVa = ToV(boundaryCandidate.A);
-                        var boundaryVb = ToV(boundaryCandidate.B);
+                        var boundaryVa = ProjectPointToSectionV(swCorner, northUnit, boundaryCandidate.A);
+                        var boundaryVb = ProjectPointToSectionV(swCorner, northUnit, boundaryCandidate.B);
                         var southIsStart = FirstPointIsSouth(boundaryCandidate.A, boundaryCandidate.B);
                         var southPoint = southIsStart ? boundaryCandidate.A : boundaryCandidate.B;
                         var northPoint = southIsStart ? boundaryCandidate.B : boundaryCandidate.A;
@@ -5218,12 +4571,12 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
 
-                            var uA = ToU(seg.A);
-                            var uB = ToU(seg.B);
+                            var uA = ProjectPointToSectionU(swCorner, eastUnit, seg.A);
+                            var uB = ProjectPointToSectionU(swCorner, eastUnit, seg.B);
                             var minU = Math.Min(uA, uB);
                             var maxU = Math.Max(uA, uB);
-                            var vA = ToV(seg.A);
-                            var vB = ToV(seg.B);
+                            var vA = ProjectPointToSectionV(swCorner, northUnit, seg.A);
+                            var vB = ProjectPointToSectionV(swCorner, northUnit, seg.B);
                             var vLine = 0.5 * (vA + vB);
                             if (Math.Abs(Math.Abs(vLine) - expectedSouthOffset) > southOffsetTol)
                             {
@@ -5362,7 +4715,7 @@ namespace AtsBackgroundBuilder
                                 }
                             }
 
-                            var bestVLine = 0.5 * (ToV(best.SegmentA) + ToV(best.SegmentB));
+                            var bestVLine = 0.5 * (ProjectPointToSectionV(swCorner, northUnit, best.SegmentA) + ProjectPointToSectionV(swCorner, northUnit, best.SegmentB));
                             if (Math.Abs(Math.Abs(bestVLine) - expectedSouthOffset) > southBandMatchTol)
                             {
                                 continue;
@@ -5374,7 +4727,7 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
 
-                            if (!TryReadOpenSegment(horizontalEntity, out var h0, out var h1) || !IsHorizontalLike(h0, h1))
+                            if (!TryReadOpenSegment(horizontalEntity, out var h0, out var h1) || !IsHorizontalLikeForQuarterExtensionsConnectivity(h0, h1))
                             {
                                 rejectedNonHorizontalBoundary++;
                                 continue;
@@ -5400,7 +4753,7 @@ namespace AtsBackgroundBuilder
                                     }
 
                                     if (!TryReadOpenSegment(writableBoundaryInSpecial, out var b0Special, out var b1Special) ||
-                                        !IsVerticalLike(b0Special, b1Special))
+                                        !IsVerticalLikeForQuarterExtensionsConnectivity(b0Special, b1Special))
                                     {
                                         continue;
                                     }
@@ -5456,7 +4809,7 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!TryReadOpenSegment(writableBoundary, out var b0, out var b1) || !IsVerticalLike(b0, b1))
+                        if (!TryReadOpenSegment(writableBoundary, out var b0, out var b1) || !IsVerticalLikeForQuarterExtensionsConnectivity(b0, b1))
                         {
                             rejectedNonVerticalBoundary++;
                             continue;
@@ -5524,38 +4877,6 @@ namespace AtsBackgroundBuilder
                     const double southwardTol = 0.50;
                     const double maxSouthwardDelta = 70.0;
                     const double maxCenterlineOffset = 35.0;
-
-                    bool TryGetOwningSectionIndex(Point2d a, Point2d b, out int sectionIndex)
-                    {
-                        const double ownershipUTol = 40.0;
-                        sectionIndex = -1;
-                        var mid = Midpoint(a, b);
-                        var bestDistance = double.MaxValue;
-                        for (var si = 0; si < sectionTargets.Count; si++)
-                        {
-                            var sectionTarget = sectionTargets[si];
-                            if (!DoesSegmentIntersectWindow(a, b, sectionTarget.Window) &&
-                                !IsPointInWindow(mid, sectionTarget.Window))
-                            {
-                                continue;
-                            }
-
-                            var midU = (mid - sectionTarget.SwCorner).DotProduct(sectionTarget.EastUnit);
-                            if (midU < -ownershipUTol || midU > (sectionTarget.EastEdgeU + ownershipUTol))
-                            {
-                                continue;
-                            }
-
-                            var d = mid.GetDistanceTo(sectionTarget.SwCorner);
-                            if (d < bestDistance)
-                            {
-                                bestDistance = d;
-                                sectionIndex = si;
-                            }
-                        }
-
-                        return sectionIndex >= 0;
-                    }
 
                     bool TrySelectSouthTargetMidpoint(
                         Point2d southEndpoint,
@@ -5638,12 +4959,17 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!IsVerticalLike(p0, p1))
+                        if (!IsVerticalLikeForQuarterExtensionsConnectivity(p0, p1))
                         {
                             continue;
                         }
 
-                        if (!TryGetOwningSectionIndex(p0, p1, out var sectionIndex))
+                        if (!TryGetOwningSectionIndexForQuarterExtensionsConnectivity(
+                                p0,
+                                p1,
+                                sectionTargets,
+                                ownershipUTol: 40.0,
+                                out var sectionIndex))
                         {
                             continue;
                         }
@@ -5722,6 +5048,343 @@ namespace AtsBackgroundBuilder
             CleanupDuplicateBlindLineSegments(database, targetSectionIds, logger);
         }
 
+        private static bool IsHorizontalLikeForQuarterExtensionsConnectivity(Point2d a, Point2d b)
+        {
+            var d = b - a;
+            return Math.Abs(d.X) >= Math.Abs(d.Y);
+        }
+
+        private static bool IsPointInWindowForQuarterExtensionsConnectivity(Point2d point, Extents3d window)
+        {
+            return point.X >= window.MinPoint.X &&
+                   point.X <= window.MaxPoint.X &&
+                   point.Y >= window.MinPoint.Y &&
+                   point.Y <= window.MaxPoint.Y;
+        }
+
+        private static bool DoesSegmentIntersectWindowForQuarterExtensionsConnectivity(Point2d a, Point2d b, Extents3d window)
+        {
+            return IsPointInWindowForQuarterExtensionsConnectivity(a, window) ||
+                   IsPointInWindowForQuarterExtensionsConnectivity(b, window) ||
+                   TryClipSegmentToWindow(a, b, window, out _, out _);
+        }
+
+        private static bool TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(
+            Point2d a0,
+            Point2d a1,
+            Point2d b0,
+            Point2d b1,
+            out Point2d intersection)
+        {
+            intersection = default;
+            var da = a1 - a0;
+            var db = b1 - b0;
+            var denom = Cross2d(da, db);
+            if (Math.Abs(denom) <= 1e-9)
+            {
+                return false;
+            }
+
+            var diff = b0 - a0;
+            var t = Cross2d(diff, db) / denom;
+            intersection = a0 + (da * t);
+            return true;
+        }
+
+        private static bool IsPointInAnyWindowForQuarterExtensionsConnectivity(Point2d point, IReadOnlyList<Extents3d> clipWindows)
+        {
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                var window = clipWindows[i];
+                if (point.X >= window.MinPoint.X && point.X <= window.MaxPoint.X &&
+                    point.Y >= window.MinPoint.Y && point.Y <= window.MaxPoint.Y)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool DoesSegmentIntersectAnyWindowForQuarterExtensionsConnectivity(Point2d a, Point2d b, IReadOnlyList<Extents3d> clipWindows)
+        {
+            if (IsPointInAnyWindowForQuarterExtensionsConnectivity(a, clipWindows) ||
+                IsPointInAnyWindowForQuarterExtensionsConnectivity(b, clipWindows))
+            {
+                return true;
+            }
+
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryReadOpenSegmentForQuarterExtensionsConnectivity(
+            Entity ent,
+            bool allowCollinearOpenPolyline,
+            out Point2d a,
+            out Point2d b)
+        {
+            a = default;
+            b = default;
+            if (ent == null)
+            {
+                return false;
+            }
+
+            if (ent is Line line)
+            {
+                a = new Point2d(line.StartPoint.X, line.StartPoint.Y);
+                b = new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            if (ent is Polyline polyline)
+            {
+                if (polyline.Closed || polyline.NumberOfVertices < 2)
+                {
+                    return false;
+                }
+
+                if (!allowCollinearOpenPolyline && polyline.NumberOfVertices != 2)
+                {
+                    return false;
+                }
+
+                a = polyline.GetPoint2dAt(0);
+                b = polyline.GetPoint2dAt(polyline.NumberOfVertices - 1);
+                if (a.GetDistanceTo(b) <= 1e-4)
+                {
+                    return false;
+                }
+
+                if (allowCollinearOpenPolyline && polyline.NumberOfVertices > 2)
+                {
+                    const double collinearTol = 0.35;
+                    for (var vi = 1; vi < polyline.NumberOfVertices - 1; vi++)
+                    {
+                        var point = polyline.GetPoint2dAt(vi);
+                        if (DistancePointToInfiniteLine(point, a, b) > collinearTol)
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryMoveEndpointForQuarterExtensionsConnectivity(
+            Entity writable,
+            bool moveStart,
+            Point2d target,
+            double moveTol,
+            bool requireTwoVertexPolyline = false)
+        {
+            if (writable is Line line)
+            {
+                var old = moveStart
+                    ? new Point2d(line.StartPoint.X, line.StartPoint.Y)
+                    : new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                if (old.GetDistanceTo(target) <= moveTol)
+                {
+                    return false;
+                }
+
+                if (moveStart)
+                {
+                    line.StartPoint = new Point3d(target.X, target.Y, line.StartPoint.Z);
+                }
+                else
+                {
+                    line.EndPoint = new Point3d(target.X, target.Y, line.EndPoint.Z);
+                }
+
+                return true;
+            }
+
+            if (writable is Polyline polyline && !polyline.Closed && polyline.NumberOfVertices >= 2)
+            {
+                if (requireTwoVertexPolyline && polyline.NumberOfVertices != 2)
+                {
+                    return false;
+                }
+
+                var index = moveStart ? 0 : polyline.NumberOfVertices - 1;
+                var old = polyline.GetPoint2dAt(index);
+                if (old.GetDistanceTo(target) <= moveTol)
+                {
+                    return false;
+                }
+
+                polyline.SetPointAt(index, target);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TrySelectBestLsdMidpointForQuarterExtensionsConnectivity(
+            Point2d endpoint,
+            IReadOnlyList<(Point2d OldA, Point2d OldB, Point2d OldMid, Point2d NewMid)> midpointAdjustments,
+            double oldSegmentTol,
+            double oldMidpointTol,
+            double endpointMoveTol,
+            double maxMove,
+            out Point2d midpoint,
+            out double bestOldMidpointDistance,
+            out double bestMoveDistance)
+        {
+            midpoint = endpoint;
+            bestOldMidpointDistance = double.MaxValue;
+            bestMoveDistance = double.MaxValue;
+            var bestSegmentDistance = double.MaxValue;
+
+            for (var i = 0; i < midpointAdjustments.Count; i++)
+            {
+                var adj = midpointAdjustments[i];
+                var segmentDistance = DistancePointToSegment(endpoint, adj.OldA, adj.OldB);
+                if (segmentDistance > oldSegmentTol)
+                {
+                    continue;
+                }
+
+                var oldMidpointDistance = endpoint.GetDistanceTo(adj.OldMid);
+                if (oldMidpointDistance > oldMidpointTol)
+                {
+                    continue;
+                }
+
+                var moveDistance = endpoint.GetDistanceTo(adj.NewMid);
+                if (moveDistance <= endpointMoveTol || moveDistance > maxMove)
+                {
+                    continue;
+                }
+
+                var betterSegment = segmentDistance < (bestSegmentDistance - 1e-6);
+                var tiedSegment = Math.Abs(segmentDistance - bestSegmentDistance) <= 1e-6;
+                var betterMidpoint = tiedSegment && oldMidpointDistance < (bestOldMidpointDistance - 1e-6);
+                var tiedMidpoint = tiedSegment && Math.Abs(oldMidpointDistance - bestOldMidpointDistance) <= 1e-6;
+                var betterMove = tiedMidpoint && moveDistance < bestMoveDistance;
+                if (!betterSegment && !betterMidpoint && !betterMove)
+                {
+                    continue;
+                }
+
+                bestSegmentDistance = segmentDistance;
+                bestOldMidpointDistance = oldMidpointDistance;
+                bestMoveDistance = moveDistance;
+                midpoint = adj.NewMid;
+            }
+
+            return bestOldMidpointDistance < double.MaxValue;
+        }
+
+        private static bool TryGetOwningSectionIndexForQuarterExtensionsConnectivity(
+            Point2d a,
+            Point2d b,
+            IReadOnlyList<(ObjectId SectionId, Point2d SwCorner, Vector2d EastUnit, Vector2d NorthUnit, double Width, double Height, Extents3d Window)> sectionTargets,
+            double ownershipUTol,
+            double minV,
+            double upperVPad,
+            out int sectionIndex)
+        {
+            sectionIndex = -1;
+            var mid = Midpoint(a, b);
+            var bestDistance = double.MaxValue;
+            for (var i = 0; i < sectionTargets.Count; i++)
+            {
+                var sectionTarget = sectionTargets[i];
+                if (!DoesSegmentIntersectWindowForQuarterExtensionsConnectivity(a, b, sectionTarget.Window) &&
+                    !IsPointInWindowForQuarterExtensionsConnectivity(mid, sectionTarget.Window))
+                {
+                    continue;
+                }
+
+                var midU = ProjectPointToSectionU(sectionTarget.SwCorner, sectionTarget.EastUnit, mid);
+                if (midU < -ownershipUTol || midU > (sectionTarget.Width + ownershipUTol))
+                {
+                    continue;
+                }
+
+                var midV = ProjectPointToSectionV(sectionTarget.SwCorner, sectionTarget.NorthUnit, mid);
+                if (midV < minV || midV > (sectionTarget.Height + upperVPad))
+                {
+                    continue;
+                }
+
+                var distance = mid.GetDistanceTo(sectionTarget.SwCorner);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    sectionIndex = i;
+                }
+            }
+
+            return sectionIndex >= 0;
+        }
+
+        private static bool TryGetOwningSectionIndexForQuarterExtensionsConnectivity(
+            Point2d a,
+            Point2d b,
+            IReadOnlyList<(ObjectId SectionId, Point2d SwCorner, Vector2d EastUnit, Vector2d NorthUnit, Extents3d Window, double EastEdgeU, Point2d OriginalSeCorner, bool HasOriginalSeCorner)> sectionTargets,
+            double ownershipUTol,
+            out int sectionIndex)
+        {
+            sectionIndex = -1;
+            var mid = Midpoint(a, b);
+            var bestDistance = double.MaxValue;
+            for (var i = 0; i < sectionTargets.Count; i++)
+            {
+                var sectionTarget = sectionTargets[i];
+                if (!DoesSegmentIntersectWindowForQuarterExtensionsConnectivity(a, b, sectionTarget.Window) &&
+                    !IsPointInWindowForQuarterExtensionsConnectivity(mid, sectionTarget.Window))
+                {
+                    continue;
+                }
+
+                var midU = ProjectPointToSectionU(sectionTarget.SwCorner, sectionTarget.EastUnit, mid);
+                if (midU < -ownershipUTol || midU > (sectionTarget.EastEdgeU + ownershipUTol))
+                {
+                    continue;
+                }
+
+                var distance = mid.GetDistanceTo(sectionTarget.SwCorner);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    sectionIndex = i;
+                }
+            }
+
+            return sectionIndex >= 0;
+        }
+
+        private static bool IsVerticalLikeForQuarterExtensionsConnectivity(Point2d a, Point2d b)
+        {
+            var d = b - a;
+            return Math.Abs(d.Y) > Math.Abs(d.X);
+        }
+
+        private static double ProjectPointToSectionU(Point2d swCorner, Vector2d eastUnit, Point2d point)
+        {
+            return (point - swCorner).DotProduct(eastUnit);
+        }
+
+        private static double ProjectPointToSectionV(Point2d swCorner, Vector2d northUnit, Point2d point)
+        {
+            return (point - swCorner).DotProduct(northUnit);
+        }
+
         private static bool IsWestMostSectionForSeRaBoundary(int sectionNumber)
         {
             return (sectionNumber >= 1 && sectionNumber <= 6) ||
@@ -5730,3 +5393,4 @@ namespace AtsBackgroundBuilder
         }
     }
 }
+

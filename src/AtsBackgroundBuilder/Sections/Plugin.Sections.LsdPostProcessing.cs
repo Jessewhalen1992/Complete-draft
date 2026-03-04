@@ -39,180 +39,9 @@ namespace AtsBackgroundBuilder
             }
 
             var clipWindows = BuildBufferedQuarterWindows(database, uniqueQuarterInfos.Keys, 100.0);
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                if (clipWindows == null || clipWindows.Count == 0)
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (clipWindows == null || clipWindows.Count == 0)
-                {
-                    return true;
-                }
-
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-                {
-                    a = default;
-                    b = default;
-                    if (ent == null)
-                    {
-                        return false;
-                    }
-
-                    if (ent is Line ln)
-                    {
-                        a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                        b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                        return a.GetDistanceTo(b) > 1e-4;
-                    }
-
-                    if (ent is Polyline pl)
-                    {
-                        if (pl.Closed || pl.NumberOfVertices != 2)
-                        {
-                            return false;
-                        }
-
-                        a = pl.GetPoint2dAt(0);
-                        b = pl.GetPoint2dAt(1);
-                        return a.GetDistanceTo(b) > 1e-4;
-                    }
-
-                    return false;
-                }
-
-                bool TryGetEntityCenter(Entity ent, out Point2d center)
-                {
-                    center = default;
-                    if (ent == null)
-                    {
-                        return false;
-                    }
-
-                    try
-                    {
-                        var ext = ent.GeometricExtents;
-                        center = new Point2d(
-                            0.5 * (ext.MinPoint.X + ext.MaxPoint.X),
-                            0.5 * (ext.MinPoint.Y + ext.MaxPoint.Y));
-                        return true;
-                    }
-                    catch
-                    {
-                        if (ent is DBText dbt)
-                        {
-                            center = new Point2d(dbt.Position.X, dbt.Position.Y);
-                            return true;
-                        }
-
-                        if (ent is MText mt)
-                        {
-                            center = new Point2d(mt.Location.X, mt.Location.Y);
-                            return true;
-                        }
-
-                        if (ent is BlockReference br)
-                        {
-                            center = new Point2d(br.Position.X, br.Position.Y);
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
-
-                bool IsHorizontalLike(Point2d a, Point2d b)
-                {
-                    var d = b - a;
-                    return Math.Abs(d.X) >= Math.Abs(d.Y);
-                }
-
-                bool IsVerticalLike(Point2d a, Point2d b)
-                {
-                    var d = b - a;
-                    return Math.Abs(d.Y) > Math.Abs(d.X);
-                }
-
-                bool TryIntersectSegments(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
-                {
-                    intersection = default;
-                    var da = a1 - a0;
-                    var db = b1 - b0;
-                    var denom = Cross2d(da, db);
-                    if (Math.Abs(denom) <= 1e-9)
-                    {
-                        return false;
-                    }
-
-                    var diff = b0 - a0;
-                    var t = Cross2d(diff, db) / denom;
-                    var u = Cross2d(diff, da) / denom;
-                    if (t < -1e-6 || t > 1.0 + 1e-6 || u < -1e-6 || u > 1.0 + 1e-6)
-                    {
-                        return false;
-                    }
-
-                    intersection = a0 + (da * t);
-                    return true;
-                }
-
-                bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
-                {
-                    intersection = default;
-                    var da = a1 - a0;
-                    var db = b1 - b0;
-                    var denom = Cross2d(da, db);
-                    if (Math.Abs(denom) <= 1e-9)
-                    {
-                        return false;
-                    }
-
-                    var diff = b0 - a0;
-                    var t = Cross2d(diff, db) / denom;
-                    intersection = a0 + (da * t);
-                    return true;
-                }
-
-                bool IsPointInExpandedExtents(Point2d p, Extents3d ext, double tol)
-                {
-                    return p.X >= (ext.MinPoint.X - tol) && p.X <= (ext.MaxPoint.X + tol) &&
-                           p.Y >= (ext.MinPoint.Y - tol) && p.Y <= (ext.MaxPoint.Y + tol);
-                }
-
                 EnsureLayer(database, tr, "L-SECTION-LSD");
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
@@ -232,9 +61,9 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (TryReadOpenSegment(ent, out var a, out var b))
+                    if (TryReadOpenTwoVertexSegmentForLsd(ent, out var a, out var b))
                     {
-                        if (!DoesSegmentIntersectAnyWindow(a, b))
+                        if (!DoesSegmentIntersectLsdClipWindows(a, b, clipWindows))
                         {
                             continue;
                         }
@@ -242,16 +71,16 @@ namespace AtsBackgroundBuilder
                         var mid = Midpoint(a, b);
                         if (IsAdjustableLsdLineSegment(a, b))
                         {
-                            if (IsHorizontalLike(a, b))
+                            if (IsLsdHorizontalLike(a, b))
                             {
                                 horizontalLsdSegments.Add((a, b, mid));
                             }
-                            else if (IsVerticalLike(a, b))
+                            else if (IsLsdVerticalLike(a, b))
                             {
                                 verticalLsdSegments.Add((a, b, mid));
                             }
                         }
-                        else if (IsPointInAnyWindow(mid))
+                        else if (IsPointInLsdClipWindows(mid, clipWindows))
                         {
                             oldLabelEntities[id] = mid;
                         }
@@ -259,7 +88,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (TryGetEntityCenter(ent, out var center) && IsPointInAnyWindow(center))
+                    if (TryGetEntityCenterForLsd(ent, out var center) && IsPointInLsdClipWindows(center, clipWindows))
                     {
                         oldLabelEntities[id] = center;
                     }
@@ -305,10 +134,10 @@ namespace AtsBackgroundBuilder
                         0.5 * (quarterExtents.MinPoint.Y + quarterExtents.MaxPoint.Y));
                     const double quarterTol = 2.0;
                     var horizontalCandidates = horizontalLsdSegments
-                        .Where(s => IsPointInExpandedExtents(s.Mid, quarterExtents, quarterTol))
+                        .Where(s => IsPointInExpandedExtentsForLsd(s.Mid, quarterExtents, quarterTol))
                         .ToList();
                     var verticalCandidates = verticalLsdSegments
-                        .Where(s => IsPointInExpandedExtents(s.Mid, quarterExtents, quarterTol))
+                        .Where(s => IsPointInExpandedExtentsForLsd(s.Mid, quarterExtents, quarterTol))
                         .ToList();
                     if (horizontalCandidates.Count == 0 || verticalCandidates.Count == 0)
                     {
@@ -325,12 +154,12 @@ namespace AtsBackgroundBuilder
                         for (var vi = 0; vi < verticalCandidates.Count; vi++)
                         {
                             var v = verticalCandidates[vi];
-                            if (!TryIntersectSegments(h.A, h.B, v.A, v.B, out var intersection))
+                            if (!TryIntersectLsdSegments(h.A, h.B, v.A, v.B, out var intersection))
                             {
                                 continue;
                             }
 
-                            if (!IsPointInExpandedExtents(intersection, quarterExtents, quarterTol))
+                            if (!IsPointInExpandedExtentsForLsd(intersection, quarterExtents, quarterTol))
                             {
                                 continue;
                             }
@@ -353,8 +182,8 @@ namespace AtsBackgroundBuilder
                         var bestV = verticalCandidates
                             .OrderBy(s => DistancePointToSegment(quarterCenter, s.A, s.B))
                             .First();
-                        if (TryIntersectInfiniteLines(bestH.A, bestH.B, bestV.A, bestV.B, out var fallback) &&
-                            IsPointInExpandedExtents(fallback, quarterExtents, 4.0))
+                        if (TryIntersectLsdInfiniteLines(bestH.A, bestH.B, bestV.A, bestV.B, out var fallback) &&
+                            IsPointInExpandedExtentsForLsd(fallback, quarterExtents, 4.0))
                         {
                             foundTarget = true;
                             target = fallback;
@@ -374,7 +203,7 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!IsPointInExpandedExtents(old.Value, quarterExtents, quarterTol))
+                        if (!IsPointInExpandedExtentsForLsd(old.Value, quarterExtents, quarterTol))
                         {
                             continue;
                         }
@@ -421,54 +250,8 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-                {
-                    a = default;
-                    b = default;
-                    if (ent == null)
-                    {
-                        return false;
-                    }
-
-                    if (ent is Line ln)
-                    {
-                        a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                        b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                        return a.GetDistanceTo(b) > 1e-4;
-                    }
-
-                    if (ent is Polyline pl)
-                    {
-                        if (pl.Closed || pl.NumberOfVertices != 2)
-                        {
-                            return false;
-                        }
-
-                        a = pl.GetPoint2dAt(0);
-                        b = pl.GetPoint2dAt(1);
-                        return a.GetDistanceTo(b) > 1e-4;
-                    }
-
-                    return false;
-                }
-
                 var sectionBoundarySegments = new List<(Point2d A, Point2d B)>();
                 var lsdLineIds = new List<ObjectId>();
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
@@ -497,13 +280,13 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegment(ent, out var a, out var b))
+                    if (!TryReadOpenTwoVertexSegmentForLsd(ent, out var a, out var b))
                     {
                         continue;
                     }
 
                     var mid = Midpoint(a, b);
-                    if (!IsPointInAnyWindow(mid))
+                    if (!IsPointInLsdClipWindows(mid, clipWindows))
                     {
                         continue;
                     }
@@ -536,7 +319,7 @@ namespace AtsBackgroundBuilder
                     }
 
                     var center = Midpoint(p0, p1);
-                    if (!IsPointInAnyWindow(center))
+                    if (!IsPointInLsdClipWindows(center, clipWindows))
                     {
                         continue;
                     }
@@ -620,163 +403,6 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            bool IsPointInAnyWindow(Point2d p)
-            {
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    var w = clipWindows[i];
-                    if (p.X >= w.MinPoint.X && p.X <= w.MaxPoint.X &&
-                        p.Y >= w.MinPoint.Y && p.Y <= w.MaxPoint.Y)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b)
-            {
-                if (IsPointInAnyWindow(a) || IsPointInAnyWindow(b))
-                {
-                    return true;
-                }
-
-                for (var i = 0; i < clipWindows.Count; i++)
-                {
-                    if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b)
-            {
-                a = default;
-                b = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                if (ent is Line ln)
-                {
-                    a = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
-                    b = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
-                    return a.GetDistanceTo(b) > 1e-4;
-                }
-
-                if (ent is Polyline pl)
-                {
-                    if (pl.Closed || pl.NumberOfVertices < 2)
-                    {
-                        return false;
-                    }
-
-                    a = pl.GetPoint2dAt(0);
-                    b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                    if (a.GetDistanceTo(b) <= 1e-4)
-                    {
-                        return false;
-                    }
-
-                    if (pl.NumberOfVertices > 2)
-                    {
-                        const double collinearTol = 0.35;
-                        for (var vi = 1; vi < pl.NumberOfVertices - 1; vi++)
-                        {
-                            var p = pl.GetPoint2dAt(vi);
-                            if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
-                            {
-                                return false;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                return false;
-            }
-
-            bool IsHorizontalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.X) >= Math.Abs(d.Y);
-            }
-
-            bool IsVerticalLike(Point2d a, Point2d b)
-            {
-                var d = b - a;
-                return Math.Abs(d.Y) > Math.Abs(d.X);
-            }
-
-            bool TryGetEntityCenter(Entity ent, out Point2d center)
-            {
-                center = default;
-                if (ent == null)
-                {
-                    return false;
-                }
-
-                try
-                {
-                    var ext = ent.GeometricExtents;
-                    center = new Point2d(
-                        0.5 * (ext.MinPoint.X + ext.MaxPoint.X),
-                        0.5 * (ext.MinPoint.Y + ext.MaxPoint.Y));
-                    return true;
-                }
-                catch
-                {
-                    if (ent is DBText dbt)
-                    {
-                        center = new Point2d(dbt.Position.X, dbt.Position.Y);
-                        return true;
-                    }
-
-                    if (ent is MText mt)
-                    {
-                        center = new Point2d(mt.Location.X, mt.Location.Y);
-                        return true;
-                    }
-
-                    if (ent is BlockReference br)
-                    {
-                        center = new Point2d(br.Position.X, br.Position.Y);
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool TryIntersectSegments(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
-            {
-                intersection = default;
-                var da = a1 - a0;
-                var db = b1 - b0;
-                var denom = Cross2d(da, db);
-                if (Math.Abs(denom) <= 1e-9)
-                {
-                    return false;
-                }
-
-                var diff = b0 - a0;
-                var t = Cross2d(diff, db) / denom;
-                var u = Cross2d(diff, da) / denom;
-                if (t < -1e-6 || t > 1.0 + 1e-6 || u < -1e-6 || u > 1.0 + 1e-6)
-                {
-                    return false;
-                }
-
-                intersection = a0 + (da * t);
-                return true;
-            }
-
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var horizontalLsdSegments = new List<(Point2d A, Point2d B)>();
@@ -796,20 +422,20 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (TryReadOpenSegment(ent, out var a, out var b))
+                    if (TryReadOpenCollinearSegmentForLsd(ent, out var a, out var b))
                     {
                         if (IsAdjustableLsdLineSegment(a, b))
                         {
-                            if (!DoesSegmentIntersectAnyWindow(a, b))
+                            if (!DoesSegmentIntersectLsdClipWindows(a, b, clipWindows))
                             {
                                 continue;
                             }
 
-                            if (IsHorizontalLike(a, b))
+                            if (IsLsdHorizontalLike(a, b))
                             {
                                 horizontalLsdSegments.Add((a, b));
                             }
-                            else if (IsVerticalLike(a, b))
+                            else if (IsLsdVerticalLike(a, b))
                             {
                                 verticalLsdSegments.Add((a, b));
                             }
@@ -818,7 +444,7 @@ namespace AtsBackgroundBuilder
                         }
 
                         var shortMid = Midpoint(a, b);
-                        if (IsPointInAnyWindow(shortMid))
+                        if (IsPointInLsdClipWindows(shortMid, clipWindows))
                         {
                             labelEntityCenters[id] = shortMid;
                         }
@@ -826,7 +452,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (TryGetEntityCenter(ent, out var center) && IsPointInAnyWindow(center))
+                    if (TryGetEntityCenterForLsd(ent, out var center) && IsPointInLsdClipWindows(center, clipWindows))
                     {
                         labelEntityCenters[id] = center;
                     }
@@ -848,12 +474,12 @@ namespace AtsBackgroundBuilder
                     for (var vi = 0; vi < verticalLsdSegments.Count; vi++)
                     {
                         var v = verticalLsdSegments[vi];
-                        if (!TryIntersectSegments(h.A, h.B, v.A, v.B, out var intersection))
+                        if (!TryIntersectLsdSegments(h.A, h.B, v.A, v.B, out var intersection))
                         {
                             continue;
                         }
 
-                        if (!IsPointInAnyWindow(intersection))
+                        if (!IsPointInLsdClipWindows(intersection, clipWindows))
                         {
                             continue;
                         }
@@ -1044,6 +670,237 @@ namespace AtsBackgroundBuilder
                     logger?.WriteLine($"Cleanup: skipped {ambiguousClustersSkipped} ambiguous LSD label cluster snap(s).");
                 }
             }
+        }
+
+        private static bool IsPointInLsdClipWindows(Point2d point, IReadOnlyList<Extents3d> clipWindows)
+        {
+            if (clipWindows == null || clipWindows.Count == 0)
+            {
+                return true;
+            }
+
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                var window = clipWindows[i];
+                if (point.X >= window.MinPoint.X && point.X <= window.MaxPoint.X &&
+                    point.Y >= window.MinPoint.Y && point.Y <= window.MaxPoint.Y)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool DoesSegmentIntersectLsdClipWindows(
+            Point2d a,
+            Point2d b,
+            IReadOnlyList<Extents3d> clipWindows)
+        {
+            if (clipWindows == null || clipWindows.Count == 0)
+            {
+                return true;
+            }
+
+            if (IsPointInLsdClipWindows(a, clipWindows) || IsPointInLsdClipWindows(b, clipWindows))
+            {
+                return true;
+            }
+
+            for (var i = 0; i < clipWindows.Count; i++)
+            {
+                if (TryClipSegmentToWindow(a, b, clipWindows[i], out _, out _))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryReadOpenTwoVertexSegmentForLsd(Entity ent, out Point2d a, out Point2d b)
+        {
+            a = default;
+            b = default;
+            if (ent == null)
+            {
+                return false;
+            }
+
+            if (ent is Line line)
+            {
+                a = new Point2d(line.StartPoint.X, line.StartPoint.Y);
+                b = new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            if (ent is Polyline polyline)
+            {
+                if (polyline.Closed || polyline.NumberOfVertices != 2)
+                {
+                    return false;
+                }
+
+                a = polyline.GetPoint2dAt(0);
+                b = polyline.GetPoint2dAt(1);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            return false;
+        }
+
+        private static bool TryReadOpenCollinearSegmentForLsd(Entity ent, out Point2d a, out Point2d b)
+        {
+            a = default;
+            b = default;
+            if (ent == null)
+            {
+                return false;
+            }
+
+            if (ent is Line line)
+            {
+                a = new Point2d(line.StartPoint.X, line.StartPoint.Y);
+                b = new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                return a.GetDistanceTo(b) > 1e-4;
+            }
+
+            if (ent is Polyline polyline)
+            {
+                if (polyline.Closed || polyline.NumberOfVertices < 2)
+                {
+                    return false;
+                }
+
+                a = polyline.GetPoint2dAt(0);
+                b = polyline.GetPoint2dAt(polyline.NumberOfVertices - 1);
+                if (a.GetDistanceTo(b) <= 1e-4)
+                {
+                    return false;
+                }
+
+                if (polyline.NumberOfVertices > 2)
+                {
+                    const double collinearTol = 0.35;
+                    for (var vi = 1; vi < polyline.NumberOfVertices - 1; vi++)
+                    {
+                        var p = polyline.GetPoint2dAt(vi);
+                        if (DistancePointToInfiniteLine(p, a, b) > collinearTol)
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryGetEntityCenterForLsd(Entity ent, out Point2d center)
+        {
+            center = default;
+            if (ent == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var ext = ent.GeometricExtents;
+                center = new Point2d(
+                    0.5 * (ext.MinPoint.X + ext.MaxPoint.X),
+                    0.5 * (ext.MinPoint.Y + ext.MaxPoint.Y));
+                return true;
+            }
+            catch
+            {
+                if (ent is DBText dbText)
+                {
+                    center = new Point2d(dbText.Position.X, dbText.Position.Y);
+                    return true;
+                }
+
+                if (ent is MText mText)
+                {
+                    center = new Point2d(mText.Location.X, mText.Location.Y);
+                    return true;
+                }
+
+                if (ent is BlockReference blockReference)
+                {
+                    center = new Point2d(blockReference.Position.X, blockReference.Position.Y);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsLsdHorizontalLike(Point2d a, Point2d b)
+        {
+            var delta = b - a;
+            return Math.Abs(delta.X) >= Math.Abs(delta.Y);
+        }
+
+        private static bool IsLsdVerticalLike(Point2d a, Point2d b)
+        {
+            var delta = b - a;
+            return Math.Abs(delta.Y) > Math.Abs(delta.X);
+        }
+
+        private static bool TryIntersectLsdSegments(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection)
+        {
+            intersection = default;
+            var da = a1 - a0;
+            var db = b1 - b0;
+            var denom = Cross2d(da, db);
+            if (Math.Abs(denom) <= 1e-9)
+            {
+                return false;
+            }
+
+            var diff = b0 - a0;
+            var t = Cross2d(diff, db) / denom;
+            var u = Cross2d(diff, da) / denom;
+            if (t < -1e-6 || t > 1.0 + 1e-6 || u < -1e-6 || u > 1.0 + 1e-6)
+            {
+                return false;
+            }
+
+            intersection = a0 + (da * t);
+            return true;
+        }
+
+        private static bool TryIntersectLsdInfiniteLines(
+            Point2d a0,
+            Point2d a1,
+            Point2d b0,
+            Point2d b1,
+            out Point2d intersection)
+        {
+            intersection = default;
+            var da = a1 - a0;
+            var db = b1 - b0;
+            var denom = Cross2d(da, db);
+            if (Math.Abs(denom) <= 1e-9)
+            {
+                return false;
+            }
+
+            var diff = b0 - a0;
+            var t = Cross2d(diff, db) / denom;
+            intersection = a0 + (da * t);
+            return true;
+        }
+
+        private static bool IsPointInExpandedExtentsForLsd(Point2d point, Extents3d extents, double tolerance)
+        {
+            return point.X >= (extents.MinPoint.X - tolerance) &&
+                   point.X <= (extents.MaxPoint.X + tolerance) &&
+                   point.Y >= (extents.MinPoint.Y - tolerance) &&
+                   point.Y <= (extents.MaxPoint.Y + tolerance);
         }
     }
 }
