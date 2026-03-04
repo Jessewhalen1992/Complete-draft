@@ -1040,7 +1040,7 @@ namespace AtsBackgroundBuilder
 
                         var eastInset = frame.EastEdgeU - u;
                         var northInset = frame.NorthEdgeV - v;
-                        var insetTarget = RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters;
+                        var insetTarget = RoadAllowanceSecWidthMeters;
                         var insetScore = Math.Abs(eastInset - insetTarget) + Math.Abs(northInset - insetTarget);
                         var endpointPenalty = hasEndpointNode ? endpointDistance * 8.0 : 120.0;
                         var score =
@@ -1412,15 +1412,68 @@ namespace AtsBackgroundBuilder
                             dividerRelB.DotProduct(frame.EastUnit));
                     }
 
-                    var quarterDirectionInset = RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters;
-                    var westExpectedOffset = quarterDirectionInset;
+                    // East quarter ownership currently targets SEC-width inset.
+                    var eastExpectedOffset = RoadAllowanceSecWidthMeters;
+                    var isBlindSouthBoundarySection = IsBlindSouthBoundarySectionForQuarterView(frame.SectionNumber);
+                    var usecZeroSegments = boundarySegments
+                        .Where(s => string.Equals(s.Layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    var secOrUsecZeroSegments = boundarySegments
+                        .Where(s =>
+                            string.Equals(s.Layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(s.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(s.Layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    var westResolutionSegments = secOrUsecZeroSegments.Count > 0
+                        ? (IReadOnlyList<(Point2d A, Point2d B, string Layer)>)secOrUsecZeroSegments
+                        : boundarySegments;
+                    var southResolutionSegments = secOrUsecZeroSegments.Count > 0
+                        ? (IReadOnlyList<(Point2d A, Point2d B, string Layer)>)secOrUsecZeroSegments
+                        : boundarySegments;
+                    var hasWestUsecZeroOwnershipCandidate = TryResolveQuarterViewWestBoundaryU(
+                        frame,
+                        usecZeroSegments,
+                        RoadAllowanceUsecWidthMeters,
+                        dividerPreferredU,
+                        out _,
+                        out _,
+                        out _,
+                        out _);
+                    var hasSouthUsecZeroOwnershipCandidate = !isBlindSouthBoundarySection &&
+                                                             TryResolveQuarterViewSouthBoundaryV(
+                                                                 frame,
+                                                                 usecZeroSegments,
+                                                                 RoadAllowanceUsecWidthMeters,
+                                                                 dividerPreferredU,
+                                                                 dividerLineA,
+                                                                 dividerLineB,
+                                                                 out _,
+                                                                 out _,
+                                                                 out _,
+                                                                 out _);
+                    // Side-specific ownership targets:
+                    // - west: prefer USEC-width when a west L-USEC-0 ownership candidate exists, otherwise SEC-width.
+                    // - south: same rule for surveyed south sections; blind south keeps legacy zero-offset behavior.
+                    var westExpectedOffset = hasWestUsecZeroOwnershipCandidate
+                        ? RoadAllowanceUsecWidthMeters
+                        : RoadAllowanceSecWidthMeters;
                     var westBoundaryU = frame.WestEdgeU - westExpectedOffset;
-                    var southFallbackOffset = IsBlindSouthBoundarySectionForQuarterView(frame.SectionNumber)
+                    var southFallbackOffset = isBlindSouthBoundarySection
                         ? 0.0
-                        : quarterDirectionInset;
+                        : (hasSouthUsecZeroOwnershipCandidate
+                            ? RoadAllowanceUsecWidthMeters
+                            : RoadAllowanceSecWidthMeters);
+                    // If a L-USEC-0 west ownership candidate exists, do not permit downgrade fallback.
+                    var allowWestInsetDowngrade = !hasWestUsecZeroOwnershipCandidate;
                     var southBoundaryV = frame.SouthEdgeV - southFallbackOffset;
-                    var westSource = "fallback-20.12";
-                    var southSource = southFallbackOffset > 0.0 ? "fallback-20.12" : "fallback-blind";
+                    var westSource = westExpectedOffset >= (RoadAllowanceUsecWidthMeters - 0.5)
+                        ? "fallback-30.16"
+                        : "fallback-20.12";
+                    var southSource = southFallbackOffset <= 0.0
+                        ? "fallback-blind"
+                        : (southFallbackOffset >= (RoadAllowanceUsecWidthMeters - 0.5)
+                            ? "fallback-30.16"
+                            : "fallback-20.12");
                     var hasResolvedWest = false;
                     var hasWestBoundarySegment = false;
                     var westBoundarySegmentA = default(Point2d);
@@ -1441,13 +1494,42 @@ namespace AtsBackgroundBuilder
 
                     hasResolvedWest = TryResolveQuarterViewWestBoundaryU(
                         frame,
-                        boundarySegments,
+                        westResolutionSegments,
                         westExpectedOffset,
                         dividerPreferredU,
                         out var resolvedWestU,
                         out var resolvedWestLayer,
                         out var resolvedWestA,
                         out var resolvedWestB);
+                    if (!hasResolvedWest &&
+                        westExpectedOffset >= (RoadAllowanceUsecWidthMeters - 0.5) &&
+                        allowWestInsetDowngrade)
+                    {
+                        // Fallback to SEC-width ownership when USEC-width candidates are absent.
+                        var secWidthInset = RoadAllowanceSecWidthMeters;
+                        hasResolvedWest = TryResolveQuarterViewWestBoundaryU(
+                            frame,
+                            westResolutionSegments,
+                            secWidthInset,
+                            dividerPreferredU,
+                            out resolvedWestU,
+                            out resolvedWestLayer,
+                            out resolvedWestA,
+                            out resolvedWestB);
+                    }
+                    if (!hasResolvedWest && westExpectedOffset > 0.5 && allowWestInsetDowngrade)
+                    {
+                        // Final fallback keeps legacy near-edge behavior when no offset-class candidate survives filters.
+                        hasResolvedWest = TryResolveQuarterViewWestBoundaryU(
+                            frame,
+                            westResolutionSegments,
+                            0.0,
+                            dividerPreferredU,
+                            out resolvedWestU,
+                            out resolvedWestLayer,
+                            out resolvedWestA,
+                            out resolvedWestB);
+                    }
                     if (hasResolvedWest)
                     {
                         westBoundaryU = resolvedWestU;
@@ -1485,6 +1567,11 @@ namespace AtsBackgroundBuilder
                                 out resolvedB))
                         {
                             return true;
+                        }
+
+                        if (!allowWestInsetDowngrade)
+                        {
+                            return false;
                         }
 
                         // Regression guard: if geometry has already shifted section edge inward,
@@ -1545,6 +1632,8 @@ namespace AtsBackgroundBuilder
                             "L-SEC-2012",
                             LayerUsecZero
                         };
+
+                        // First pass: prefer a full-width inward road-allowance candidate.
                         for (var li = 0; li < preferredEastLayers.Length; li++)
                         {
                             var layer = preferredEastLayers[li];
@@ -1552,6 +1641,7 @@ namespace AtsBackgroundBuilder
                                     frame,
                                     boundarySegments,
                                     layer,
+                                    eastExpectedOffset,
                                     out resolvedEastA,
                                     out resolvedEastB))
                             {
@@ -1560,6 +1650,28 @@ namespace AtsBackgroundBuilder
 
                             resolvedEastLayer = layer;
                             return true;
+                        }
+
+                        // Fallback: preserve legacy near-edge behavior when full-width geometry is unavailable.
+                        if (eastExpectedOffset > 0.5)
+                        {
+                            for (var li = 0; li < preferredEastLayers.Length; li++)
+                            {
+                                var layer = preferredEastLayers[li];
+                                if (!TryResolveQuarterViewEastBoundarySegmentOnLayer(
+                                        frame,
+                                        boundarySegments,
+                                        layer,
+                                        0.0,
+                                        out resolvedEastA,
+                                        out resolvedEastB))
+                                {
+                                    continue;
+                                }
+
+                                resolvedEastLayer = layer;
+                                return true;
+                            }
                         }
 
                         return false;
@@ -1604,28 +1716,70 @@ namespace AtsBackgroundBuilder
                         southBoundarySegmentB = correctionSouthB;
                         hasSouthBoundarySegment = true;
                     }
-                    else if (TryResolveQuarterViewSouthBoundaryV(
-                                 frame,
-                                 boundarySegments,
-                                  southFallbackOffset,
-                                 dividerPreferredU,
-                                 dividerLineA,
-                                 dividerLineB,
-                                 out var resolvedSouthV,
-                                 out var resolvedSouthLayer,
-                                 out var resolvedSouthA,
-                                 out var resolvedSouthB))
+                    else
                     {
-                        southBoundaryV = resolvedSouthV;
-                        southSource = resolvedSouthLayer;
-                        southBoundarySegmentA = resolvedSouthA;
-                        southBoundarySegmentB = resolvedSouthB;
-                        hasSouthBoundarySegment = true;
+                        var hasResolvedSouth = TryResolveQuarterViewSouthBoundaryV(
+                            frame,
+                            southResolutionSegments,
+                            southFallbackOffset,
+                            dividerPreferredU,
+                            dividerLineA,
+                            dividerLineB,
+                            out var resolvedSouthV,
+                            out var resolvedSouthLayer,
+                            out var resolvedSouthA,
+                            out var resolvedSouthB);
+
+                        if (!hasResolvedSouth &&
+                            !isBlindSouthBoundarySection &&
+                            southFallbackOffset <= (RoadAllowanceSecWidthMeters + 0.5))
+                        {
+                            // If SEC-width matching misses, allow a USEC-width retry for mixed/tight geometry.
+                            hasResolvedSouth = TryResolveQuarterViewSouthBoundaryV(
+                                frame,
+                                southResolutionSegments,
+                                RoadAllowanceUsecWidthMeters,
+                                dividerPreferredU,
+                                dividerLineA,
+                                dividerLineB,
+                                out resolvedSouthV,
+                                out resolvedSouthLayer,
+                                out resolvedSouthA,
+                                out resolvedSouthB);
+                        }
+
+                        if (!hasResolvedSouth &&
+                            !isBlindSouthBoundarySection &&
+                            southFallbackOffset >= (RoadAllowanceUsecWidthMeters - 0.5))
+                        {
+                            // Symmetric retry back to SEC-width when USEC-width detection is noisy.
+                            hasResolvedSouth = TryResolveQuarterViewSouthBoundaryV(
+                                frame,
+                                southResolutionSegments,
+                                RoadAllowanceSecWidthMeters,
+                                dividerPreferredU,
+                                dividerLineA,
+                                dividerLineB,
+                                out resolvedSouthV,
+                                out resolvedSouthLayer,
+                                out resolvedSouthA,
+                                out resolvedSouthB);
+                        }
+
+                        if (hasResolvedSouth)
+                        {
+                            southBoundaryV = resolvedSouthV;
+                            southSource = resolvedSouthLayer;
+                            southBoundarySegmentA = resolvedSouthA;
+                            southBoundarySegmentB = resolvedSouthB;
+                            hasSouthBoundarySegment = true;
+                        }
                     }
 
                     if (!IsBlindSouthBoundarySectionForQuarterView(frame.SectionNumber) &&
                         hasSouthBoundarySegment &&
-                        string.Equals(southSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
+                        string.Equals(southSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase) &&
+                        southFallbackOffset <= (RoadAllowanceSecWidthMeters + 0.5))
                     {
                         bool TryResolvePreferredSouthBoundary(
                             IReadOnlyList<(Point2d A, Point2d B, string Layer)> candidates,
@@ -1647,7 +1801,7 @@ namespace AtsBackgroundBuilder
                             if (TryResolveQuarterViewSouthBoundaryV(
                                     frame,
                                     candidates,
-                                    quarterDirectionInset,
+                                    southFallbackOffset,
                                     dividerPreferredU,
                                     dividerLineA,
                                     dividerLineB,
@@ -1659,8 +1813,7 @@ namespace AtsBackgroundBuilder
                                 return true;
                             }
 
-                            // Regression guard: allow 20.12-class fallback even when section-edge
-                            // normalization already consumed the expected inset.
+                            // Regression guard: allow near-edge fallback for SEC-width ownership.
                             return TryResolveQuarterViewSouthBoundaryV(
                                 frame,
                                 candidates,
@@ -1676,9 +1829,6 @@ namespace AtsBackgroundBuilder
 
                         var preferredSouthSegments = boundarySegments
                             .Where(s =>
-                                string.Equals(s.Layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(s.Layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(s.Layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
                                 string.Equals(s.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
                                 string.Equals(s.Layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
                             .ToList();
@@ -1897,8 +2047,11 @@ namespace AtsBackgroundBuilder
                         var currentOutwardDistance = hasSouthBoundarySegment
                             ? ResolveOutwardDistanceAtMidU(southBoundarySegmentA, southBoundarySegmentB, southBoundaryV)
                             : (frame.SouthEdgeV - southBoundaryV);
-                        var candidateError = Math.Abs(candidateOutwardDistance - quarterDirectionInset);
-                        var currentError = Math.Abs(currentOutwardDistance - quarterDirectionInset);
+                        var southPromotionTargetInset = southFallbackOffset > 0.5
+                            ? southFallbackOffset
+                            : RoadAllowanceSecWidthMeters;
+                        var candidateError = Math.Abs(candidateOutwardDistance - southPromotionTargetInset);
+                        var currentError = Math.Abs(currentOutwardDistance - southPromotionTargetInset);
                         if (candidateError + minPromotionImprovement < currentError)
                         {
                             promotedCorrectionSouthBoundary = true;
@@ -3341,6 +3494,7 @@ namespace AtsBackgroundBuilder
                     frame,
                     boundarySegments,
                     LayerUsecZero,
+                    0.0,
                     out var eastUsecZeroA,
                     out var eastUsecZeroB) &&
                 TryIntersectBoundarySegmentWithLocalLine(
@@ -4401,6 +4555,7 @@ namespace AtsBackgroundBuilder
             QuarterViewSectionFrame frame,
             IReadOnlyList<(Point2d A, Point2d B, string Layer)> segments,
             string targetLayer,
+            double expectedInsetMeters,
             out Point2d segmentA,
             out Point2d segmentB)
         {
@@ -4411,10 +4566,12 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
+            const double axisTolerance = 0.5;
             const double overlapPadding = 16.0;
             const double minProjectedOverlap = 20.0;
-            const double minOffset = -60.0;
             const double maxOffset = 60.0;
+            const double minRoadAllowanceOffset = 5.0;
+            const double maxTargetOffsetError = 6.0;
             var found = false;
             var bestScore = double.MaxValue;
             for (var i = 0; i < segments.Count; i++)
@@ -4457,13 +4614,27 @@ namespace AtsBackgroundBuilder
                     }
                 }
 
-                var offsetFromEast = uAtMidV - frame.EastEdgeU;
-                if (offsetFromEast < minOffset || offsetFromEast > maxOffset)
+                // Positive inward distance means the candidate lies west of the east edge.
+                var inwardDistance = frame.EastEdgeU - uAtMidV;
+                if (inwardDistance < -axisTolerance || inwardDistance > maxOffset)
                 {
                     continue;
                 }
 
-                var score = Math.Abs(offsetFromEast);
+                var targetOffset = Math.Max(0.0, expectedInsetMeters);
+                if (targetOffset >= minRoadAllowanceOffset &&
+                    inwardDistance < minRoadAllowanceOffset)
+                {
+                    continue;
+                }
+
+                if (targetOffset >= minRoadAllowanceOffset &&
+                    Math.Abs(inwardDistance - targetOffset) > maxTargetOffsetError)
+                {
+                    continue;
+                }
+
+                var score = Math.Abs(inwardDistance - targetOffset);
                 if (!found || score < bestScore)
                 {
                     found = true;

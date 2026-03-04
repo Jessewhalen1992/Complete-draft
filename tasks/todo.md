@@ -3277,3 +3277,36 @@
 - Verification:
   - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -nologo`
   - succeeded (`0 Warning(s)`, `0 Error(s)`).
+
+# Follow-up (Quarter Ownership Full 20.12 Baseline, 2026-03-04)
+
+- [x] Switch quarter ownership inset target from `RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters` to full `RoadAllowanceUsecWidthMeters`.
+- [x] Update east-boundary selector to prefer inward west-side candidates using expected inset targeting, with legacy near-edge fallback.
+- [x] Rebuild ATS and redeploy DLL/PDB to COMPASS plugin folder.
+- [ ] User retest on baseline section(s) (`6-65-3-W6`, then `12-65-3-W6`) and confirm south/west/east quarter boundaries.
+
+- Iteration after baseline report (`south 10.05 below RA`, `west using east boundary`):
+  - Added west/south boundary fallback resolution ladder: full-width inset -> SEC-width inset -> near-edge fallback, preventing synthetic raw-offset fallback when real candidates exist.
+  - Kept east-side inward selection and full-width targeting, with near-edge fallback retained.
+  - Rebuilt and redeployed ATS DLL/PDB for immediate user retest.
+- Iteration after user retest (`south good`, `west still missing RA where south surveyed + west unsurveyed`):
+  - Gated west inset downgrade paths (`20.12 -> 10.05 -> 0`) to blind-south sections only.
+  - Prevented preferred-west promotion from downgrading to zero-offset fallback when south is surveyed.
+  - Rebuilt and redeployed ATS DLL/PDB for user validation.
+- Iteration after next retest (`west fixed`, `south no longer includes RA`):
+  - Removed south downgrade ladder that could demote surveyed south from full-width ownership (`20.12`) to SEC/near-edge candidates.
+  - Restored direct south boundary resolution against the active ownership target only.
+  - Rebuilt and redeployed ATS DLL/PDB for immediate retest.
+- Iteration after next retest (`south ~10.06 too far south`):
+  - Corrected quarter ownership inset class from `RoadAllowanceUsecWidthMeters` (`30.16`) to `RoadAllowanceSecWidthMeters` (`20.11`) for quarter boundary targeting.
+  - Updated both frame-level quarter inset targeting and NE hard-corner inset scoring to use SEC-width ownership.
+  - Rebuilt and redeployed ATS DLL/PDB for immediate retest.
+- Iteration after next retest (`west now ~10.06 east of target`):
+  - Split ownership offsets by side: kept south/east on SEC-width (`20.11`) while restoring west expected inset to USEC-width (`30.16`).
+  - Updated west fallback source tag for clarity (`fallback-30.16`).
+  - Rebuilt and redeployed ATS DLL/PDB for immediate retest.
+- Iteration after next retest (`6-64-3-W6 south 30.18 treated as 20.12`, `32-64-3-W6 west treated as 20.12`):
+  - Switched west/south ownership resolution to layer-guided candidate pools (`L-SEC`, `L-SEC-2012`, `L-USEC-0`) before broad fallbacks.
+  - Added side-specific USEC-zero detection to choose 30.16 vs 20.11 ownership target per side instead of one global inset.
+  - Prevented forced zero-layer demotion on sides already classified as USEC-width ownership.
+  - Rebuilt and redeployed ATS DLL/PDB for immediate retest.
