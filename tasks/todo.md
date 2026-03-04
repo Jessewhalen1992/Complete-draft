@@ -3258,3 +3258,22 @@
   - Added stricter non-correction NE handling so `N.E. N.E.` uses strict east×north segment intersection (`VERIFY-QTR-NE-NE-STRICT`) instead of apparent infinite-line intersection.
   - Enabled quarter verify logging for section 9 to expose the exact NE authority path during user retest.
   - Rebuilt and redeployed `AtsBackgroundBuilder.dll` + `.pdb` to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows`.
+
+# Follow-up (NE Corner Refactor Cleanup, 2026-03-04)
+
+- [x] Extract non-correction NE endpoint fallback scoring into dedicated helpers.
+- [x] Replace inline/local logic in `SectionDrawingLsd` with helper calls while preserving behavior.
+- [x] Rebuild ATS and confirm compile stability after refactor.
+
+## Review (NE Corner Refactor Cleanup, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - replaced deeply nested non-correction NE fallback block with `TryResolveNonCorrectionNorthEastFromEastEndpoints(...)`.
+  - extracted scoring and endpoint-node checks to focused helpers:
+    - `TryScoreNonCorrectionNorthEastEndpointCandidate(...)`
+    - `HasQuarterViewHorizontalEndpointNode(...)`
+    - `IsQuarterViewHorizontalSegment(...)`
+  - preserved existing verification log strings and decision behavior.
+- Verification:
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -nologo`
+  - succeeded (`0 Warning(s)`, `0 Error(s)`).

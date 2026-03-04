@@ -2738,121 +2738,31 @@ namespace AtsBackgroundBuilder
                                 // Do not fall back to apparent/projection-only solutions that require extension-only intersections.
                                 if (!resolvedByHardNode)
                                 {
-                                    var haveA = TryConvertQuarterWorldToLocal(frame, eastBoundarySegmentA, out var eastAu, out var eastAv);
-                                    var haveB = TryConvertQuarterWorldToLocal(frame, eastBoundarySegmentB, out var eastBu, out var eastBv);
-                                    if (!haveA)
+                                    if (TryResolveNonCorrectionNorthEastFromEastEndpoints(
+                                            frame,
+                                            boundarySegments,
+                                            eastBoundarySegmentA,
+                                            eastBoundarySegmentB,
+                                            northBoundarySegmentA,
+                                            northBoundarySegmentB,
+                                            out var endpointFallbackLocal))
                                     {
-                                        var eastRelA = eastBoundarySegmentA - frame.Origin;
-                                        eastAu = eastRelA.DotProduct(frame.EastUnit);
-                                        eastAv = eastRelA.DotProduct(frame.NorthUnit);
-                                        haveA = true;
-                                    }
-
-                                    if (!haveB)
-                                    {
-                                        var eastRelB = eastBoundarySegmentB - frame.Origin;
-                                        eastBu = eastRelB.DotProduct(frame.EastUnit);
-                                        eastBv = eastRelB.DotProduct(frame.NorthUnit);
-                                        haveB = true;
-                                    }
-
-                                    if (haveA && haveB)
-                                    {
-                                        bool IsHorizontalBoundarySegment(Point2d a, Point2d b)
-                                        {
-                                            var delta = b - a;
-                                            var eastComp = Math.Abs(delta.DotProduct(frame.EastUnit));
-                                            var northComp = Math.Abs(delta.DotProduct(frame.NorthUnit));
-                                            return eastComp > northComp;
-                                        }
-
-                                        bool HasHorizontalEndpointNode(Point2d worldPoint, double endpointTol)
-                                        {
-                                            for (var si = 0; si < boundarySegments.Count; si++)
-                                            {
-                                                var seg = boundarySegments[si];
-                                                if (!IsQuarterViewBoundaryCandidateLayer(seg.Layer) ||
-                                                    !IsHorizontalBoundarySegment(seg.A, seg.B))
-                                                {
-                                                    continue;
-                                                }
-
-                                                if (worldPoint.GetDistanceTo(seg.A) <= endpointTol ||
-                                                    worldPoint.GetDistanceTo(seg.B) <= endpointTol)
-                                                {
-                                                    return true;
-                                                }
-                                            }
-
-                                            return false;
-                                        }
-
-                                        bool TryScoreEastEndpointCandidate(
-                                            Point2d endpointWorld,
-                                            double endpointU,
-                                            double endpointV,
-                                            out double score)
-                                        {
-                                            score = double.MaxValue;
-                                            const double endpointNodeTol = 1.25;
-                                            const double northBoundaryTouchTol = 1.25;
-                                            var northBoundaryDistance =
-                                                DistancePointToSegment(endpointWorld, northBoundarySegmentA, northBoundarySegmentB);
-                                            var hasHorizontalNode = HasHorizontalEndpointNode(endpointWorld, endpointNodeTol);
-                                            var nearNorthBoundary = northBoundaryDistance <= northBoundaryTouchTol;
-                                            if (!hasHorizontalNode && !nearNorthBoundary)
-                                            {
-                                                return false;
-                                            }
-
-                                            var northInset = Math.Abs(frame.NorthEdgeV - endpointV);
-                                            score = ((hasHorizontalNode ? 0.0 : 20.0) +
-                                                     (nearNorthBoundary ? 0.0 : 10.0) +
-                                                     (northBoundaryDistance * 6.0) +
-                                                     (northInset * 0.35) +
-                                                     (Math.Abs(frame.EastEdgeU - endpointU) * 0.25));
-                                            return true;
-                                        }
-
-                                        var bestUseA = false;
-                                        var haveScoredEndpoint = false;
-                                        if (TryScoreEastEndpointCandidate(eastBoundarySegmentA, eastAu, eastAv, out var scoreA))
-                                        {
-                                            bestUseA = true;
-                                            haveScoredEndpoint = true;
-                                            var bestScore = scoreA;
-                                            if (TryScoreEastEndpointCandidate(eastBoundarySegmentB, eastBu, eastBv, out var scoreB) &&
-                                                scoreB < bestScore)
-                                            {
-                                                bestUseA = false;
-                                                bestScore = scoreB;
-                                            }
-                                        }
-                                        else if (TryScoreEastEndpointCandidate(eastBoundarySegmentB, eastBu, eastBv, out _))
-                                        {
-                                            bestUseA = false;
-                                            haveScoredEndpoint = true;
-                                        }
-
-                                        if (haveScoredEndpoint)
-                                        {
-                                            northAtEastU = bestUseA ? eastAu : eastBu;
-                                            northAtEastV = bestUseA ? eastAv : eastBv;
-                                            northEastLockedByApparentIntersection = true;
-                                            resolvedByHardNode = true;
-                                            if (emitQuarterVerify)
-                                            {
-                                                logger?.WriteLine(
-                                                    $"VERIFY-QTR-NE-NE-ENDPT-FALLBACK sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
-                                                    $"u={northAtEastU:0.###} v={northAtEastV:0.###} note=east-endpoint-with-north-node");
-                                            }
-                                        }
-                                        else if (emitQuarterVerify)
+                                        northAtEastU = endpointFallbackLocal.X;
+                                        northAtEastV = endpointFallbackLocal.Y;
+                                        northEastLockedByApparentIntersection = true;
+                                        resolvedByHardNode = true;
+                                        if (emitQuarterVerify)
                                         {
                                             logger?.WriteLine(
-                                                $"VERIFY-QTR-NE-NE-ENDPT-FALLBACK-SKIP sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
-                                                "note=no-north-node-linked-east-endpoint-kept-prior-ne");
+                                                $"VERIFY-QTR-NE-NE-ENDPT-FALLBACK sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                                $"u={northAtEastU:0.###} v={northAtEastV:0.###} note=east-endpoint-with-north-node");
                                         }
+                                    }
+                                    else if (emitQuarterVerify)
+                                    {
+                                        logger?.WriteLine(
+                                            $"VERIFY-QTR-NE-NE-ENDPT-FALLBACK-SKIP sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                            "note=no-north-node-linked-east-endpoint-kept-prior-ne");
                                     }
                                 }
 
@@ -3474,6 +3384,163 @@ namespace AtsBackgroundBuilder
                    string.Equals(layerName, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(layerName, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(layerName, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryResolveNonCorrectionNorthEastFromEastEndpoints(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            Point2d eastBoundarySegmentA,
+            Point2d eastBoundarySegmentB,
+            Point2d northBoundarySegmentA,
+            Point2d northBoundarySegmentB,
+            out Point2d resolvedLocal)
+        {
+            resolvedLocal = default;
+            if (boundarySegments == null || boundarySegments.Count == 0)
+            {
+                return false;
+            }
+
+            var haveA = TryConvertQuarterWorldToLocal(frame, eastBoundarySegmentA, out var eastAu, out var eastAv);
+            if (!haveA)
+            {
+                var eastRelA = eastBoundarySegmentA - frame.Origin;
+                eastAu = eastRelA.DotProduct(frame.EastUnit);
+                eastAv = eastRelA.DotProduct(frame.NorthUnit);
+                haveA = true;
+            }
+
+            var haveB = TryConvertQuarterWorldToLocal(frame, eastBoundarySegmentB, out var eastBu, out var eastBv);
+            if (!haveB)
+            {
+                var eastRelB = eastBoundarySegmentB - frame.Origin;
+                eastBu = eastRelB.DotProduct(frame.EastUnit);
+                eastBv = eastRelB.DotProduct(frame.NorthUnit);
+                haveB = true;
+            }
+
+            if (!haveA || !haveB)
+            {
+                return false;
+            }
+
+            var haveScoredEndpoint = false;
+            var bestUseA = false;
+            var bestScore = double.MaxValue;
+            if (TryScoreNonCorrectionNorthEastEndpointCandidate(
+                    frame,
+                    boundarySegments,
+                    eastBoundarySegmentA,
+                    northBoundarySegmentA,
+                    northBoundarySegmentB,
+                    eastAu,
+                    eastAv,
+                    out var scoreA))
+            {
+                haveScoredEndpoint = true;
+                bestUseA = true;
+                bestScore = scoreA;
+            }
+
+            if (TryScoreNonCorrectionNorthEastEndpointCandidate(
+                    frame,
+                    boundarySegments,
+                    eastBoundarySegmentB,
+                    northBoundarySegmentA,
+                    northBoundarySegmentB,
+                    eastBu,
+                    eastBv,
+                    out var scoreB) &&
+                (!haveScoredEndpoint || scoreB < bestScore))
+            {
+                haveScoredEndpoint = true;
+                bestUseA = false;
+                bestScore = scoreB;
+            }
+
+            if (!haveScoredEndpoint)
+            {
+                return false;
+            }
+
+            resolvedLocal = bestUseA ? new Point2d(eastAu, eastAv) : new Point2d(eastBu, eastBv);
+            return true;
+        }
+
+        private static bool TryScoreNonCorrectionNorthEastEndpointCandidate(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            Point2d endpointWorld,
+            Point2d northBoundarySegmentA,
+            Point2d northBoundarySegmentB,
+            double endpointU,
+            double endpointV,
+            out double score)
+        {
+            score = double.MaxValue;
+            const double endpointNodeTol = 1.25;
+            const double northBoundaryTouchTol = 1.25;
+            var northBoundaryDistance =
+                DistancePointToSegment(endpointWorld, northBoundarySegmentA, northBoundarySegmentB);
+            var hasHorizontalNode = HasQuarterViewHorizontalEndpointNode(
+                frame,
+                boundarySegments,
+                endpointWorld,
+                endpointNodeTol);
+            var nearNorthBoundary = northBoundaryDistance <= northBoundaryTouchTol;
+            if (!hasHorizontalNode && !nearNorthBoundary)
+            {
+                return false;
+            }
+
+            var northInset = Math.Abs(frame.NorthEdgeV - endpointV);
+            score = ((hasHorizontalNode ? 0.0 : 20.0) +
+                     (nearNorthBoundary ? 0.0 : 10.0) +
+                     (northBoundaryDistance * 6.0) +
+                     (northInset * 0.35) +
+                     (Math.Abs(frame.EastEdgeU - endpointU) * 0.25));
+            return true;
+        }
+
+        private static bool HasQuarterViewHorizontalEndpointNode(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            Point2d worldPoint,
+            double endpointTol)
+        {
+            if (boundarySegments == null || boundarySegments.Count == 0)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < boundarySegments.Count; i++)
+            {
+                var seg = boundarySegments[i];
+                if (!IsQuarterViewBoundaryCandidateLayer(seg.Layer) ||
+                    !IsQuarterViewHorizontalSegment(frame, seg.A, seg.B))
+                {
+                    continue;
+                }
+
+                if (worldPoint.GetDistanceTo(seg.A) <= endpointTol ||
+                    worldPoint.GetDistanceTo(seg.B) <= endpointTol)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsQuarterViewHorizontalSegment(
+            QuarterViewSectionFrame frame,
+            Point2d a,
+            Point2d b)
+        {
+            var delta = b - a;
+            var eastComp = Math.Abs(delta.DotProduct(frame.EastUnit));
+            var northComp = Math.Abs(delta.DotProduct(frame.NorthUnit));
+            return eastComp > northComp;
         }
 
         private static bool TryResolveQuarterViewVerticalDividerSegmentFromQsec(
