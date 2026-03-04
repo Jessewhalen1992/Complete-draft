@@ -516,7 +516,7 @@ namespace AtsBackgroundBuilder
                 var erased = 0;
                 foreach (ObjectId id in modelSpace)
                 {
-                    if (!(transaction.GetObject(id, OpenMode.ForWrite, false) is Entity ent) || ent.IsErased)
+                    if (!(transaction.GetObject(id, OpenMode.ForRead, false) is Entity ent) || ent.IsErased)
                     {
                         continue;
                     }
@@ -536,8 +536,16 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    ent.Erase();
-                    erased++;
+                    try
+                    {
+                        ent.UpgradeOpen();
+                        ent.Erase();
+                        erased++;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        // Ignore locked/invalid entities and continue rebuilding quarter view.
+                    }
                 }
 
                 var drawn = 0;
@@ -1890,7 +1898,7 @@ namespace AtsBackgroundBuilder
                 var snappedBoxes = 0;
                 foreach (ObjectId id in modelSpace)
                 {
-                    if (!(transaction.GetObject(id, OpenMode.ForWrite, false) is Polyline box) || box.IsErased || !box.Closed)
+                    if (!(transaction.GetObject(id, OpenMode.ForRead, false) is Polyline box) || box.IsErased || !box.Closed)
                     {
                         continue;
                     }
@@ -1912,6 +1920,16 @@ namespace AtsBackgroundBuilder
 
                     if (!ExtentsIntersectAnyQuarterWindow(extents, frames) || box.NumberOfVertices < 3)
                     {
+                        continue;
+                    }
+
+                    try
+                    {
+                        box.UpgradeOpen();
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        // Ignore locked/invalid entities and continue rebuilding quarter view.
                         continue;
                     }
 

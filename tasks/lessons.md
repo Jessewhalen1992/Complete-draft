@@ -151,3 +151,4 @@
 - For west/south quarter ownership, use layer intent to choose class per side: `L-USEC-0` indicates USEC-width ownership, while `L-SEC`/`L-SEC-2012` indicate SEC-width ownership; do not resolve these sides from broad mixed-layer pools first.
 - When users report "old ATS behavior" after a pull, always verify `main` is fast-forwarded to `origin/main`, rebuild both `WildlifeSweeps` and `AtsBackgroundBuilder`, and log the resolved ATS assembly version/path at runtime before further geometry changes.
 - When AutoCAD is unavailable/locked, prioritize ATS-only refactors that are behavior-preserving and provable by local build + decision tests; defer any refactor that needs in-drawing validation until user test windows reopen.
+- In PLSR flows, never use canonical normalized DISP keys (which may trim leading zeros) as user-facing display/output values; keep a separate display DISP parsed from XML/label text and use canonical keys only for matching/dedupe.

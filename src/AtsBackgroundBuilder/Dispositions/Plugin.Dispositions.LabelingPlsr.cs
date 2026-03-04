@@ -834,6 +834,12 @@ namespace AtsBackgroundBuilder
                 {
                     var dispNum = pair.Key;
                     var act = pair.Value;
+                    if (act == null)
+                    {
+                        continue;
+                    }
+
+                    var displayDispNum = ResolveIssueDisplayDispNum(act.DispNum, dispNum);
                     var prefix = GetDispositionPrefix(dispNum);
                     if (string.IsNullOrWhiteSpace(prefix))
                         continue;
@@ -918,7 +924,7 @@ namespace AtsBackgroundBuilder
                         if (!hasDispositionSource && !result.AllowTextOnlyFallbackLabels && hasTextOnlyFallbackCandidate)
                         {
                             result.SkippedTextOnlyFallbackLabels++;
-                            result.SkippedTextOnlyFallbackExamples.Add($"{dispNum} in {quarterKey}");
+                            result.SkippedTextOnlyFallbackExamples.Add($"{displayDispNum} in {quarterKey}");
                         }
 
                         var changeType = PlsrIssueChangeType.None;
@@ -939,7 +945,7 @@ namespace AtsBackgroundBuilder
                         {
                             Type = "Missing label",
                             QuarterKey = quarterKey,
-                            DispNum = dispNum,
+                            DispNum = displayDispNum,
                             CurrentValue = "(none)",
                             ExpectedValue = mappedOwnerForMissing ?? string.Empty,
                             Detail = hasDispositionSource
@@ -953,7 +959,7 @@ namespace AtsBackgroundBuilder
                                         : (!result.AllowTextOnlyFallbackLabels && hasTextOnlyFallbackCandidate
                                             ? "No source disposition geometry was found. Text-only fallback label creation is disabled to prevent floating MText labels."
                                             : "No label found in this quarter and no source disposition geometry was found."))),
-                            SummaryLine = $"Missing label: {dispNum} in {quarterKey}",
+                            SummaryLine = $"Missing label: {displayDispNum} in {quarterKey}",
                             ChangeType = changeType,
                             Label = hasTemplateSource ? templateLabel : (hasXmlFallbackSource ? xmlFallbackTemplateLabel : null),
                             Disposition = hasDispositionSource ? sourceDisposition : null,
@@ -972,11 +978,11 @@ namespace AtsBackgroundBuilder
                         {
                             Type = "Owner mismatch",
                             QuarterKey = quarterKey,
-                            DispNum = dispNum,
+                            DispNum = displayDispNum,
                             CurrentValue = label.Owner ?? string.Empty,
                             ExpectedValue = mappedOwner ?? string.Empty,
                             Detail = "Label owner differs from PLSR XML owner.",
-                            SummaryLine = $"Owner mismatch: {dispNum} in {quarterKey} (label='{label.Owner}' vs xml='{act.Owner}')",
+                            SummaryLine = $"Owner mismatch: {displayDispNum} in {quarterKey} (label='{label.Owner}' vs xml='{act.Owner}')",
                             ChangeType = PlsrIssueChangeType.UpdateOwner,
                             Label = label,
                             ProposedOwner = mappedOwner ?? string.Empty
@@ -992,11 +998,11 @@ namespace AtsBackgroundBuilder
                             {
                                 Type = "Expired in PLSR",
                                 QuarterKey = quarterKey,
-                                DispNum = dispNum,
+                                DispNum = displayDispNum,
                                 CurrentValue = FlattenMTextForDisplay(label.RawContents ?? string.Empty),
                                 ExpectedValue = $"Expiry {act.ExpiryDate.Value:yyyy-MM-dd} < report {expected.ReportDate:yyyy-MM-dd}",
                                 Detail = "Append '(Expired)' to this label.",
-                                SummaryLine = $"Expired in PLSR: {dispNum} in {quarterKey}",
+                                SummaryLine = $"Expired in PLSR: {displayDispNum} in {quarterKey}",
                                 ChangeType = PlsrIssueChangeType.TagExpired,
                                 Label = label
                             });
@@ -1006,18 +1012,25 @@ namespace AtsBackgroundBuilder
 
                 foreach (var labelPair in labelByDisp)
                 {
+                    var extraLabel = labelPair.Value;
+                    if (extraLabel == null)
+                    {
+                        continue;
+                    }
+
                     if (!expectedByDisp.ContainsKey(labelPair.Key))
                     {
+                        var displayDispNum = ResolveIssueDisplayDispNum(extraLabel.DispNum, labelPair.Key);
                         result.ExtraLabels++;
                         result.Issues.Add(new PlsrCheckIssue
                         {
                             Type = "Not in PLSR",
                             QuarterKey = quarterKey,
-                            DispNum = labelPair.Key,
-                            CurrentValue = labelPair.Value.Owner ?? string.Empty,
+                            DispNum = displayDispNum,
+                            CurrentValue = extraLabel.Owner ?? string.Empty,
                             ExpectedValue = "(none)",
                             Detail = "Label exists in drawing but not in current PLSR data.",
-                            SummaryLine = $"Not in PLSR: {labelPair.Key} in {quarterKey}",
+                            SummaryLine = $"Not in PLSR: {displayDispNum} in {quarterKey}",
                             ChangeType = PlsrIssueChangeType.None,
                             Label = null
                         });
@@ -1724,6 +1737,7 @@ namespace AtsBackgroundBuilder
             }
 
             var contents = ReplaceLabelOwnerInContents(baseContents, issue.ExpectedValue);
+            contents = ReplaceLabelDispNumInContents(contents, ResolveIssueDisplayDispNum(issue.DispNum, normalizedDispNum));
             if (string.IsNullOrWhiteSpace(contents))
             {
                 reason = "template label contents invalid";
@@ -1836,7 +1850,7 @@ namespace AtsBackgroundBuilder
                 owner = "UNKNOWN";
             }
 
-            var dispLine = string.IsNullOrWhiteSpace(issue.DispNum) ? normalizedDispNum : issue.DispNum.Trim();
+            var dispLine = ResolveIssueDisplayDispNum(issue.DispNum, normalizedDispNum);
             if (string.IsNullOrWhiteSpace(dispLine))
             {
                 reason = "disposition number missing";
@@ -1977,6 +1991,53 @@ namespace AtsBackgroundBuilder
 
             parts[0] = expectedOwner.Trim();
             return string.Join(delimiter, parts);
+        }
+
+        private static string ReplaceLabelDispNumInContents(string contents, string dispNum)
+        {
+            if (string.IsNullOrWhiteSpace(contents))
+            {
+                return string.Empty;
+            }
+
+            var normalizedDisplayDispNum = ResolveIssueDisplayDispNum(dispNum, string.Empty);
+            if (string.IsNullOrWhiteSpace(normalizedDisplayDispNum))
+            {
+                return contents;
+            }
+
+            var delimiter = contents.IndexOf("\\X", StringComparison.OrdinalIgnoreCase) >= 0 ? "\\X" : "\\P";
+            var parts = contents.Split(new[] { delimiter }, StringSplitOptions.None);
+            if (parts.Length == 0)
+            {
+                return contents;
+            }
+
+            for (var i = parts.Length - 1; i >= 0; i--)
+            {
+                if (TryParseDispositionNumberFromText(parts[i], out _))
+                {
+                    parts[i] = normalizedDisplayDispNum;
+                    return string.Join(delimiter, parts);
+                }
+            }
+
+            return contents;
+        }
+
+        private static string ResolveIssueDisplayDispNum(string candidateDispNum, string normalizedFallback)
+        {
+            if (TryParseDispositionNumberFromText(candidateDispNum, out var parsedDispNum))
+            {
+                return parsedDispNum;
+            }
+
+            if (!string.IsNullOrWhiteSpace(normalizedFallback))
+            {
+                return normalizedFallback.Trim();
+            }
+
+            return (candidateDispNum ?? string.Empty).Trim();
         }
 
         private static void ApplyTemplateTextFormatting(Entity templateEntity, MText target)

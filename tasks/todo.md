@@ -4158,3 +4158,30 @@
 - Verification:
   - `dotnet build wls_program\\src\\WildlifeSweeps\\WildlifeSweeps.csproj -c Release --no-restore -o .artifacts\\build-verify\\WildlifeSweeps`
   - build succeeded (0 warnings, 0 errors).
+
+# Follow-up (PLSR DISP Leading-Zero Preservation, 2026-03-04)
+
+- [x] Keep PLSR matching canonical while preserving leading-zero DISP display text in review/issues/log output.
+- [x] Ensure missing-label creation paths (template/XML fallback) write DISP text with preserved leading zeros.
+- [x] Rebuild/compile ATS and verify no regressions.
+- [x] Capture review notes and residual risk.
+
+## Review (PLSR DISP Leading-Zero Preservation, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - in PLSR scan issue creation, DISP display now uses `ResolveIssueDisplayDispNum(...)`:
+    - keeps review-grid/log/summary DISP values aligned to XML/label text values with leading zeros preserved.
+    - matching/indexing still uses normalized canonical keys.
+  - missing-label summary/example text now reports preserved display DISP values.
+  - template missing-label creation now also rewrites the disposition token in template contents using preserved display DISP (`ReplaceLabelDispNumInContents(...)`).
+  - XML fallback label creation now uses preserved display DISP directly.
+- Added helpers:
+  - `ResolveIssueDisplayDispNum(...)`
+  - `ReplaceLabelDispNumInContents(...)`
+- Verification:
+  - `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - compile succeeded and produced `src/AtsBackgroundBuilder/bin/Release/net8.0-windows/AtsBackgroundBuilder.dll`.
+  - expected copy-to-`build/net8.0-windows` failed because DLL is locked by active AutoCAD process.
+  - staged fresh build to `build/net8.0-windows-next/AtsBackgroundBuilder.dll` (`2026-03-04 5:35:43 PM`).
+- Residual risk:
+  - if source OD DISP values are inherently zero-stripped upstream, source-geometry-created labels can still carry stripped DISP text in some paths; PLSR issue/review display and template/XML fallback creation are now zero-preserving.
