@@ -3232,3 +3232,29 @@
 - Verification:
   - `dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release`
   - succeeded (`0 Warning(s)`, `0 Error(s)`).
+
+# Follow-up (NE.NE Quarter Corner Crossing RA in 9-65-3-W6, 2026-03-04)
+
+- [x] Reproduce baseline for `SEC 9 TWP 65 RGE 3 W6` and capture debug/simulation artifacts.
+- [x] Trace `N.E. N.E.` corner authority path in section drawing and identify the crossing condition.
+- [x] Implement a targeted fix that prevents RA-crossing NE corner placement without broad tolerance regressions.
+- [x] Rebuild ATS and verify with Python viewer/simulation output before/after comparison.
+
+## Review (NE.NE Quarter Corner Crossing RA in 9-65-3-W6, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
+  - tightened non-correction `N.E. N.E.` fallback behavior in the `isBlindNonCorrectionSouth` branch.
+  - removed blind "highest east endpoint" fallback when endpoint-node resolution fails.
+  - added gated endpoint scoring that only accepts an east endpoint if it has north/horizontal node evidence (`HasHorizontalEndpointNode(...)`) or near-north-boundary touch.
+  - if no valid endpoint node evidence exists, keeps prior NE candidate and logs `VERIFY-QTR-NE-NE-ENDPT-FALLBACK-SKIP`.
+- Verification:
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -nologo`
+  - succeeded (`0 Warning(s)`, `0 Error(s)`).
+  - Python viewer baseline + post-change export run for section `9-65-3-W6`:
+    - `py -m ats_viewer --sections "9-65-3-W6" --zone auto --debug --road-width-targets "20.11,30.17" --out ".\out-debug\sec-9-65-3-w6-before"`
+    - `py -m ats_viewer --sections "9-65-3-W6" --zone auto --debug --road-width-targets "20.11,30.17" --out ".\out-debug\sec-9-65-3-w6-after"`
+  - Note: `ats_viewer` validates index/edge-pair inference and does not execute ATS AutoCAD quarter-corner heuristics; before/after viewer artifacts are unchanged and serve as secondary scope sanity only.
+- Iteration after user retest reported "no changes":
+  - Added stricter non-correction NE handling so `N.E. N.E.` uses strict east×north segment intersection (`VERIFY-QTR-NE-NE-STRICT`) instead of apparent infinite-line intersection.
+  - Enabled quarter verify logging for section 9 to expose the exact NE authority path during user retest.
+  - Rebuilt and redeployed `AtsBackgroundBuilder.dll` + `.pdb` to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows`.
