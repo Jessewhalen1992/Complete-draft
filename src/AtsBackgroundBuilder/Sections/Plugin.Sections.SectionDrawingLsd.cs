@@ -1374,7 +1374,6 @@ namespace AtsBackgroundBuilder
                 foreach (var frame in frames)
                 {
                     var emitQuarterVerify = frame.SectionNumber == 6 ||
-                                            frame.SectionNumber == 9 ||
                                             frame.SectionNumber == 12 ||
                                             frame.SectionNumber == 11 ||
                                             frame.SectionNumber == 36;
