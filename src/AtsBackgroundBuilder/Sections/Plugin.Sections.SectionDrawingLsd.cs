@@ -1374,6 +1374,7 @@ namespace AtsBackgroundBuilder
                 foreach (var frame in frames)
                 {
                     var emitQuarterVerify = frame.SectionNumber == 6 ||
+                                            frame.SectionNumber == 9 ||
                                             frame.SectionNumber == 12 ||
                                             frame.SectionNumber == 11 ||
                                             frame.SectionNumber == 36;
@@ -2596,49 +2597,84 @@ namespace AtsBackgroundBuilder
 
                         if (hasNorthBoundarySegment)
                         {
-                            if (TryIntersectLocalInfiniteLines(
-                                    frame,
-                                    eastBoundarySegmentA,
-                                    eastBoundarySegmentB,
-                                    northBoundarySegmentA,
-                                    northBoundarySegmentB,
-                                    out var apparentNorthEastU,
-                                    out var apparentNorthEastV))
+                            var correctionAdjoiningForNorthEast =
+                                isCorrectionSouthBoundary ||
+                                string.Equals(northSource, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(northSource, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
+
+                            if (!correctionAdjoiningForNorthEast)
                             {
-                                var eastOffset = apparentNorthEastU - frame.EastEdgeU;
-                                var northOffset = apparentNorthEastV - frame.NorthEdgeV;
-                                const double minOffset = -6.0;
-                                const double maxOffset = 90.0;
-                                if (eastOffset >= -maxOffset &&
-                                    eastOffset <= maxOffset &&
-                                    northOffset >= minOffset &&
-                                    northOffset <= maxOffset)
+                                if (TryIntersectBoundarySegmentsLocal(
+                                        frame,
+                                        eastBoundarySegmentA,
+                                        eastBoundarySegmentB,
+                                        northBoundarySegmentA,
+                                        northBoundarySegmentB,
+                                        out var strictNorthEastU,
+                                        out var strictNorthEastV))
                                 {
-                                    northAtEastU = apparentNorthEastU;
-                                    northAtEastV = apparentNorthEastV;
+                                    northAtEastU = strictNorthEastU;
+                                    northAtEastV = strictNorthEastV;
                                     northEastLockedByApparentIntersection = true;
                                     if (emitQuarterVerify)
                                     {
                                         logger?.WriteLine(
-                                            $"VERIFY-QTR-NE-NE-APP sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
-                                            $"u={northAtEastU:0.###} v={northAtEastV:0.###} eastOffset={eastOffset:0.###} northOffset={northOffset:0.###} " +
-                                            $"eastSource={eastSource} northSource={northSource}");
+                                            $"VERIFY-QTR-NE-NE-STRICT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                            $"u={northAtEastU:0.###} v={northAtEastV:0.###} eastSource={eastSource} northSource={northSource}");
                                     }
                                 }
+                                else if (emitQuarterVerify)
+                                {
+                                    logger?.WriteLine(
+                                        $"VERIFY-QTR-NE-NE-STRICT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: found=False eastSource={eastSource} northSource={northSource}");
+                                }
                             }
-
-                            if (!northEastLockedByApparentIntersection &&
-                                TryIntersectBoundarySegmentsLocal(
-                                    frame,
-                                    eastBoundarySegmentA,
-                                    eastBoundarySegmentB,
-                                    northBoundarySegmentA,
-                                    northBoundarySegmentB,
-                                    out var northEastU,
-                                    out var northEastV))
+                            else
                             {
-                                northAtEastU = northEastU;
-                                northAtEastV = northEastV;
+                                if (TryIntersectLocalInfiniteLines(
+                                        frame,
+                                        eastBoundarySegmentA,
+                                        eastBoundarySegmentB,
+                                        northBoundarySegmentA,
+                                        northBoundarySegmentB,
+                                        out var apparentNorthEastU,
+                                        out var apparentNorthEastV))
+                                {
+                                    var eastOffset = apparentNorthEastU - frame.EastEdgeU;
+                                    var northOffset = apparentNorthEastV - frame.NorthEdgeV;
+                                    const double minOffset = -6.0;
+                                    const double maxOffset = 90.0;
+                                    if (eastOffset >= -maxOffset &&
+                                        eastOffset <= maxOffset &&
+                                        northOffset >= minOffset &&
+                                        northOffset <= maxOffset)
+                                    {
+                                        northAtEastU = apparentNorthEastU;
+                                        northAtEastV = apparentNorthEastV;
+                                        northEastLockedByApparentIntersection = true;
+                                        if (emitQuarterVerify)
+                                        {
+                                            logger?.WriteLine(
+                                                $"VERIFY-QTR-NE-NE-APP sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                                $"u={northAtEastU:0.###} v={northAtEastV:0.###} eastOffset={eastOffset:0.###} northOffset={northOffset:0.###} " +
+                                                $"eastSource={eastSource} northSource={northSource}");
+                                        }
+                                    }
+                                }
+
+                                if (!northEastLockedByApparentIntersection &&
+                                    TryIntersectBoundarySegmentsLocal(
+                                        frame,
+                                        eastBoundarySegmentA,
+                                        eastBoundarySegmentB,
+                                        northBoundarySegmentA,
+                                        northBoundarySegmentB,
+                                        out var northEastU,
+                                        out var northEastV))
+                                {
+                                    northAtEastU = northEastU;
+                                    northAtEastV = northEastV;
+                                }
                             }
                         }
 
@@ -2722,16 +2758,100 @@ namespace AtsBackgroundBuilder
 
                                     if (haveA && haveB)
                                     {
-                                        var useA = eastAv >= eastBv;
-                                        northAtEastU = useA ? eastAu : eastBu;
-                                        northAtEastV = useA ? eastAv : eastBv;
-                                        northEastLockedByApparentIntersection = true;
-                                        resolvedByHardNode = true;
-                                        if (emitQuarterVerify)
+                                        bool IsHorizontalBoundarySegment(Point2d a, Point2d b)
+                                        {
+                                            var delta = b - a;
+                                            var eastComp = Math.Abs(delta.DotProduct(frame.EastUnit));
+                                            var northComp = Math.Abs(delta.DotProduct(frame.NorthUnit));
+                                            return eastComp > northComp;
+                                        }
+
+                                        bool HasHorizontalEndpointNode(Point2d worldPoint, double endpointTol)
+                                        {
+                                            for (var si = 0; si < boundarySegments.Count; si++)
+                                            {
+                                                var seg = boundarySegments[si];
+                                                if (!IsQuarterViewBoundaryCandidateLayer(seg.Layer) ||
+                                                    !IsHorizontalBoundarySegment(seg.A, seg.B))
+                                                {
+                                                    continue;
+                                                }
+
+                                                if (worldPoint.GetDistanceTo(seg.A) <= endpointTol ||
+                                                    worldPoint.GetDistanceTo(seg.B) <= endpointTol)
+                                                {
+                                                    return true;
+                                                }
+                                            }
+
+                                            return false;
+                                        }
+
+                                        bool TryScoreEastEndpointCandidate(
+                                            Point2d endpointWorld,
+                                            double endpointU,
+                                            double endpointV,
+                                            out double score)
+                                        {
+                                            score = double.MaxValue;
+                                            const double endpointNodeTol = 1.25;
+                                            const double northBoundaryTouchTol = 1.25;
+                                            var northBoundaryDistance =
+                                                DistancePointToSegment(endpointWorld, northBoundarySegmentA, northBoundarySegmentB);
+                                            var hasHorizontalNode = HasHorizontalEndpointNode(endpointWorld, endpointNodeTol);
+                                            var nearNorthBoundary = northBoundaryDistance <= northBoundaryTouchTol;
+                                            if (!hasHorizontalNode && !nearNorthBoundary)
+                                            {
+                                                return false;
+                                            }
+
+                                            var northInset = Math.Abs(frame.NorthEdgeV - endpointV);
+                                            score = ((hasHorizontalNode ? 0.0 : 20.0) +
+                                                     (nearNorthBoundary ? 0.0 : 10.0) +
+                                                     (northBoundaryDistance * 6.0) +
+                                                     (northInset * 0.35) +
+                                                     (Math.Abs(frame.EastEdgeU - endpointU) * 0.25));
+                                            return true;
+                                        }
+
+                                        var bestUseA = false;
+                                        var haveScoredEndpoint = false;
+                                        if (TryScoreEastEndpointCandidate(eastBoundarySegmentA, eastAu, eastAv, out var scoreA))
+                                        {
+                                            bestUseA = true;
+                                            haveScoredEndpoint = true;
+                                            var bestScore = scoreA;
+                                            if (TryScoreEastEndpointCandidate(eastBoundarySegmentB, eastBu, eastBv, out var scoreB) &&
+                                                scoreB < bestScore)
+                                            {
+                                                bestUseA = false;
+                                                bestScore = scoreB;
+                                            }
+                                        }
+                                        else if (TryScoreEastEndpointCandidate(eastBoundarySegmentB, eastBu, eastBv, out _))
+                                        {
+                                            bestUseA = false;
+                                            haveScoredEndpoint = true;
+                                        }
+
+                                        if (haveScoredEndpoint)
+                                        {
+                                            northAtEastU = bestUseA ? eastAu : eastBu;
+                                            northAtEastV = bestUseA ? eastAv : eastBv;
+                                            northEastLockedByApparentIntersection = true;
+                                            resolvedByHardNode = true;
+                                            if (emitQuarterVerify)
+                                            {
+                                                logger?.WriteLine(
+                                                    $"VERIFY-QTR-NE-NE-ENDPT-FALLBACK sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                                    $"u={northAtEastU:0.###} v={northAtEastV:0.###} note=east-endpoint-with-north-node");
+                                            }
+                                        }
+                                        else if (emitQuarterVerify)
                                         {
                                             logger?.WriteLine(
-                                                $"VERIFY-QTR-NE-NE-ENDPT-FALLBACK sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
-                                                $"u={northAtEastU:0.###} v={northAtEastV:0.###} note=east-endpoint-used-no-endpoint-node-found");
+                                                $"VERIFY-QTR-NE-NE-ENDPT-FALLBACK-SKIP sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                                "note=no-north-node-linked-east-endpoint-kept-prior-ne");
                                         }
                                     }
                                 }
