@@ -17,6 +17,7 @@ namespace AtsBackgroundBuilder
             public string Type { get; set; } = string.Empty;
             public string Quarter { get; set; } = string.Empty;
             public string DispNum { get; set; } = string.Empty;
+            public string VerDate { get; set; } = string.Empty;
             public string Current { get; set; } = string.Empty;
             public string Expected { get; set; } = string.Empty;
             public string Action { get; set; } = string.Empty;
@@ -44,6 +45,7 @@ namespace AtsBackgroundBuilder
                         Type = issue.Type ?? string.Empty,
                         Quarter = issue.QuarterKey ?? string.Empty,
                         DispNum = issue.DispNum ?? string.Empty,
+                        VerDate = issue.VersionDateStatus ?? "N/A",
                         Current = issue.CurrentValue ?? string.Empty,
                         Expected = issue.ExpectedValue ?? string.Empty,
                         Action = DescribeIssueAction(issue.ChangeType),
@@ -100,6 +102,7 @@ namespace AtsBackgroundBuilder
                     grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Type), HeaderText = "Result", ReadOnly = true, Width = 130 });
                     grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Quarter), HeaderText = "Quarter", ReadOnly = true, Width = 170 });
                     grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.DispNum), HeaderText = "Disp", ReadOnly = true, Width = 120 });
+                    grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.VerDate), HeaderText = "Ver. Date.", ReadOnly = true, Width = 90 });
                     grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Action), HeaderText = "Action", ReadOnly = true, Width = 160 });
                     grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Current), HeaderText = "Current", ReadOnly = true, Width = 230 });
                     grid.Columns.Add(new WinForms.DataGridViewTextBoxColumn { DataPropertyName = nameof(PlsrReviewRow.Expected), HeaderText = "Expected", ReadOnly = true, Width = 230 });

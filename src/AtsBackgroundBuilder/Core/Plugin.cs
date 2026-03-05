@@ -695,6 +695,14 @@ namespace AtsBackgroundBuilder
 
             if (shouldImportDispositions)
             {
+                if (executionPlan.ShouldAutoUpdateShapes &&
+                    executionPlan.ShouldRunPlsrCheck &&
+                    !executionPlan.IncludeDispositionLinework &&
+                    !executionPlan.IncludeDispositionLabels)
+                {
+                    AutoUpdateDispositionShapesIfNeeded(config, logger);
+                }
+
                 setExitStage("disposition_import");
                 importSummary = ShapefileImporter.ImportShapefiles(
                     database,
@@ -812,6 +820,8 @@ namespace AtsBackgroundBuilder
                         var company = od.TryGetValue("COMPANY", out var companyRaw) ? companyRaw : string.Empty;
                         var purpose = od.TryGetValue("PURPCD", out var purposeRaw) ? purposeRaw : string.Empty;
                         var odDimension = od.TryGetValue("DIMENSION", out var dimensionRaw) ? dimensionRaw : string.Empty;
+                        var odVerDate = od.TryGetValue("VER_DATE", out var verDateRaw) ? verDateRaw : string.Empty;
+                        var odEffDate = od.TryGetValue("EFFDATE", out var effDateRaw) ? effDateRaw : string.Empty;
 
                         var mappedCompany = MapValue(companyLookup, company, company);
                         var mappedPurpose = MapValue(purposeLookup, purpose, purpose);
@@ -958,7 +968,9 @@ namespace AtsBackgroundBuilder
                                 MappedPurpose = mappedPurpose ?? string.Empty,
                                 PurposeTitleCase = ToTitleCaseWords(purpose),
                                 DispNumFormatted = dispNumFormatted,
-                                OdDimension = odDimension ?? string.Empty
+                                OdDimension = odDimension ?? string.Empty,
+                                OdVerDateRaw = odVerDate ?? string.Empty,
+                                OdEffDateRaw = odEffDate ?? string.Empty
                             };
                             dispositions.Add(info);
                             continue;
@@ -969,7 +981,9 @@ namespace AtsBackgroundBuilder
                         {
                             AllowLabelOutsideDisposition = false,
                             AddLeader = false,
-                            DispNumFormatted = dispNumFormatted
+                            DispNumFormatted = dispNumFormatted,
+                            OdVerDateRaw = odVerDate ?? string.Empty,
+                            OdEffDateRaw = odEffDate ?? string.Empty
                         };
                         dispositions.Add(nonWidthInfo);
                     }

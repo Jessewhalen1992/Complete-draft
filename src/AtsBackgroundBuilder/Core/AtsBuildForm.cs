@@ -23,7 +23,7 @@ namespace AtsBackgroundBuilder.Core
         public bool IncludeP3Shapefiles { get; set; } = false;
         public bool IncludeCompassMapping { get; set; } = false;
         public bool IncludeCrownReservations { get; set; } = false;
-        public bool AutoCheckUpdateShapefilesAlways { get; set; } = false;
+        public bool AutoCheckUpdateShapefilesAlways { get; set; } = true;
 
         /// <summary>
         /// When false, imported disposition linework is removed at cleanup.
@@ -72,11 +72,8 @@ namespace AtsBackgroundBuilder.Core
         private readonly CheckBox _includeSurfaceImpact = new CheckBox();
         private readonly CheckBox _allowMultiQuarterDispositions = new CheckBox();
         private readonly CheckBox _includeQuarterSectionLabels = new CheckBox();
-        private readonly CheckBox _autoCheckUpdateShapesAlways = new CheckBox();
         private readonly DataGridView _grid = new DataGridView();
         private readonly Button _addGridRow = new Button();
-        private readonly ComboBox _shapeTypeCombo = new ComboBox();
-        private readonly Button _updateShape = new Button();
         private readonly Button _addSectionsFromBoundary = new Button();
         private readonly Button _build = new Button();
         private readonly Button _cancel = new Button();
@@ -523,37 +520,13 @@ namespace AtsBackgroundBuilder.Core
                 Margin = new Padding(0),
             };
 
-            leftActions.Controls.Add(CreateFieldLabel("Shape Type", margin: new Padding(0, 7, 8, 0)));
-
-            _shapeTypeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-            _shapeTypeCombo.Width = 180;
-            _shapeTypeCombo.Margin = new Padding(0, 2, 10, 0);
-            foreach (var supportedType in ShapeUpdateService.SupportedShapeTypes)
-            {
-                _shapeTypeCombo.Items.Add(supportedType);
-            }
-            _shapeTypeCombo.SelectedIndex = 0;
-            leftActions.Controls.Add(_shapeTypeCombo);
-
-            _updateShape.Text = "Update Shape";
-            _updateShape.Width = 130;
-            _updateShape.Height = 32;
-            _updateShape.Margin = new Padding(0, 0, 0, 0);
-            _updateShape.Click += (_, __) => OnUpdateShape();
-            ConfigureOutlineButton(_updateShape);
-            leftActions.Controls.Add(_updateShape);
-
             _addSectionsFromBoundary.Text = "ADD SECTIONS FROM BDY";
             _addSectionsFromBoundary.Width = 190;
             _addSectionsFromBoundary.Height = 32;
-            _addSectionsFromBoundary.Margin = new Padding(10, 0, 0, 0);
+            _addSectionsFromBoundary.Margin = new Padding(0);
             _addSectionsFromBoundary.Click += (_, __) => OnAddSectionsFromBoundary();
             ConfigureOutlineButton(_addSectionsFromBoundary);
             leftActions.Controls.Add(_addSectionsFromBoundary);
-
-            ConfigureOptionCheckBox(_autoCheckUpdateShapesAlways, "CHECK/UPDATE SHAPES ALWAYS", false);
-            _autoCheckUpdateShapesAlways.Margin = new Padding(10, 7, 0, 0);
-            leftActions.Controls.Add(_autoCheckUpdateShapesAlways);
 
             _build.Text = "BUILD";
             _build.Width = 120;
@@ -723,66 +696,6 @@ namespace AtsBackgroundBuilder.Core
                 row.Cells["ROW"].Value = (i + 1).ToString(CultureInfo.InvariantCulture);
             }
         }
-
-        private void OnUpdateShape()
-        {
-            var shapeType = _shapeTypeCombo.SelectedItem?.ToString()?.Trim() ?? string.Empty;
-            if (!ShapeUpdateService.TryPreparePlan(shapeType, out var plan, out var planError))
-            {
-                MessageBox.Show(this, planError, "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            if (plan == null)
-            {
-                MessageBox.Show(this, "Shape update plan was not created.", "Update Shape", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            var confirm = MessageBox.Show(
-                this,
-                plan.ConfirmationMessage,
-                "Update Shape",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning,
-                MessageBoxDefaultButton.Button2);
-            if (confirm != DialogResult.Yes)
-            {
-                return;
-            }
-
-            _updateShape.Enabled = false;
-            var previousCursor = Cursor.Current;
-            Cursor.Current = Cursors.WaitCursor;
-            try
-            {
-                var copiedCount = ShapeUpdateService.ExecutePlan(plan);
-                MessageBox.Show(
-                    this,
-                    $"Shape update complete.\n\nCopied {copiedCount} file(s) from:\n{plan.SourceDisplayPath}\n\nto:\n{plan.DestinationPath}",
-                    "Update Shape",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    this,
-                    "Shape update failed:\n" + ex.Message,
-                    "Update Shape",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-            }
-            finally
-            {
-                if (previousCursor != null)
-                {
-                    Cursor.Current = previousCursor;
-                }
-                _updateShape.Enabled = true;
-            }
-        }
-
         private void OnAddSectionsFromBoundary()
         {
             try
@@ -982,7 +895,7 @@ namespace AtsBackgroundBuilder.Core
                 IncludeP3Shapefiles = _includeP3Shapes.Checked,
                 IncludeCompassMapping = _includeCompassMapping.Checked,
                 IncludeCrownReservations = _includeCrownReservations.Checked,
-                AutoCheckUpdateShapefilesAlways = _autoCheckUpdateShapesAlways.Checked,
+                AutoCheckUpdateShapefilesAlways = true,
                 CheckPlsr = _checkPlsr.Checked,
                 IncludeSurfaceImpact = _includeSurfaceImpact.Checked,
                 IncludeQuarterSectionLabels = _includeQuarterSectionLabels.Checked,

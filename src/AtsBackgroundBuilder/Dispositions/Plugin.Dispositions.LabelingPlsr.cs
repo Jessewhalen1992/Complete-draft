@@ -570,6 +570,9 @@ namespace AtsBackgroundBuilder
             public string DispNum { get; set; } = string.Empty;
             public string Owner { get; set; } = string.Empty;
             public DateTime? ExpiryDate { get; set; }
+            public DateTime? VersionDate { get; set; }
+            public DateTime? ActivityDate { get; set; }
+            public List<DateTime> VersionDates { get; } = new List<DateTime>();
         }
 
         private sealed class PlsrQuarterData
@@ -614,6 +617,7 @@ namespace AtsBackgroundBuilder
             public DispositionInfo? Disposition { get; set; }
             public QuarterInfo? Quarter { get; set; }
             public string ProposedOwner { get; set; } = string.Empty;
+            public string VersionDateStatus { get; set; } = "N/A";
 
             public bool IsActionable => ChangeType switch
             {
@@ -850,6 +854,26 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
+                    DispositionInfo? versionDateSourceDisposition = null;
+                    if (quarterByKey.TryGetValue(quarterKey, out var versionDateQuarter) &&
+                        versionDateQuarter != null &&
+                        TryFindDispositionSourceForQuarterDisp(
+                            quarterKey,
+                            versionDateQuarter,
+                            dispNum,
+                            result.DispositionsByDispNum,
+                            dispositionSourceCache,
+                            logger,
+                            out var versionDateDispositionMatch) &&
+                        versionDateDispositionMatch != null)
+                    {
+                        versionDateSourceDisposition = versionDateDispositionMatch;
+                    }
+                    var versionDateStatus = ResolvePlsrVersionDateStatus(versionDateSourceDisposition, act);
+                    var odVersionDateDisplay = FormatDispositionDateFieldsForDisplay(versionDateSourceDisposition);
+                    var xmlVersionDateDisplay = FormatPlsrExpectedVersionDateForDisplay(act);
+                    var versionDateMismatchDetail = ResolvePlsrVersionDateMismatchDetail(act);
+
                     if (!labelByDisp.TryGetValue(dispNum, out var label))
                     {
                         result.MissingLabels++;
@@ -941,6 +965,9 @@ namespace AtsBackgroundBuilder
                             changeType = PlsrIssueChangeType.CreateMissingLabelFromXml;
                         }
 
+                        var missingLabelVersionDateStatus = hasDispositionSource
+                            ? ResolvePlsrVersionDateStatus(sourceDisposition, act)
+                            : versionDateStatus;
                         result.Issues.Add(new PlsrCheckIssue
                         {
                             Type = "Missing label",
@@ -963,16 +990,19 @@ namespace AtsBackgroundBuilder
                             ChangeType = changeType,
                             Label = hasTemplateSource ? templateLabel : (hasXmlFallbackSource ? xmlFallbackTemplateLabel : null),
                             Disposition = hasDispositionSource ? sourceDisposition : null,
-                            Quarter = (hasDispositionSource || hasTemplateSource || hasXmlFallbackSource) ? sourceQuarter : null
+                            Quarter = (hasDispositionSource || hasTemplateSource || hasXmlFallbackSource) ? sourceQuarter : null,
+                            VersionDateStatus = missingLabelVersionDateStatus
                         });
                         continue;
                     }
 
+                    var hasBehaviorTriggerIssue = false;
                     var mappedOwner = MapClientNameForCompare(companyLookup, act.Owner);
                     var labelOwner = NormalizeOwner(label.Owner);
                     var expectedOwner = NormalizeOwner(mappedOwner);
                     if (!string.Equals(labelOwner, expectedOwner, StringComparison.OrdinalIgnoreCase))
                     {
+                        hasBehaviorTriggerIssue = true;
                         result.OwnerMismatches++;
                         result.Issues.Add(new PlsrCheckIssue
                         {
@@ -985,7 +1015,8 @@ namespace AtsBackgroundBuilder
                             SummaryLine = $"Owner mismatch: {displayDispNum} in {quarterKey} (label='{label.Owner}' vs xml='{act.Owner}')",
                             ChangeType = PlsrIssueChangeType.UpdateOwner,
                             Label = label,
-                            ProposedOwner = mappedOwner ?? string.Empty
+                            ProposedOwner = mappedOwner ?? string.Empty,
+                            VersionDateStatus = versionDateStatus
                         });
                     }
 
@@ -993,6 +1024,7 @@ namespace AtsBackgroundBuilder
                     {
                         if (!HasExpiredMarker(label.RawContents))
                         {
+                            hasBehaviorTriggerIssue = true;
                             result.ExpiredCandidates++;
                             result.Issues.Add(new PlsrCheckIssue
                             {
@@ -1004,10 +1036,29 @@ namespace AtsBackgroundBuilder
                                 Detail = "Append '(Expired)' to this label.",
                                 SummaryLine = $"Expired in PLSR: {displayDispNum} in {quarterKey}",
                                 ChangeType = PlsrIssueChangeType.TagExpired,
-                                Label = label
+                                Label = label,
+                                VersionDateStatus = versionDateStatus
                             });
                         }
                     }
+                    if (!hasBehaviorTriggerIssue &&
+                        string.Equals(versionDateStatus, "NON-MATCH", StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.Issues.Add(new PlsrCheckIssue
+                        {
+                            Type = "Version date mismatch",
+                            QuarterKey = quarterKey,
+                            DispNum = displayDispNum,
+                            CurrentValue = odVersionDateDisplay,
+                            ExpectedValue = xmlVersionDateDisplay,
+                            Detail = versionDateMismatchDetail,
+                            SummaryLine = $"Version date mismatch: {displayDispNum} in {quarterKey} (od='{odVersionDateDisplay}' vs xml='{xmlVersionDateDisplay}')",
+                            ChangeType = PlsrIssueChangeType.None,
+                            Label = null,
+                            VersionDateStatus = versionDateStatus
+                        });
+                    }
+
                 }
 
                 foreach (var labelPair in labelByDisp)
@@ -1104,6 +1155,31 @@ namespace AtsBackgroundBuilder
             PlsrAcceptedActionBuckets actionBuckets)
         {
             var issueById = issues.ToDictionary(i => i.Id);
+            var effectiveAcceptedIssueIds = acceptedIssueIds != null
+                ? new HashSet<Guid>(acceptedIssueIds)
+                : new HashSet<Guid>();
+            var forcedOwnerUpdateCount = 0;
+            foreach (var issue in issues)
+            {
+                if (issue == null ||
+                    issue.ChangeType != PlsrIssueChangeType.UpdateOwner ||
+                    !issue.IsActionable)
+                {
+                    continue;
+                }
+
+                if (effectiveAcceptedIssueIds.Add(issue.Id))
+                {
+                    forcedOwnerUpdateCount++;
+                }
+            }
+
+            if (forcedOwnerUpdateCount > 0)
+            {
+                logger.WriteLine(
+                    $"PLSR owner enforcement: applying {forcedOwnerUpdateCount} owner update issue(s) from XML regardless of review selection.");
+            }
+
             var decision = PlsrApplyDecisionEngine.Route(
                 issues.Select(issue => new PlsrApplyDecisionItem
                 {
@@ -1111,7 +1187,7 @@ namespace AtsBackgroundBuilder
                     IsActionable = issue.IsActionable,
                     ActionType = MapPlsrApplyDecisionActionType(issue.ChangeType)
                 }),
-                acceptedIssueIds);
+                effectiveAcceptedIssueIds);
             result.AcceptedActionable = decision.AcceptedActionable;
             result.IgnoredActionable = decision.IgnoredActionable;
 
@@ -1617,6 +1693,224 @@ namespace AtsBackgroundBuilder
             }
 
             dispositionSourceCache[cacheKey] = null;
+            return false;
+        }
+
+        private static string ResolvePlsrVersionDateStatus(DispositionInfo? sourceDisposition, PlsrActivity? activity)
+        {
+            if (sourceDisposition == null || activity == null)
+            {
+                return "N/A";
+            }
+
+            var odCandidateDates = new HashSet<DateTime>();
+            if (TryParseDispositionVersionDate(sourceDisposition.OdVerDateRaw, out var odVersionDate))
+            {
+                odCandidateDates.Add(odVersionDate.Date);
+            }
+
+            if (TryParseDispositionVersionDate(sourceDisposition.OdEffDateRaw, out var odEffDate))
+            {
+                odCandidateDates.Add(odEffDate.Date);
+            }
+
+            if (odCandidateDates.Count == 0)
+            {
+                return "N/A";
+            }
+
+            var candidateDates = new HashSet<DateTime>();
+            if (activity.VersionDates != null && activity.VersionDates.Count > 0)
+            {
+                foreach (var versionDate in activity.VersionDates)
+                {
+                    candidateDates.Add(versionDate.Date);
+                }
+            }
+
+            if (activity.VersionDate.HasValue)
+            {
+                candidateDates.Add(activity.VersionDate.Value.Date);
+            }
+
+            if (activity.ActivityDate.HasValue)
+            {
+                candidateDates.Add(activity.ActivityDate.Value.Date);
+            }
+
+            if (candidateDates.Count == 0)
+            {
+                return "N/A";
+            }
+
+            return odCandidateDates.Overlaps(candidateDates)
+                ? "MATCH"
+                : "NON-MATCH";
+        }
+
+        private static string FormatPlsrExpectedVersionDateForDisplay(PlsrActivity? activity)
+        {
+            if (activity == null)
+            {
+                return "N/A";
+            }
+
+            if (activity.VersionDates != null && activity.VersionDates.Count > 0)
+            {
+                var preferredVersionDate = activity.VersionDates.Max();
+                return FormatPlsrVersionDateForDisplay(preferredVersionDate);
+            }
+
+            if (activity.VersionDate.HasValue)
+            {
+                return FormatPlsrVersionDateForDisplay(activity.VersionDate);
+            }
+
+            if (activity.ActivityDate.HasValue)
+            {
+                return FormatPlsrVersionDateForDisplay(activity.ActivityDate);
+            }
+
+            return "N/A";
+        }
+
+        private static string ResolvePlsrVersionDateMismatchDetail(PlsrActivity? activity)
+        {
+            var hasVersionDates = (activity?.VersionDates?.Count ?? 0) > 0 || (activity?.VersionDate.HasValue == true);
+            if (hasVersionDates)
+            {
+                if (activity?.ActivityDate.HasValue == true)
+                {
+                    return "Disposition OD VER_DATE/EFFDATE differs from PLSR XML VersionDate (ActivityDate fallback also checked).";
+                }
+
+                return "Disposition OD VER_DATE/EFFDATE differs from PLSR XML VersionDate.";
+            }
+
+            if (activity?.ActivityDate.HasValue == true)
+            {
+                return "Disposition OD VER_DATE/EFFDATE differs from PLSR XML ActivityDate.";
+            }
+
+            return "Disposition OD VER_DATE/EFFDATE differs from PLSR XML date values.";
+        }
+
+        private static string FormatDispositionDateFieldsForDisplay(DispositionInfo? sourceDisposition)
+        {
+            if (sourceDisposition == null)
+            {
+                return "N/A";
+            }
+
+            var parts = new List<string>(2);
+            var verDateDisplay = FormatDispositionVersionDateForDisplay(sourceDisposition.OdVerDateRaw);
+            if (!string.Equals(verDateDisplay, "N/A", StringComparison.OrdinalIgnoreCase))
+            {
+                parts.Add($"VER_DATE={verDateDisplay}");
+            }
+
+            var effDateDisplay = FormatDispositionVersionDateForDisplay(sourceDisposition.OdEffDateRaw);
+            if (!string.Equals(effDateDisplay, "N/A", StringComparison.OrdinalIgnoreCase))
+            {
+                parts.Add($"EFFDATE={effDateDisplay}");
+            }
+
+            if (parts.Count == 0)
+            {
+                return "N/A";
+            }
+
+            return string.Join("; ", parts);
+        }
+        private static string FormatDispositionVersionDateForDisplay(string? rawValue)
+        {
+            if (TryParseDispositionVersionDate(rawValue, out var parsed))
+            {
+                return parsed.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            }
+
+            return "N/A";
+        }
+
+        private static string FormatPlsrVersionDateForDisplay(DateTime? value)
+        {
+            if (!value.HasValue)
+            {
+                return "N/A";
+            }
+
+            return value.Value.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        }
+
+        private static bool TryParseDispositionVersionDate(string? rawValue, out DateTime versionDate)
+        {
+            versionDate = DateTime.MinValue;
+            if (string.IsNullOrWhiteSpace(rawValue))
+            {
+                return false;
+            }
+
+            var trimmed = rawValue.Trim();
+            if (DateTime.TryParseExact(trimmed, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var exactDate))
+            {
+                versionDate = exactDate.Date;
+                return true;
+            }
+
+            var digitsOnly = new string(trimmed.Where(char.IsDigit).ToArray());
+            if (digitsOnly.Length >= 8 &&
+                DateTime.TryParseExact(digitsOnly.Substring(0, 8), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var digitDate))
+            {
+                versionDate = digitDate.Date;
+                return true;
+            }
+
+            if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var numericDate))
+            {
+                var rounded = Math.Round(numericDate).ToString("0", CultureInfo.InvariantCulture);
+                if (rounded.Length >= 8 &&
+                    DateTime.TryParseExact(rounded.Substring(0, 8), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var numericParsedDate))
+                {
+                    versionDate = numericParsedDate.Date;
+                    return true;
+                }
+            }
+
+            DateTime parsedDate;
+            if (DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out parsedDate) ||
+                DateTime.TryParse(trimmed, out parsedDate))
+            {
+                versionDate = parsedDate.Date;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryParsePlsrXmlVersionDate(string? rawValue, out DateTime versionDate)
+        {
+            versionDate = DateTime.MinValue;
+            if (string.IsNullOrWhiteSpace(rawValue))
+            {
+                return false;
+            }
+
+            var trimmed = rawValue.Trim();
+            if (trimmed.Length >= 10 &&
+                DateTime.TryParseExact(trimmed.Substring(0, 10), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var isoDate))
+            {
+                versionDate = isoDate.Date;
+                return true;
+            }
+
+            DateTime parsedDate;
+            if (DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out parsedDate) ||
+                DateTime.TryParse(trimmed, out parsedDate))
+            {
+                versionDate = parsedDate.Date;
+                return true;
+            }
+
             return false;
         }
 
@@ -2299,6 +2593,35 @@ namespace AtsBackgroundBuilder
                     if (DateTime.TryParse(expiryText, out var expiryParsed))
                         expiryDate = expiryParsed;
 
+                    DateTime? versionDate = null;
+                    var versionDates = new List<DateTime>();
+                    foreach (var versionElement in activity.Descendants(ns + "VersionDate"))
+                    {
+                        var versionDateText = versionElement?.Value?.Trim();
+                        if (!TryParsePlsrXmlVersionDate(versionDateText, out var versionParsed))
+                        {
+                            continue;
+                        }
+
+                        var parsedDate = versionParsed.Date;
+                        if (!versionDates.Contains(parsedDate))
+                        {
+                            versionDates.Add(parsedDate);
+                        }
+                    }
+
+                    if (versionDates.Count > 0)
+                    {
+                        versionDate = versionDates.Max();
+                    }
+
+                    DateTime? activityDate = null;
+                    var activityDateText = activity.Element(ns + "ActivityDate")?.Value?.Trim();
+                    if (TryParsePlsrXmlVersionDate(activityDateText, out var activityParsed))
+                    {
+                        activityDate = activityParsed;
+                    }
+
                     var landIds = new List<string>();
                     var lands = activity.Element(ns + "Lands");
                     if (lands != null)
@@ -2314,12 +2637,21 @@ namespace AtsBackgroundBuilder
                     if (landIds.Count == 0)
                         continue;
 
-                    activities.Add((new PlsrActivity
+                    var parsedActivity = new PlsrActivity
                     {
                         DispNum = dispNum,
                         Owner = owner,
-                        ExpiryDate = expiryDate
-                    }, landIds));
+                        ExpiryDate = expiryDate,
+                        VersionDate = versionDate,
+                        ActivityDate = activityDate
+                    };
+
+                    foreach (var parsedVersionDate in versionDates)
+                    {
+                        parsedActivity.VersionDates.Add(parsedVersionDate);
+                    }
+
+                    activities.Add((parsedActivity, landIds));
                 }
 
                 return true;

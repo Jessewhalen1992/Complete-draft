@@ -275,7 +275,7 @@ namespace AtsBackgroundBuilder.Dispositions
 
                                 if (candidates.Count == 0)
                                 {
-                                    // Don’t place labels using an out-of-quarter/out-of-disposition fallback target
+                                    // Donâ€™t place labels using an out-of-quarter/out-of-disposition fallback target
                                     if (!GeometryUtils.IsPointInsidePolyline(quarterClone, searchTarget) ||
                                         !GeometryUtils.IsPointInsidePolyline(dispClone, searchTarget))
                                     {
@@ -850,7 +850,7 @@ namespace AtsBackgroundBuilder.Dispositions
 
         private static TextAttachmentType GetLeaderTextAttachment(AttachmentPoint attachment)
         {
-            // AutoCAD 2025's TextAttachmentType enum doesn’t define MiddleLeft/MiddleRight/MiddleCenter.
+            // AutoCAD 2025's TextAttachmentType enum doesnâ€™t define MiddleLeft/MiddleRight/MiddleCenter.
             // Use a neutral attachment type that aligns text to the middle for both left and right leaders.
             return TextAttachmentType.AttachmentMiddle;
         }
@@ -1057,7 +1057,7 @@ namespace AtsBackgroundBuilder.Dispositions
             intersectionPiece = null;
             target = default;
 
-            // First try true polygon intersection: disposition ∩ quarter
+            // First try true polygon intersection: disposition âˆ© quarter
             if (GeometryUtils.TryIntersectPolylines(disposition, quarter, out var pieces) && pieces.Count > 0)
             {
                 // keep only closed pieces
@@ -1678,6 +1678,8 @@ namespace AtsBackgroundBuilder.Dispositions
         public string PurposeTitleCase { get; set; } = string.Empty;
         public string DispNumFormatted { get; set; } = string.Empty;
         public string OdDimension { get; set; } = string.Empty;
+        public string OdVerDateRaw { get; set; } = string.Empty;
+        public string OdEffDateRaw { get; set; } = string.Empty;
 
         // For width-required purposes, allow label to be placed in the quarter (not necessarily in the disposition)
         public bool AllowLabelOutsideDisposition { get; set; }

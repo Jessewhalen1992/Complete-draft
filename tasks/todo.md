@@ -29,9 +29,9 @@
   - `TestPlsrMissingLabelCandidateSelectorSkipsBlankCandidates`
 - Verification:
   - build succeeded (warnings only):
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - decision tests passed:
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (PLSR Apply Decision Engine Tests, 2026-03-02)
 
@@ -65,9 +65,9 @@
   - `TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted`
 - Verification:
   - build succeeded (warnings only):
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - decision tests passed:
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (PLSR Summary Composer Tests, 2026-03-02)
 
@@ -95,9 +95,9 @@
   - `TestPlsrSummaryComposerSkipsWarningWhenTextFallbackAllowed`
 - Verification:
   - build succeeded (warnings only):
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - decision tests passed:
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (PLSR Apply Helper Split Refactor, 2026-03-02)
 
@@ -125,9 +125,9 @@
     - all existing skip/failure log text and counters.
 - Verification:
   - build succeeded (warnings only):
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - decision tests passed:
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (PLSR Summary Extraction Refactor, 2026-03-02)
 
@@ -152,9 +152,9 @@
     - writes `summaryResult.SummaryText` to `PLSR_Check.txt`.
 - Verification:
   - build succeeded (warnings only):
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - decision tests passed:
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (PLSR Apply Extraction Refactor, 2026-03-02)
 
@@ -184,9 +184,9 @@
     - consume returned counters for summary output.
 - Verification:
   - build succeeded (warnings only):
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - decision tests passed:
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (PLSR Scan Extraction Refactor, 2026-03-02)
 
@@ -216,9 +216,9 @@
 - Verification:
   - initial restore-based build failed due blocked network to NuGet (`api.nuget.org`).
   - no-restore build succeeded (warnings only):
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - decision tests passed:
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release`
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (/debug-config lingering command prompt screenshot, 2026-03-02)
 
@@ -232,8 +232,8 @@
   - screenshot (`src/AtsBackgroundBuilder/REFERENCE ONLY/Screenshot 2026-03-01 194742.png`) shows the older modeless PLSR review variant (`Drawing changed during review. Apply is disabled; rerun PLSR Check.`).
   - current source in `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs` is modal `ShowDialog()` flow and does not contain that modeless guard text.
 - Build/test verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 - Runtime sync:
   - copied Release artifacts to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows\`.
 - parity confirmed:
@@ -257,9 +257,9 @@
   - updated top guidance text to explicitly state pan/zoom is allowed during review.
 - Verification:
   - build succeeded:
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - decision tests passed:
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
   - runtime sync + parity:
     - `AtsBackgroundBuilder.dll` source/runtime: `2026-03-01 19:59:45`, `978432` bytes.
     - `AtsBackgroundBuilder.pdb` source/runtime: `2026-03-01 19:59:45`, `391616` bytes.
@@ -281,9 +281,9 @@
   - intent: clear stale `ATSBUILD Select closed boundary polyline` prompt residue after boundary import returns to UI.
 - Verification:
   - build succeeded:
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - decision tests passed:
-    - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
   - runtime sync + parity:
     - `AtsBackgroundBuilder.dll` source/runtime: `2026-03-01 20:29:03`, `978432` bytes.
     - `AtsBackgroundBuilder.pdb` source/runtime: `2026-03-01 20:29:02`, `391696` bytes.
@@ -312,8 +312,8 @@
     - passes `Handle`.
     - removes hide/show round-trip around boundary import.
 - Verification:
-  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
-  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
   - runtime DLL sync succeeded:
     - source/runtime timestamp `2026-03-01 7:43:02 PM`, size `980480`.
 
@@ -340,8 +340,8 @@
     - blocks apply and prompts user to rerun PLSR check.
   - always detaches database event handlers in `finally`.
 - Verification:
-  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
-  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
   - runtime DLL sync succeeded:
     - source/runtime timestamp `2026-03-01 7:30:13 PM`, size `979968`.
 
@@ -360,10 +360,10 @@
   - retained summary generation + `PLSR_Check.txt` write path.
   - now writes command line confirmation: `PLSR check complete. Summary written to PLSR_Check.txt.`
 - Verification:
-  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
   - standard release output build was blocked by file lock on `bin\Release\net8.0-windows\AtsBackgroundBuilder.dll`.
   - compiled equivalent artifact via alternate output path:
-    - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /p:OutputPath=bin\Release\net8.0-windows-plsr-no-final-popup\`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - runtime sync succeeded from alternate build output:
     - source/runtime timestamp `2026-03-01 7:24:20 PM`, size `977408`.
 
@@ -379,8 +379,8 @@
   - removed the 10-item cap when collecting skipped text-only fallback labels.
   - warning dialog now lists every skipped label entry and orders them alphabetically for readability.
 - Verification:
-  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
   - runtime DLL/PDB synced to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows`.
 
 # Follow-up (PLSR Floating Text Fallback Guard, 2026-03-01)
@@ -405,8 +405,8 @@
     - skipped text-only candidates are counted,
     - warning dialog lists skipped count and examples.
 - Verification:
-  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
-  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
   - runtime sync succeeded:
     - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll`
     - `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows\AtsBackgroundBuilder.dll`
@@ -436,8 +436,8 @@
     - `Disposition boundary recovery: closed trimmed/open boundary for entity ...`
   - keeps original `SkippedNotClosed` behavior only for unrecoverable cases.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
   - runtime DLL synced:
     - source + runtime `AtsBackgroundBuilder.dll` timestamp `2026-03-01 6:26:16 PM`, size `975360`.
 
@@ -464,8 +464,8 @@
     - deterministic in-quarter placement offsets to avoid full stacking.
   - review action text now includes `Create missing label (XML fallback)`.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
   - synced runtime plugin:
     - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll`
     - `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows\AtsBackgroundBuilder.dll`
@@ -494,8 +494,8 @@
   - relaxed fallback existing-source scan to include `Polyline`/`Polyline2d`/`Polyline3d` entities with OD DISP data regardless of layer naming.
   - this avoids missing valid source candidates that are not on strict `C-/F-` layers.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (PLSR Disp Number Canonicalization For Actionable Coverage, 2026-03-01)
 
@@ -523,8 +523,8 @@
   - better matching between XML DISP numbers, existing label DISP numbers, and OD/source DISP numbers (for example zero-padded variants).
   - more missing-label rows become actionable without requiring risky supplemental import.
 - Verification:
-  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
-  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (PLSR Import Crash Guard For Partial Existing Coverage, 2026-03-01)
 
@@ -551,8 +551,8 @@
   - prevents default path from entering known crash-prone native importer call for partial-coverage runs.
   - still allows explicit opt-in supplemental import via env var when needed.
 - Verification:
-  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
-  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (PLSR Supplemental Import Gate For Missing Labels, 2026-03-01)
 
@@ -573,8 +573,8 @@
   - Net effect: PLSR-only runs can now import supplemental disposition sources when missing labels are detected, even with partial existing disposition coverage.
 - Updated `src/AtsBackgroundBuilder.DecisionTests/Program.cs` expectations for the new plan behavior.
 - Verification:
-  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only).
-  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` succeeded (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (PLSR Cleanup Scope Guard, 2026-03-01)
 
@@ -595,7 +595,7 @@
 - Verification:
   - default Release build path is currently locked by another process (`bin\\Release\\net8.0-windows\\AtsBackgroundBuilder.dll`).
   - compile verified successfully to alternate output path:
-    - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /p:OutputPath=bin\Release\net8.0-windows-plsr-cleanup-fix\`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
 
 # Follow-up (1/4 Definitions UI Default Off, 2026-03-01)
 
@@ -608,7 +608,7 @@
   - removed `config => config.AllowMultiQuarterDispositions` default resolver from `AllowMultiQuarterDispositions`
   - `1/4 Definitions` now defaults unchecked in UI unless explicitly set by seeded state during recovery flows
 - Build and artifact sync:
-  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only, no errors)
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - DLL/PDB parity synced to:
     - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows`
     - `build\net8.0-windows`
@@ -634,7 +634,7 @@
   - new log line:
     - `UI boundary round-trip recovery: reopening dialog without snapshot (...)`
 - Verification:
-  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only, no errors)
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - synced DLL/PDB parity at:
     - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows`
     - `build\net8.0-windows`
@@ -661,7 +661,7 @@
     - erase `L-QUATER` quarter-view output within requested-section windows
   - this keeps quarter-dependent processing available while removing visible 1/4 definition output when user disables it
 - Build and sync verification:
-  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded (warnings only, no errors)
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - DLL/PDB synced with parity:
     - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows`
     - `build\net8.0-windows`
@@ -688,7 +688,7 @@
   - fallback still guarantees at least one option is enabled when persisted XML-driven recovery is used
   - retained existing `UI options: CheckPLSR=..., SurfaceImpact=..., XML files=...` runtime log line for direct verification
 - Build verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - build succeeded (warnings only, no errors)
 - Artifact sync:
   - copied updated `AtsBackgroundBuilder.dll/.pdb` to `build\net8.0-windows` (source/build parity confirmed)
@@ -714,7 +714,7 @@
 - Updated `AtsBuildForm`:
   - `OnBuild` now uses shared constants and shared validation logic for XML selection
 - Build verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - build succeeded (warnings only, no errors).
 
 # Follow-up (ATSBUILD Shared Shape-Update Service Refactor, 2026-03-01)
@@ -737,7 +737,7 @@
   - now prepares/executes updates via `ShapeUpdateService.TryPreparePlan(...)` and `ExecutePlan(...)`
 - Refactored `AtsBuildForm` with the same shared service path and removed duplicated local helpers/constants.
 - Build verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - build succeeded (warnings only, no errors).
 
 # Follow-up (ATSBUILD Shared Option Catalog Refactor, 2026-03-01)
@@ -757,7 +757,7 @@
 - Updated `AtsBuildWindow` to configure and render grouped options by iterating the shared catalog instead of hardcoded label/group lists.
 - Updated `AtsBuildForm` to do the same, preserving the same grouped output and order as WPF.
 - Build verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - build succeeded (warnings only, no errors).
 
 # Follow-up (ATSBUILD Option Grouping by Section, 2026-03-01)
@@ -781,7 +781,7 @@
   - `src/AtsBackgroundBuilder/Core/AtsBuildWindow.cs`
   - `src/AtsBackgroundBuilder/Core/AtsBuildForm.cs`
 - Build verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - build succeeded (warnings only, no errors).
 
 # Feature (Surface Impact Build Option, 2026-03-01)
@@ -805,7 +805,7 @@
 - Removed manual surface checklist behavior by replacing it with ATSBUILD input scoping only.
 - Execution order: Surface Impact runs as final ATSBUILD stage before summary; canceling insertion point safely skips only the table insert.
 - Build verification:
-  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /p:OutputPath=bin\Release\net8.0-windows-surfaceimpact\` (success)
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
 - Runtime sync:
   - copied `AtsBackgroundBuilder.dll` and `AtsBackgroundBuilder.pdb` from `bin\Release\net8.0-windows-surfaceimpact` to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows` (timestamp `2026-03-01 12:14:42 PM`).
 
@@ -824,7 +824,7 @@
   - duplicate-window guard (`Close()` still-visible original window before seeded reopen)
   - validation-abort gate (`onbuild_abort_*`) on snapshot-run fallback.
 - Build verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - build succeeded (warnings only, no errors).
 
 # Follow-up (UI Section Payload Trace + Duplicate Reopen Guard, 2026-03-01)
@@ -859,7 +859,7 @@
 - Added bounded recovery (`3` attempts) to avoid endless reopen loops on persistent host/modal lifecycle failures.
 - Tightened snapshot execution gate to ignore validation-aborted build traces (`onbuild_abort_*`) so fallback cannot run when Build was attempted but validation intentionally failed.
 - Build + runtime sync verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - copied `AtsBackgroundBuilder.dll` and `AtsBackgroundBuilder.pdb` to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows`.
 
 # Follow-up (Boundary Dialog Round-Trip Resume, 2026-03-01)
@@ -874,7 +874,7 @@
 - Added `BoundaryImportRoundTripUsed` tracking in `AtsBuildWindow` and seeded-window restore support (`AtsBuildWindow(..., AtsBuildInput? seedInput)` + `ApplySeedInput(...)`).
 - Updated `Plugin.cs` UI loop to detect boundary round-trip false-return and reopen the dialog with captured state, waiting for explicit Build click instead of cancelling or auto-running.
 - Build verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - build succeeded (warnings only, no errors).
 
 ## Follow-up (Build Click Trace, 2026-03-01)
@@ -894,7 +894,7 @@
 - User correction confirmed regression: fallback was too aggressive and allowed build execution from UI auto-close.
 - Restored strict recovery intent: snapshot recovery now requires explicit build intent (`BuildRequested || BuildAttempted`), preserving normal close-as-cancel behavior.
 - Build verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - build succeeded (warnings only, no errors).
 
 # Follow-up (Debug-Config PLSR Auto-Close Recovery, 2026-03-01)
@@ -910,7 +910,7 @@
 - Added diagnostic line for this path: `UI auto-close fallback: recovered build input snapshot without explicit Build click (PLSR-enabled snapshot).`
 - Follow-up adjustment: for auto-close with valid snapshot and `CheckPlsr=false`, auto-enable PLSR using persisted XML paths (when available) instead of cancelling.
 - Build verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - build succeeded (warnings only, no errors).
 - Runtime sync:
   - copied `AtsBackgroundBuilder.dll` and `AtsBackgroundBuilder.pdb` to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows` (timestamp `2026-03-01 8:56:47 AM`).
@@ -928,7 +928,7 @@
 - Added `BuildAttempted` state in `Core/AtsBuildWindow.cs` so fallback logic can still recover when a build was attempted but `_buildRequested` was later reset by validation/dialog paths.
 - Updated `Core/Plugin.cs` fallback gate to recover on `BuildRequested || BuildAttempted`, while preserving explicit cancel behavior.
 - Build verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home\.nuget\packages'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore`
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
   - build succeeded (existing nullable warnings remain, no new errors).
 
 # Follow-up (PLSR Fatal Guardrails, 2026-03-01)
@@ -1501,7 +1501,7 @@
 ## Review (Section 11 NW Snap Over-Drift From Raw Seed, 2026-02-26)
 
 - Updated `Sections/Plugin.Sections.SectionDrawingLsd.cs`:
-  - Added raw-lock stage for blind `NW` from apparent west×north intersection with explicit diagnostics:
+  - Added raw-lock stage for blind `NW` from apparent westÃƒâ€”north intersection with explicit diagnostics:
     - `VERIFY-QTR-NW-NW-RAW`
     - `VERIFY-QTR-NW-NW-RAWLOCK`
   - Blind `NW-NW-SNAP` now only applies when candidate is `priority<=0` and movement is within local cap:
@@ -2458,8 +2458,8 @@
 - Updated `src/AtsBackgroundBuilder.DecisionTests/Program.cs`:
   - extended `TestBuildExecutionPlanQuarterVisibility()` with an ATS-enabled case to assert `ShowQuarterDefinitionLinework == true`.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (ATS On Should Keep 1/4 Lines But Hide L-QUATER When 1/4 Definitions Off, 2026-03-02)
 
@@ -2476,8 +2476,8 @@
   - `L-QSEC` helper-line cleanup remains ATS-aware:
     - erase only when ATS fabric is off and quarter-definition display is off.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (Quarter Visibility Policy Refactor, 2026-03-02)
 
@@ -2504,8 +2504,8 @@
     - added `TestQuarterVisibilityPolicyMatrix()` covering OFF/OFF, toggle-only, ATS-only, env-only.
     - updated `TestBuildExecutionPlanQuarterVisibility()` ATS-only expectation to `ShowQuarterDefinitionLinework == false` (matches `L-QUATER` display semantics).
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (Cleanup Plan Refactor, 2026-03-02)
 
@@ -2535,8 +2535,8 @@
   - `src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj` links `Core/CleanupPlan.cs`.
   - `src/AtsBackgroundBuilder.DecisionTests/Program.cs` adds `TestCleanupPlanMatrix()` and runs it in `RunAll()`.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (Native Disposition Import Crash Guard for Large SHP/DBF, 2026-03-02)
 
@@ -2560,8 +2560,8 @@
   - added env override for deliberate force-run:
     - `ATSBUILD_ALLOW_LARGE_DISPOSITION_IMPORT=1`
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (ATS-Fabric-ON Crash on Generated Subset Import, 2026-03-02)
 
@@ -2586,8 +2586,8 @@
     - use chunked source import (`TryCreateChunkedSubsetShapefiles(...)`) with existing section-window filtering and post-filter logic.
     - log explicit safety-mode message with env override instructions.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.nuget_packages'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.nuget_packages'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (LSD 20.12 vs 30.18 Boundary Regression, 2026-03-02)
 
@@ -2607,8 +2607,8 @@
     2) a `0.0` offset fallback to handle normalized-edge cases where inset is already consumed.
   - South promotion is now deterministic once a preferred candidate resolves (instead of requiring an error-delta threshold).
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.nuget_packages'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.cli_home'; $env:NUGET_PACKAGES='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.nuget_packages'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (Large DAB_APPL Safe Spatial-Subset Import, 2026-03-02)
 
@@ -2634,8 +2634,8 @@
   - Safety behavior for large files:
     - if subset prep fails, skip source native import instead of falling back to crash-prone `Importer.Import()` on the full source file.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (Chunked Safe Import Fallback When Raw Spatial Filter Misses, 2026-03-02)
 
@@ -2656,8 +2656,8 @@
     - `ATSBUILD_LARGE_IMPORT_CHUNK_RECORDS` (default `50000`, clamped to safe min/max).
   - Added chunk-progress logging and temporary folder cleanup for all generated chunk sets.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (ATS Fabric OFF Crash During Chunked Large Import, 2026-03-02)
 
@@ -2677,8 +2677,8 @@
   - lowered min clamp from `2000` to `1000`.
   - intent: reduce per-chunk imported MPOLYGON counts and memory pressure in ATS-off path.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (Disposition Import Scope Buffer +100m, 2026-03-02)
 
@@ -2694,8 +2694,8 @@
 - Expected runtime log change:
   - `Section extents loaded: <n> (buffer 100).`
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (CRS-Aware Spatial Subset for Geographic Disposition SHP, 2026-03-02)
 
@@ -2722,8 +2722,8 @@
   - For `DAB_APPL`, logs should show CRS transform applied and `Spatial subset import enabled ... kept X/Y` instead of immediate chunk fallback.
   - ATS Fabric ON runs should be materially faster because import volume is reduced before native Map import/conversion.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (ATS-Fabric-OFF Stability Gate for CRS Subset Path, 2026-03-02)
 
@@ -2747,8 +2747,8 @@
     - ATS Fabric ON: keeps CRS-aware subset acceleration.
     - ATS Fabric OFF: disables CRS transform hint and reverts to previous chunked-safe path behavior.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (LSD Endpoint 30.18 Escape Hardening, 2026-03-02)
 
@@ -2775,8 +2775,8 @@
     - applied the same widened 30.18 escape chain for both horizontal and vertical endpoints,
     - added final relaxed nearest hard-boundary fallback with `preferZero: null` to prevent 30.18 persistence when preferred side candidates are absent.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 
 # Follow-up (LSD Boundary Segment Collection Robustness, 2026-03-02)
 
@@ -2795,8 +2795,8 @@
 - Expected effect:
   - `L-USEC-3018` boundaries represented as segmented/closed polylines are now visible to LSD endpoint rules and final 30.18 invariant snap.
 - Verification:
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` succeeded.
-  - `$env:DOTNET_CLI_HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; $env:HOME='C:\Users\jesse\OneDrive\Desktop\COMPLETE DRAFT\.dotnet-home'; .\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 # Follow-up (Nullable Warning Cleanup + Build Simulation, 2026-03-02)
 
 - [x] Add targeted null-safety guards for reported CS8602 warnings.
@@ -3255,7 +3255,7 @@
     - `py -m ats_viewer --sections "9-65-3-W6" --zone auto --debug --road-width-targets "20.11,30.17" --out ".\out-debug\sec-9-65-3-w6-after"`
   - Note: `ats_viewer` validates index/edge-pair inference and does not execute ATS AutoCAD quarter-corner heuristics; before/after viewer artifacts are unchanged and serve as secondary scope sanity only.
 - Iteration after user retest reported "no changes":
-  - Added stricter non-correction NE handling so `N.E. N.E.` uses strict east×north segment intersection (`VERIFY-QTR-NE-NE-STRICT`) instead of apparent infinite-line intersection.
+  - Added stricter non-correction NE handling so `N.E. N.E.` uses strict eastÃƒâ€”north segment intersection (`VERIFY-QTR-NE-NE-STRICT`) instead of apparent infinite-line intersection.
   - Enabled quarter verify logging for section 9 to expose the exact NE authority path during user retest.
   - Rebuilt and redeployed `AtsBackgroundBuilder.dll` + `.pdb` to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows`.
 
@@ -3450,7 +3450,7 @@
 
 - Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
   - added `TryResolvePreferredQuarterViewEastBoundary(...)`.
-  - moved the callsite�s inline east mid-U calculation into the helper while reusing existing `TryResolvePreferredQuarterViewEastBoundarySegment(...)` behavior.
+  - moved the callsiteÃ¯Â¿Â½s inline east mid-U calculation into the helper while reusing existing `TryResolvePreferredQuarterViewEastBoundarySegment(...)` behavior.
   - preserved assignment/logging behavior at the callsite (now consumes `preferredEastMidU`).
 - Verification:
   - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n`
@@ -4185,3 +4185,248 @@
   - staged fresh build to `build/net8.0-windows-next/AtsBackgroundBuilder.dll` (`2026-03-04 5:35:43 PM`).
 - Residual risk:
   - if source OD DISP values are inherently zero-stripped upstream, source-geometry-created labels can still carry stripped DISP text in some paths; PLSR issue/review display and template/XML fallback creation are now zero-preserving.
+
+# Follow-up (ATS Auto Shape Update Prompting, 2026-03-04)
+
+- [x] Remove the manual "check/update shapes always" UI toggle from ATS build forms.
+- [x] Force shape update checks to run automatically on every build submission.
+- [x] Keep auto-update checks scoped to requested shape sets only (Dispositions, Compass Mapping, CLRs).
+- [x] Add pre-copy confirmation prompts when newer shape content is detected.
+- [x] Show user-facing warnings when requested shape updates cannot run because source drives/folders are unavailable.
+- [x] Rebuild ATS + decision tests to verify compile/runtime safety.
+
+## Review (ATS Auto Shape Update Prompting, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Core/AtsBuildWindow.cs`:
+  - removed the `CHECK/UPDATE SHAPES ALWAYS` toggle from the action row.
+  - build input capture now always sets `AutoCheckUpdateShapefilesAlways = true`.
+- Updated `src/AtsBackgroundBuilder/Core/AtsBuildForm.cs` for parity:
+  - removed the same manual toggle from the WinForms action row.
+  - default/input capture now forces `AutoCheckUpdateShapefilesAlways = true`.
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.Core.ImportWindowing.cs`:
+  - auto-update flow now prompts before each requested update when newer source content is detected:
+    - `There are newer Shapes for <type> Located at: ... Would you like to update them?`
+  - if update roots/folders cannot be reached for requested sets, ATSBUILD now shows a warning dialog instead of logging-only.
+  - requested-only gating remains intact (`Dispositions` only when linework/labels/PLSR needs it; `Compass Mapping`/`CLRs` only when selected).
+- Verification:
+  - `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -v minimal` (succeeded)
+  - `dotnet build .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release -v minimal` (succeeded)
+  - `dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release` ("Decision tests passed.")
+- Notes:
+  - NuGet vulnerability index warnings (`NU1900`) were emitted due source reachability to `https://api.nuget.org/v3/index.json`; no compile errors.
+
+# Follow-up (ATS Shape-Update Pre-Prompt Performance Pass, 2026-03-04)
+
+- [x] Identify startup delay source before shape-update prompt.
+- [x] Remove per-base repeated recursive tree scans in shape source resolution.
+- [x] Switch to single recursive `.shp` anchor pass for requested base names.
+- [x] Compile-check patched code path.
+
+## Review (ATS Shape-Update Pre-Prompt Performance Pass, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.Core.ImportWindowing.cs`:
+  - `ResolveSelectedShapeSourceFiles(...)` now:
+    - builds a requested base-name set once,
+    - runs one top-level `*.shp` pass,
+    - then one recursive `*.shp` pass (only if needed),
+    - chooses newest valid anchor per base name,
+    - resolves sidecar files from anchor folder.
+  - removed the previous per-base recursive `Directory.GetFiles(..., SearchOption.AllDirectories)` pattern that caused repeated network-tree traversals.
+- Verification:
+  - `dotnet msbuild .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -verbosity=minimal` succeeded.
+  - full `dotnet build` currently blocked from mirror copy step when `build/net8.0-windows/AtsBackgroundBuilder.dll` is locked by active AutoCAD process; compile output still produced updated assembly in `obj/Release/net8.0-windows`.
+- Build artifact status:
+  - updated compiled DLL: `src/AtsBackgroundBuilder/obj/Release/net8.0-windows/AtsBackgroundBuilder.dll` (`2026-03-04 7:44:29 PM`).
+
+# Follow-up (ATS Remove Manual Shape Update Controls, 2026-03-04)
+
+- [x] Remove manual shape update combo/button from WPF ATS build action row.
+- [x] Remove manual shape update combo/button from WinForms ATS build action row.
+- [x] Remove now-unused manual shape update handlers/control fields.
+- [x] Compile-check ATS after UI cleanup.
+
+## Review (ATS Remove Manual Shape Update Controls, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Core/AtsBuildWindow.cs`:
+  - removed shape-type dropdown + "Update Shape" button from action area.
+  - removed `OnUpdateShape()` handler and related control fields.
+  - build input continues to force auto shape update checks (`AutoCheckUpdateShapefilesAlways = true`).
+- Updated `src/AtsBackgroundBuilder/Core/AtsBuildForm.cs` for parity:
+  - removed shape-type dropdown + "Update Shape" button from action area.
+  - removed `OnUpdateShape()` handler and related control fields.
+  - build input/default keeps auto shape update checks on (`AutoCheckUpdateShapefilesAlways = true`).
+- Verification:
+  - `dotnet msbuild .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -verbosity:minimal` succeeded.
+  - full `dotnet build` compiles but currently fails final mirror copy to `build\net8.0-windows\AtsBackgroundBuilder.dll` because file is locked by another process.
+
+# Follow-up (ATS Deferred PLSR Shape Prompt + Refresh Compare Tightening, 2026-03-04)
+
+- [x] Stop triggering Disposition update prompts during pre-build auto-check for PLSR-only runs.
+- [x] Trigger Disposition update prompt only at the actual supplemental import step when PLSR decides import is needed.
+- [x] Tighten shape refresh comparison to avoid false prompts from generated/extra sidecars and non-source-newer timestamp drift.
+- [x] Build/compile and deploy updated ATS DLL.
+
+## Review (ATS Deferred PLSR Shape Prompt + Refresh Compare Tightening, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.Core.ImportWindowing.cs`:
+  - pre-build disposition auto-update gate now runs only for linework/label requests (`IncludeDispositionLinework || IncludeDispositionLabels`).
+  - added `AutoUpdateDispositionShapesIfNeeded(...)` helper and reused it for targeted invocation.
+  - `DirectoryContentsDifferForBaseNames(...)` now checks refresh need per selected tracked files (`.shp/.shx/.dbf/.prj/.cpg`) using:
+    - missing destination file,
+    - size mismatch,
+    - source file newer-than destination.
+  - ignores destination-only/generated extras (e.g. index sidecars) to reduce repeated false prompts.
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - for PLSR-only supplemental import path, disposition update check now runs immediately before `ShapefileImporter.ImportShapefiles(...)` and only when import is still required.
+- Verification:
+  - `dotnet msbuild .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -verbosity:minimal` succeeded.
+  - `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release` succeeded.
+  - Deployed to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows\AtsBackgroundBuilder.dll`.
+
+# Follow-up (PLSR XML Owner Enforcement, 2026-03-04)
+
+- [x] Enforce XML owner as authoritative during PLSR apply (owner mismatch actions always applied).
+- [x] Keep non-owner actions (expired/missing-label create) under review acceptance flow.
+- [x] Verify compile and deploy updated DLL.
+
+## Review (PLSR XML Owner Enforcement, 2026-03-04)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - `ApplyAcceptedPlsrActions(...)` now force-adds all actionable `UpdateOwner` issues to the accepted issue set before decision routing.
+  - logs owner enforcement count for transparency.
+- Behavior:
+  - With PLSR XML selected, label owner updates follow XML truth regardless of review checkbox state.
+  - With no XML selected, PLSR check exits early and no XML owner enforcement runs (disposition-only behavior remains).
+- Verification:
+  - `dotnet msbuild .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -verbosity:minimal` succeeded.
+  - `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release` succeeded.
+  - deployed to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows\AtsBackgroundBuilder.dll`.
+
+# Follow-up (PLSR Ver. Date OD/XML Compare Column, 2026-03-04)
+
+- [x] Parse OD VER_DATE from disposition object data into the disposition info model.
+- [x] Parse PLSR XML VersionDate values from activity nodes.
+- [x] Add per-issue Ver. Date status calculation (MATCH / NON-MATCH / N/A) using OD sources that exist in drawing (or fallback source candidates used by insert decisions).
+- [x] Add Ver. Date. column to the PLSR review grid and bind status values.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (PLSR Ver. Date OD/XML Compare Column, 2026-03-04)
+
+- Updated src/AtsBackgroundBuilder/Core/Plugin.cs:
+  - read OD VER_DATE in disposition ingestion,
+  - persist raw value to DispositionInfo.OdVerDateRaw for both width and non-width disposition entries.
+- Updated src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs:
+  - added DispositionInfo.OdVerDateRaw.
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs:
+  - parse XML <VersionDate> into PlsrActivity.VersionDate.
+  - added source-resolution helper for version-date compare (quarter overlap match first, fallback indexed disposition candidate second).
+  - added date-status resolver that compares OD yyyyMMdd vs XML date (date-only) and emits MATCH, NON-MATCH, or N/A.
+  - wired VersionDateStatus onto missing-label, owner-mismatch, and expired issue rows.
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.PlsrReviewDialog.cs:
+  - added Ver. Date. review column,
+  - bound row value from issue.VersionDateStatus.
+- Verification:
+  - `.\.local_dotnet\dotnet.exe build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore` (with `DOTNET_CLI_HOME`, `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_CLI_TELEMETRY_OPTOUT` set; succeeded; warnings only).
+  - `.\.local_dotnet\dotnet.exe run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
+
+# Follow-up (PLSR Ver. Date Mismatch Listing + Parse Hardening, 2026-03-04)
+
+- [x] Add standalone Version date mismatch findings when OD/XML dates differ and no other PLSR trigger exists.
+- [x] Keep N/A version-date status informational only (no standalone row).
+- [x] Harden OD VER_DATE parsing for numeric/text variants.
+- [x] Harden XML version-date parsing to accept descendant VersionDate or ActivityDate values.
+- [x] Rebuild ATS and rerun decision tests.
+
+## Review (PLSR Ver. Date Mismatch Listing + Parse Hardening, 2026-03-04)
+
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs:
+  - added standalone Version date mismatch issue generation only when VersionDateStatus == NON-MATCH and no owner/expiry issue exists for that activity.
+  - added display helpers for OD/XML version dates (yyyy-MM-dd output).
+  - expanded OD date parsing to handle yyyyMMdd, digit-extracted values, and numeric/scientific-style values.
+  - expanded XML date extraction to search descendant nodes by local-name (VersionDate or ActivityDate) and parse date-only safely.
+- Verification:
+  - dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore succeeded (warnings only).
+  - dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore passed (Decision tests passed.).
+# Follow-up (PLSR XML Date Source: ActivityDate Only, 2026-03-04)
+
+- [x] Remove XML version-date fallback logic and use ActivityDate only for PLSR version-date comparison.
+- [x] Rebuild ATS and deploy runtime DLL/PDB.
+
+## Review (PLSR XML Date Source: ActivityDate Only, 2026-03-04)
+
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs:
+  - `TryParsePlsrXml(...)` now reads XML date source from `activity.Element(ns + "ActivityDate")` only.
+  - removed descendant fallback chain (VersionDate / ActivityDate) for this compare source.
+- Verification:
+  - dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore succeeded.
+  - runtime deploy copied to C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows.
+# Follow-up (PLSR Ver. Date Source Scoping for NON-MATCH, 2026-03-04)
+
+- [x] Restrict standalone PLSR version-date mismatch detection to same-quarter disposition matches only.
+- [x] Keep missing-label version status tied to the actual source used for insertion decisions.
+- [x] Rebuild ATS and deploy runtime DLL/PDB.
+
+## Review (PLSR Ver. Date Source Scoping for NON-MATCH, 2026-03-04)
+
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs:
+  - removed cross-quarter fallback source resolution from standalone version-date mismatch checks.
+  - standalone `Version date mismatch` rows now require a quarter-resolved source disposition (otherwise status remains `N/A`, no standalone row).
+  - missing-label rows now calculate `VersionDateStatus` from the actual selected source disposition when one is used for insertion.
+  - mismatch detail text now references XML `ActivityDate`.
+- Verification:
+  - .\\.local_dotnet\\dotnet.exe build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore succeeded (warnings only).
+  - deployed to C:\\AUTOCAD-SETUP CG\\CG_LISP\\COMPASS\\net8.0-windows.
+# Follow-up (PLSR Ver. Date Compare: VersionDate First + ActivityDate Fallback, 2026-03-04)
+
+- [x] Parse both XML `VersionDate` and XML `ActivityDate` for each PLSR activity.
+- [x] Mark VER_DATE compare as MATCH when OD date matches either XML date.
+- [x] In mismatch rows, display XML VersionDate as expected date (fallback to ActivityDate when VersionDate is missing).
+- [x] Rebuild ATS and deploy runtime DLL/PDB.
+
+## Review (PLSR Ver. Date Compare: VersionDate First + ActivityDate Fallback, 2026-03-04)
+
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs:
+  - `PlsrActivity` now stores both `VersionDate` and `ActivityDate`.
+  - XML parse now reads both fields independently.
+  - `ResolvePlsrVersionDateStatus(...)` now returns MATCH when OD `VER_DATE` equals either XML `VersionDate` or XML `ActivityDate`.
+  - mismatch expected-date display now prefers XML `VersionDate`; falls back to XML `ActivityDate`.
+  - mismatch detail now explicitly states VersionDate mismatch context.
+- Verification:
+  - .\\.local_dotnet\\dotnet.exe build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore succeeded (warnings only).
+  - runtime deploy copied to C:\\AUTOCAD-SETUP CG\\CG_LISP\\COMPASS\\net8.0-windows.
+# Follow-up (PLSR XML VersionDate Nested Parse Fix, 2026-03-04)
+
+- [x] Parse XML VersionDate from descendant nodes (e.g., Plans/Plan/VersionDate), not only direct Activity child.
+- [x] Compare OD VER_DATE against any parsed XML VersionDate (plus ActivityDate fallback).
+- [x] Rebuild ATS and deploy runtime DLL/PDB.
+
+## Review (PLSR XML VersionDate Nested Parse Fix, 2026-03-04)
+
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs:
+  - `TryParsePlsrXml(...)` now collects descendant `VersionDate` values under each activity.
+  - per-activity compare now uses all parsed XML version dates (date-only), then ActivityDate fallback.
+  - mismatch expected display still prioritizes VersionDate.
+- Verification:
+  - .\\.local_dotnet\\dotnet.exe build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore succeeded (warnings only).
+  - runtime deploy copied to C:\\AUTOCAD-SETUP CG\\CG_LISP\\COMPASS\\net8.0-windows.
+# Follow-up (PLSR OD Date Compare: Add EFFDATE, 2026-03-05)
+
+- [x] Extend disposition model to carry OD `EFFDATE` alongside `VER_DATE`.
+- [x] Read OD `EFFDATE` during disposition ingestion and persist into `DispositionInfo`.
+- [x] Update PLSR date status to match if any OD date (`VER_DATE`, `EFFDATE`) equals any XML date (`VersionDate`, `ActivityDate`).
+- [x] Rebuild ATS and deploy runtime DLL/PDB.
+
+## Review (PLSR OD Date Compare: Add EFFDATE, 2026-03-05)
+
+- Updated src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs:
+  - added `DispositionInfo.OdEffDateRaw`.
+- Updated src/AtsBackgroundBuilder/Core/Plugin.cs:
+  - reads OD field `EFFDATE` and stores it in both width and non-width disposition info entries.
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs:
+  - `ResolvePlsrVersionDateStatus(...)` now compares OD candidate dates from both `VER_DATE` and `EFFDATE`.
+  - status returns MATCH when any OD date overlaps any XML compare date (`VersionDate` descendants + `ActivityDate`).
+  - mismatch current-value display now shows available OD date fields (`VER_DATE=...; EFFDATE=...`).
+  - mismatch detail text now references `VER_DATE/EFFDATE`.
+- Verification:
+  - .\\.local_dotnet\\dotnet.exe build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore succeeded (warnings only).
+  - runtime deploy copied to C:\\AUTOCAD-SETUP CG\\CG_LISP\\COMPASS\\net8.0-windows.

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -47,6 +48,15 @@ namespace AtsBackgroundBuilder
         private const string CompassMappingShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\COMPASS MAPPING";
         private const string CrownReservationsShapeDestinationFolder = @"C:\AUTOCAD-SETUP CG\SHAPE FILES\CLR";
 
+        private static readonly HashSet<string> ShapeUpdateTrackedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".shp",
+            ".shx",
+            ".dbf",
+            ".prj",
+            ".cpg",
+        };
+
         private static void AutoUpdateSelectedShapeSetsIfNeeded(AtsBuildInput input, Config config, Logger? logger)
         {
             if (input == null)
@@ -54,95 +64,291 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
+            var overallTimer = Stopwatch.StartNew();
             try
             {
-                var needsDisposition = input.IncludeDispositionLinework || input.IncludeDispositionLabels || input.CheckPlsr;
-                var dispositionShapeBaseNames = BuildShapeBaseNamesFromShapefileNames(config?.DispositionShapefiles, "DAB_APPL");
-                var dispositionError = string.Empty;
-                if (needsDisposition &&
-                    TryResolveNewestDidsFolderAcrossRoots(
-                        DispositionShapeUpdateSourceRoots,
-                        out var sourceRoot,
-                        out var newestFolder,
-                        out var newestDate,
-                        out dispositionError))
+                var unavailableUpdateMessages = new List<string>();
+                var needsDisposition = input.IncludeDispositionLinework || input.IncludeDispositionLabels;
+                if (needsDisposition)
                 {
-                    if (DirectoryContentsDifferForBaseNames(newestFolder, DispositionShapeDestinationFolder, dispositionShapeBaseNames))
-                    {
-                        var copied = ReplaceDirectoryContentsWithSelectedShapeSets(
-                            newestFolder,
-                            DispositionShapeDestinationFolder,
-                            dispositionShapeBaseNames);
-                        logger?.WriteLine($"Shape auto-update: Disposition copied {copied} file(s) from '{newestFolder}' (root '{sourceRoot}', date {newestDate:yyyy-MM-dd}, shapeSets={string.Join(", ", dispositionShapeBaseNames)}).");
-                    }
-                    else
-                    {
-                        logger?.WriteLine("Shape auto-update: Disposition already current.");
-                    }
-                }
-                else if (needsDisposition)
-                {
-                    logger?.WriteLine("Shape auto-update: Disposition skipped. " + dispositionError);
+                    AutoUpdateDispositionShapesIfNeeded(config, logger, unavailableUpdateMessages);
                 }
 
-                var compassError = string.Empty;
-                if (input.IncludeCompassMapping &&
-                    TryResolveFirstExistingRootAcrossRoots(
+                if (input.IncludeCompassMapping)
+                {
+                    var compassTimer = Stopwatch.StartNew();
+                    var compassError = string.Empty;
+
+                    var compassResolveTimer = Stopwatch.StartNew();
+                    var hasCompassSource = TryResolveFirstExistingRootAcrossRoots(
                         CompassMappingShapeUpdateSourceRoots,
                         out var compassSource,
-                        out compassError))
-                {
-                    if (DirectoryContentsDifferForBaseNames(compassSource, CompassMappingShapeDestinationFolder, CompassMappingShapeBaseNames))
+                        out compassError);
+                    compassResolveTimer.Stop();
+                    logger?.WriteLine($"Shape auto-update timing [Compass Mapping]: resolve source took {compassResolveTimer.ElapsedMilliseconds} ms.");
+
+                    if (hasCompassSource)
                     {
-                        var copied = ReplaceDirectoryContentsWithSelectedShapeSets(
-                            compassSource,
-                            CompassMappingShapeDestinationFolder,
-                            CompassMappingShapeBaseNames);
-                        logger?.WriteLine($"Shape auto-update: Compass Mapping copied {copied} file(s) from '{compassSource}'.");
+                        var compassDiffTimer = Stopwatch.StartNew();
+                        var compassNeedsUpdate = DirectoryContentsDifferForBaseNames(compassSource, CompassMappingShapeDestinationFolder, CompassMappingShapeBaseNames);
+                        compassDiffTimer.Stop();
+                        logger?.WriteLine($"Shape auto-update timing [Compass Mapping]: compare source/destination took {compassDiffTimer.ElapsedMilliseconds} ms.");
+
+                        if (compassNeedsUpdate)
+                        {
+                            var compassPromptTimer = Stopwatch.StartNew();
+                            var shouldUpdateCompass = ConfirmShapeUpdateIfNewer("Compass Mapping", compassSource);
+                            compassPromptTimer.Stop();
+                            logger?.WriteLine($"Shape auto-update timing [Compass Mapping]: user prompt wait took {compassPromptTimer.ElapsedMilliseconds} ms.");
+
+                            if (shouldUpdateCompass)
+                            {
+                                var compassCopyTimer = Stopwatch.StartNew();
+                                var copied = ReplaceDirectoryContentsWithSelectedShapeSets(
+                                    compassSource,
+                                    CompassMappingShapeDestinationFolder,
+                                    CompassMappingShapeBaseNames);
+                                compassCopyTimer.Stop();
+                                logger?.WriteLine($"Shape auto-update: Compass Mapping copied {copied} file(s) from '{compassSource}'.");
+                                logger?.WriteLine($"Shape auto-update timing [Compass Mapping]: copy took {compassCopyTimer.ElapsedMilliseconds} ms.");
+                            }
+                            else
+                            {
+                                logger?.WriteLine($"Shape auto-update: Compass Mapping update declined by user (source '{compassSource}').");
+                            }
+                        }
+                        else
+                        {
+                            logger?.WriteLine("Shape auto-update: Compass Mapping already current.");
+                        }
                     }
                     else
                     {
-                        logger?.WriteLine("Shape auto-update: Compass Mapping already current.");
+                        logger?.WriteLine("Shape auto-update: Compass Mapping skipped. " + compassError);
+                        unavailableUpdateMessages.Add(BuildUpdateUnavailableMessage("Compass Mapping", compassError));
                     }
-                }
-                else if (input.IncludeCompassMapping)
-                {
-                    logger?.WriteLine("Shape auto-update: Compass Mapping skipped. " + compassError);
+
+                    compassTimer.Stop();
+                    logger?.WriteLine($"Shape auto-update timing [Compass Mapping]: total took {compassTimer.ElapsedMilliseconds} ms.");
                 }
 
-                var crownError = string.Empty;
-                if (input.IncludeCrownReservations &&
-                    TryResolveNewestDatedFolderAcrossRoots(
+                if (input.IncludeCrownReservations)
+                {
+                    var crownTimer = Stopwatch.StartNew();
+                    var crownError = string.Empty;
+
+                    var crownResolveTimer = Stopwatch.StartNew();
+                    var hasCrownSource = TryResolveNewestDatedFolderAcrossRoots(
                         CrownReservationsShapeUpdateSourceRoots,
                         out var crownSourceRoot,
                         out var crownSourceFolder,
                         out var crownSourceDate,
-                        out crownError))
-                {
-                    if (DirectoryContentsDifferForBaseNames(crownSourceFolder, CrownReservationsShapeDestinationFolder, CrownReservationsShapeBaseNames))
+                        out crownError);
+                    crownResolveTimer.Stop();
+                    logger?.WriteLine($"Shape auto-update timing [Crown Reservations]: resolve source took {crownResolveTimer.ElapsedMilliseconds} ms.");
+
+                    if (hasCrownSource)
                     {
-                        var copied = ReplaceDirectoryContentsWithSelectedShapeSets(
-                            crownSourceFolder,
-                            CrownReservationsShapeDestinationFolder,
-                            CrownReservationsShapeBaseNames);
-                        logger?.WriteLine($"Shape auto-update: Crown Reservations copied {copied} file(s) from '{crownSourceFolder}' (root '{crownSourceRoot}', date {crownSourceDate:yyyy-MM-dd}).");
+                        var crownDiffTimer = Stopwatch.StartNew();
+                        var crownNeedsUpdate = DirectoryContentsDifferForBaseNames(crownSourceFolder, CrownReservationsShapeDestinationFolder, CrownReservationsShapeBaseNames);
+                        crownDiffTimer.Stop();
+                        logger?.WriteLine($"Shape auto-update timing [Crown Reservations]: compare source/destination took {crownDiffTimer.ElapsedMilliseconds} ms.");
+
+                        if (crownNeedsUpdate)
+                        {
+                            var crownPromptTimer = Stopwatch.StartNew();
+                            var shouldUpdateCrown = ConfirmShapeUpdateIfNewer("Crown Reservations", crownSourceFolder);
+                            crownPromptTimer.Stop();
+                            logger?.WriteLine($"Shape auto-update timing [Crown Reservations]: user prompt wait took {crownPromptTimer.ElapsedMilliseconds} ms.");
+
+                            if (shouldUpdateCrown)
+                            {
+                                var crownCopyTimer = Stopwatch.StartNew();
+                                var copied = ReplaceDirectoryContentsWithSelectedShapeSets(
+                                    crownSourceFolder,
+                                    CrownReservationsShapeDestinationFolder,
+                                    CrownReservationsShapeBaseNames);
+                                crownCopyTimer.Stop();
+                                logger?.WriteLine($"Shape auto-update: Crown Reservations copied {copied} file(s) from '{crownSourceFolder}' (root '{crownSourceRoot}', date {crownSourceDate:yyyy-MM-dd}).");
+                                logger?.WriteLine($"Shape auto-update timing [Crown Reservations]: copy took {crownCopyTimer.ElapsedMilliseconds} ms.");
+                            }
+                            else
+                            {
+                                logger?.WriteLine($"Shape auto-update: Crown Reservations update declined by user (source '{crownSourceFolder}').");
+                            }
+                        }
+                        else
+                        {
+                            logger?.WriteLine("Shape auto-update: Crown Reservations already current.");
+                        }
                     }
                     else
                     {
-                        logger?.WriteLine("Shape auto-update: Crown Reservations already current.");
+                        logger?.WriteLine("Shape auto-update: Crown Reservations skipped. " + crownError);
+                        unavailableUpdateMessages.Add(BuildUpdateUnavailableMessage("Crown Reservations", crownError));
                     }
+
+                    crownTimer.Stop();
+                    logger?.WriteLine($"Shape auto-update timing [Crown Reservations]: total took {crownTimer.ElapsedMilliseconds} ms.");
                 }
-                else if (input.IncludeCrownReservations)
+
+                if (unavailableUpdateMessages.Count > 0)
                 {
-                    logger?.WriteLine("Shape auto-update: Crown Reservations skipped. " + crownError);
+                    ShowShapeUpdateUnavailableWarning(unavailableUpdateMessages);
                 }
             }
             catch (System.Exception ex)
             {
                 logger?.WriteLine("Shape auto-update failed: " + ex.Message);
+                ShowShapeUpdateUnavailableWarning(new[]
+                {
+                    "Unable to update requested shape files before build.",
+                    ex.Message,
+                });
+            }
+            finally
+            {
+                overallTimer.Stop();
+                logger?.WriteLine($"Shape auto-update timing: total pre-build check took {overallTimer.ElapsedMilliseconds} ms.");
             }
         }
 
+        private static void AutoUpdateDispositionShapesIfNeeded(
+            Config? config,
+            Logger? logger,
+            IList<string>? unavailableUpdateMessages = null)
+        {
+            var dispositionTimer = Stopwatch.StartNew();
+            var dispositionError = string.Empty;
+            var dispositionShapeBaseNames = BuildShapeBaseNamesFromShapefileNames(config?.DispositionShapefiles, "DAB_APPL");
+
+            var dispositionResolveTimer = Stopwatch.StartNew();
+            var hasDispositionSource = TryResolveNewestDidsFolderAcrossRoots(
+                DispositionShapeUpdateSourceRoots,
+                out var sourceRoot,
+                out var newestFolder,
+                out var newestDate,
+                out dispositionError);
+            dispositionResolveTimer.Stop();
+            logger?.WriteLine($"Shape auto-update timing [Dispositions]: resolve source took {dispositionResolveTimer.ElapsedMilliseconds} ms.");
+
+            if (hasDispositionSource)
+            {
+                var dispositionDiffTimer = Stopwatch.StartNew();
+                var dispositionNeedsUpdate = DirectoryContentsDifferForBaseNames(newestFolder, DispositionShapeDestinationFolder, dispositionShapeBaseNames);
+                dispositionDiffTimer.Stop();
+                logger?.WriteLine($"Shape auto-update timing [Dispositions]: compare source/destination took {dispositionDiffTimer.ElapsedMilliseconds} ms.");
+
+                if (dispositionNeedsUpdate)
+                {
+                    var dispositionPromptTimer = Stopwatch.StartNew();
+                    var shouldUpdateDisposition = ConfirmShapeUpdateIfNewer("Dispositions", newestFolder);
+                    dispositionPromptTimer.Stop();
+                    logger?.WriteLine($"Shape auto-update timing [Dispositions]: user prompt wait took {dispositionPromptTimer.ElapsedMilliseconds} ms.");
+
+                    if (shouldUpdateDisposition)
+                    {
+                        var dispositionCopyTimer = Stopwatch.StartNew();
+                        var copied = ReplaceDirectoryContentsWithSelectedShapeSets(
+                            newestFolder,
+                            DispositionShapeDestinationFolder,
+                            dispositionShapeBaseNames);
+                        dispositionCopyTimer.Stop();
+                        logger?.WriteLine($"Shape auto-update: Disposition copied {copied} file(s) from '{newestFolder}' (root '{sourceRoot}', date {newestDate:yyyy-MM-dd}, shapeSets={string.Join(", ", dispositionShapeBaseNames)}).");
+                        logger?.WriteLine($"Shape auto-update timing [Dispositions]: copy took {dispositionCopyTimer.ElapsedMilliseconds} ms.");
+                    }
+                    else
+                    {
+                        logger?.WriteLine($"Shape auto-update: Disposition update declined by user (source '{newestFolder}').");
+                    }
+                }
+                else
+                {
+                    logger?.WriteLine("Shape auto-update: Disposition already current.");
+                }
+            }
+            else
+            {
+                logger?.WriteLine("Shape auto-update: Disposition skipped. " + dispositionError);
+                var unavailableMessage = BuildUpdateUnavailableMessage("Dispositions", dispositionError);
+                if (unavailableUpdateMessages != null)
+                {
+                    unavailableUpdateMessages.Add(unavailableMessage);
+                }
+                else
+                {
+                    ShowShapeUpdateUnavailableWarning(new[] { unavailableMessage });
+                }
+            }
+
+            dispositionTimer.Stop();
+            logger?.WriteLine($"Shape auto-update timing [Dispositions]: total took {dispositionTimer.ElapsedMilliseconds} ms.");
+        }
+
+        private static bool IsTrackedShapeUpdateExtension(string pathOrExtension)
+        {
+            if (string.IsNullOrWhiteSpace(pathOrExtension))
+            {
+                return false;
+            }
+
+            var extension = pathOrExtension;
+            if (!extension.StartsWith(".", StringComparison.Ordinal))
+            {
+                extension = Path.GetExtension(pathOrExtension) ?? string.Empty;
+            }
+
+            return ShapeUpdateTrackedExtensions.Contains(extension);
+        }
+
+        private static bool ConfirmShapeUpdateIfNewer(string shapeLabel, string sourcePath)
+        {
+            var label = string.IsNullOrWhiteSpace(shapeLabel) ? "requested shape files" : shapeLabel.Trim();
+            var displayPath = string.IsNullOrWhiteSpace(sourcePath) ? "(unknown source path)" : sourcePath.Trim();
+            var message =
+                $"There are newer Shapes for {label} Located at:\n{displayPath}\n\nWould you like to update them?";
+            var decision = System.Windows.Forms.MessageBox.Show(
+                message,
+                "ATSBUILD",
+                System.Windows.Forms.MessageBoxButtons.YesNo,
+                System.Windows.Forms.MessageBoxIcon.Question,
+                System.Windows.Forms.MessageBoxDefaultButton.Button1);
+            return decision == System.Windows.Forms.DialogResult.Yes;
+        }
+
+        private static string BuildUpdateUnavailableMessage(string shapeLabel, string details)
+        {
+            var label = string.IsNullOrWhiteSpace(shapeLabel) ? "Requested shape files" : shapeLabel.Trim();
+            var normalizedDetails = string.IsNullOrWhiteSpace(details)
+                ? "No additional details were provided."
+                : details.Trim();
+            return
+                $"{label}: unable to update because the source drive or update folder could not be reached.\n{normalizedDetails}";
+        }
+
+        private static void ShowShapeUpdateUnavailableWarning(IEnumerable<string> messages)
+        {
+            if (messages == null)
+            {
+                return;
+            }
+
+            var filtered = messages
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim())
+                .ToList();
+            if (filtered.Count == 0)
+            {
+                return;
+            }
+
+            var combined = string.Join("\n\n", filtered);
+            System.Windows.Forms.MessageBox.Show(
+                "One or more requested shape updates were unable to run before build.\n\n" + combined,
+                "ATSBUILD",
+                System.Windows.Forms.MessageBoxButtons.OK,
+                System.Windows.Forms.MessageBoxIcon.Warning);
+        }
         private static P3ImportSummary ImportP3Shapefiles(
             Database database,
             Editor editor,
@@ -800,22 +1006,36 @@ namespace AtsBackgroundBuilder
                 return true;
             }
 
-            var sourceFilesByName = ResolveSelectedShapeSourceFiles(sourceDirectory, selectedBaseNames, out _);
+            var sourceFilesByName = ResolveSelectedShapeSourceFiles(sourceDirectory, selectedBaseNames, out _, useDeepValidation: false);
             if (sourceFilesByName.Count == 0)
             {
                 return true;
             }
 
-            var src = sourceFilesByName
-                .Select(pair => BuildFlatFileSignature(pair.Key, pair.Value))
-                .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            var dst = Directory.GetFiles(destinationDirectory, "*", SearchOption.TopDirectoryOnly)
+            var destinationFilesByName = Directory.GetFiles(destinationDirectory, "*", SearchOption.TopDirectoryOnly)
                 .Where(path => selectedBaseNames.Contains(Path.GetFileNameWithoutExtension(path) ?? string.Empty))
-                .Select(path => BuildFlatFileSignature(Path.GetFileName(path), path))
-                .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            return !src.SequenceEqual(dst, StringComparer.OrdinalIgnoreCase);
+                .Where(path => IsTrackedShapeUpdateExtension(Path.GetExtension(path) ?? string.Empty))
+                .ToDictionary(path => Path.GetFileName(path), path => path, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var sourcePair in sourceFilesByName)
+            {
+                if (!destinationFilesByName.TryGetValue(sourcePair.Key, out var destinationPath))
+                {
+                    return true;
+                }
+
+                if (GetSafeFileLength(sourcePair.Value) != GetSafeFileLength(destinationPath))
+                {
+                    return true;
+                }
+
+                if (GetSafeLastWriteTimeUtcTicks(sourcePair.Value) > GetSafeLastWriteTimeUtcTicks(destinationPath))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static string BuildFileSignature(string root, string fullPath)
@@ -844,7 +1064,8 @@ namespace AtsBackgroundBuilder
         private static Dictionary<string, string> ResolveSelectedShapeSourceFiles(
             string sourceDirectory,
             IReadOnlyCollection<string> shapeBaseNames,
-            out List<string> missingBaseNames)
+            out List<string> missingBaseNames,
+            bool useDeepValidation = true)
         {
             missingBaseNames = new List<string>();
             var selectedFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -854,58 +1075,73 @@ namespace AtsBackgroundBuilder
                 return selectedFiles;
             }
 
-            foreach (var baseName in shapeBaseNames)
+            var requestedBaseNames = new HashSet<string>(
+                shapeBaseNames?.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()) ?? Enumerable.Empty<string>(),
+                StringComparer.OrdinalIgnoreCase);
+            if (requestedBaseNames.Count == 0)
+            {
+                return selectedFiles;
+            }
+
+            // Resolve one best .shp anchor per requested base name. Do a cheap top-level
+            // pass first, then a single recursive pass only for still-missing bases.
+            var bestAnchorByBaseName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var shpPath in Directory.EnumerateFiles(sourceDirectory, "*.shp", SearchOption.TopDirectoryOnly))
+            {
+                var baseName = Path.GetFileNameWithoutExtension(shpPath) ?? string.Empty;
+                if (!requestedBaseNames.Contains(baseName))
+                {
+                    continue;
+                }
+
+                if (!IsShapefileAnchorValid(shpPath, useDeepValidation))
+                {
+                    continue;
+                }
+
+                TrySetNewerAnchor(bestAnchorByBaseName, baseName, shpPath);
+            }
+
+            if (bestAnchorByBaseName.Count < requestedBaseNames.Count)
+            {
+                foreach (var shpPath in Directory.EnumerateFiles(sourceDirectory, "*.shp", SearchOption.AllDirectories))
+                {
+                    var baseName = Path.GetFileNameWithoutExtension(shpPath) ?? string.Empty;
+                    if (!requestedBaseNames.Contains(baseName))
+                    {
+                        continue;
+                    }
+
+                    if (!IsShapefileAnchorValid(shpPath, useDeepValidation))
+                    {
+                        continue;
+                    }
+
+                    TrySetNewerAnchor(bestAnchorByBaseName, baseName, shpPath);
+                }
+            }
+
+            foreach (var baseName in requestedBaseNames)
             {
                 if (string.IsNullOrWhiteSpace(baseName))
                 {
                     continue;
                 }
 
-                var matches = Directory.GetFiles(sourceDirectory, baseName + ".*", SearchOption.TopDirectoryOnly)
-                    .Where(path => string.Equals(Path.GetFileNameWithoutExtension(path), baseName, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-                if (!IsMatchSetValidForShapefile(matches))
-                {
-                    matches.Clear();
-                }
-
-                if (matches.Count == 0)
-                {
-                    var recursiveMatches = Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories)
-                        .Where(path => string.Equals(Path.GetFileNameWithoutExtension(path), baseName, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-                    if (recursiveMatches.Count > 0)
-                    {
-                        var preferredAnchors = recursiveMatches
-                            .Where(path => string.Equals(Path.GetExtension(path), ".shp", StringComparison.OrdinalIgnoreCase))
-                            .ToList();
-                        var anchors = preferredAnchors.Count > 0
-                            ? preferredAnchors
-                                .Where(path => TryValidateShapefileSet(path, out _))
-                                .ToList()
-                            : recursiveMatches;
-                        var anchor = anchors
-                            .OrderByDescending(GetSafeLastWriteTimeUtcTicks)
-                            .ThenBy(path => path.Length)
-                            .FirstOrDefault();
-                        if (!string.IsNullOrWhiteSpace(anchor))
-                        {
-                            var anchorFolder = Path.GetDirectoryName(anchor) ?? sourceDirectory;
-                            matches = Directory.GetFiles(anchorFolder, baseName + ".*", SearchOption.TopDirectoryOnly)
-                                .Where(path => string.Equals(Path.GetFileNameWithoutExtension(path), baseName, StringComparison.OrdinalIgnoreCase))
-                                .ToList();
-                            if (matches.Count == 0)
-                            {
-                                matches.Add(anchor);
-                            }
-                        }
-                    }
-                }
-
-                if (matches.Count == 0)
+                if (!bestAnchorByBaseName.TryGetValue(baseName, out var anchorPath) || string.IsNullOrWhiteSpace(anchorPath))
                 {
                     missingBaseNames.Add(baseName);
                     continue;
+                }
+
+                var anchorFolder = Path.GetDirectoryName(anchorPath) ?? sourceDirectory;
+                var matches = Directory.GetFiles(anchorFolder, baseName + ".*", SearchOption.TopDirectoryOnly)
+                    .Where(path => string.Equals(Path.GetFileNameWithoutExtension(path), baseName, StringComparison.OrdinalIgnoreCase))
+                    .Where(path => IsTrackedShapeUpdateExtension(Path.GetExtension(path) ?? string.Empty))
+                    .ToList();
+                if (matches.Count == 0)
+                {
+                    matches.Add(anchorPath);
                 }
 
                 foreach (var path in matches)
@@ -932,6 +1168,49 @@ namespace AtsBackgroundBuilder
             return selectedFiles;
         }
 
+        private static void TrySetNewerAnchor(
+            IDictionary<string, string> anchorByBaseName,
+            string baseName,
+            string candidatePath)
+        {
+            if (anchorByBaseName == null || string.IsNullOrWhiteSpace(baseName) || string.IsNullOrWhiteSpace(candidatePath))
+            {
+                return;
+            }
+
+            if (!anchorByBaseName.TryGetValue(baseName, out var existingPath))
+            {
+                anchorByBaseName[baseName] = candidatePath;
+                return;
+            }
+
+            if (GetSafeLastWriteTimeUtcTicks(candidatePath) > GetSafeLastWriteTimeUtcTicks(existingPath))
+            {
+                anchorByBaseName[baseName] = candidatePath;
+            }
+        }
+        private static bool IsShapefileAnchorValid(string shapefilePath, bool useDeepValidation)
+        {
+            if (string.IsNullOrWhiteSpace(shapefilePath) || !File.Exists(shapefilePath))
+            {
+                return false;
+            }
+
+            var basePath = Path.Combine(
+                Path.GetDirectoryName(shapefilePath) ?? string.Empty,
+                Path.GetFileNameWithoutExtension(shapefilePath) ?? string.Empty);
+            if (!File.Exists(basePath + ".shx") || !File.Exists(basePath + ".dbf"))
+            {
+                return false;
+            }
+
+            if (!useDeepValidation)
+            {
+                return true;
+            }
+
+            return TryValidateShapefileSet(shapefilePath, out _);
+        }
         private static bool IsMatchSetValidForShapefile(IReadOnlyList<string> matches)
         {
             if (matches == null || matches.Count == 0)
@@ -1082,6 +1361,18 @@ namespace AtsBackgroundBuilder
             return BitConverter.ToInt32(bytes, 0);
         }
 
+        private static long GetSafeFileLength(string path)
+        {
+            try
+            {
+                return new FileInfo(path).Length;
+            }
+            catch
+            {
+                return -1L;
+            }
+        }
+
         private static long GetSafeLastWriteTimeUtcTicks(string path)
         {
             try
@@ -1174,7 +1465,7 @@ namespace AtsBackgroundBuilder
                 throw new InvalidOperationException("No shape base names configured for selected shape-set copy.");
             }
 
-            var sourceFilesByName = ResolveSelectedShapeSourceFiles(sourceDirectory, selectedBaseNames, out var missingBaseNames);
+            var sourceFilesByName = ResolveSelectedShapeSourceFiles(sourceDirectory, selectedBaseNames, out var missingBaseNames, useDeepValidation: true);
             if (missingBaseNames.Count > 0)
             {
                 throw new FileNotFoundException(
@@ -1554,3 +1845,5 @@ namespace AtsBackgroundBuilder
         }
     }
 }
+
+
