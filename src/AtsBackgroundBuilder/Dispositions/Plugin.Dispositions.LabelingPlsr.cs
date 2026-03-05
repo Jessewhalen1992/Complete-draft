@@ -1703,18 +1703,7 @@ namespace AtsBackgroundBuilder
                 return "N/A";
             }
 
-            var odCandidateDates = new HashSet<DateTime>();
-            if (TryParseDispositionVersionDate(sourceDisposition.OdVerDateRaw, out var odVersionDate))
-            {
-                odCandidateDates.Add(odVersionDate.Date);
-            }
-
-            if (TryParseDispositionVersionDate(sourceDisposition.OdEffDateRaw, out var odEffDate))
-            {
-                odCandidateDates.Add(odEffDate.Date);
-            }
-
-            if (odCandidateDates.Count == 0)
+            if (!TryParseDispositionVersionDate(sourceDisposition.OdVerDateRaw, out var odVersionDate))
             {
                 return "N/A";
             }
@@ -1733,17 +1722,12 @@ namespace AtsBackgroundBuilder
                 candidateDates.Add(activity.VersionDate.Value.Date);
             }
 
-            if (activity.ActivityDate.HasValue)
-            {
-                candidateDates.Add(activity.ActivityDate.Value.Date);
-            }
-
             if (candidateDates.Count == 0)
             {
                 return "N/A";
             }
 
-            return odCandidateDates.Overlaps(candidateDates)
+            return candidateDates.Contains(odVersionDate.Date)
                 ? "MATCH"
                 : "NON-MATCH";
         }
@@ -1766,33 +1750,13 @@ namespace AtsBackgroundBuilder
                 return FormatPlsrVersionDateForDisplay(activity.VersionDate);
             }
 
-            if (activity.ActivityDate.HasValue)
-            {
-                return FormatPlsrVersionDateForDisplay(activity.ActivityDate);
-            }
-
             return "N/A";
         }
 
         private static string ResolvePlsrVersionDateMismatchDetail(PlsrActivity? activity)
         {
-            var hasVersionDates = (activity?.VersionDates?.Count ?? 0) > 0 || (activity?.VersionDate.HasValue == true);
-            if (hasVersionDates)
-            {
-                if (activity?.ActivityDate.HasValue == true)
-                {
-                    return "Disposition OD VER_DATE/EFFDATE differs from PLSR XML VersionDate (ActivityDate fallback also checked).";
-                }
-
-                return "Disposition OD VER_DATE/EFFDATE differs from PLSR XML VersionDate.";
-            }
-
-            if (activity?.ActivityDate.HasValue == true)
-            {
-                return "Disposition OD VER_DATE/EFFDATE differs from PLSR XML ActivityDate.";
-            }
-
-            return "Disposition OD VER_DATE/EFFDATE differs from PLSR XML date values.";
+            _ = activity;
+            return "Disposition OD VER_DATE differs from PLSR XML VersionDate.";
         }
 
         private static string FormatDispositionDateFieldsForDisplay(DispositionInfo? sourceDisposition)
@@ -1802,26 +1766,12 @@ namespace AtsBackgroundBuilder
                 return "N/A";
             }
 
-            var parts = new List<string>(2);
             var verDateDisplay = FormatDispositionVersionDateForDisplay(sourceDisposition.OdVerDateRaw);
-            if (!string.Equals(verDateDisplay, "N/A", StringComparison.OrdinalIgnoreCase))
-            {
-                parts.Add($"VER_DATE={verDateDisplay}");
-            }
-
-            var effDateDisplay = FormatDispositionVersionDateForDisplay(sourceDisposition.OdEffDateRaw);
-            if (!string.Equals(effDateDisplay, "N/A", StringComparison.OrdinalIgnoreCase))
-            {
-                parts.Add($"EFFDATE={effDateDisplay}");
-            }
-
-            if (parts.Count == 0)
-            {
-                return "N/A";
-            }
-
-            return string.Join("; ", parts);
+            return string.Equals(verDateDisplay, "N/A", StringComparison.OrdinalIgnoreCase)
+                ? "N/A"
+                : $"VER_DATE={verDateDisplay}";
         }
+
         private static string FormatDispositionVersionDateForDisplay(string? rawValue)
         {
             if (TryParseDispositionVersionDate(rawValue, out var parsed))

@@ -826,17 +826,60 @@ namespace AtsBackgroundBuilder
                         var mappedCompany = MapValue(companyLookup, company, company);
                         var mappedPurpose = MapValue(purposeLookup, purpose, purpose);
                         var purposeExtra = purposeLookup.Lookup(purpose)?.Extra ?? string.Empty;
-
                         var dispNumFormatted = FormatDispNum(dispNum);
 
-                        var isSurfaceLabel = (mappedPurpose ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0;
-                        if (shouldGenerateDispositionLabels && (IsWellSitePurpose(purpose) || isSurfaceLabel))
+                        var normalizedPurpose = NormalizePurposeCode(purpose);
+                        var isMixedWellsiteAccessRoad =
+                            IsWellSiteAndAccessRoadPurpose(purpose) ||
+                            IsWellSiteAndAccessRoadPurpose(mappedPurpose ?? string.Empty);
+                        var mixedClassifiedAsAccessRoad = false;
+                        var mixedHasWellsitePadSignature = false;
+                        var mixedEmitAccessRoadLabel = false;
+                        var mixedEmitWellsiteLabel = false;
+                        var mixedAccessRoadMappedPurpose = string.Empty;
+                        var mixedWellsiteMappedPurpose = string.Empty;
+                        if (isMixedWellsiteAccessRoad)
                         {
-                            var normalizedPurpose = NormalizePurposeCode(purpose);
+                            mixedAccessRoadMappedPurpose = ResolveMixedPurposeMappedValue(purposeLookup, accessRoadVariant: true);
+                            mixedWellsiteMappedPurpose = ResolveMixedPurposeMappedValue(purposeLookup, accessRoadVariant: false);
+
+                            if (!TryClassifyMixedWellsiteAccessRoadAsAccessRoad(
+                                    clone,
+                                    odDimension ?? string.Empty,
+                                    config,
+                                    out mixedClassifiedAsAccessRoad,
+                                    out mixedHasWellsitePadSignature,
+                                    out var mixedClassificationDetail))
+                            {
+                                mixedClassifiedAsAccessRoad = false;
+                                mixedHasWellsitePadSignature = false;
+                                mixedClassificationDetail = "classification_unavailable";
+                            }
+
+                            mixedEmitAccessRoadLabel = mixedClassifiedAsAccessRoad;
+                            mixedEmitWellsiteLabel = !mixedClassifiedAsAccessRoad || mixedHasWellsitePadSignature;
+
+                            // Keep the "primary" mapped purpose aligned with the emitted variant when
+                            // mixed geometry only emits one side.
+                            mappedPurpose = mixedEmitAccessRoadLabel && !mixedEmitWellsiteLabel
+                                ? mixedAccessRoadMappedPurpose
+                                : mixedWellsiteMappedPurpose;
+
+                            logger.WriteLine(
+                                $"Mixed wellsite/access classification: DISP={dispNumFormatted} road={mixedEmitAccessRoadLabel} wellsite={mixedEmitWellsiteLabel} padSignature={mixedHasWellsitePadSignature} detail={mixedClassificationDetail}");
+                        }
+
+                        var surfacePurposeCandidate = isMixedWellsiteAccessRoad && mixedEmitWellsiteLabel
+                            ? mixedWellsiteMappedPurpose
+                            : mappedPurpose;
+                        var isSurfaceLabel = (surfacePurposeCandidate ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0;
+                        var treatAsWellsitePurpose = IsWellSitePurpose(purpose) || (isMixedWellsiteAccessRoad && mixedEmitWellsiteLabel);
+                        if (shouldGenerateDispositionLabels && (treatAsWellsitePurpose || isSurfaceLabel))
+                        {
                             if (EnableWellsiteDebug)
                             {
-                                editor.WriteMessage($"\nWELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}' surface={isSurfaceLabel}");
-                                logger.WriteLine($"WELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}' surface={isSurfaceLabel}");
+                                editor.WriteMessage($"\nWELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{surfacePurposeCandidate}' surface={isSurfaceLabel}");
+                                logger.WriteLine($"WELLSITE DEBUG: DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{surfacePurposeCandidate}' surface={isSurfaceLabel}");
                             }
 
                             var lsdSecToken = GetDominantLsdSectionToken(clone, lsdCells);
@@ -878,27 +921,37 @@ namespace AtsBackgroundBuilder
 
                             if (!string.IsNullOrWhiteSpace(lsdSecToken))
                             {
-                                mappedPurpose = lsdSecToken + " " + mappedPurpose;
+                                surfacePurposeCandidate = lsdSecToken + " " + surfacePurposeCandidate;
                                 if (EnableWellsiteDebug)
                                 {
-                                    editor.WriteMessage($"\nWELLSITE DEBUG: final surface line='{mappedPurpose}'");
-                                    logger.WriteLine($"WELLSITE DEBUG: final surface line='{mappedPurpose}'");
+                                    editor.WriteMessage($"\nWELLSITE DEBUG: final surface line='{surfacePurposeCandidate}'");
+                                    logger.WriteLine($"WELLSITE DEBUG: final surface line='{surfacePurposeCandidate}'");
                                 }
                             }
                         }
-                        else if (shouldGenerateDispositionLabels && (mappedPurpose ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0)
+                        else if (shouldGenerateDispositionLabels && (surfacePurposeCandidate ?? string.Empty).IndexOf("(Surface)", StringComparison.OrdinalIgnoreCase) >= 0)
                         {
-                            var normalizedPurpose = NormalizePurposeCode(purpose);
                             if (EnableWellsiteDebug)
                             {
-                                editor.WriteMessage($"\nWELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}'");
-                                logger.WriteLine($"WELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{mappedPurpose}'");
+                                editor.WriteMessage($"\nWELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{surfacePurposeCandidate}'");
+                                logger.WriteLine($"WELLSITE DEBUG: skipped (not detected as wellsite) DISP={dispNumFormatted} PURPCD='{purpose}' normalized='{normalizedPurpose}' mapped='{surfacePurposeCandidate}'");
                             }
+                        }
+
+                        if (isMixedWellsiteAccessRoad && mixedEmitWellsiteLabel)
+                        {
+                            mixedWellsiteMappedPurpose = surfacePurposeCandidate ?? string.Empty;
+                        }
+                        else
+                        {
+                            mappedPurpose = surfacePurposeCandidate;
                         }
 
                         // Default output layers; will be overridden when mapping succeeds.
                         string lineLayer = ent.Layer;
                         string textLayer = ent.Layer;
+                        var isClientCompany = string.Equals(currentClient, mappedCompany, StringComparison.InvariantCultureIgnoreCase)
+                                              || string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase);
 
                         // Determine client/foreign layer names based on company and purpose.
                         // Purpose extra column supplies the layer suffix (e.g. ROW, PIPE, etc.).
@@ -907,22 +960,13 @@ namespace AtsBackgroundBuilder
                         try
                         {
                             var purposeEntry = purposeLookup.Lookup(purpose);
-                            var suffix = purposeEntry?.Extra?.Trim() ?? string.Empty;
-                            if (suffix.StartsWith("-", StringComparison.InvariantCulture))
-                            {
-                                suffix = suffix.Substring(1);
-                            }
+                            var suffix = NormalizeLayerSuffix(purposeEntry?.Extra);
 
                             if (!string.IsNullOrEmpty(suffix))
                             {
-                                // OD COMPANY is often a code (lookup key), while the UI client list comes from
-                                // the lookup VALUE column. Compare against the mapped company first.
-                                var isClient = string.Equals(currentClient, mappedCompany, StringComparison.InvariantCultureIgnoreCase)
-                                               || string.Equals(currentClient, company, StringComparison.InvariantCultureIgnoreCase);
-
-                                var prefix = isClient ? "C" : "F";
-                                lineLayerName = $"{prefix}-{suffix}";
-                                textLayerName = $"{lineLayerName}-T";
+                                var prefix = isClientCompany ? "C" : "F";
+                                lineLayerName = prefix + "-" + suffix;
+                                textLayerName = lineLayerName + "-T";
                             }
                         }
                         catch
@@ -940,12 +984,44 @@ namespace AtsBackgroundBuilder
                             textLayer = textLayerName;
                         }
 
-                        // Ensure the layer exists before assigning
-                        layerManager.EnsureLayer(lineLayer);
-                        var lineEntity = transaction.GetObject(id, OpenMode.ForWrite) as Entity;
-                        if (lineEntity != null && lineEntity.Layer != lineLayer)
+                        var mixedAccessRoadLineLayer = lineLayer;
+                        var mixedAccessRoadTextLayer = textLayer;
+                        var mixedWellsiteLineLayer = lineLayer;
+                        var mixedWellsiteTextLayer = textLayer;
+                        if (isMixedWellsiteAccessRoad)
                         {
-                            lineEntity.Layer = lineLayer;
+                            if (TryBuildMixedPurposeLayerNames(purposeLookup, accessRoadVariant: true, isClientCompany, out var mixedRoadLineCandidate, out var mixedRoadTextCandidate))
+                            {
+                                mixedAccessRoadLineLayer = mixedRoadLineCandidate;
+                                mixedAccessRoadTextLayer = mixedRoadTextCandidate;
+                            }
+
+                            if (TryBuildMixedPurposeLayerNames(purposeLookup, accessRoadVariant: false, isClientCompany, out var mixedWellsiteLineCandidate, out var mixedWellsiteTextCandidate))
+                            {
+                                mixedWellsiteLineLayer = mixedWellsiteLineCandidate;
+                                mixedWellsiteTextLayer = mixedWellsiteTextCandidate;
+                            }
+                        }
+
+                        // Ensure the line layer exists before assigning.
+                        var lineLayerForEntity = lineLayer;
+                        if (isMixedWellsiteAccessRoad)
+                        {
+                            if (!string.IsNullOrWhiteSpace(mixedWellsiteLineLayer))
+                            {
+                                lineLayerForEntity = mixedWellsiteLineLayer;
+                            }
+                            else if (!string.IsNullOrWhiteSpace(mixedAccessRoadLineLayer))
+                            {
+                                lineLayerForEntity = mixedAccessRoadLineLayer;
+                            }
+                        }
+
+                        layerManager.EnsureLayer(lineLayerForEntity);
+                        var lineEntity = transaction.GetObject(id, OpenMode.ForWrite) as Entity;
+                        if (lineEntity != null && lineEntity.Layer != lineLayerForEntity)
+                        {
+                            lineEntity.Layer = lineLayerForEntity;
                             lineEntity.ColorIndex = 256; // ensure ByLayer colour
                         }
 
@@ -956,6 +1032,45 @@ namespace AtsBackgroundBuilder
                         }
 
                         var safePoint = GeometryUtils.GetSafeInteriorPoint(clone);
+                        if (isMixedWellsiteAccessRoad)
+                        {
+                            if (mixedEmitAccessRoadLabel)
+                            {
+                                var accessRoadInfo = new DispositionInfo(id, clone, string.Empty, mixedAccessRoadLineLayer, mixedAccessRoadTextLayer, safePoint)
+                                {
+                                    AllowLabelOutsideDisposition = config.AllowOutsideDispositionForWidthPurposes,
+                                    AddLeader = true,
+                                    RequiresWidth = true,
+                                    MappedCompany = mappedCompany ?? string.Empty,
+                                    MappedPurpose = mixedAccessRoadMappedPurpose ?? string.Empty,
+                                    PurposeTitleCase = ToTitleCaseWords(mixedAccessRoadMappedPurpose ?? string.Empty),
+                                    DispNumFormatted = dispNumFormatted,
+                                    OdDimension = odDimension ?? string.Empty,
+                                    OdVerDateRaw = odVerDate ?? string.Empty,
+                                    OdEffDateRaw = odEffDate ?? string.Empty,
+                                    ReuseVariantKey = DispositionInfo.ReuseVariantMixedAccessRoad
+                                };
+                                dispositions.Add(accessRoadInfo);
+                            }
+
+                            if (mixedEmitWellsiteLabel)
+                            {
+                                var mixedWellsiteLabelText = mappedCompany + "\\P" + mixedWellsiteMappedPurpose + "\\P" + dispNumFormatted;
+                                var mixedWellsiteInfo = new DispositionInfo(id, clone, mixedWellsiteLabelText, mixedWellsiteLineLayer, mixedWellsiteTextLayer, safePoint)
+                                {
+                                    AllowLabelOutsideDisposition = false,
+                                    AddLeader = false,
+                                    DispNumFormatted = dispNumFormatted,
+                                    OdVerDateRaw = odVerDate ?? string.Empty,
+                                    OdEffDateRaw = odEffDate ?? string.Empty,
+                                    ReuseVariantKey = DispositionInfo.ReuseVariantMixedWellsitePad
+                                };
+                                dispositions.Add(mixedWellsiteInfo);
+                            }
+
+                            continue;
+                        }
+
                         var requiresWidth = PurposeRequiresWidth(purpose, config);
                         if (requiresWidth)
                         {
@@ -966,11 +1081,12 @@ namespace AtsBackgroundBuilder
                                 RequiresWidth = true,
                                 MappedCompany = mappedCompany ?? string.Empty,
                                 MappedPurpose = mappedPurpose ?? string.Empty,
-                                PurposeTitleCase = ToTitleCaseWords(purpose),
+                                PurposeTitleCase = ToTitleCaseWords(mappedPurpose ?? purpose),
                                 DispNumFormatted = dispNumFormatted,
                                 OdDimension = odDimension ?? string.Empty,
                                 OdVerDateRaw = odVerDate ?? string.Empty,
-                                OdEffDateRaw = odEffDate ?? string.Empty
+                                OdEffDateRaw = odEffDate ?? string.Empty,
+                                ReuseVariantKey = string.Empty
                             };
                             dispositions.Add(info);
                             continue;
@@ -983,7 +1099,8 @@ namespace AtsBackgroundBuilder
                             AddLeader = false,
                             DispNumFormatted = dispNumFormatted,
                             OdVerDateRaw = odVerDate ?? string.Empty,
-                            OdEffDateRaw = odEffDate ?? string.Empty
+                            OdEffDateRaw = odEffDate ?? string.Empty,
+                            ReuseVariantKey = string.Empty
                         };
                         dispositions.Add(nonWidthInfo);
                     }
@@ -1103,6 +1220,16 @@ namespace AtsBackgroundBuilder
                         {
                             existingLabelCount++;
                         }
+
+                        var reuseVariant = ResolveExistingDispositionReuseVariantKey(label);
+                        if (!string.IsNullOrWhiteSpace(reuseVariant))
+                        {
+                            var reuseKey = BuildDispositionReuseKey(normalizedDispNum, reuseVariant);
+                            if (!string.IsNullOrWhiteSpace(reuseKey) && dispNums.Add(reuseKey))
+                            {
+                                existingLabelCount++;
+                            }
+                        }
                     }
                 }
 
@@ -1111,6 +1238,352 @@ namespace AtsBackgroundBuilder
             }
 
             return new QuarterLabelContext(quarters, existingDispNumsByQuarter);
+        }
+
+        private static string ResolveExistingDispositionReuseVariantKey(PlsrLabelEntry? label)
+        {
+            if (label == null)
+            {
+                return string.Empty;
+            }
+
+            var flattened = FlattenMTextForDisplay(label.RawContents ?? string.Empty);
+            var normalized = NormalizePurposeCode(flattened);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return string.Empty;
+            }
+
+            if (normalized.Contains("ACCESS ROAD", StringComparison.OrdinalIgnoreCase) ||
+                Regex.IsMatch(normalized, @"\bA/R\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            {
+                return DispositionInfo.ReuseVariantMixedAccessRoad;
+            }
+
+            if (normalized.Contains("WELLSITE", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Contains("WELL SITE", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Contains("(SURFACE)", StringComparison.OrdinalIgnoreCase))
+            {
+                return DispositionInfo.ReuseVariantMixedWellsitePad;
+            }
+
+            return string.Empty;
+        }
+
+        private static string NormalizeDispositionReuseVariant(string? variantKey)
+        {
+            return string.IsNullOrWhiteSpace(variantKey)
+                ? string.Empty
+                : variantKey.Trim().ToUpperInvariant();
+        }
+
+        private static string BuildDispositionReuseKey(string normalizedDispNum, string variantKey)
+        {
+            if (string.IsNullOrWhiteSpace(normalizedDispNum))
+            {
+                return string.Empty;
+            }
+
+            var normalizedVariant = NormalizeDispositionReuseVariant(variantKey);
+            return string.IsNullOrWhiteSpace(normalizedVariant)
+                ? normalizedDispNum
+                : $"{normalizedDispNum}|{normalizedVariant}";
+        }
+
+        private static string ResolveMixedPurposeMappedValue(ExcelLookup purposeLookup, bool accessRoadVariant)
+        {
+            var fallback = accessRoadVariant ? "ACCESS ROAD" : "WELLSITE";
+            var entry = ResolveMixedPurposeLookupEntry(purposeLookup, accessRoadVariant);
+            return string.IsNullOrWhiteSpace(entry?.Value) ? fallback : entry.Value;
+        }
+
+        private static string[] GetMixedPurposeCandidateKeys(bool accessRoadVariant)
+        {
+            return accessRoadVariant
+                ? new[] { "ACCESS ROAD", "ACCESSROAD", "A/R" }
+                : new[] { "WELLSITE", "WELL SITE", "WELLSITE (SURFACE)", "WELL SITE (SURFACE)" };
+        }
+
+        private static LookupEntry? ResolveMixedPurposeLookupEntry(ExcelLookup purposeLookup, bool accessRoadVariant)
+        {
+            var candidateKeys = GetMixedPurposeCandidateKeys(accessRoadVariant);
+            for (var i = 0; i < candidateKeys.Length; i++)
+            {
+                var candidate = candidateKeys[i];
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    continue;
+                }
+
+                var entry = purposeLookup.Lookup(candidate);
+                if (!string.IsNullOrWhiteSpace(entry?.Value))
+                {
+                    return entry;
+                }
+            }
+
+            return null;
+        }
+
+        private static string NormalizeLayerSuffix(string? rawSuffix)
+        {
+            var suffix = rawSuffix?.Trim() ?? string.Empty;
+            if (suffix.StartsWith("-", StringComparison.InvariantCulture))
+            {
+                suffix = suffix.Substring(1);
+            }
+
+            return suffix;
+        }
+
+        private static bool TryBuildMixedPurposeLayerNames(
+            ExcelLookup purposeLookup,
+            bool accessRoadVariant,
+            bool isClientCompany,
+            out string lineLayerName,
+            out string textLayerName)
+        {
+            lineLayerName = string.Empty;
+            textLayerName = string.Empty;
+
+            var entry = ResolveMixedPurposeLookupEntry(purposeLookup, accessRoadVariant);
+            var suffix = NormalizeLayerSuffix(entry?.Extra);
+            if (string.IsNullOrWhiteSpace(suffix))
+            {
+                return false;
+            }
+
+            var prefix = isClientCompany ? "C" : "F";
+            lineLayerName = prefix + "-" + suffix;
+            textLayerName = lineLayerName + "-T";
+            return true;
+        }
+
+        private static bool IsWellSiteAndAccessRoadPurpose(string? purpose)
+        {
+            var normalized = NormalizePurposeCode(purpose ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return false;
+            }
+
+            var hasAccessRoad = normalized.Contains("ACCESS ROAD", StringComparison.OrdinalIgnoreCase);
+            var hasWellsite = normalized.Contains("WELLSITE", StringComparison.OrdinalIgnoreCase) ||
+                              normalized.Contains("WELL SITE", StringComparison.OrdinalIgnoreCase);
+            return hasAccessRoad && hasWellsite;
+        }
+
+        private static bool TryClassifyMixedWellsiteAccessRoadAsAccessRoad(
+            Polyline polyline,
+            string odDimensionRaw,
+            Config config,
+            out bool isAccessRoad,
+            out bool hasWellsitePadSignature,
+            out string diagnostics)
+        {
+            isAccessRoad = false;
+            hasWellsitePadSignature = false;
+            diagnostics = "classification_unavailable";
+            if (polyline == null || config == null)
+            {
+                return false;
+            }
+
+            var measurement = GeometryUtils.MeasureCorridorWidth(
+                polyline,
+                config.WidthSampleCount,
+                config.VariableWidthAbsTolerance,
+                config.VariableWidthRelTolerance);
+
+            var measuredWidth = Math.Max(0.0, measurement.MedianWidth);
+            var measuredNearAcceptable = false;
+            var measuredSnapped = measuredWidth;
+            var measuredDiff = double.MaxValue;
+            if (TrySnapToNearestAcceptableWidth(measuredWidth, config.AcceptableRowWidths, out var measuredCandidate, out var measuredCandidateDiff))
+            {
+                measuredSnapped = measuredCandidate;
+                measuredDiff = measuredCandidateDiff;
+                measuredNearAcceptable = measuredCandidateDiff <= Math.Max(config.WidthSnapTolerance, 0.30);
+            }
+
+            var odNearAcceptable = false;
+            var odSnapped = 0.0;
+            var odDiff = double.MaxValue;
+            if (TryParseOdDimensionWidthMeters(odDimensionRaw, out var odWidth) &&
+                TrySnapToNearestAcceptableWidth(odWidth, config.AcceptableRowWidths, out var odCandidate, out var odCandidateDiff))
+            {
+                odSnapped = odCandidate;
+                odDiff = odCandidateDiff;
+                odNearAcceptable = odCandidateDiff <= Math.Max(config.WidthSnapTolerance, 0.30);
+            }
+
+            var representativeWidth = measuredNearAcceptable
+                ? measuredSnapped
+                : (odNearAcceptable ? odSnapped : measuredWidth);
+
+            TryGetDispositionAreaEstimate(polyline, out var areaEstimate);
+            TryGetDispositionAspectRatio(polyline, out var aspectRatio);
+
+            var perimeter = 0.0;
+            try
+            {
+                perimeter = Math.Abs(polyline.Length);
+            }
+            catch
+            {
+                perimeter = 0.0;
+            }
+
+            var compactness = (areaEstimate > 1e-6 && perimeter > 1e-6)
+                ? (4.0 * Math.PI * areaEstimate) / (perimeter * perimeter)
+                : 0.0;
+
+            var nearAcceptable = measuredNearAcceptable || odNearAcceptable;
+            var roadLikeCompactness = compactness > 0.0 && compactness <= 0.32;
+            var roadLikeAspect = aspectRatio >= 3.0;
+            var widthLooksRoadLike = representativeWidth > 0.0 && representativeWidth <= 40.0;
+
+            isAccessRoad = nearAcceptable && widthLooksRoadLike && (roadLikeCompactness || roadLikeAspect);
+
+                        var widthSpreadRatio = measuredWidth > 1e-6
+                ? measurement.MaxWidth / measuredWidth
+                : 1.0;
+            var hasWidePadSpread = representativeWidth > 0.0 &&
+                                   measurement.MaxWidth >= representativeWidth * 1.25 &&
+                                   widthSpreadRatio >= 1.25;
+            var padLikeShape = aspectRatio <= 6.0 && compactness > 0.0 && compactness <= 0.35;
+
+            hasWellsitePadSignature = nearAcceptable && (hasWidePadSpread || padLikeShape);
+            diagnostics =
+                $"measured={measuredWidth:0.00}, min={measurement.MinWidth:0.00}, max={measurement.MaxWidth:0.00}, spread={widthSpreadRatio:0.00}, var={measurement.IsVariable}, " +
+                $"snap={measuredSnapped:0.00}, d={measuredDiff:0.00}, odSnap={odSnapped:0.00}, odD={odDiff:0.00}, " +
+                $"area={areaEstimate:0.00}, aspect={aspectRatio:0.00}, compact={compactness:0.000}, padShape={padLikeShape}, padSig={hasWellsitePadSignature}";
+
+            return true;
+        }
+
+        private static bool TrySnapToNearestAcceptableWidth(
+            double widthMeters,
+            double[]? acceptableWidths,
+            out double snappedWidth,
+            out double difference)
+        {
+            snappedWidth = widthMeters;
+            difference = double.MaxValue;
+            if (widthMeters <= 0.0 || acceptableWidths == null || acceptableWidths.Length == 0)
+            {
+                return false;
+            }
+
+            var ordered = acceptableWidths
+                .Where(w => double.IsFinite(w) && w > 0.0)
+                .OrderBy(w => Math.Abs(widthMeters - w))
+                .ThenBy(w => w)
+                .ToList();
+            if (ordered.Count == 0)
+            {
+                return false;
+            }
+
+            snappedWidth = ordered[0];
+            difference = Math.Abs(widthMeters - snappedWidth);
+            return true;
+        }
+
+        private static bool TryParseOdDimensionWidthMeters(string raw, out double widthMeters)
+        {
+            widthMeters = 0.0;
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            var match = Regex.Match(raw, @"(?<!\d)(\d+(?:\.\d+)?)\s*(?:M|m)?");
+            if (!match.Success)
+            {
+                return false;
+            }
+
+            if (!double.TryParse(match.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ||
+                !double.IsFinite(parsed) ||
+                parsed <= 0.0)
+            {
+                return false;
+            }
+
+            widthMeters = parsed;
+            return true;
+        }
+
+        private static bool TryGetDispositionAreaEstimate(Polyline polyline, out double area)
+        {
+            area = 0.0;
+            if (polyline == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var measuredArea = Math.Abs(polyline.Area);
+                if (double.IsFinite(measuredArea) && measuredArea > 0.0)
+                {
+                    area = measuredArea;
+                    return true;
+                }
+            }
+            catch
+            {
+                // fall back to extents area
+            }
+
+            try
+            {
+                var ext = polyline.GeometricExtents;
+                var width = Math.Abs(ext.MaxPoint.X - ext.MinPoint.X);
+                var height = Math.Abs(ext.MaxPoint.Y - ext.MinPoint.Y);
+                var extArea = width * height;
+                if (double.IsFinite(extArea) && extArea > 0.0)
+                {
+                    area = extArea;
+                    return true;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            return false;
+        }
+
+        private static bool TryGetDispositionAspectRatio(Polyline polyline, out double aspectRatio)
+        {
+            aspectRatio = 1.0;
+            if (polyline == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var ext = polyline.GeometricExtents;
+                var width = Math.Abs(ext.MaxPoint.X - ext.MinPoint.X);
+                var height = Math.Abs(ext.MaxPoint.Y - ext.MinPoint.Y);
+                if (width <= 1e-6 || height <= 1e-6)
+                {
+                    return false;
+                }
+
+                var major = Math.Max(width, height);
+                var minor = Math.Min(width, height);
+                aspectRatio = major / minor;
+                return double.IsFinite(aspectRatio) && aspectRatio > 0.0;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private void ExecutePostQuarterPipeline(
@@ -7794,9 +8267,6 @@ namespace AtsBackgroundBuilder
 }
 
 /////////////////////////////////////////////////////////////////////
-
-
-
 
 
 

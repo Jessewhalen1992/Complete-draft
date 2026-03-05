@@ -545,7 +545,8 @@ namespace AtsBackgroundBuilder.Geometry
                 double maxWidth,
                 bool isVariable,
                 bool usedSamples,
-                Point2d medianCenter)
+                Point2d medianCenter,
+                Point2d maxCenter)
             {
                 MedianWidth = medianWidth;
                 MinWidth = minWidth;
@@ -553,6 +554,7 @@ namespace AtsBackgroundBuilder.Geometry
                 IsVariable = isVariable;
                 UsedSamples = usedSamples;
                 MedianCenter = medianCenter;
+                MaxCenter = maxCenter;
             }
 
             public double MedianWidth { get; }
@@ -561,6 +563,7 @@ namespace AtsBackgroundBuilder.Geometry
             public bool IsVariable { get; }
             public bool UsedSamples { get; }
             public Point2d MedianCenter { get; }
+            public Point2d MaxCenter { get; }
         }
 
         /// <summary>
@@ -634,7 +637,7 @@ namespace AtsBackgroundBuilder.Geometry
                 double fallback = maxS - minS;
                 if (fallback < 0) fallback = -fallback;
                 var fallbackCenter = GetSafeInteriorPoint(corridor);
-                return new WidthMeasurement(fallback, fallback, fallback, false, false, fallbackCenter);
+                return new WidthMeasurement(fallback, fallback, fallback, false, false, fallbackCenter, fallbackCenter);
             }
 
             widths.Sort();
@@ -648,7 +651,7 @@ namespace AtsBackgroundBuilder.Geometry
                 double fallback = maxS - minS;
                 if (fallback < 0) fallback = -fallback;
                 var fallbackCenter = GetSafeInteriorPoint(corridor);
-                return new WidthMeasurement(fallback, fallback, fallback, false, false, fallbackCenter);
+                return new WidthMeasurement(fallback, fallback, fallback, false, false, fallbackCenter, fallbackCenter);
             }
 
             widths.Sort();
@@ -661,6 +664,7 @@ namespace AtsBackgroundBuilder.Geometry
             bool isVariable = range > Math.Max(variableAbsTol, median * variableRelTol);
 
             Point2d medianCenter = samples.Count > 0 ? samples[0].center : GetSafeInteriorPoint(corridor);
+            Point2d maxCenter = samples.Count > 0 ? samples[samples.Count - 1].center : medianCenter;
             double bestDiff = double.MaxValue;
             foreach (var sample in samples)
             {
@@ -672,7 +676,7 @@ namespace AtsBackgroundBuilder.Geometry
                 }
             }
 
-            return new WidthMeasurement(median, minW, maxW, isVariable, usedSamples, medianCenter);
+            return new WidthMeasurement(median, minW, maxW, isVariable, usedSamples, medianCenter, maxCenter);
         }
 
         public static double SnapWidthToAcceptable(double measured, IReadOnlyList<double> acceptable, double tolerance)
@@ -1175,3 +1179,7 @@ namespace AtsBackgroundBuilder.Geometry
 
     }
 }
+
+
+
+

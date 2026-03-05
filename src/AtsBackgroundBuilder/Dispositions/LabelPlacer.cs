@@ -37,8 +37,8 @@ namespace AtsBackgroundBuilder.Dispositions
             Dictionary<string, HashSet<string>>? existingDispNumsByQuarter = null)
         {
             var result = new PlacementResult();
-            var processedDispositionIds = new HashSet<ObjectId>();
-            var countedDispositionIds = new HashSet<ObjectId>();
+            var processedDispositionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var countedDispositionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             using (var transaction = _database.TransactionManager.StartTransaction())
             {
@@ -64,20 +64,28 @@ namespace AtsBackgroundBuilder.Dispositions
                         foreach (var disposition in dispositions)
                         {
                             var normalizedDispNum = NormalizeDispNum(disposition.DispNumFormatted);
+                            var normalizedReuseVariant = NormalizeDispositionReuseVariant(disposition.ReuseVariantKey);
+                            var dispositionReuseKey = BuildDispositionReuseKey(normalizedDispNum, normalizedReuseVariant);
                             if (existingQuarterDispNums != null &&
-                                !string.IsNullOrWhiteSpace(normalizedDispNum) &&
-                                existingQuarterDispNums.Contains(normalizedDispNum))
+                                !string.IsNullOrWhiteSpace(normalizedDispNum))
                             {
-                                continue;
+                                var shouldSkip = string.IsNullOrWhiteSpace(normalizedReuseVariant)
+                                    ? existingQuarterDispNums.Contains(normalizedDispNum)
+                                    : existingQuarterDispNums.Contains(dispositionReuseKey);
+                                if (shouldSkip)
+                                {
+                                    continue;
+                                }
                             }
 
-                            if (!_config.AllowMultiQuarterDispositions && processedDispositionIds.Contains(disposition.ObjectId))
+                            var dispositionIdentity = BuildDispositionIdentity(disposition);
+                            if (!_config.AllowMultiQuarterDispositions && processedDispositionIds.Contains(dispositionIdentity))
                                 continue;
 
-                            if (countedDispositionIds.Contains(disposition.ObjectId))
+                            if (countedDispositionIds.Contains(dispositionIdentity))
                                 result.MultiQuarterProcessed++;
                             else
-                                countedDispositionIds.Add(disposition.ObjectId);
+                                countedDispositionIds.Add(dispositionIdentity);
 
                             // Quick reject by extents
                             if (!GeometryUtils.ExtentsIntersect(quarter.Polyline.GeometricExtents, disposition.Polyline.GeometricExtents))
@@ -119,9 +127,28 @@ namespace AtsBackgroundBuilder.Dispositions
                                 double measuredWidth = 0.0;
 
                                 // Default: per-quarter anchor/placement target.
-                                // (Using disposition.SafePoint will bias multi-quarter dispositions to a single quarter.)
-                                Point2d searchTarget = intersectionTarget;
+                                // (Using disposition.SafePoint will bias multi-quarter dispositions to a single quarter.)                                Point2d searchTarget = intersectionTarget;
                                 Point2d leaderTarget = intersectionTarget;
+
+                                // Mixed wellsite+access dispositions are a single boundary: bias the wellsite
+                                // variant toward the most interior/high-clearance pad point.
+                                if (string.Equals(
+                                        NormalizeDispositionReuseVariant(disposition.ReuseVariantKey),
+                                        DispositionInfo.ReuseVariantMixedWellsitePad,
+                                        StringComparison.OrdinalIgnoreCase))
+                                {
+                                    if (TryFindMixedWellsitePadTarget(
+                                            quarterClone,
+                                            dispClone,
+                                            intersectionPiece ?? dispClone,
+                                            disposition.SafePoint,
+                                            _config.TextHeight,
+                                            out var padTarget))
+                                    {
+                                        searchTarget = padTarget;
+                                        leaderTarget = padTarget;
+                                    }
+                                }
 
                                 if (disposition.RequiresWidth)
                                 {
@@ -275,7 +302,7 @@ namespace AtsBackgroundBuilder.Dispositions
 
                                 if (candidates.Count == 0)
                                 {
-                                    // Donâ€™t place labels using an out-of-quarter/out-of-disposition fallback target
+                                    // Do not place labels using an out-of-quarter/out-of-disposition fallback target
                                     if (!GeometryUtils.IsPointInsidePolyline(quarterClone, searchTarget) ||
                                         !GeometryUtils.IsPointInsidePolyline(dispClone, searchTarget))
                                     {
@@ -333,6 +360,10 @@ namespace AtsBackgroundBuilder.Dispositions
                                         }
 
                                         existingQuarterDispNums.Add(normalizedDispNum);
+                                        if (!string.IsNullOrWhiteSpace(normalizedReuseVariant))
+                                        {
+                                            existingQuarterDispNums.Add(dispositionReuseKey);
+                                        }
                                     }
                                     break;
                                 }
@@ -365,6 +396,10 @@ namespace AtsBackgroundBuilder.Dispositions
                                         }
 
                                         existingQuarterDispNums.Add(normalizedDispNum);
+                                        if (!string.IsNullOrWhiteSpace(normalizedReuseVariant))
+                                        {
+                                            existingQuarterDispNums.Add(dispositionReuseKey);
+                                        }
                                     }
 
                                     placed = true;
@@ -377,7 +412,7 @@ namespace AtsBackgroundBuilder.Dispositions
                                 }
 
                                 if (!_config.AllowMultiQuarterDispositions)
-                                    processedDispositionIds.Add(disposition.ObjectId);
+                                    processedDispositionIds.Add(dispositionIdentity);
                             }
 
                             if (intersectionPiece != null && !ReferenceEquals(intersectionPiece, disposition.Polyline))
@@ -850,7 +885,7 @@ namespace AtsBackgroundBuilder.Dispositions
 
         private static TextAttachmentType GetLeaderTextAttachment(AttachmentPoint attachment)
         {
-            // AutoCAD 2025's TextAttachmentType enum doesnâ€™t define MiddleLeft/MiddleRight/MiddleCenter.
+            // AutoCAD 2025's TextAttachmentType enum does not define MiddleLeft/MiddleRight/MiddleCenter.
             // Use a neutral attachment type that aligns text to the middle for both left and right leaders.
             return TextAttachmentType.AttachmentMiddle;
         }
@@ -1048,6 +1083,133 @@ namespace AtsBackgroundBuilder.Dispositions
             return target.GetDistanceTo(candidate) <= maxLeaderLength;
         }
 
+        private static bool TryFindMixedWellsitePadTarget(
+            Polyline quarter,
+            Polyline disposition,
+            Polyline padSource,
+            Point2d safeFallback,
+            double textHeight,
+            out Point2d target)
+        {
+            target = safeFallback;
+            if (quarter == null || disposition == null || padSource == null)
+            {
+                return false;
+            }
+
+            var hasBest = false;
+            var bestPoint = target;
+            var bestClearance = double.NegativeInfinity;
+
+            void Consider(Point2d candidate)
+            {
+                if (!GeometryUtils.IsPointInsidePolyline(quarter, candidate) ||
+                    !GeometryUtils.IsPointInsidePolyline(disposition, candidate))
+                {
+                    return;
+                }
+
+                var p3d = new Point3d(candidate.X, candidate.Y, 0.0);
+                var quarterClearance = DistanceToPolyline(quarter, p3d);
+                var dispClearance = DistanceToPolyline(disposition, p3d);
+                var clearance = Math.Min(quarterClearance, dispClearance);
+                if (!IsFinite(clearance) || clearance <= 0.0)
+                {
+                    return;
+                }
+
+                if (clearance > bestClearance)
+                {
+                    bestClearance = clearance;
+                    bestPoint = candidate;
+                    hasBest = true;
+                }
+            }
+
+            try
+            {
+                var measurement = GeometryUtils.MeasureCorridorWidth(
+                    padSource,
+                    25,
+                    Math.Max(0.20, textHeight * 0.05),
+                    0.10);
+                Consider(measurement.MaxCenter);
+                Consider(measurement.MedianCenter);
+            }
+            catch
+            {
+                // Fall through to geometric candidates.
+            }
+
+            Consider(safeFallback);
+            Consider(GeometryUtils.GetSafeInteriorPoint(padSource));
+            try
+            {
+                Consider(GetExtentsOverlapCenter(quarter.GeometricExtents, disposition.GeometricExtents));
+            }
+            catch
+            {
+                // ignore extents failures
+            }
+
+            try
+            {
+                if (TryGetOverlapExtents(
+                        quarter.GeometricExtents,
+                        disposition.GeometricExtents,
+                        out var minX,
+                        out var minY,
+                        out var maxX,
+                        out var maxY))
+                {
+                    var xSpan = maxX - minX;
+                    var ySpan = maxY - minY;
+                    const int gridSteps = 22;
+                    for (var ix = 0; ix <= gridSteps; ix++)
+                    {
+                        var x = minX + (xSpan * ix / gridSteps);
+                        for (var iy = 0; iy <= gridSteps; iy++)
+                        {
+                            var y = minY + (ySpan * iy / gridSteps);
+                            Consider(new Point2d(x, y));
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // ignore grid fallback failures
+            }
+
+            if (!hasBest)
+            {
+                return false;
+            }
+
+            target = bestPoint;
+            return true;
+        }
+
+        private static bool TryGetOverlapExtents(
+            Extents3d a,
+            Extents3d b,
+            out double minX,
+            out double minY,
+            out double maxX,
+            out double maxY)
+        {
+            minX = Math.Max(a.MinPoint.X, b.MinPoint.X);
+            minY = Math.Max(a.MinPoint.Y, b.MinPoint.Y);
+            maxX = Math.Min(a.MaxPoint.X, b.MaxPoint.X);
+            maxY = Math.Min(a.MaxPoint.Y, b.MaxPoint.Y);
+
+            return IsFinite(minX) &&
+                   IsFinite(minY) &&
+                   IsFinite(maxX) &&
+                   IsFinite(maxY) &&
+                   maxX > minX &&
+                   maxY > minY;
+        }
         private bool TryGetQuarterIntersectionTarget(
             Polyline quarter,
             Polyline disposition,
@@ -1057,7 +1219,7 @@ namespace AtsBackgroundBuilder.Dispositions
             intersectionPiece = null;
             target = default;
 
-            // First try true polygon intersection: disposition âˆ© quarter
+            // First try true polygon intersection: disposition intersection quarter
             if (GeometryUtils.TryIntersectPolylines(disposition, quarter, out var pieces) && pieces.Count > 0)
             {
                 // keep only closed pieces
@@ -1557,6 +1719,44 @@ namespace AtsBackgroundBuilder.Dispositions
 
             return prefix + suffix;
         }
+        private static string NormalizeDispositionReuseVariant(string? variantKey)
+        {
+            return string.IsNullOrWhiteSpace(variantKey)
+                ? string.Empty
+                : variantKey.Trim().ToUpperInvariant();
+        }
+
+        private static string BuildDispositionReuseKey(string normalizedDispNum, string normalizedVariantKey)
+        {
+            if (string.IsNullOrWhiteSpace(normalizedDispNum))
+            {
+                return string.Empty;
+            }
+
+            if (string.IsNullOrWhiteSpace(normalizedVariantKey))
+            {
+                return normalizedDispNum;
+            }
+
+            return $"{normalizedDispNum}|{normalizedVariantKey}";
+        }
+
+        private static string BuildDispositionIdentity(DispositionInfo disposition)
+        {
+            if (disposition == null)
+            {
+                return string.Empty;
+            }
+
+            var objectToken = disposition.ObjectId.IsNull
+                ? (disposition.DispNumFormatted ?? string.Empty)
+                : disposition.ObjectId.Handle.ToString();
+            var variantToken = NormalizeDispositionReuseVariant(disposition.ReuseVariantKey);
+
+            return string.IsNullOrWhiteSpace(variantToken)
+                ? objectToken
+                : $"{objectToken}|{variantToken}";
+        }
 
     }
 
@@ -1650,6 +1850,9 @@ namespace AtsBackgroundBuilder.Dispositions
 
     public sealed class DispositionInfo
     {
+        public const string ReuseVariantMixedAccessRoad = "MIXED_ACCESS_ROAD";
+        public const string ReuseVariantMixedWellsitePad = "MIXED_WELLSITE_PAD";
+
         public DispositionInfo(ObjectId objectId, Polyline polyline, string labelText, string layerName, string textLayerName, Point2d safePoint)
         {
             ObjectId = objectId;
@@ -1680,6 +1883,7 @@ namespace AtsBackgroundBuilder.Dispositions
         public string OdDimension { get; set; } = string.Empty;
         public string OdVerDateRaw { get; set; } = string.Empty;
         public string OdEffDateRaw { get; set; } = string.Empty;
+        public string ReuseVariantKey { get; set; } = string.Empty;
 
         // For width-required purposes, allow label to be placed in the quarter (not necessarily in the disposition)
         public bool AllowLabelOutsideDisposition { get; set; }
@@ -1767,3 +1971,13 @@ namespace AtsBackgroundBuilder.Dispositions
         public int MultiQuarterProcessed { get; set; }
     }
 }
+
+
+
+
+
+
+
+
+
+

@@ -4430,3 +4430,123 @@
 - Verification:
   - .\\.local_dotnet\\dotnet.exe build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore succeeded (warnings only).
   - runtime deploy copied to C:\\AUTOCAD-SETUP CG\\CG_LISP\\COMPASS\\net8.0-windows.
+# Follow-up (PLSR Date Compare: XML VersionDate + OD VER_DATE Only, 2026-03-05)
+
+- [x] Restrict PLSR version-date compare inputs to XML `VersionDate` and OD `VER_DATE` only.
+- [x] Return `N/A` when either side is missing and avoid standalone mismatch flags for that case.
+- [x] Remove `EFFDATE` / `ActivityDate` fallback messaging from mismatch details and display values.
+- [x] Compile-check ATS and rerun decision tests.
+
+## Review (PLSR Date Compare: XML VersionDate + OD VER_DATE Only, 2026-03-05)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`:
+  - `ResolvePlsrVersionDateStatus(...)` now compares only OD `VER_DATE` against XML `VersionDate` values.
+  - missing/invalid OD `VER_DATE` or missing XML `VersionDate` now returns `N/A`.
+  - `FormatPlsrExpectedVersionDateForDisplay(...)` no longer falls back to XML `ActivityDate`.
+  - `ResolvePlsrVersionDateMismatchDetail(...)` now references only `VER_DATE` vs `VersionDate`.
+  - `FormatDispositionDateFieldsForDisplay(...)` now displays only `VER_DATE` (or `N/A`).
+- Verification:
+  - `dotnet msbuild src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -t:Compile -v minimal` succeeded (warning `NU1900` only).
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj --no-restore -v minimal` passed (`Decision tests passed.`).
+  - full `dotnet build` currently fails copy-to-`build\\net8.0-windows\\AtsBackgroundBuilder.dll` because the destination DLL is locked by another process (`MSB3021/MSB3027`).
+# Follow-up (Mixed WELLSITE + ACCESS ROAD Split, 2026-03-05)
+
+- [x] Detect mixed-purpose dispositions where purpose indicates both wellsite and access road.
+- [x] Classify each mixed polygon as road-like vs pad-like using width + shape heuristics.
+- [x] Apply label-mode split: access-road polygons use width labels; pad polygons use wellsite labels.
+- [x] Make label reuse/dedupe variant-aware so both labels can coexist for a single DISP number.
+- [x] Compile-check ATS and rerun decision tests.
+
+## Review (Mixed WELLSITE + ACCESS ROAD Split, 2026-03-05)
+
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - added mixed-purpose detection (`IsWellSiteAndAccessRoadPurpose(...)`).
+  - added geometry classification (`TryClassifyMixedWellsiteAccessRoadAsAccessRoad(...)`) using:
+    - acceptable-width snap proximity,
+    - compactness (`4pA/P²`) and extents aspect ratio,
+    - representative-width guard (`<= 40m`).
+  - for mixed purposes:
+    - road-like polygons are labeled as `ACCESS ROAD` and forced to width-label path,
+    - pad-like polygons are labeled as `WELLSITE` and forced to non-width wellsite path.
+  - added variant reuse keys on prepared dispositions (`MIXED_ACCESS_ROAD`, `MIXED_WELLSITE_PAD`).
+  - existing-label indexing now adds optional variant reuse keys inferred from existing label text.
+- Updated `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`:
+  - reuse skip logic now supports variant keys for mixed dispositions.
+  - placement identity now includes variant key so mixed variants on the same ObjectId are not collapsed.
+  - added `DispositionInfo.ReuseVariantKey` and mixed-variant constants.
+- Verification:
+  - `dotnet msbuild src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -t:Compile -v minimal` succeeded (warning `NU1900` only in sandbox).
+  - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj --no-restore -v minimal` passed (`Decision tests passed.`).
+
+# Follow-up (Mixed Wellsite/Access Road Variant Labels, 2026-03-05)
+
+- [x] Route `PURPCD = WELLSITE AND ACCESS ROAD` through purpose lookup outputs instead of hardcoded strings.
+- [x] Emit mixed variants as separate label candidates (A/R width label + wellsite surface label when pad signature is detected).
+- [x] Keep wellsite LSD-prefix behavior for mixed wellsite variant.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Mixed Wellsite/Access Road Variant Labels, 2026-03-05)
+
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - mixed-purpose mapping now uses lookup-driven resolver (`ResolveMixedPurposeMappedValue`) so access-road text follows lookup (e.g. `A/R`) and wellsite follows lookup (e.g. `8-2 (Surface)`).
+  - mixed-purpose classification now returns both `isAccessRoad` and `hasWellsitePadSignature`.
+  - mixed-purpose emission now supports two variants for a single mixed geometry when pad signature exists:
+    - width/leader access-road variant (`ReuseVariantMixedAccessRoad`)
+    - non-width wellsite variant with LSD-prefixed surface line (`ReuseVariantMixedWellsitePad`).
+  - existing-label variant detection now recognizes `A/R` and `(Surface)` content for mixed reuse keys.
+- Verification:
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj --no-restore -v minimal` (with `DOTNET_CLI_HOME=.dotnet-home`) succeeded.
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj --no-restore -v minimal` (with `DOTNET_CLI_HOME=.dotnet-home`) passed.
+
+# Follow-up (Mixed Variant Layer + Wellsite Placement, 2026-03-05)
+
+- [x] Ensure mixed access-road label variant uses purpose-lookup layer suffix (`AR`) for text layer mapping (`C/F-*-T`).
+- [x] Bias mixed wellsite variant placement target to safe interior point when available in-quarter to avoid road-corridor-only search failures.
+- [x] Loosen mixed pad-signature heuristic so road+pad shapes still emit wellsite variant when width spread is moderate.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Mixed Variant Layer + Wellsite Placement, 2026-03-05)
+
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - mixed variants now compute layer names from mixed-purpose lookup entries (`TryBuildMixedPurposeLayerNames(...)`), so access-road text can land on `F-AR-T` for non-client records.
+  - mixed access-road and wellsite `DispositionInfo` instances now use variant-specific layer names.
+  - mixed classifier pad-signature thresholds relaxed (`spread >= 1.25` or pad-like shape check) to reduce false negatives for connected pad geometry.
+- Updated `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`:
+  - for `ReuseVariantMixedWellsitePad`, placement target now prefers `SafePoint` when it lies inside the current quarter+disposition intersection context.
+- Verification:
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj --no-restore -v minimal` (with `DOTNET_CLI_HOME=.dotnet-home`) succeeded.
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj --no-restore -v minimal` (with `DOTNET_CLI_HOME=.dotnet-home`) passed.
+
+# Follow-up (Mixed Wellsite Pad Placement + WS Linework Layer, 2026-03-05)
+
+- [x] Force mixed-disposition source linework layer to wellsite layer variant (`C/F-WS`) when mixed wellsite variant is present.
+- [x] Improve mixed wellsite label anchor selection to prefer widest local corridor sample center (`MaxCenter`) before safe-point fallback.
+- [x] Recompile and run decision tests.
+
+## Review (Mixed Wellsite Pad Placement + WS Linework Layer, 2026-03-05)
+
+- Updated `src/AtsBackgroundBuilder/Core/Plugin.cs`:
+  - line entity relayer now uses mixed-variant-aware `lineLayerForEntity`, preferring mixed wellsite line layer (`WS`) for mixed records.
+- Updated `src/AtsBackgroundBuilder/Geometry/GeometryUtils.cs`:
+  - `WidthMeasurement` now includes `MaxCenter` (widest sampled center).
+- Updated `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`:
+  - mixed wellsite variant now anchors label search to `MeasureCorridorWidth(...).MaxCenter` (pad-biased) with safe-point fallback.
+- Verification:
+  - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -v minimal` succeeded (NU1900 warning only).
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj --no-restore -v minimal` passed.
+
+# Follow-up (Mixed Surface Label Interior Placement, 2026-03-05)
+
+- [x] Replace mixed wellsite anchor heuristic with high-clearance interior target search inside quarter+disposition overlap.
+- [x] Keep mixed wellsite text anchored to selected pad-center target before candidate spiral placement.
+- [x] Rebuild and rerun decision tests.
+
+## Review (Mixed Surface Label Interior Placement, 2026-03-05)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`:
+  - added `TryFindMixedWellsitePadTarget(...)` with interior-clearance scoring and overlap-grid sampling.
+  - mixed wellsite variant now uses that target for `searchTarget`/`leaderTarget`, improving pad interior placement.
+- Verification:
+  - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -v minimal` succeeded.
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj --no-restore -v minimal` passed.
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj --no-restore -v minimal` succeeded.
