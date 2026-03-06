@@ -1,3 +1,156 @@
+# Follow-up (PLSR Touch-Quarter Matching, 2026-03-06)
+
+- [x] Verify that fresh-build labels are still being collapsed to a single quarter during PLSR scan.
+- [x] Let label existence satisfy every quarter the label visibly touches, while keeping a primary quarter for `Not in PLSR`.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Touch-Quarter Matching, 2026-03-06)
+
+- The PLSR scan was still collapsing each parsed label into one quarter bucket, which meant a fresh-build label could visibly touch the correct quarter and still be missed if another quarter won the assignment.
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs so label existence now indexes every touched quarter, while `Not in PLSR` still uses a primary quarter bucket only.
+- Added pure touch-resolution coverage in src/AtsBackgroundBuilder/Core/PlsrQuarterPointMatcher.cs and src/AtsBackgroundBuilder.DecisionTests/Program.cs so multi-quarter touch behavior is testable without AutoCAD.
+- Verification:
+  - dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore (passed; NU1900 warning only because the sandbox could not reach api.nuget.org).
+  - dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore (Decision tests passed.).
+
+# Follow-up (PLSR Best-Quarter Label Assignment, 2026-03-06)
+
+- [x] Verify whether labels that touch multiple quarters are being assigned to the first matching quarter instead of the best one.
+- [x] Score quarter matches and assign each scanned label to the best quarter, not the first touching quarter.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Best-Quarter Label Assignment, 2026-03-06)
+
+- The collector was still using first-match quarter assignment even after broader point/bounds checks, so labels touching more than one quarter could be claimed by the wrong quarter and then appear as false `Missing label` / `Not in PLSR` rows.
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs so scanned labels now resolve to the best quarter based on in-quarter point hits first, with bounds-overlap only as a weak fallback tie-breaker.
+- Verification:
+  - dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore (passed; NU1900 warning only because sandboxed vulnerability checks could not reach api.nuget.org).
+  - dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore (Decision tests passed.).
+# Follow-up (PLSR Bounds Touch + Label Spacing, 2026-03-06)
+
+- [x] Review the fresh-build evidence, including the supplied PDF, to separate false missing-labels from placement overlap.
+- [x] Treat rendered label bounds touching a quarter as sufficient label existence for PLSR review.
+- [x] Apply a low-risk spacing tweak so leader labels search farther and reserve a larger collision footprint.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Bounds Touch + Label Spacing, 2026-03-06)
+
+- Rendered `missing labels.pdf` locally and confirmed the remaining problem is a mix of false `Missing label` rows plus heavy corridor label clustering.
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs so label-quarter matching now falls back to rendered entity-bounds touching the quarter, not just sampled anchor points.
+- Updated src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs so leader labels search farther (`160` candidates, `300m` max leader length) and use a larger collision gap when evaluating placements; this is a heuristic overlap reduction, not a full layout solver.
+- Verification:
+  - dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore (passed; NU1900 warning only because sandboxed vulnerability checks could not reach api.nuget.org).
+  - dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore (Decision tests passed.).
+# Follow-up (PLSR Label Any-Point Quarter Matching, 2026-03-06)
+
+- [x] Broaden quarter matching so plain text labels are not judged by a single insertion point.
+- [x] Include sampled text extents for text, leaders, and dimensions when deciding whether a label exists in a quarter.
+- [x] Add decision coverage for the new extent-point builder.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Label Any-Point Quarter Matching, 2026-03-06)
+
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs so PLSR label existence uses sampled text-extents points for plain `MText`, `MLeader`, and `AlignedDimension` entities, in addition to leader vertices and dimension endpoints.
+- Added src/AtsBackgroundBuilder/Core/PlsrQuarterPointMatcher.cs extent-point builder coverage so quarter matching now aligns better with the rule "if any part of the label lands in the quarter, count it".
+- This specifically reduces false `Missing label` / `Not in PLSR` rows when text is offset but some visible label geometry still falls inside the quarter.
+- Verification:
+  - dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore (passed; NU1900 warning only because sandboxed vulnerability checks could not reach api.nuget.org).
+  - dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore (Decision tests passed.).
+# Follow-up (Dispose OD Table Wrappers, 2026-03-06)
+
+- [x] Capture the latest crash evidence instead of guessing from the ATS log alone.
+- [x] Trace every `ODTables[tableName]` / `tables[tableName]` path that can leave `Autodesk.Gis.Map.ObjectData.Table` wrappers for finalization.
+- [x] Dispose those OD table wrappers deterministically.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Dispose OD Table Wrappers, 2026-03-06)
+
+- Windows Application/Error Reporting showed `acad.exe` crashing with `System.AccessViolationException` in `Autodesk.Gis.Map.ObjectData.Table.DeleteUnmanagedObject()` from the finalizer thread.
+- Updated src/AtsBackgroundBuilder/Dispositions/OdHelpers.cs and src/AtsBackgroundBuilder/Dispositions/ShapefileImporter.cs so OD table wrappers fetched from `tables[tableName]` are wrapped in `using (table)` and disposed immediately instead of being left for finalization.
+- This is a runtime stability fix; it does not change the PLSR decision rules.
+- Verification:
+  - dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore (passed; NU1900 warning only because sandboxed vulnerability checks could not reach api.nuget.org).
+  - dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore (Decision tests passed.).
+# Follow-up (PLSR Nonstandard-Layer Missing-Label Suppression, 2026-03-06)
+
+- [x] Track visible DISP candidates on nonstandard layers during PLSR label collection.
+- [x] Suppress `Missing label` review rows when a nonstandard-layer DISP candidate already exists in that quarter.
+- [x] Add decision coverage for the suppression-key logic.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Nonstandard-Layer Missing-Label Suppression, 2026-03-06)
+
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs so nonstandard-layer text entities that still expose a parsed DISP number register as visible quarter candidates even when they do not qualify as full PLSR labels.
+- Missing-label generation now skips `Create missing label` for quarter/DISP pairs already backed by one of those nonstandard-layer candidates, and writes a log line when suppression occurs.
+- Added src/AtsBackgroundBuilder/Core/PlsrMissingLabelSuppressionPolicy.cs plus decision coverage in src/AtsBackgroundBuilder.DecisionTests/Program.cs.
+- Verification:
+  - dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore (passed; NU1900 warning only because sandboxed vulnerability checks could not reach api.nuget.org).
+  - dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore (Decision tests passed.).
+# Follow-up (PLSR Nonstandard Label Layer Scan, 2026-03-06)
+
+- [x] Verify whether visible missing-label examples are being filtered out before quarter matching.
+- [x] Stop requiring the narrow C/F-...-T layer pattern when the entity text already parses as a valid disposition label.
+- [x] Add runtime logging so the next test run shows whether nonstandard-layer fallback was used.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Nonstandard Label Layer Scan, 2026-03-06)
+
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs so the PLSR scan no longer drops parsed labels solely because their layer is not recognized as C-...-T or F-...-T.
+- Preserved the existing layer check as a diagnostic signal instead of a hard gate; parsed labels on nonstandard layers now count, and the scan logs the first few accepted fallback cases plus a summary count.
+- This specifically addresses cases like the visible DRS label that exists in the drawing but was still being flagged as missing before any quarter test ran.
+- Verification:
+  - dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore (passed; NU1900 warning only because sandboxed vulnerability check could not reach api.nuget.org).
+  - dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore (Decision tests passed.).
+
+# Follow-up (PLSR Aligned-Dimension Quarter Matching, 2026-03-06)
+
+- [x] Extend PLSR quarter matching for aligned-dimension labels beyond the text position.
+- [x] Treat in-quarter dimension geometry as sufficient even when the dimension text drifts slightly outside the 1/4.
+- [x] Add decision coverage for dimension-point quarter candidates.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Aligned-Dimension Quarter Matching, 2026-03-06)
+
+- Updated src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs so aligned-dimension labels contribute quarter-test points from their extension-line endpoints and midpoint, not just the text anchor.
+- Switched aligned-dimension PLSR anchor preference to the extension-line midpoint, which better reflects the in-quarter width geometry created during label placement.
+- Expanded src/AtsBackgroundBuilder/Core/PlsrQuarterPointMatcher.cs with PlsrQuarterPointBuilder.BuildDimensionPoints(...) so dimension candidate-point logic is pure and testable.
+- Added decision tests in src/AtsBackgroundBuilder.DecisionTests/Program.cs for midpoint inclusion and dimension-point dedupe behavior.
+- Verification:
+  - dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore (passed; NU1900 warning only because sandboxed vulnerability check could not reach api.nuget.org).
+  - dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore (Decision tests passed.).
+
+# Follow-up (Variable Width Review Color, 2026-03-06)
+
+- [x] Centralize the rule that forced Variable Width labels must be green.
+- [x] Keep non-variable label colors unchanged.
+- [x] Add decision coverage for the variable-width color policy.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (Variable Width Review Color, 2026-03-06)
+
+- Added `src/AtsBackgroundBuilder/Core/DispositionLabelColorPolicy.cs` so review-color enforcement is explicit and testable instead of relying only on upstream width-label branches.
+- Updated `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs` to resolve the final text color through `DispositionLabelColorPolicy.ResolveTextColorIndex(...)` before creating aligned dimensions, leaders, or plain `MText` labels.
+- Preserved existing non-variable color behavior; only labels whose final text contains `Variable Width` are forced to ACI 3 (green).
+- Added decision tests in `src/AtsBackgroundBuilder.DecisionTests/Program.cs` for: variable-width labels forcing green, and non-variable labels preserving the requested color.
+- Verification:
+  - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` (passed; `NU1900` warning only because sandboxed vulnerability check could not reach `api.nuget.org`).
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
+# Follow-up (PLSR Leader Quarter Matching, 2026-03-06)
+
+- [x] Update PLSR label quarter matching to consider leader points, not just text location.
+- [x] Keep leader label placement unchanged; only change missing-label detection behavior.
+- [x] Add decision coverage for candidate-point quarter matching.
+- [x] Rebuild plugin and rerun decision tests.
+
+## Review (PLSR Leader Quarter Matching, 2026-03-06)
+
+- Added `src/AtsBackgroundBuilder/Core/PlsrQuarterPointMatcher.cs` to centralize quarter membership against multiple candidate points while keeping the polygon test injected by the caller.
+- Updated `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs` so `MLeader` labels carry quarter-test points from both the text location and reflected leader vertices; PLSR quarter assignment now accepts the label when any of those points lands inside the quarter polygon.
+- Preserved label placement behavior; the change is limited to PLSR missing-label detection and still uses the farthest leader point as the stored anchor/display location.
+- Added decision test coverage in `src/AtsBackgroundBuilder.DecisionTests/Program.cs` for: text-outside/leader-inside match, all-points-outside reject, and inside-bounds-but-outside-polygon reject.
+- Verification:
+  - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore` (passed; `NU1900` warning only because sandboxed vulnerability check could not reach `api.nuget.org`).
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` (`Decision tests passed.`).
 # Follow-up (PLSR Missing-Label Candidate Selector Tests, 2026-03-02)
 
 - [x] Extract missing-label candidate selection ordering/dedupe into a pure helper.
@@ -4347,6 +4500,7 @@
 - Verification:
   - dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore succeeded (warnings only).
   - dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore passed (Decision tests passed.).
+
 # Follow-up (PLSR XML Date Source: ActivityDate Only, 2026-03-04)
 
 - [x] Remove XML version-date fallback logic and use ActivityDate only for PLSR version-date comparison.
@@ -4463,7 +4617,7 @@
   - added mixed-purpose detection (`IsWellSiteAndAccessRoadPurpose(...)`).
   - added geometry classification (`TryClassifyMixedWellsiteAccessRoadAsAccessRoad(...)`) using:
     - acceptable-width snap proximity,
-    - compactness (`4pA/P²`) and extents aspect ratio,
+    - compactness (`4pA/Pï¿½`) and extents aspect ratio,
     - representative-width guard (`<= 40m`).
   - for mixed purposes:
     - road-like polygons are labeled as `ACCESS ROAD` and forced to width-label path,

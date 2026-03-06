@@ -55,6 +55,7 @@ namespace AtsBackgroundBuilder.Dispositions
                         continue;
                     }
 
+                    using (table)
                     using (var records = GetRecordsForObject(table, tableName, objectId, logger))
                     {
                         if (records == null || records.Count == 0)

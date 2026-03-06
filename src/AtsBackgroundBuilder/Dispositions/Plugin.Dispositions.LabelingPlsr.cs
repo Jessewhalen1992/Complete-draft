@@ -590,6 +590,9 @@ namespace AtsBackgroundBuilder
             public string DispNum { get; set; } = string.Empty;
             public string RawContents { get; set; } = string.Empty;
             public Point2d Location { get; set; }
+            public string PrimaryQuarterKey { get; set; } = string.Empty;
+            public PlsrQuarterMatchBounds? EntityBounds { get; set; }
+            public List<PlsrQuarterMatchPoint> QuarterTestPoints { get; } = new List<PlsrQuarterMatchPoint>();
         }
 
         private sealed class PlsrDispositionLabelOverride
@@ -641,6 +644,7 @@ namespace AtsBackgroundBuilder
         {
             public HashSet<string> NotIncludedPrefixes { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, List<PlsrLabelEntry>> LabelByQuarter { get; set; } = new Dictionary<string, List<PlsrLabelEntry>>(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> NonStandardLayerDispCandidates { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, List<DispositionInfo>> DispositionsByDispNum { get; set; } = new Dictionary<string, List<DispositionInfo>>(StringComparer.OrdinalIgnoreCase);
             public List<PlsrCheckIssue> Issues { get; } = new List<PlsrCheckIssue>();
             public bool AllowTextOnlyFallbackLabels { get; set; }
@@ -794,7 +798,8 @@ namespace AtsBackgroundBuilder
             var missingQuarterKeys = requestedQuarterKeys.Where(k => !quarterData.ContainsKey(k)).ToList();
 
             setStage("collect_labels");
-            result.LabelByQuarter = CollectPlsrLabels(database, quarters, logger);
+            var primaryLabelByQuarter = new Dictionary<string, List<PlsrLabelEntry>>(StringComparer.OrdinalIgnoreCase);
+            result.LabelByQuarter = CollectPlsrLabels(database, quarters, logger, out primaryLabelByQuarter, result.NonStandardLayerDispCandidates);
             var labelTemplatesByDispNum = BuildLabelTemplatesByDispNum(result.LabelByQuarter);
             var defaultTemplateLabel = labelTemplatesByDispNum.Values.FirstOrDefault();
             result.AllowTextOnlyFallbackLabels = IsPlsrTextOnlyFallbackLabelsEnabled();
@@ -805,9 +810,11 @@ namespace AtsBackgroundBuilder
             foreach (var quarterKey in requestedQuarterKeys)
             {
                 result.LabelByQuarter.TryGetValue(quarterKey, out var labels);
+                primaryLabelByQuarter.TryGetValue(quarterKey, out var primaryLabels);
                 quarterData.TryGetValue(quarterKey, out var expected);
 
                 var labelsForQuarter = labels ?? new List<PlsrLabelEntry>();
+                var primaryLabelsForQuarter = primaryLabels ?? new List<PlsrLabelEntry>();
                 var expectedActivities = expected?.Activities ?? new List<PlsrActivity>();
 
                 var expectedByDisp = new Dictionary<string, PlsrActivity>(StringComparer.OrdinalIgnoreCase);
@@ -820,26 +827,8 @@ namespace AtsBackgroundBuilder
                         expectedByDisp.Add(normDisp, act);
                 }
 
-                var labelByDisp = new Dictionary<string, PlsrLabelEntry>(StringComparer.OrdinalIgnoreCase);
-                foreach (var label in labelsForQuarter)
-                {
-                    var normDisp = NormalizeDispNum(label.DispNum);
-                    if (string.IsNullOrWhiteSpace(normDisp))
-                        continue;
-
-                    var prefix = GetDispositionPrefix(normDisp);
-                    if (string.IsNullOrWhiteSpace(prefix))
-                        continue;
-
-                    if (!PlsrDispositionPrefixes.Contains(prefix))
-                    {
-                        result.NotIncludedPrefixes.Add(prefix);
-                        continue;
-                    }
-
-                    if (!labelByDisp.ContainsKey(normDisp))
-                        labelByDisp.Add(normDisp, label);
-                }
+                var labelByDisp = BuildBestLabelsByDisp(labelsForQuarter, quarterKey, result.NotIncludedPrefixes);
+                var primaryLabelByDisp = BuildBestLabelsByDisp(primaryLabelsForQuarter, quarterKey, result.NotIncludedPrefixes);
 
                 foreach (var pair in expectedByDisp)
                 {
@@ -884,6 +873,15 @@ namespace AtsBackgroundBuilder
 
                     if (!labelByDisp.TryGetValue(dispNum, out var label))
                     {
+                        if (PlsrMissingLabelSuppressionPolicy.ShouldSuppressMissingLabel(
+                            result.NonStandardLayerDispCandidates,
+                            quarterKey,
+                            dispNum))
+                        {
+                            logger.WriteLine($"PLSR missing-label review suppressed {displayDispNum} in {quarterKey} because a non-standard-layer DISP candidate exists in that quarter.");
+                            continue;
+                        }
+
                         result.MissingLabels++;
                         var mappedOwnerForMissing = MapClientNameForCompare(companyLookup, act.Owner);
                         DispositionInfo? sourceDisposition = null;
@@ -1079,7 +1077,7 @@ namespace AtsBackgroundBuilder
 
                 }
 
-                foreach (var labelPair in labelByDisp)
+                foreach (var labelPair in primaryLabelByDisp)
                 {
                     var extraLabel = labelPair.Value;
                     if (extraLabel == null)
@@ -2522,7 +2520,8 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
-                var labelByQuarter = CollectPlsrLabels(database, plsrQuarters, logger);
+                var ignoredPrimaryLabelByQuarter = new Dictionary<string, List<PlsrLabelEntry>>(StringComparer.OrdinalIgnoreCase);
+                var labelByQuarter = CollectPlsrLabels(database, plsrQuarters, logger, out ignoredPrimaryLabelByQuarter);
                 var existingDispNumsByQuarter = BuildExistingDispNumsByQuarter(labelByQuarter);
                 var emptySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -3009,9 +3008,15 @@ namespace AtsBackgroundBuilder
             return token.Trim().TrimStart('0');
         }
 
-        private static Dictionary<string, List<PlsrLabelEntry>> CollectPlsrLabels(Database database, List<QuarterInfo> quarters, Logger logger)
+        private static Dictionary<string, List<PlsrLabelEntry>> CollectPlsrLabels(
+            Database database,
+            List<QuarterInfo> quarters,
+            Logger logger,
+            out Dictionary<string, List<PlsrLabelEntry>> primaryByQuarter,
+            HashSet<string>? nonStandardLayerDispCandidates = null)
         {
             var byQuarter = new Dictionary<string, List<PlsrLabelEntry>>(StringComparer.OrdinalIgnoreCase);
+            primaryByQuarter = new Dictionary<string, List<PlsrLabelEntry>>(StringComparer.OrdinalIgnoreCase);
             if (quarters == null || quarters.Count == 0)
                 return byQuarter;
 
@@ -3029,11 +3034,21 @@ namespace AtsBackgroundBuilder
                 .Select(pair => (
                     Key: pair.Key,
                     Polyline: pair.Value.Polyline,
-                    Bounds: pair.Value.Bounds))
+                    Bounds: pair.Value.Bounds,
+                    MatchBounds: new PlsrQuarterMatchBounds(
+                        pair.Value.Bounds.MinPoint.X,
+                        pair.Value.Bounds.MinPoint.Y,
+                        pair.Value.Bounds.MaxPoint.X,
+                        pair.Value.Bounds.MaxPoint.Y)))
                 .ToList();
             var layerMatchCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             var scanErrors = 0;
+            var nonStandardLayerAccepted = 0;
+            var recognizedLabels = 0;
+            var touchedQuarterHits = 0;
+            var multiQuarterLabels = 0;
             const int maxLoggedScanErrors = 8;
+            const int maxLoggedNonStandardLayerAccepts = 8;
 
             try
             {
@@ -3047,55 +3062,82 @@ namespace AtsBackgroundBuilder
                         try
                         {
                             PlsrLabelEntry? entry = null;
-
+                            var contents = string.Empty;
+                            var labelLocation = new Point2d(0.0, 0.0);
+                            List<PlsrQuarterMatchPoint>? quarterTestPoints = null;
+                            var isLeader = false;
+                            var isDimension = false;
                             var dbObject = tr.GetObject(id, OpenMode.ForRead, false);
                             if (!(dbObject is Entity labelEntity) || labelEntity.IsErased)
                             {
                                 continue;
                             }
-
                             if (!(dbObject is MText || dbObject is MLeader || dbObject is AlignedDimension))
                             {
                                 continue;
                             }
-
+                            var entityBounds = TryGetEntityQuarterMatchBounds(labelEntity);
                             var layerName = labelEntity.Layer ?? string.Empty;
                             if (!layerMatchCache.TryGetValue(layerName, out var isDispositionTextLayer))
                             {
                                 isDispositionTextLayer = IsDispositionTextLayer(layerName);
                                 layerMatchCache[layerName] = isDispositionTextLayer;
                             }
-
-                            if (!isDispositionTextLayer)
-                            {
-                                continue;
-                            }
-
                             if (dbObject is MText mtext)
                             {
-                                var contents = mtext.Contents ?? string.Empty;
-                                entry = BuildLabelEntry(id, false, contents, new Point2d(mtext.Location.X, mtext.Location.Y));
+                                contents = mtext.Contents ?? string.Empty;
+                                labelLocation = new Point2d(mtext.Location.X, mtext.Location.Y);
+                                quarterTestPoints = GetEntityExtentQuarterTestPoints(mtext, labelLocation);
                             }
                             else if (dbObject is MLeader mleader)
                             {
                                 var leaderText = mleader.MText;
                                 if (leaderText != null)
                                 {
-                                    var contents = leaderText.Contents ?? string.Empty;
-                                    var anchor = GetLeaderAnchorPoint(mleader, leaderText, logger);
-                                    entry = BuildLabelEntry(id, true, contents, anchor);
+                                    contents = leaderText.Contents ?? string.Empty;
+                                    var textLocation = new Point2d(leaderText.Location.X, leaderText.Location.Y);
+                                    quarterTestPoints = GetLeaderQuarterTestPoints(mleader, textLocation);
+                                    labelLocation = SelectLeaderHeadPoint(quarterTestPoints, textLocation);
+                                    isLeader = true;
                                 }
                             }
                             else if (dbObject is AlignedDimension aligned)
                             {
-                                var contents = aligned.DimensionText ?? string.Empty;
+                                contents = aligned.DimensionText ?? string.Empty;
                                 if (!string.IsNullOrWhiteSpace(contents) && !string.Equals(contents.Trim(), "<>", StringComparison.Ordinal))
                                 {
-                                    var location = GetDimensionAnchorPoint(aligned);
-                                    entry = BuildLabelEntry(id, false, contents, location, isDimension: true);
+                                    labelLocation = GetDimensionAnchorPoint(aligned);
+                                    quarterTestPoints = GetDimensionQuarterTestPoints(aligned, labelLocation);
+                                    isDimension = true;
+                                }
+                                else
+                                {
+                                    contents = string.Empty;
                                 }
                             }
-
+                            if (string.IsNullOrWhiteSpace(contents))
+                            {
+                                continue;
+                            }
+                            entry = BuildLabelEntry(id, isLeader, contents, labelLocation, isDimension: isDimension, quarterTestPoints: quarterTestPoints, entityBounds: entityBounds);
+                            if (!isDispositionTextLayer)
+                            {
+                                var lines = SplitMTextLines(contents);
+                                if (lines.Count >= 2)
+                                {
+                                    var candidateDispNum = NormalizeDispNum(entry?.DispNum ?? ExtractDispositionNumber(lines, contents));
+                                    var candidatePrefix = GetDispositionPrefix(candidateDispNum);
+                                    if (!string.IsNullOrWhiteSpace(candidatePrefix) && PlsrDispositionPrefixes.Contains(candidatePrefix))
+                                    {
+                                        RegisterNonStandardLayerDispCandidate(
+                                            nonStandardLayerDispCandidates,
+                                            quarterEntries,
+                                            candidateDispNum,
+                                            labelLocation,
+                                            quarterTestPoints);
+                                    }
+                                }
+                            }
                             if (entry == null)
                                 continue;
 
@@ -3106,27 +3148,37 @@ namespace AtsBackgroundBuilder
                             if (string.IsNullOrWhiteSpace(prefix) || !PlsrDispositionPrefixes.Contains(prefix))
                                 continue;
 
-                            foreach (var quarterEntry in quarterEntries)
+                            if (!isDispositionTextLayer)
                             {
-                                if (entry.Location.X < quarterEntry.Bounds.MinPoint.X ||
-                                    entry.Location.X > quarterEntry.Bounds.MaxPoint.X ||
-                                    entry.Location.Y < quarterEntry.Bounds.MinPoint.Y ||
-                                    entry.Location.Y > quarterEntry.Bounds.MaxPoint.Y)
+                                nonStandardLayerAccepted++;
+                                if (nonStandardLayerAccepted <= maxLoggedNonStandardLayerAccepts)
                                 {
-                                    continue;
+                                    logger.WriteLine($"PLSR label scan accepted parsed label {entry.DispNum} on non-standard layer '{layerName}'.");
                                 }
+                            }
 
-                                if (GeometryUtils.IsPointInsidePolyline(quarterEntry.Polyline, entry.Location))
-                                {
-                                    if (!byQuarter.TryGetValue(quarterEntry.Key, out var list))
-                                    {
-                                        list = new List<PlsrLabelEntry>();
-                                        byQuarter[quarterEntry.Key] = list;
-                                    }
+                            recognizedLabels++;
+                            var touchResolution = ResolveQuarterTouchResolution(entry, quarterEntries);
+                            if (touchResolution.TouchedQuarterKeys.Count == 0)
+                            {
+                                continue;
+                            }
 
-                                    list.Add(entry);
-                                    break;
-                                }
+                            entry.PrimaryQuarterKey = touchResolution.PrimaryQuarterKey;
+                            if (touchResolution.TouchedQuarterKeys.Count > 1)
+                            {
+                                multiQuarterLabels++;
+                            }
+
+                            foreach (var touchedQuarterKey in touchResolution.TouchedQuarterKeys)
+                            {
+                                AddLabelEntryToQuarter(byQuarter, touchedQuarterKey, entry);
+                                touchedQuarterHits++;
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(entry.PrimaryQuarterKey))
+                            {
+                                AddLabelEntryToQuarter(primaryByQuarter, entry.PrimaryQuarterKey, entry);
                             }
                         }
                         catch (Autodesk.AutoCAD.Runtime.Exception ex)
@@ -3163,11 +3215,182 @@ namespace AtsBackgroundBuilder
             {
                 logger.WriteLine($"PLSR label scan completed with {scanErrors} recoverable entity error(s).");
             }
+            if (nonStandardLayerAccepted > maxLoggedNonStandardLayerAccepts)
+            {
+                logger.WriteLine($"PLSR label scan accepted {nonStandardLayerAccepted - maxLoggedNonStandardLayerAccepts} additional parsed label(s) on non-standard layers.");
+            }
+            if (recognizedLabels > 0)
+            {
+                logger.WriteLine($"PLSR label scan indexed {recognizedLabels} parsed label(s) across {touchedQuarterHits} quarter touch(es); {multiQuarterLabels} label(s) touched multiple quarter(s).");
+            }
 
             return byQuarter;
         }
 
-        private static PlsrLabelEntry? BuildLabelEntry(ObjectId id, bool isLeader, string contents, Point2d location, bool isDimension = false)
+        private static void RegisterNonStandardLayerDispCandidate(
+            HashSet<string>? nonStandardLayerDispCandidates,
+            List<(string Key, Polyline Polyline, Extents3d Bounds, PlsrQuarterMatchBounds MatchBounds)> quarterEntries,
+            string normalizedDispNum,
+            Point2d anchorLocation,
+            IEnumerable<PlsrQuarterMatchPoint>? quarterTestPoints)
+        {
+            if (nonStandardLayerDispCandidates == null || string.IsNullOrWhiteSpace(normalizedDispNum))
+            {
+                return;
+            }
+            var candidatePoints = new List<PlsrQuarterMatchPoint>();
+            AddQuarterTestPoint(candidatePoints, new PlsrQuarterMatchPoint(anchorLocation.X, anchorLocation.Y));
+            if (quarterTestPoints != null)
+            {
+                foreach (var quarterTestPoint in quarterTestPoints)
+                {
+                    AddQuarterTestPoint(candidatePoints, quarterTestPoint);
+                }
+            }
+            foreach (var quarterEntry in quarterEntries)
+            {
+                if (!PlsrQuarterPointMatcher.MatchesAnyPoint(
+                    quarterEntry.MatchBounds,
+                    candidatePoints,
+                    candidate => GeometryUtils.IsPointInsidePolyline(
+                        quarterEntry.Polyline,
+                        new Point2d(candidate.X, candidate.Y))))
+                {
+                    continue;
+                }
+                nonStandardLayerDispCandidates.Add(
+                    PlsrMissingLabelSuppressionPolicy.BuildNonStandardLayerCandidateKey(
+                        quarterEntry.Key,
+                        normalizedDispNum));
+            }
+        }
+
+        private static void AddLabelEntryToQuarter(
+            Dictionary<string, List<PlsrLabelEntry>> labelsByQuarter,
+            string quarterKey,
+            PlsrLabelEntry entry)
+        {
+            if (labelsByQuarter == null || string.IsNullOrWhiteSpace(quarterKey) || entry == null)
+            {
+                return;
+            }
+
+            if (!labelsByQuarter.TryGetValue(quarterKey, out var list))
+            {
+                list = new List<PlsrLabelEntry>();
+                labelsByQuarter[quarterKey] = list;
+            }
+
+            list.Add(entry);
+        }
+
+        private static Dictionary<string, PlsrLabelEntry> BuildBestLabelsByDisp(
+            IEnumerable<PlsrLabelEntry> labelsForQuarter,
+            string quarterKey,
+            HashSet<string> notIncludedPrefixes)
+        {
+            var labelByDisp = new Dictionary<string, PlsrLabelEntry>(StringComparer.OrdinalIgnoreCase);
+            if (labelsForQuarter == null)
+            {
+                return labelByDisp;
+            }
+
+            foreach (var label in labelsForQuarter)
+            {
+                if (label == null)
+                {
+                    continue;
+                }
+
+                var normDisp = NormalizeDispNum(label.DispNum ?? string.Empty);
+                if (string.IsNullOrWhiteSpace(normDisp))
+                    continue;
+
+                var prefix = GetDispositionPrefix(normDisp);
+                if (string.IsNullOrWhiteSpace(prefix))
+                    continue;
+
+                if (!PlsrDispositionPrefixes.Contains(prefix))
+                {
+                    notIncludedPrefixes?.Add(prefix);
+                    continue;
+                }
+
+                if (!labelByDisp.TryGetValue(normDisp, out var existingLabel) ||
+                    ShouldPreferLabelForQuarter(label, existingLabel, quarterKey))
+                {
+                    labelByDisp[normDisp] = label;
+                }
+            }
+
+            return labelByDisp;
+        }
+
+        private static bool ShouldPreferLabelForQuarter(
+            PlsrLabelEntry? candidate,
+            PlsrLabelEntry? existing,
+            string quarterKey)
+        {
+            if (candidate == null)
+            {
+                return false;
+            }
+
+            if (existing == null)
+            {
+                return true;
+            }
+
+            var candidateIsPrimary = string.Equals(candidate.PrimaryQuarterKey, quarterKey, StringComparison.OrdinalIgnoreCase);
+            var existingIsPrimary = string.Equals(existing.PrimaryQuarterKey, quarterKey, StringComparison.OrdinalIgnoreCase);
+            if (candidateIsPrimary != existingIsPrimary)
+            {
+                return candidateIsPrimary;
+            }
+
+            if (candidate.IsDimension != existing.IsDimension)
+            {
+                return !candidate.IsDimension;
+            }
+
+            if (candidate.IsLeader != existing.IsLeader)
+            {
+                return candidate.IsLeader;
+            }
+
+            return false;
+        }
+
+        private static PlsrQuarterTouchResolution ResolveQuarterTouchResolution(
+            PlsrLabelEntry entry,
+            List<(string Key, Polyline Polyline, Extents3d Bounds, PlsrQuarterMatchBounds MatchBounds)> quarterEntries)
+        {
+            var candidates = new List<PlsrQuarterTouchCandidate>();
+            foreach (var quarterEntry in quarterEntries)
+            {
+                var score = GetLabelQuarterMatchScore(entry, quarterEntry.Polyline, quarterEntry.MatchBounds);
+                if (score <= 0)
+                {
+                    continue;
+                }
+
+                candidates.Add(new PlsrQuarterTouchCandidate(
+                    quarterEntry.Key,
+                    score,
+                    GetBoundsOverlapArea(entry.EntityBounds, quarterEntry.MatchBounds)));
+            }
+
+            return PlsrQuarterTouchResolver.Resolve(candidates);
+        }
+
+        private static PlsrLabelEntry? BuildLabelEntry(
+            ObjectId id,
+            bool isLeader,
+            string contents,
+            Point2d location,
+            bool isDimension = false,
+            IEnumerable<PlsrQuarterMatchPoint>? quarterTestPoints = null,
+            PlsrQuarterMatchBounds? entityBounds = null)
         {
             var lines = SplitMTextLines(contents);
             if (lines.Count < 2)
@@ -3180,7 +3403,7 @@ namespace AtsBackgroundBuilder
                 return null;
             }
 
-            return new PlsrLabelEntry
+            var entry = new PlsrLabelEntry
             {
                 Id = id,
                 IsLeader = isLeader,
@@ -3188,8 +3411,20 @@ namespace AtsBackgroundBuilder
                 Owner = owner,
                 DispNum = dispNum,
                 RawContents = contents,
-                Location = location
+                Location = location,
+                EntityBounds = entityBounds
             };
+
+            AddQuarterTestPoint(entry.QuarterTestPoints, new PlsrQuarterMatchPoint(location.X, location.Y));
+            if (quarterTestPoints != null)
+            {
+                foreach (var quarterTestPoint in quarterTestPoints)
+                {
+                    AddQuarterTestPoint(entry.QuarterTestPoints, quarterTestPoint);
+                }
+            }
+
+            return entry;
         }
 
         private static string ExtractDispositionNumber(IReadOnlyList<string> lines, string rawContents)
@@ -3270,8 +3505,9 @@ namespace AtsBackgroundBuilder
         {
             try
             {
-                var textPos = dimension.TextPosition;
-                return new Point2d(textPos.X, textPos.Y);
+                var a = dimension.XLine1Point;
+                var b = dimension.XLine2Point;
+                return new Point2d((a.X + b.X) * 0.5, (a.Y + b.Y) * 0.5);
             }
             catch
             {
@@ -3280,9 +3516,8 @@ namespace AtsBackgroundBuilder
 
             try
             {
-                var a = dimension.XLine1Point;
-                var b = dimension.XLine2Point;
-                return new Point2d((a.X + b.X) * 0.5, (a.Y + b.Y) * 0.5);
+                var textPos = dimension.TextPosition;
+                return new Point2d(textPos.X, textPos.Y);
             }
             catch
             {
@@ -3290,222 +3525,506 @@ namespace AtsBackgroundBuilder
             }
         }
 
-        private static Point2d GetLeaderAnchorPoint(MLeader leader, MText leaderText, Logger logger)
+        private static List<PlsrQuarterMatchPoint> GetDimensionQuarterTestPoints(AlignedDimension dimension, Point2d anchorLocation)
         {
+            PlsrQuarterMatchPoint? textPoint = null;
+            PlsrQuarterMatchPoint? firstExtensionPoint = null;
+            PlsrQuarterMatchPoint? secondExtensionPoint = null;
+
             try
             {
-                var type = leader.GetType();
-                var allVertices = new List<Point3d>();
-                string? source = null;
-
-                void AddVertices(Point3dCollection? pts, string src)
-                {
-                    if (pts == null || pts.Count == 0)
-                        return;
-                    if (source == null)
-                        source = src;
-                    foreach (Point3d p in pts)
-                        allVertices.Add(p);
-                }
-
-                int? TryGetInt(string name)
-                {
-                    var prop = type.GetProperty(name);
-                    if (prop != null && prop.PropertyType == typeof(int))
-                        return (int?)prop.GetValue(leader);
-                    var method = type.GetMethod(name, Type.EmptyTypes);
-                    if (method != null && method.ReturnType == typeof(int))
-                        return (int?)method.Invoke(leader, Array.Empty<object>());
-                    return null;
-                }
-
-                int? leaderCount = TryGetInt("NumLeaders") ?? TryGetInt("LeaderCount") ?? TryGetInt("NumberOfLeaders");
-                var maxLeaders = leaderCount.HasValue ? Math.Max(1, leaderCount.Value) : 4;
-
-                var method2 = type.GetMethod("GetLeaderLineVertices", new[] { typeof(int), typeof(int) });
-                var method1 = type.GetMethod("GetLeaderLineVertices", new[] { typeof(int) });
-                var method3 = type.GetMethod("GetLeaderLineVertices", new[] { typeof(int), typeof(int), typeof(bool) });
-
-                var getLeaderIndexes = type.GetMethod("GetLeaderIndexes", Type.EmptyTypes);
-                var getLeaderLineIndexes = type.GetMethod("GetLeaderLineIndexes", new[] { typeof(int) });
-                var getFirstVertex = type.GetMethods().FirstOrDefault(m => m.Name == "GetFirstVertex");
-                var getLastVertex = type.GetMethods().FirstOrDefault(m => m.Name == "GetLastVertex");
-                var getVertex = type.GetMethods().FirstOrDefault(m => m.Name == "GetVertex");
-
-                int? TryGetLineCount(int leaderIndex)
-                {
-                    var method = type.GetMethod("GetLeaderLineCount", new[] { typeof(int) });
-                    if (method != null && method.ReturnType == typeof(int))
-                        return (int?)method.Invoke(leader, new object[] { leaderIndex });
-                    var prop = type.GetProperty("LeaderLineCount");
-                    if (prop != null && prop.PropertyType == typeof(int))
-                        return (int?)prop.GetValue(leader);
-                    return null;
-                }
-
-                IEnumerable<int> EnumerateLeaderIndexes()
-                {
-                    if (getLeaderIndexes != null)
-                    {
-                        var result = getLeaderIndexes.Invoke(leader, Array.Empty<object>());
-                        if (result is IEnumerable<int> ints)
-                            return ints;
-                        if (result is System.Collections.IEnumerable enumerable)
-                            return enumerable.Cast<object>().Select(o => Convert.ToInt32(o));
-                    }
-                    return Enumerable.Range(0, maxLeaders);
-                }
-
-                IEnumerable<int> EnumerateLeaderLineIndexes(int leaderIndex, int maxLines)
-                {
-                    if (getLeaderLineIndexes != null)
-                    {
-                        var result = getLeaderLineIndexes.Invoke(leader, new object[] { leaderIndex });
-                        if (result is IEnumerable<int> ints)
-                            return ints;
-                        if (result is System.Collections.IEnumerable enumerable)
-                            return enumerable.Cast<object>().Select(o => Convert.ToInt32(o));
-                    }
-                    return Enumerable.Range(0, maxLines);
-                }
-
-                Point3d? TryInvokePoint3d(MethodInfo? method, params object[] args)
-                {
-                    if (method == null)
-                        return null;
-                    try
-                    {
-                        var paramCount = method.GetParameters().Length;
-                        if (paramCount != args.Length)
-                            return null;
-                        var result = method.Invoke(leader, args);
-                        if (result is Point3d p)
-                            return p;
-                    }
-                    catch
-                    {
-                        // ignore
-                    }
-                    return null;
-                }
-
-                foreach (int leaderIndex in EnumerateLeaderIndexes())
-                {
-                    int? lineCount = TryGetLineCount(leaderIndex);
-                    var maxLines = lineCount.HasValue ? Math.Max(1, lineCount.Value) : 4;
-
-                    foreach (int lineIndex in EnumerateLeaderLineIndexes(leaderIndex, maxLines))
-                    {
-                        if (method2 != null)
-                        {
-                            var result = method2.Invoke(leader, new object[] { leaderIndex, lineIndex }) as Point3dCollection;
-                            AddVertices(result, "GetLeaderLineVertices(int,int)");
-                        }
-
-                        if (method3 != null)
-                        {
-                            var resultFalse = method3.Invoke(leader, new object[] { leaderIndex, lineIndex, false }) as Point3dCollection;
-                            AddVertices(resultFalse, "GetLeaderLineVertices(int,int,bool=false)");
-                            var resultTrue = method3.Invoke(leader, new object[] { leaderIndex, lineIndex, true }) as Point3dCollection;
-                            AddVertices(resultTrue, "GetLeaderLineVertices(int,int,bool=true)");
-                        }
-
-                        var first = TryInvokePoint3d(getFirstVertex, leaderIndex, lineIndex)
-                            ?? TryInvokePoint3d(getFirstVertex, leaderIndex)
-                            ?? TryInvokePoint3d(getFirstVertex, lineIndex);
-                        if (first.HasValue)
-                            AddVertices(new Point3dCollection { first.Value }, "GetFirstVertex");
-
-                        var last = TryInvokePoint3d(getLastVertex, leaderIndex, lineIndex)
-                            ?? TryInvokePoint3d(getLastVertex, leaderIndex)
-                            ?? TryInvokePoint3d(getLastVertex, lineIndex);
-                        if (last.HasValue)
-                            AddVertices(new Point3dCollection { last.Value }, "GetLastVertex");
-
-                        if (getVertex != null)
-                        {
-                            for (int v = 0; v < 6; v++)
-                            {
-                                var vtx = TryInvokePoint3d(getVertex, leaderIndex, lineIndex, v)
-                                    ?? TryInvokePoint3d(getVertex, leaderIndex, v)
-                                    ?? TryInvokePoint3d(getVertex, lineIndex, v);
-                                if (vtx.HasValue)
-                                    AddVertices(new Point3dCollection { vtx.Value }, "GetVertex");
-                            }
-                        }
-                    }
-
-                    if (method1 != null)
-                    {
-                        var result = method1.Invoke(leader, new object[] { leaderIndex }) as Point3dCollection;
-                        AddVertices(result, "GetLeaderLineVertices(int)");
-                    }
-                }
-
-                if (allVertices.Count == 0 && method1 != null)
-                {
-                    var result = method1.Invoke(leader, new object[] { 0 }) as Point3dCollection;
-                    AddVertices(result, "GetLeaderLineVertices(int)@0");
-                }
-
-                var prop = type.GetProperty("LeaderLineVertices");
-                if (prop != null)
-                {
-                    var val = prop.GetValue(leader);
-                    if (val is Point3dCollection pts)
-                        AddVertices(pts, "LeaderLineVertices");
-                    else if (val is IEnumerable<Point3d> enumerable)
-                    {
-                        var pts2 = new Point3dCollection();
-                        foreach (var p in enumerable)
-                            pts2.Add(p);
-                        AddVertices(pts2, "LeaderLineVertices(IEnumerable)");
-                    }
-                }
-
-                if (allVertices.Count > 0)
-                    return SelectLeaderHeadPoint(allVertices, leaderText.Location);
+                var textPos = dimension.TextPosition;
+                textPoint = new PlsrQuarterMatchPoint(textPos.X, textPos.Y);
             }
             catch
             {
-                // fall back to text location
+                // ignore
             }
 
-            return new Point2d(leaderText.Location.X, leaderText.Location.Y);
+            try
+            {
+                var a = dimension.XLine1Point;
+                var b = dimension.XLine2Point;
+                firstExtensionPoint = new PlsrQuarterMatchPoint(a.X, a.Y);
+                secondExtensionPoint = new PlsrQuarterMatchPoint(b.X, b.Y);
+            }
+            catch
+            {
+                // ignore
+            }
+
+            var points = PlsrQuarterPointBuilder.BuildDimensionPoints(
+                new PlsrQuarterMatchPoint(anchorLocation.X, anchorLocation.Y),
+                textPoint,
+                firstExtensionPoint,
+                secondExtensionPoint);
+
+            foreach (var extentPoint in GetEntityExtentQuarterTestPoints(dimension, anchorLocation))
+            {
+                AddQuarterTestPoint(points, extentPoint);
+            }
+
+            return points;
         }
 
-        private static Point2d SelectLeaderHeadPoint(Point3dCollection vertices, Point3d labelLocation)
+        private static PlsrQuarterMatchBounds? TryGetEntityQuarterMatchBounds(Entity entity)
+        {
+            try
+            {
+                var extents = entity.GeometricExtents;
+                return new PlsrQuarterMatchBounds(
+                    extents.MinPoint.X,
+                    extents.MinPoint.Y,
+                    extents.MaxPoint.X,
+                    extents.MaxPoint.Y);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static List<PlsrQuarterMatchPoint> GetEntityExtentQuarterTestPoints(Entity entity, Point2d anchorLocation)
+        {
+            var bounds = TryGetEntityQuarterMatchBounds(entity);
+            var minPoint = bounds.HasValue ? new PlsrQuarterMatchPoint(bounds.Value.MinX, bounds.Value.MinY) : (PlsrQuarterMatchPoint?)null;
+            var maxPoint = bounds.HasValue ? new PlsrQuarterMatchPoint(bounds.Value.MaxX, bounds.Value.MaxY) : (PlsrQuarterMatchPoint?)null;
+
+            return PlsrQuarterPointBuilder.BuildExtentPoints(
+                new PlsrQuarterMatchPoint(anchorLocation.X, anchorLocation.Y),
+                minPoint,
+                maxPoint);
+        }
+        private static List<PlsrQuarterMatchPoint> GetLeaderQuarterTestPoints(MLeader leader, Point2d labelLocation)
+        {
+            var points = new List<PlsrQuarterMatchPoint>();
+            AddQuarterTestPoint(points, new PlsrQuarterMatchPoint(labelLocation.X, labelLocation.Y));
+
+            try
+            {
+                foreach (var vertex in CollectLeaderVertices(leader))
+                {
+                    AddQuarterTestPoint(points, new PlsrQuarterMatchPoint(vertex.X, vertex.Y));
+                }
+            }
+            catch
+            {
+                // fall back to text location only
+            }
+
+            foreach (var extentPoint in GetEntityExtentQuarterTestPoints(leader, labelLocation))
+            {
+                AddQuarterTestPoint(points, extentPoint);
+            }
+
+            return points;
+        }
+
+        private static bool TryResolveBestQuarterKey(
+            PlsrLabelEntry entry,
+            List<(string Key, Polyline Polyline, Extents3d Bounds, PlsrQuarterMatchBounds MatchBounds)> quarterEntries,
+            out string quarterKey)
+        {
+            quarterKey = string.Empty;
+            var bestScore = int.MinValue;
+            var bestOverlapArea = double.NegativeInfinity;
+
+            foreach (var quarterEntry in quarterEntries)
+            {
+                var score = GetLabelQuarterMatchScore(entry, quarterEntry.Polyline, quarterEntry.MatchBounds);
+                if (score <= 0)
+                {
+                    continue;
+                }
+
+                var overlapArea = GetBoundsOverlapArea(entry.EntityBounds, quarterEntry.MatchBounds);
+                if (score > bestScore || (score == bestScore && overlapArea > bestOverlapArea))
+                {
+                    bestScore = score;
+                    bestOverlapArea = overlapArea;
+                    quarterKey = quarterEntry.Key;
+                }
+            }
+
+            return !string.IsNullOrWhiteSpace(quarterKey);
+        }
+
+        private static int GetLabelQuarterMatchScore(PlsrLabelEntry entry, Polyline quarterPolyline, PlsrQuarterMatchBounds quarterBounds)
+        {
+            var pointMatches = CountMatchingQuarterPoints(entry.QuarterTestPoints, quarterPolyline, quarterBounds);
+            if (pointMatches > 0)
+            {
+                return 1000 + (pointMatches * 100);
+            }
+
+            return DoesLabelTouchQuarter(entry, quarterPolyline, quarterBounds) ? 1 : 0;
+        }
+
+        private static int CountMatchingQuarterPoints(
+            IEnumerable<PlsrQuarterMatchPoint>? candidatePoints,
+            Polyline quarterPolyline,
+            PlsrQuarterMatchBounds quarterBounds)
+        {
+            if (candidatePoints == null)
+            {
+                return 0;
+            }
+
+            var matches = 0;
+            foreach (var candidatePoint in candidatePoints)
+            {
+                if (!quarterBounds.Contains(candidatePoint))
+                {
+                    continue;
+                }
+
+                if (GeometryUtils.IsPointInsidePolyline(quarterPolyline, new Point2d(candidatePoint.X, candidatePoint.Y)))
+                {
+                    matches++;
+                }
+            }
+
+            return matches;
+        }
+
+        private static double GetBoundsOverlapArea(PlsrQuarterMatchBounds? entityBounds, PlsrQuarterMatchBounds quarterBounds)
+        {
+            if (!entityBounds.HasValue)
+            {
+                return 0.0;
+            }
+
+            var bounds = entityBounds.Value;
+            var minX = Math.Max(bounds.MinX, quarterBounds.MinX);
+            var minY = Math.Max(bounds.MinY, quarterBounds.MinY);
+            var maxX = Math.Min(bounds.MaxX, quarterBounds.MaxX);
+            var maxY = Math.Min(bounds.MaxY, quarterBounds.MaxY);
+            if (maxX <= minX || maxY <= minY)
+            {
+                return 0.0;
+            }
+
+            return (maxX - minX) * (maxY - minY);
+        }
+        private static bool DoesLabelTouchQuarter(PlsrLabelEntry entry, Polyline quarterPolyline, PlsrQuarterMatchBounds quarterBounds)
+        {
+            if (PlsrQuarterPointMatcher.MatchesAnyPoint(
+                quarterBounds,
+                entry.QuarterTestPoints,
+                candidate => GeometryUtils.IsPointInsidePolyline(
+                    quarterPolyline,
+                    new Point2d(candidate.X, candidate.Y))))
+            {
+                return true;
+            }
+
+            if (!entry.EntityBounds.HasValue)
+            {
+                return false;
+            }
+
+            var entityBounds = entry.EntityBounds.Value;
+            if (entityBounds.MaxX < quarterBounds.MinX ||
+                entityBounds.MinX > quarterBounds.MaxX ||
+                entityBounds.MaxY < quarterBounds.MinY ||
+                entityBounds.MinY > quarterBounds.MaxY)
+            {
+                return false;
+            }
+
+            return RectangleIntersectsPolyline(entityBounds, quarterPolyline);
+        }
+
+        private static bool RectangleIntersectsPolyline(PlsrQuarterMatchBounds rect, Polyline polyline)
+        {
+            if (polyline == null || polyline.NumberOfVertices < 2)
+            {
+                return false;
+            }
+
+            var rmin = new Point2d(rect.MinX, rect.MinY);
+            var rmax = new Point2d(rect.MaxX, rect.MaxY);
+            var rbl = new Point2d(rmin.X, rmin.Y);
+            var rbr = new Point2d(rmax.X, rmin.Y);
+            var rtr = new Point2d(rmax.X, rmax.Y);
+            var rtl = new Point2d(rmin.X, rmax.Y);
+
+            if (GeometryUtils.IsPointInsidePolyline(polyline, rbl) ||
+                GeometryUtils.IsPointInsidePolyline(polyline, rbr) ||
+                GeometryUtils.IsPointInsidePolyline(polyline, rtr) ||
+                GeometryUtils.IsPointInsidePolyline(polyline, rtl) ||
+                GeometryUtils.IsPointInsidePolyline(polyline, new Point2d((rmin.X + rmax.X) * 0.5, (rmin.Y + rmax.Y) * 0.5)))
+            {
+                return true;
+            }
+
+            int last = polyline.Closed ? polyline.NumberOfVertices : polyline.NumberOfVertices - 1;
+            for (int i = 0; i < last; i++)
+            {
+                int j = (i + 1) % polyline.NumberOfVertices;
+                var a = polyline.GetPoint2dAt(i);
+                var b = polyline.GetPoint2dAt(j);
+
+                if (IsPointInMatchBounds(rect, a) || IsPointInMatchBounds(rect, b))
+                {
+                    return true;
+                }
+
+                if (SegmentsIntersect(a, b, rbl, rbr) ||
+                    SegmentsIntersect(a, b, rbr, rtr) ||
+                    SegmentsIntersect(a, b, rtr, rtl) ||
+                    SegmentsIntersect(a, b, rtl, rbl))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsPointInMatchBounds(PlsrQuarterMatchBounds bounds, Point2d point)
+        {
+            return bounds.Contains(new PlsrQuarterMatchPoint(point.X, point.Y));
+        }
+
+        private static bool SegmentsIntersect(Point2d p1, Point2d p2, Point2d q1, Point2d q2)
+        {
+            var d1 = CrossForSegmentIntersection(p1, p2, q1);
+            var d2 = CrossForSegmentIntersection(p1, p2, q2);
+            var d3 = CrossForSegmentIntersection(q1, q2, p1);
+            var d4 = CrossForSegmentIntersection(q1, q2, p2);
+
+            if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+                ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0)))
+            {
+                return true;
+            }
+
+            if (Math.Abs(d1) <= 1e-9 && IsPointOnSegmentForIntersection(p1, p2, q1)) return true;
+            if (Math.Abs(d2) <= 1e-9 && IsPointOnSegmentForIntersection(p1, p2, q2)) return true;
+            if (Math.Abs(d3) <= 1e-9 && IsPointOnSegmentForIntersection(q1, q2, p1)) return true;
+            if (Math.Abs(d4) <= 1e-9 && IsPointOnSegmentForIntersection(q1, q2, p2)) return true;
+
+            return false;
+        }
+
+        private static double CrossForSegmentIntersection(Point2d a, Point2d b, Point2d c)
+        {
+            return ((b.X - a.X) * (c.Y - a.Y)) - ((b.Y - a.Y) * (c.X - a.X));
+        }
+
+        private static bool IsPointOnSegmentForIntersection(Point2d a, Point2d b, Point2d p)
+        {
+            return p.X >= Math.Min(a.X, b.X) - 1e-9 &&
+                   p.X <= Math.Max(a.X, b.X) + 1e-9 &&
+                   p.Y >= Math.Min(a.Y, b.Y) - 1e-9 &&
+                   p.Y <= Math.Max(a.Y, b.Y) + 1e-9;
+        }
+        private static List<Point3d> CollectLeaderVertices(MLeader leader)
+        {
+            var type = leader.GetType();
+            var allVertices = new List<Point3d>();
+
+            void AddVertices(Point3dCollection? pts)
+            {
+                if (pts == null || pts.Count == 0)
+                    return;
+                foreach (Point3d p in pts)
+                    allVertices.Add(p);
+            }
+
+            int? TryGetInt(string name)
+            {
+                var prop = type.GetProperty(name);
+                if (prop != null && prop.PropertyType == typeof(int))
+                    return (int?)prop.GetValue(leader);
+                var method = type.GetMethod(name, Type.EmptyTypes);
+                if (method != null && method.ReturnType == typeof(int))
+                    return (int?)method.Invoke(leader, Array.Empty<object>());
+                return null;
+            }
+
+            int? leaderCount = TryGetInt("NumLeaders") ?? TryGetInt("LeaderCount") ?? TryGetInt("NumberOfLeaders");
+            var maxLeaders = leaderCount.HasValue ? Math.Max(1, leaderCount.Value) : 4;
+
+            var method2 = type.GetMethod("GetLeaderLineVertices", new[] { typeof(int), typeof(int) });
+            var method1 = type.GetMethod("GetLeaderLineVertices", new[] { typeof(int) });
+            var method3 = type.GetMethod("GetLeaderLineVertices", new[] { typeof(int), typeof(int), typeof(bool) });
+
+            var getLeaderIndexes = type.GetMethod("GetLeaderIndexes", Type.EmptyTypes);
+            var getLeaderLineIndexes = type.GetMethod("GetLeaderLineIndexes", new[] { typeof(int) });
+            var getFirstVertex = type.GetMethods().FirstOrDefault(m => m.Name == "GetFirstVertex");
+            var getLastVertex = type.GetMethods().FirstOrDefault(m => m.Name == "GetLastVertex");
+            var getVertex = type.GetMethods().FirstOrDefault(m => m.Name == "GetVertex");
+
+            int? TryGetLineCount(int leaderIndex)
+            {
+                var method = type.GetMethod("GetLeaderLineCount", new[] { typeof(int) });
+                if (method != null && method.ReturnType == typeof(int))
+                    return (int?)method.Invoke(leader, new object[] { leaderIndex });
+                var prop = type.GetProperty("LeaderLineCount");
+                if (prop != null && prop.PropertyType == typeof(int))
+                    return (int?)prop.GetValue(leader);
+                return null;
+            }
+
+            IEnumerable<int> EnumerateLeaderIndexes()
+            {
+                if (getLeaderIndexes != null)
+                {
+                    var result = getLeaderIndexes.Invoke(leader, Array.Empty<object>());
+                    if (result is IEnumerable<int> ints)
+                        return ints;
+                    if (result is System.Collections.IEnumerable enumerable)
+                        return enumerable.Cast<object>().Select(o => Convert.ToInt32(o));
+                }
+                return Enumerable.Range(0, maxLeaders);
+            }
+
+            IEnumerable<int> EnumerateLeaderLineIndexes(int leaderIndex, int maxLines)
+            {
+                if (getLeaderLineIndexes != null)
+                {
+                    var result = getLeaderLineIndexes.Invoke(leader, new object[] { leaderIndex });
+                    if (result is IEnumerable<int> ints)
+                        return ints;
+                    if (result is System.Collections.IEnumerable enumerable)
+                        return enumerable.Cast<object>().Select(o => Convert.ToInt32(o));
+                }
+                return Enumerable.Range(0, maxLines);
+            }
+
+            Point3d? TryInvokePoint3d(MethodInfo? method, params object[] args)
+            {
+                if (method == null)
+                    return null;
+                try
+                {
+                    var paramCount = method.GetParameters().Length;
+                    if (paramCount != args.Length)
+                        return null;
+                    var result = method.Invoke(leader, args);
+                    if (result is Point3d p)
+                        return p;
+                }
+                catch
+                {
+                    // ignore
+                }
+
+                return null;
+            }
+
+            foreach (int leaderIndex in EnumerateLeaderIndexes())
+            {
+                int? lineCount = TryGetLineCount(leaderIndex);
+                var maxLines = lineCount.HasValue ? Math.Max(1, lineCount.Value) : 4;
+
+                foreach (int lineIndex in EnumerateLeaderLineIndexes(leaderIndex, maxLines))
+                {
+                    if (method2 != null)
+                    {
+                        var result = method2.Invoke(leader, new object[] { leaderIndex, lineIndex }) as Point3dCollection;
+                        AddVertices(result);
+                    }
+
+                    if (method3 != null)
+                    {
+                        var resultFalse = method3.Invoke(leader, new object[] { leaderIndex, lineIndex, false }) as Point3dCollection;
+                        AddVertices(resultFalse);
+                        var resultTrue = method3.Invoke(leader, new object[] { leaderIndex, lineIndex, true }) as Point3dCollection;
+                        AddVertices(resultTrue);
+                    }
+
+                    var first = TryInvokePoint3d(getFirstVertex, leaderIndex, lineIndex)
+                        ?? TryInvokePoint3d(getFirstVertex, leaderIndex)
+                        ?? TryInvokePoint3d(getFirstVertex, lineIndex);
+                    if (first.HasValue)
+                        AddVertices(new Point3dCollection { first.Value });
+
+                    var last = TryInvokePoint3d(getLastVertex, leaderIndex, lineIndex)
+                        ?? TryInvokePoint3d(getLastVertex, leaderIndex)
+                        ?? TryInvokePoint3d(getLastVertex, lineIndex);
+                    if (last.HasValue)
+                        AddVertices(new Point3dCollection { last.Value });
+
+                    if (getVertex != null)
+                    {
+                        for (int v = 0; v < 6; v++)
+                        {
+                            var vtx = TryInvokePoint3d(getVertex, leaderIndex, lineIndex, v)
+                                ?? TryInvokePoint3d(getVertex, leaderIndex, v)
+                                ?? TryInvokePoint3d(getVertex, lineIndex, v);
+                            if (vtx.HasValue)
+                                AddVertices(new Point3dCollection { vtx.Value });
+                        }
+                    }
+                }
+
+                if (method1 != null)
+                {
+                    var result = method1.Invoke(leader, new object[] { leaderIndex }) as Point3dCollection;
+                    AddVertices(result);
+                }
+            }
+
+            if (allVertices.Count == 0 && method1 != null)
+            {
+                var result = method1.Invoke(leader, new object[] { 0 }) as Point3dCollection;
+                AddVertices(result);
+            }
+
+            var prop = type.GetProperty("LeaderLineVertices");
+            if (prop != null)
+            {
+                var val = prop.GetValue(leader);
+                if (val is Point3dCollection pts)
+                    AddVertices(pts);
+                else if (val is IEnumerable<Point3d> enumerable)
+                {
+                    var pts2 = new Point3dCollection();
+                    foreach (var p in enumerable)
+                        pts2.Add(p);
+                    AddVertices(pts2);
+                }
+            }
+
+            return allVertices;
+        }
+
+        private static Point2d SelectLeaderHeadPoint(IEnumerable<PlsrQuarterMatchPoint> points, Point2d labelLocation)
         {
             double bestDistance = double.MinValue;
-            Point3d best = labelLocation;
-            foreach (Point3d p in vertices)
+            var best = new PlsrQuarterMatchPoint(labelLocation.X, labelLocation.Y);
+            foreach (var point in points)
             {
-                double d = p.DistanceTo(labelLocation);
-                if (d > bestDistance)
+                double dx = point.X - labelLocation.X;
+                double dy = point.Y - labelLocation.Y;
+                double distanceSquared = (dx * dx) + (dy * dy);
+                if (distanceSquared > bestDistance)
                 {
-                    bestDistance = d;
-                    best = p;
+                    bestDistance = distanceSquared;
+                    best = point;
                 }
             }
 
             return new Point2d(best.X, best.Y);
         }
 
-        private static Point2d SelectLeaderHeadPoint(IEnumerable<Point3d> vertices, Point3d labelLocation)
+        private static void AddQuarterTestPoint(List<PlsrQuarterMatchPoint> points, PlsrQuarterMatchPoint candidate)
         {
-            double bestDistance = double.MinValue;
-            Point3d best = labelLocation;
-            foreach (Point3d p in vertices)
+            const double epsilon = 1e-6;
+
+            foreach (var existing in points)
             {
-                double d = p.DistanceTo(labelLocation);
-                if (d > bestDistance)
+                if (Math.Abs(existing.X - candidate.X) <= epsilon &&
+                    Math.Abs(existing.Y - candidate.Y) <= epsilon)
                 {
-                    bestDistance = d;
-                    best = p;
+                    return;
                 }
             }
 
-            return new Point2d(best.X, best.Y);
+            points.Add(candidate);
         }
 
         private static List<string> SplitMTextLines(string contents)

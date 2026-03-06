@@ -2929,6 +2929,7 @@ namespace AtsBackgroundBuilder.Dispositions
                         continue;
                     }
 
+                    using (table)
                     using (OdRecords records = table.GetObjectTableRecords(0, sourceId, MapOpenMode.OpenForRead, true))
                     {
                         if (records == null || records.Count == 0)

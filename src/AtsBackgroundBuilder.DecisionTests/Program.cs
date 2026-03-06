@@ -66,6 +66,18 @@ internal static class Program
         TestPlsrMissingLabelCandidateSelectorPrefersIssueCandidateAndDedupes();
         TestPlsrMissingLabelCandidateSelectorPreservesIndexedOrderWithoutPreferred();
         TestPlsrMissingLabelCandidateSelectorSkipsBlankCandidates();
+        TestPlsrMissingLabelSuppressionPolicyMatchesNonStandardLayerCandidate();
+        TestPlsrMissingLabelSuppressionPolicyRejectsDifferentQuarter();
+        TestPlsrQuarterPointMatcherMatchesLeaderPointInsideWhenTextOutside();
+        TestPlsrQuarterPointMatcherRejectsWhenAllPointsAreOutside();
+        TestPlsrQuarterPointMatcherRejectsWhenPointIsInsideBoundsButOutsideQuarter();
+        TestPlsrQuarterPointBuilderBuildsDimensionMidpointCandidate();
+        TestPlsrQuarterPointBuilderDedupesRepeatedDimensionPoints();
+        TestPlsrQuarterPointBuilderBuildsExtentCenterCandidate();
+        TestPlsrQuarterTouchResolverReturnsAllTouchedQuarterKeys();
+        TestPlsrQuarterTouchResolverPrefersHigherScoreForPrimaryQuarter();
+        TestDispositionLabelColorPolicyForcesGreenForVariableWidthLabels();
+        TestDispositionLabelColorPolicyPreservesRequestedColorForNonVariableLabels();
 
         TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes();
         TestPlsrSummaryComposerBuildsWarningWithSortedExamples();
@@ -811,6 +823,156 @@ internal static class Program
 
         AssertEqual(false, result.HasCandidates, nameof(TestPlsrMissingLabelCandidateSelectorSkipsBlankCandidates));
         AssertEqual(0, result.OrderedCandidateIds.Count, nameof(TestPlsrMissingLabelCandidateSelectorSkipsBlankCandidates));
+    }
+
+    private static void TestPlsrMissingLabelSuppressionPolicyMatchesNonStandardLayerCandidate()
+    {
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            PlsrMissingLabelSuppressionPolicy.BuildNonStandardLayerCandidateKey("5|18|57|7|NW", "DRS220054")
+        };
+        var result = PlsrMissingLabelSuppressionPolicy.ShouldSuppressMissingLabel(
+            candidates,
+            "5|18|57|7|NW",
+            "DRS220054");
+        AssertEqual(true, result, nameof(TestPlsrMissingLabelSuppressionPolicyMatchesNonStandardLayerCandidate));
+    }
+    private static void TestPlsrMissingLabelSuppressionPolicyRejectsDifferentQuarter()
+    {
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            PlsrMissingLabelSuppressionPolicy.BuildNonStandardLayerCandidateKey("5|18|57|7|NW", "DRS220054")
+        };
+        var result = PlsrMissingLabelSuppressionPolicy.ShouldSuppressMissingLabel(
+            candidates,
+            "5|18|57|7|SW",
+            "DRS220054");
+        AssertEqual(false, result, nameof(TestPlsrMissingLabelSuppressionPolicyRejectsDifferentQuarter));
+    }
+    private static void TestPlsrQuarterPointMatcherMatchesLeaderPointInsideWhenTextOutside()
+    {
+        var result = PlsrQuarterPointMatcher.MatchesAnyPoint(
+            new PlsrQuarterMatchBounds(0.0, 0.0, 100.0, 100.0),
+            new[]
+            {
+                new PlsrQuarterMatchPoint(130.0, 130.0),
+                new PlsrQuarterMatchPoint(25.0, 25.0)
+            },
+            point => point.X == 25.0 && point.Y == 25.0);
+
+        AssertEqual(true, result, nameof(TestPlsrQuarterPointMatcherMatchesLeaderPointInsideWhenTextOutside));
+    }
+
+    private static void TestPlsrQuarterPointMatcherRejectsWhenAllPointsAreOutside()
+    {
+        var result = PlsrQuarterPointMatcher.MatchesAnyPoint(
+            new PlsrQuarterMatchBounds(0.0, 0.0, 100.0, 100.0),
+            new[]
+            {
+                new PlsrQuarterMatchPoint(130.0, 130.0),
+                new PlsrQuarterMatchPoint(-10.0, 25.0)
+            },
+            _ => true);
+
+        AssertEqual(false, result, nameof(TestPlsrQuarterPointMatcherRejectsWhenAllPointsAreOutside));
+    }
+
+    private static void TestPlsrQuarterPointMatcherRejectsWhenPointIsInsideBoundsButOutsideQuarter()
+    {
+        var result = PlsrQuarterPointMatcher.MatchesAnyPoint(
+            new PlsrQuarterMatchBounds(0.0, 0.0, 100.0, 100.0),
+            new[]
+            {
+                new PlsrQuarterMatchPoint(50.0, 50.0)
+            },
+            _ => false);
+
+        AssertEqual(false, result, nameof(TestPlsrQuarterPointMatcherRejectsWhenPointIsInsideBoundsButOutsideQuarter));
+    }
+
+    private static void TestPlsrQuarterPointBuilderBuildsDimensionMidpointCandidate()
+    {
+        var points = PlsrQuarterPointBuilder.BuildDimensionPoints(
+            new PlsrQuarterMatchPoint(130.0, 130.0),
+            new PlsrQuarterMatchPoint(130.0, 130.0),
+            new PlsrQuarterMatchPoint(20.0, 40.0),
+            new PlsrQuarterMatchPoint(30.0, 40.0));
+
+        var result = PlsrQuarterPointMatcher.MatchesAnyPoint(
+            new PlsrQuarterMatchBounds(0.0, 0.0, 100.0, 100.0),
+            points,
+            point => Math.Abs(point.X - 25.0) < 0.001 && Math.Abs(point.Y - 40.0) < 0.001);
+
+        AssertEqual(true, result, nameof(TestPlsrQuarterPointBuilderBuildsDimensionMidpointCandidate));
+    }
+
+    private static void TestPlsrQuarterPointBuilderDedupesRepeatedDimensionPoints()
+    {
+        var points = PlsrQuarterPointBuilder.BuildDimensionPoints(
+            new PlsrQuarterMatchPoint(25.0, 40.0),
+            new PlsrQuarterMatchPoint(25.0, 40.0),
+            new PlsrQuarterMatchPoint(20.0, 40.0),
+            new PlsrQuarterMatchPoint(30.0, 40.0));
+
+        AssertEqual(3, points.Count, nameof(TestPlsrQuarterPointBuilderDedupesRepeatedDimensionPoints));
+    }
+
+    private static void TestPlsrQuarterPointBuilderBuildsExtentCenterCandidate()
+    {
+        var points = PlsrQuarterPointBuilder.BuildExtentPoints(
+            new PlsrQuarterMatchPoint(120.0, 50.0),
+            new PlsrQuarterMatchPoint(-10.0, 40.0),
+            new PlsrQuarterMatchPoint(110.0, 60.0));
+
+        var result = PlsrQuarterPointMatcher.MatchesAnyPoint(
+            new PlsrQuarterMatchBounds(0.0, 0.0, 100.0, 100.0),
+            points,
+            point => Math.Abs(point.X - 50.0) < 0.001 && Math.Abs(point.Y - 50.0) < 0.001);
+
+        AssertEqual(true, result, nameof(TestPlsrQuarterPointBuilderBuildsExtentCenterCandidate));
+    }
+    private static void TestPlsrQuarterTouchResolverReturnsAllTouchedQuarterKeys()
+    {
+        var resolution = PlsrQuarterTouchResolver.Resolve(
+            new[]
+            {
+                new PlsrQuarterTouchCandidate("5|19|57|12|NW", 1200, 10.0),
+                new PlsrQuarterTouchCandidate("5|19|57|12|NE", 1100, 30.0),
+                new PlsrQuarterTouchCandidate("5|19|57|12|NW", 1200, 12.0)
+            });
+
+        AssertEqual(2, resolution.TouchedQuarterKeys.Count, nameof(TestPlsrQuarterTouchResolverReturnsAllTouchedQuarterKeys));
+        AssertEqual("5|19|57|12|NW", resolution.TouchedQuarterKeys[0], nameof(TestPlsrQuarterTouchResolverReturnsAllTouchedQuarterKeys));
+        AssertEqual("5|19|57|12|NE", resolution.TouchedQuarterKeys[1], nameof(TestPlsrQuarterTouchResolverReturnsAllTouchedQuarterKeys));
+        AssertEqual("5|19|57|12|NW", resolution.PrimaryQuarterKey, nameof(TestPlsrQuarterTouchResolverReturnsAllTouchedQuarterKeys));
+    }
+
+    private static void TestPlsrQuarterTouchResolverPrefersHigherScoreForPrimaryQuarter()
+    {
+        var resolution = PlsrQuarterTouchResolver.Resolve(
+            new[]
+            {
+                new PlsrQuarterTouchCandidate("5|19|57|12|NW", 1001, 40.0),
+                new PlsrQuarterTouchCandidate("5|19|57|12|NE", 1200, 5.0),
+                new PlsrQuarterTouchCandidate("5|19|57|12|SW", 1200, 15.0)
+            });
+
+        AssertEqual(3, resolution.TouchedQuarterKeys.Count, nameof(TestPlsrQuarterTouchResolverPrefersHigherScoreForPrimaryQuarter));
+        AssertEqual("5|19|57|12|SW", resolution.PrimaryQuarterKey, nameof(TestPlsrQuarterTouchResolverPrefersHigherScoreForPrimaryQuarter));
+    }
+
+    private static void TestDispositionLabelColorPolicyForcesGreenForVariableWidthLabels()
+    {
+        var result = DispositionLabelColorPolicy.ResolveTextColorIndex("Owner\\PVariable Width\\PRoad\\P123", 256);
+
+        AssertEqual(DispositionLabelColorPolicy.ReviewGreenColorIndex, result, nameof(TestDispositionLabelColorPolicyForcesGreenForVariableWidthLabels));
+    }
+
+    private static void TestDispositionLabelColorPolicyPreservesRequestedColorForNonVariableLabels()
+    {
+        var result = DispositionLabelColorPolicy.ResolveTextColorIndex("Owner\\P20.00 A/R\\P123", 256);
+
+        AssertEqual(256, result, nameof(TestDispositionLabelColorPolicyPreservesRequestedColorForNonVariableLabels));
     }
 
     private static void TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes()

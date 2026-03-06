@@ -1239,7 +1239,8 @@ namespace AtsBackgroundBuilder
             var existingDispNumsByQuarter = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
             if (shouldGenerateDispositionLabels && quarters.Count > 0)
             {
-                var existingLabelsByQuarter = CollectPlsrLabels(database, quarters, logger);
+                var ignoredPrimaryLabelsByQuarter = new Dictionary<string, List<PlsrLabelEntry>>(StringComparer.OrdinalIgnoreCase);
+                var existingLabelsByQuarter = CollectPlsrLabels(database, quarters, logger, out ignoredPrimaryLabelsByQuarter);
                 var existingLabelCount = 0;
                 foreach (var pair in existingLabelsByQuarter)
                 {

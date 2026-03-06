@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using AtsBackgroundBuilder.Core;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
@@ -127,7 +128,8 @@ namespace AtsBackgroundBuilder.Dispositions
                                 double measuredWidth = 0.0;
 
                                 // Default: per-quarter anchor/placement target.
-                                // (Using disposition.SafePoint will bias multi-quarter dispositions to a single quarter.)                                Point2d searchTarget = intersectionTarget;
+                                // (Using disposition.SafePoint will bias multi-quarter dispositions to a single quarter.)
+                                Point2d searchTarget = intersectionTarget;
                                 Point2d leaderTarget = intersectionTarget;
 
                                 // Mixed wellsite+access dispositions are a single boundary: bias the wellsite
@@ -279,9 +281,9 @@ namespace AtsBackgroundBuilder.Dispositions
                                 // Candidate label points around the target
                                 int maxPoints = _config.MaxOverlapAttempts;
                                 if (disposition.AddLeader)
-                                    maxPoints = Math.Max(maxPoints, 80);
+                                    maxPoints = Math.Max(maxPoints, 160);
 
-                                double maxLeaderLength = disposition.AddLeader ? 200.0 : double.PositiveInfinity;
+                                double maxLeaderLength = disposition.AddLeader ? 300.0 : double.PositiveInfinity;
                                 if (_useAlignedDimensions && disposition.RequiresWidth)
                                 {
                                     // Keep A-DIM local, but allow enough room to avoid forcing every label.
@@ -323,6 +325,14 @@ namespace AtsBackgroundBuilder.Dispositions
                                 Point2d bestFallback = lastCandidate;
                                 double bestFallbackScore = double.MaxValue;
                                 var labelGap = _config.TextHeight * 1.6;
+                                if (disposition.AddLeader)
+                                {
+                                    labelGap = Math.Max(labelGap, _config.TextHeight * 2.1);
+                                }
+                                else if (_useAlignedDimensions && disposition.RequiresWidth)
+                                {
+                                    labelGap = Math.Max(labelGap, _config.TextHeight * 1.9);
+                                }
 
                                 foreach (var pt in candidates)
                                 {
@@ -445,17 +455,19 @@ namespace AtsBackgroundBuilder.Dispositions
             string labelText,
             int textColorIndex)
         {
+            var resolvedTextColorIndex = DispositionLabelColorPolicy.ResolveTextColorIndex(labelText, textColorIndex);
+
             if (_useAlignedDimensions && disposition.RequiresWidth)
             {
-                return CreateAlignedDimensionLabel(tr, modelSpace, target, labelPoint, polyForWidth, disposition, labelText, disposition.TextLayerName, textColorIndex);
+                return CreateAlignedDimensionLabel(tr, modelSpace, target, labelPoint, polyForWidth, disposition, labelText, disposition.TextLayerName, resolvedTextColorIndex);
             }
 
             if (_config.EnableLeaders && disposition.AddLeader)
             {
-                return CreateLeader(tr, modelSpace, target, labelPoint, labelText, disposition.TextLayerName, textColorIndex);
+                return CreateLeader(tr, modelSpace, target, labelPoint, labelText, disposition.TextLayerName, resolvedTextColorIndex);
             }
 
-            var mtext = CreateLabel(tr, labelPoint, labelText, disposition.TextLayerName, textColorIndex);
+            var mtext = CreateLabel(tr, labelPoint, labelText, disposition.TextLayerName, resolvedTextColorIndex);
             modelSpace.AppendEntity(mtext);
             tr.AddNewlyCreatedDBObject(mtext, true);
             return mtext;
