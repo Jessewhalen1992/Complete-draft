@@ -135,29 +135,71 @@ namespace AtsBackgroundBuilder.Dispositions
                         if (!IsSingleSubsetImportEnabled())
                         {
                             logger.WriteLine(
-                                $"Large-file import safety mode is ON for '{Path.GetFileName(shapefilePath)}': using chunked source import (single subset import disabled; set {EnableSingleSubsetImportEnvVar}=1 to re-enable subset-file imports).");
+                                $"Large-file import safety mode is ON for '{Path.GetFileName(shapefilePath)}': using scoped subset import paths; chunking only when the filtered subset exceeds one safe import file (set {EnableSingleSubsetImportEnvVar}=1 to always import the filtered subset directly).");
 
-                            if (!TryCreateChunkedSubsetShapefiles(
-                                    shapefilePath,
-                                    logger,
-                                    out var chunkPaths,
-                                    out var chunkRootFolder,
-                                    out var chunkFailureReason))
+                            if (!TryCreateSpatiallyFilteredImportPaths(
+                                     shapefilePath,
+                                     sectionExtents,
+                                     utmZoneHint,
+                                     logger,
+                                     out var filteredImportPaths,
+                                     out var chunkTempFolders,
+                                     out var subsetKeptCount,
+                                     out var subsetTotalCount,
+                                     out var noSubsetRecordsInScope,
+                                     out var usedDirectScopedSubsetImport,
+                                     out var chunkFailureReason))
                             {
+                                if (noSubsetRecordsInScope)
+                                {
+                                    logger.WriteLine(
+                                        $"Spatially filtered chunk prep found no raw-coordinate intersections for '{Path.GetFileName(shapefilePath)}'; falling back to full-source chunked import.");
+                                }
+                                else
+                                {
+                                    logger.WriteLine(
+                                        $"Spatially filtered chunk prep failed for '{Path.GetFileName(shapefilePath)}': {chunkFailureReason}");
+                                }
+
+                                if (!TryCreateChunkedSubsetShapefiles(
+                                        shapefilePath,
+                                        logger,
+                                        out var chunkPaths,
+                                        out var chunkRootFolder,
+                                        out chunkFailureReason))
+                                {
+                                    logger.WriteLine(
+                                        $"Chunked safe import preparation failed for '{Path.GetFileName(shapefilePath)}': {chunkFailureReason}");
+                                    summary.ImportFailures++;
+                                    continue;
+                                }
+
+                                importPaths.AddRange(chunkPaths);
+                                if (!string.IsNullOrWhiteSpace(chunkRootFolder))
+                                {
+                                    temporaryImportFolders.Add(chunkRootFolder);
+                                }
+
                                 logger.WriteLine(
-                                    $"Chunked safe import preparation failed for '{Path.GetFileName(shapefilePath)}': {chunkFailureReason}");
-                                summary.ImportFailures++;
-                                continue;
+                                    $"Chunked safe import enabled for '{Path.GetFileName(shapefilePath)}': {chunkPaths.Count} chunk(s).");
                             }
-
-                            importPaths.AddRange(chunkPaths);
-                            if (!string.IsNullOrWhiteSpace(chunkRootFolder))
+                            else
                             {
-                                temporaryImportFolders.Add(chunkRootFolder);
+                                importPaths.AddRange(filteredImportPaths);
+                                temporaryImportFolders.AddRange(chunkTempFolders);
+                                if (usedDirectScopedSubsetImport)
+                                {
+                                    logger.WriteLine(
+                                        $"Scoped direct subset import selected for '{Path.GetFileName(shapefilePath)}': kept {subsetKeptCount}/{subsetTotalCount} record(s), within single-file safe threshold {GetLargeImportChunkRecordCount()}.");
+                                }
+                                else
+                                {
+                                    logger.WriteLine(
+                                        $"Chunked safe import scope filter for '{Path.GetFileName(shapefilePath)}': kept {subsetKeptCount}/{subsetTotalCount} record(s) before chunking.");
+                                    logger.WriteLine(
+                                        $"Chunked safe import enabled for '{Path.GetFileName(shapefilePath)}': {filteredImportPaths.Count} chunk(s).");
+                                }
                             }
-
-                            logger.WriteLine(
-                                $"Chunked safe import enabled for '{Path.GetFileName(shapefilePath)}': {chunkPaths.Count} chunk(s).");
                         }
                         else if (TryCreateSpatialSubsetShapefile(
                                      shapefilePath,
@@ -219,9 +261,9 @@ namespace AtsBackgroundBuilder.Dispositions
                         for (var importIndex = 0; importIndex < importPaths.Count; importIndex++)
                         {
                             var importPath = importPaths[importIndex];
-                            var useLocationWindowForImport =
-                                importPaths.Count > 1 ||
-                                PathsEqual(importPath, shapefilePath);
+                            // Keep location-window clipping active for generated subset/chunk files too.
+                            // Prior runs have been less stable when subset imports bypass this guard.
+                            var useLocationWindowForImport = true;
 
                             if (importPaths.Count > 1)
                             {
@@ -905,6 +947,97 @@ namespace AtsBackgroundBuilder.Dispositions
             }
 
             return true;
+        }
+
+        private static bool TryCreateSpatiallyFilteredImportPaths(
+            string sourceShapefilePath,
+            List<Extents2d> sectionExtents,
+            int? utmZoneHint,
+            Logger logger,
+            out List<string> importPaths,
+            out List<string> temporaryFolders,
+            out int keptRecordCount,
+            out int totalRecordCount,
+            out bool noSubsetRecordsInScope,
+            out bool usedDirectSubsetImport,
+            out string failureReason)
+        {
+            importPaths = new List<string>();
+            temporaryFolders = new List<string>();
+            keptRecordCount = 0;
+            totalRecordCount = 0;
+            noSubsetRecordsInScope = false;
+            usedDirectSubsetImport = false;
+            failureReason = string.Empty;
+
+            if (!TryCreateSpatialSubsetShapefile(
+                    sourceShapefilePath,
+                    sectionExtents,
+                    utmZoneHint,
+                    logger,
+                    out var subsetPath,
+                    out keptRecordCount,
+                    out totalRecordCount,
+                    out noSubsetRecordsInScope))
+            {
+                failureReason = noSubsetRecordsInScope
+                    ? "No records intersect requested section extents."
+                    : "Spatial subset preparation failed.";
+                return false;
+            }
+
+            var subsetFolder = Path.GetDirectoryName(subsetPath);
+            if (!string.IsNullOrWhiteSpace(subsetFolder))
+            {
+                temporaryFolders.Add(subsetFolder);
+            }
+
+            if (ShouldPreferDirectScopedSubsetImport(keptRecordCount))
+            {
+                importPaths.Add(subsetPath);
+                usedDirectSubsetImport = true;
+                return true;
+            }
+
+            if (!TryCreateChunkedSubsetShapefiles(
+                    subsetPath,
+                    logger,
+                    out var chunkShapefilePaths,
+                    out var chunkRootFolder,
+                    out failureReason))
+            {
+                if (!string.IsNullOrWhiteSpace(subsetFolder))
+                {
+                    TryDeleteSpatialSubsetFolder(subsetFolder, logger);
+                }
+
+                temporaryFolders.Clear();
+                importPaths.Clear();
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(chunkRootFolder))
+            {
+                temporaryFolders.Add(chunkRootFolder);
+            }
+
+            importPaths.AddRange(chunkShapefilePaths);
+            return true;
+        }
+
+        private static bool ShouldPreferDirectScopedSubsetImport(int keptRecordCount)
+        {
+            if (keptRecordCount <= 0)
+            {
+                return false;
+            }
+
+            if (IsSingleSubsetImportEnabled())
+            {
+                return true;
+            }
+
+            return keptRecordCount <= GetLargeImportChunkRecordCount();
         }
 
         private static List<Extents2d> ResolveSectionExtentsForShapefileCoordinates(

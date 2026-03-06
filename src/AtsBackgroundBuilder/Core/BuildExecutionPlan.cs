@@ -56,7 +56,9 @@ namespace AtsBackgroundBuilder.Core
 
         public bool ShouldBuildDispositionImportScope => IncludeDispositionLinework || ShouldGenerateDispositionLabels;
         public bool ShouldLoadQuartersForLabeling => IncludeDispositionLabels || ShouldRunPlsrCheck;
-        public bool ShouldPlaceLabelsBeforePlsr => IncludeDispositionLabels && !ShouldRunPlsrCheck;
+        // When shape-based disposition labels are enabled, place them before PLSR so
+        // the check audits the current drawing state instead of an empty label set.
+        public bool ShouldPlaceLabelsBeforePlsr => IncludeDispositionLabels;
 
         public static BuildExecutionPlan Create(AtsBuildInput input, bool enableQuarterViewByEnvironment)
         {

@@ -598,7 +598,7 @@ internal static class Program
             CheckPlsr = true,
         };
         var labelsAndPlsrPlan = BuildExecutionPlan.Create(labelsAndPlsrInput, enableQuarterViewByEnvironment: false);
-        AssertEqual(false, labelsAndPlsrPlan.ShouldPlaceLabelsBeforePlsr, nameof(TestBuildExecutionPlanLabelPlacementOrdering));
+        AssertEqual(true, labelsAndPlsrPlan.ShouldPlaceLabelsBeforePlsr, nameof(TestBuildExecutionPlanLabelPlacementOrdering));
     }
 
     private static void TestBuildExecutionPlanPlsrMissingLabelPrecheckGate()

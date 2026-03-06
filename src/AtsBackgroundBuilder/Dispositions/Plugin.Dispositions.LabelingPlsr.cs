@@ -592,6 +592,12 @@ namespace AtsBackgroundBuilder
             public Point2d Location { get; set; }
         }
 
+        private sealed class PlsrDispositionLabelOverride
+        {
+            public string Owner { get; set; } = string.Empty;
+            public bool ShouldAddExpiredMarker { get; set; }
+        }
+
         private enum PlsrIssueChangeType
         {
             None,
@@ -618,6 +624,7 @@ namespace AtsBackgroundBuilder
             public QuarterInfo? Quarter { get; set; }
             public string ProposedOwner { get; set; } = string.Empty;
             public string VersionDateStatus { get; set; } = "N/A";
+            public bool ShouldAddExpiredMarker { get; set; }
 
             public bool IsActionable => ChangeType switch
             {
@@ -873,6 +880,7 @@ namespace AtsBackgroundBuilder
                     var odVersionDateDisplay = FormatDispositionDateFieldsForDisplay(versionDateSourceDisposition);
                     var xmlVersionDateDisplay = FormatPlsrExpectedVersionDateForDisplay(act);
                     var versionDateMismatchDetail = ResolvePlsrVersionDateMismatchDetail(act);
+                    var shouldAddExpiredMarker = ShouldPlsrActivityRequireExpiredMarker(expected?.ReportDate, act);
 
                     if (!labelByDisp.TryGetValue(dispNum, out var label))
                     {
@@ -968,6 +976,22 @@ namespace AtsBackgroundBuilder
                         var missingLabelVersionDateStatus = hasDispositionSource
                             ? ResolvePlsrVersionDateStatus(sourceDisposition, act)
                             : versionDateStatus;
+                        var missingLabelDetail = hasDispositionSource
+                            ? (usedFallbackDispositionCandidate
+                                ? "No label found in this quarter. Create missing label if accepted (using fallback source candidate)."
+                                : "No label found in this quarter. Create missing label if accepted.")
+                            : (hasTemplateSource
+                                ? "No matching source disposition geometry in this quarter. Create missing label from an existing disposition label template."
+                                : (hasXmlFallbackSource
+                                    ? "No source disposition geometry was found. Create missing XML-based label in this quarter."
+                                    : (!result.AllowTextOnlyFallbackLabels && hasTextOnlyFallbackCandidate
+                                        ? "No source disposition geometry was found. Text-only fallback label creation is disabled to prevent floating MText labels."
+                                        : "No label found in this quarter and no source disposition geometry was found.")));
+                        if (shouldAddExpiredMarker && changeType != PlsrIssueChangeType.None)
+                        {
+                            missingLabelDetail += " Created label will include '(Expired)'.";
+                        }
+
                         result.Issues.Add(new PlsrCheckIssue
                         {
                             Type = "Missing label",
@@ -975,23 +999,14 @@ namespace AtsBackgroundBuilder
                             DispNum = displayDispNum,
                             CurrentValue = "(none)",
                             ExpectedValue = mappedOwnerForMissing ?? string.Empty,
-                            Detail = hasDispositionSource
-                                ? (usedFallbackDispositionCandidate
-                                    ? "No label found in this quarter. Create missing label if accepted (using fallback source candidate)."
-                                    : "No label found in this quarter. Create missing label if accepted.")
-                                : (hasTemplateSource
-                                    ? "No matching source disposition geometry in this quarter. Create missing label from an existing disposition label template."
-                                    : (hasXmlFallbackSource
-                                        ? "No source disposition geometry was found. Create missing XML-based label in this quarter."
-                                        : (!result.AllowTextOnlyFallbackLabels && hasTextOnlyFallbackCandidate
-                                            ? "No source disposition geometry was found. Text-only fallback label creation is disabled to prevent floating MText labels."
-                                            : "No label found in this quarter and no source disposition geometry was found."))),
+                            Detail = missingLabelDetail,
                             SummaryLine = $"Missing label: {displayDispNum} in {quarterKey}",
                             ChangeType = changeType,
                             Label = hasTemplateSource ? templateLabel : (hasXmlFallbackSource ? xmlFallbackTemplateLabel : null),
                             Disposition = hasDispositionSource ? sourceDisposition : null,
                             Quarter = (hasDispositionSource || hasTemplateSource || hasXmlFallbackSource) ? sourceQuarter : null,
-                            VersionDateStatus = missingLabelVersionDateStatus
+                            VersionDateStatus = missingLabelVersionDateStatus,
+                            ShouldAddExpiredMarker = shouldAddExpiredMarker
                         });
                         continue;
                     }
@@ -1020,19 +1035,22 @@ namespace AtsBackgroundBuilder
                         });
                     }
 
-                    if (expected != null && act.ExpiryDate.HasValue && act.ExpiryDate.Value < expected.ReportDate)
+                    if (shouldAddExpiredMarker)
                     {
                         if (!HasExpiredMarker(label.RawContents))
                         {
                             hasBehaviorTriggerIssue = true;
                             result.ExpiredCandidates++;
+                            var expiredExpectedValue = act.ExpiryDate.HasValue && expected != null
+                                ? $"Expiry {act.ExpiryDate.Value:yyyy-MM-dd} < report {expected.ReportDate:yyyy-MM-dd}"
+                                : "Expired in current PLSR report.";
                             result.Issues.Add(new PlsrCheckIssue
                             {
                                 Type = "Expired in PLSR",
                                 QuarterKey = quarterKey,
                                 DispNum = displayDispNum,
                                 CurrentValue = FlattenMTextForDisplay(label.RawContents ?? string.Empty),
-                                ExpectedValue = $"Expiry {act.ExpiryDate.Value:yyyy-MM-dd} < report {expected.ReportDate:yyyy-MM-dd}",
+                                ExpectedValue = expiredExpectedValue,
                                 Detail = "Append '(Expired)' to this label.",
                                 SummaryLine = $"Expired in PLSR: {displayDispNum} in {quarterKey}",
                                 ChangeType = PlsrIssueChangeType.TagExpired,
@@ -1105,6 +1123,7 @@ namespace AtsBackgroundBuilder
                 });
             }
 
+            ConsolidateRepeatedVersionDateMismatchIssues(result.Issues);
             return result;
         }
 
@@ -1529,6 +1548,116 @@ namespace AtsBackgroundBuilder
                 SummaryText = composeResult.SummaryText,
                 WarningText = composeResult.WarningText
             };
+        }
+
+        private static bool ShouldPlsrActivityRequireExpiredMarker(DateTime? reportDate, PlsrActivity? activity)
+        {
+            if (!reportDate.HasValue || reportDate.Value == DateTime.MinValue || activity == null || !activity.ExpiryDate.HasValue)
+            {
+                return false;
+            }
+
+            return activity.ExpiryDate.Value.Date < reportDate.Value.Date;
+        }
+
+        private static void ConsolidateRepeatedVersionDateMismatchIssues(List<PlsrCheckIssue> issues)
+        {
+            if (issues == null || issues.Count == 0)
+            {
+                return;
+            }
+
+            var groupedMismatches = issues
+                .Where(issue => issue != null && string.Equals(issue.Type, "Version date mismatch", StringComparison.OrdinalIgnoreCase))
+                .GroupBy(issue => NormalizeDispNum(issue.DispNum), StringComparer.OrdinalIgnoreCase)
+                .Where(group => !string.IsNullOrWhiteSpace(group.Key) && group.Count() > 1)
+                .ToList();
+            if (groupedMismatches.Count == 0)
+            {
+                return;
+            }
+
+            var replacementByOriginalId = new Dictionary<Guid, PlsrCheckIssue>();
+            var skippedIds = new HashSet<Guid>();
+            foreach (var mismatchGroup in groupedMismatches)
+            {
+                var mismatches = mismatchGroup.ToList();
+                var representative = mismatches[0];
+                var quarterKeys = mismatches
+                    .Select(issue => issue.QuarterKey ?? string.Empty)
+                    .Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var currentValues = mismatches
+                    .Select(issue => issue.CurrentValue ?? string.Empty)
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var expectedValues = mismatches
+                    .Select(issue => issue.ExpectedValue ?? string.Empty)
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var mergedCurrentValue = currentValues.Count switch
+                {
+                    0 => representative.CurrentValue ?? string.Empty,
+                    1 => currentValues[0],
+                    _ => string.Join("; ", currentValues)
+                };
+                var mergedExpectedValue = expectedValues.Count switch
+                {
+                    0 => representative.ExpectedValue ?? string.Empty,
+                    1 => expectedValues[0],
+                    _ => string.Join("; ", expectedValues)
+                };
+                var mergedDetail = string.IsNullOrWhiteSpace(representative.Detail)
+                    ? "Disposition OD VER_DATE differs from PLSR XML VersionDate."
+                    : representative.Detail.Trim();
+                if (quarterKeys.Count > 0)
+                {
+                    mergedDetail += " Quarters: " + string.Join(", ", quarterKeys) + ".";
+                }
+
+                replacementByOriginalId[representative.Id] = new PlsrCheckIssue
+                {
+                    Type = representative.Type,
+                    QuarterKey = "MULTIPLE",
+                    DispNum = representative.DispNum,
+                    CurrentValue = mergedCurrentValue,
+                    ExpectedValue = mergedExpectedValue,
+                    Detail = mergedDetail,
+                    SummaryLine = $"Version date mismatch: {representative.DispNum} in MULTIPLE (od='{mergedCurrentValue}' vs xml='{mergedExpectedValue}')",
+                    ChangeType = PlsrIssueChangeType.None,
+                    Label = null,
+                    VersionDateStatus = representative.VersionDateStatus
+                };
+
+                foreach (var duplicate in mismatches.Skip(1))
+                {
+                    skippedIds.Add(duplicate.Id);
+                }
+            }
+
+            var consolidated = new List<PlsrCheckIssue>(issues.Count);
+            foreach (var issue in issues)
+            {
+                if (skippedIds.Contains(issue.Id))
+                {
+                    continue;
+                }
+
+                if (replacementByOriginalId.TryGetValue(issue.Id, out var replacement))
+                {
+                    consolidated.Add(replacement);
+                    continue;
+                }
+
+                consolidated.Add(issue);
+            }
+
+            issues.Clear();
+            issues.AddRange(consolidated);
         }
 
         private static Dictionary<string, QuarterInfo> BuildQuarterInfoByKey(List<QuarterInfo> quarters)
@@ -1982,6 +2111,10 @@ namespace AtsBackgroundBuilder
 
             var contents = ReplaceLabelOwnerInContents(baseContents, issue.ExpectedValue);
             contents = ReplaceLabelDispNumInContents(contents, ResolveIssueDisplayDispNum(issue.DispNum, normalizedDispNum));
+            if (issue.ShouldAddExpiredMarker)
+            {
+                contents = LabelPlacer.AppendExpiredMarkerIfMissing(contents);
+            }
             if (string.IsNullOrWhiteSpace(contents))
             {
                 reason = "template label contents invalid";
@@ -2102,6 +2235,10 @@ namespace AtsBackgroundBuilder
             }
 
             var contents = owner + "\\P" + dispLine;
+            if (issue.ShouldAddExpiredMarker)
+            {
+                contents = LabelPlacer.AppendExpiredMarkerIfMissing(contents);
+            }
             Point2d anchor;
             try
             {
@@ -2432,13 +2569,13 @@ namespace AtsBackgroundBuilder
         }
 
         private static Dictionary<string, PlsrQuarterData> LoadPlsrQuarterData(
-            IEnumerable<string> xmlPaths,
+            IEnumerable<string>? xmlPaths,
             Logger logger,
             HashSet<string> notIncludedPrefixes)
         {
             var result = new Dictionary<string, PlsrQuarterData>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var path in xmlPaths)
+            foreach (var path in xmlPaths ?? Array.Empty<string>())
             {
                 if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
                 {
@@ -2493,6 +2630,105 @@ namespace AtsBackgroundBuilder
             }
 
             return result;
+        }
+
+        private static Dictionary<string, PlsrDispositionLabelOverride> BuildPlsrLabelOverridesByDispNum(
+            IEnumerable<string>? xmlPaths,
+            ExcelLookup companyLookup,
+            Logger logger)
+        {
+            var overrideByDispNum = new Dictionary<string, PlsrDispositionLabelOverride>(StringComparer.OrdinalIgnoreCase);
+            var reportDateByDispNum = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            var ownerConflictCount = 0;
+
+            foreach (var path in xmlPaths ?? Array.Empty<string>())
+            {
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                {
+                    continue;
+                }
+
+                if (!TryParsePlsrXml(path, logger, out var reportDate, out var activities))
+                {
+                    continue;
+                }
+
+                var effectiveReportDate = reportDate.Date;
+                foreach (var activity in activities)
+                {
+                    var dispNum = NormalizeDispNum(activity.Item1.DispNum);
+                    if (string.IsNullOrWhiteSpace(dispNum))
+                    {
+                        continue;
+                    }
+
+                    var prefix = GetDispositionPrefix(dispNum);
+                    if (string.IsNullOrWhiteSpace(prefix) || !PlsrDispositionPrefixes.Contains(prefix))
+                    {
+                        continue;
+                    }
+
+                    var mappedOwner = MapClientNameForCompare(companyLookup, activity.Item1.Owner);
+                    var shouldAddExpiredMarker = ShouldPlsrActivityRequireExpiredMarker(effectiveReportDate, activity.Item1);
+                    if (string.IsNullOrWhiteSpace(mappedOwner) && !shouldAddExpiredMarker)
+                    {
+                        continue;
+                    }
+
+                    if (!overrideByDispNum.TryGetValue(dispNum, out var existingOverride))
+                    {
+                        overrideByDispNum[dispNum] = new PlsrDispositionLabelOverride
+                        {
+                            Owner = mappedOwner ?? string.Empty,
+                            ShouldAddExpiredMarker = shouldAddExpiredMarker
+                        };
+                        reportDateByDispNum[dispNum] = effectiveReportDate;
+                        continue;
+                    }
+
+                    var existingReportDate = reportDateByDispNum[dispNum];
+                    if (effectiveReportDate > existingReportDate)
+                    {
+                        existingOverride.Owner = mappedOwner ?? string.Empty;
+                        existingOverride.ShouldAddExpiredMarker = shouldAddExpiredMarker;
+                        reportDateByDispNum[dispNum] = effectiveReportDate;
+                        continue;
+                    }
+
+                    if (effectiveReportDate == existingReportDate)
+                    {
+                        if (!string.IsNullOrWhiteSpace(mappedOwner) &&
+                            !string.IsNullOrWhiteSpace(existingOverride.Owner) &&
+                            !string.Equals(
+                                NormalizeOwner(existingOverride.Owner),
+                                NormalizeOwner(mappedOwner),
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            ownerConflictCount++;
+                            logger.WriteLine($"PLSR label override owner conflict for {dispNum}: keeping '{existingOverride.Owner}', ignoring '{mappedOwner}' from {Path.GetFileName(path)}.");
+                        }
+
+                        if (string.IsNullOrWhiteSpace(existingOverride.Owner) && !string.IsNullOrWhiteSpace(mappedOwner))
+                        {
+                            existingOverride.Owner = mappedOwner;
+                        }
+
+                        if (shouldAddExpiredMarker)
+                        {
+                            existingOverride.ShouldAddExpiredMarker = true;
+                        }
+                    }
+                }
+            }
+
+            logger.WriteLine($"PLSR label overrides loaded: {overrideByDispNum.Count} disposition(s).");
+            logger.WriteLine($"PLSR expired marker overrides loaded: {overrideByDispNum.Values.Count(v => v.ShouldAddExpiredMarker)} disposition(s).");
+            if (ownerConflictCount > 0)
+            {
+                logger.WriteLine($"PLSR label override owner conflicts ignored: {ownerConflictCount}.");
+            }
+
+            return overrideByDispNum;
         }
 
         private static bool TryParsePlsrXml(
@@ -3537,8 +3773,7 @@ namespace AtsBackgroundBuilder
                 return true;
             }
 
-            var delimiter = contents.IndexOf("\\X", StringComparison.OrdinalIgnoreCase) >= 0 ? "\\X" : "\\P";
-            var updated = contents + delimiter + "(Expired)";
+            var updated = LabelPlacer.AppendExpiredMarkerIfMissing(contents);
 
             if (label.IsDimension)
             {

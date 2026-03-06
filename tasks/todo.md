@@ -4550,3 +4550,136 @@
   - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -v minimal` succeeded.
   - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj --no-restore -v minimal` passed.
   - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj --no-restore -v minimal` succeeded.
+
+# Follow-up (Full Build Crash Investigation, 2026-03-05)
+
+- [x] Inspect the latest ATS runtime log and identify the last completed stage before termination.
+- [x] Correlate the failing stage with the current code path and recent crash-prone import/PLSR guards.
+- [x] Implement the smallest safe fix and rebuild.
+- [x] Verify the result with a compile/test path and document findings in this file.
+
+## Review (Full Build Crash Investigation, 2026-03-05)
+
+- Latest crash boundary from `build\net8.0-windows\AtsBackgroundBuilder.log`:
+  - run started `2026-03-05 6:46:14 PM`
+  - reached `ATSBUILD stage: disposition_import`
+  - entered large-file `DAB_APPL.shp` safe-import path
+  - completed chunks 1-18
+  - stopped at `Starting shapefile import chunk 19/42: DAB_APPL-chunk-0019.shp` -> `Importer.Import begin.` with no later `Importer.Import completed.` and no `ATSBUILD exit stage`
+  - this indicates another native Map importer host termination, not a managed exception path.
+- Confirmed source data pressure:
+  - `C:\AUTOCAD-SETUP CG\SHAPE FILES\DISPOS\DAB_APPL.dbf` ~= `743889870` bytes
+  - `C:\AUTOCAD-SETUP CG\SHAPE FILES\DISPOS\DAB_APPL.shp` ~= `237342868` bytes
+- Root cause in source:
+  - default large-file chunked mode was chunking the full source shapefile sequentially, not chunking a prefiltered in-scope subset.
+  - for this 25-quarter build that meant driving native `Importer.Import()` through 42 generated chunks even though only a tiny in-scope subset was relevant.
+- Updated `src/AtsBackgroundBuilder/Dispositions/ShapefileImporter.cs`:
+  - added `TryCreateSpatiallyFilteredChunkedSubsetShapefiles(...)`
+  - large-file default path now:
+    - builds a spatial subset first using section extents (+ CRS-aware zone hint when available)
+    - chunks that subset instead of chunking the full source file
+    - logs `Chunked safe import scope filter ... kept X/Y record(s) before chunking.`
+  - keeps location-window clipping active for generated subset/chunk imports instead of disabling it for prefiltered inputs.
+  - preserves prior full-source chunk fallback only if the spatially filtered chunk-prep path cannot produce records.
+- Verification:
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal` succeeded.
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal` passed (`Decision tests passed.`).
+# Follow-up (PLSR Should Audit After Shape-Based Label Placement, 2026-03-05)
+
+- [x] Inspect current disposition-label and PLSR execution order in source and runtime logs.
+- [x] Identify why Shapes+PLSR runs now flag every disposition as missing.
+- [x] Restore the intended order/behavior with the smallest safe fix.
+- [x] Rebuild, run decision tests, and document the result here.
+## Review (PLSR Should Audit After Shape-Based Label Placement, 2026-03-05)
+
+- Root cause from current source/runtime:
+  - `BuildExecutionPlan.ShouldPlaceLabelsBeforePlsr` required `IncludeDispositionLabels && !ShouldRunPlsrCheck`.
+  - when both `Disposition labels` and `Check PLSR` were ON, normal shape-based label placement was disabled entirely.
+  - runtime evidence in `build\net8.0-windows\AtsBackgroundBuilder.log` showed repeated runs with:
+    - `ATSBUILD stage: processing_dispositions`
+    - immediately followed by `ATSBUILD stage: plsr_check`
+    - summary `Labels placed: 0`
+    - latest successful full run also showed `Disposition label reuse: indexed 0 existing label(s) across 0 quarter(s)` before PLSR, which explains why all dispositions were reported missing.
+- Updated source:
+  - `src/AtsBackgroundBuilder/Core/BuildExecutionPlan.cs`
+    - `ShouldPlaceLabelsBeforePlsr` now follows `IncludeDispositionLabels` directly.
+    - effect: when labels are enabled, shape-based disposition labels are placed before PLSR audits drawing state.
+    - `PLSR only` behavior is unchanged because `IncludeDispositionLabels` remains OFF there.
+  - `src/AtsBackgroundBuilder.DecisionTests/Program.cs`
+    - updated `TestBuildExecutionPlanLabelPlacementOrdering()` to assert that `labels + PLSR` still places labels before PLSR.
+- Verification:
+  - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -verbosity=minimal` succeeded.
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal` passed (`Decision tests passed.`).
+  - full `dotnet build` hit a locked runtime copy target (`build\net8.0-windows\AtsBackgroundBuilder.dll` in use), so compile/test verification is the clean proof for this change.
+# Follow-up (PLSR Owner Must Win For First-Time Labels, 2026-03-05)
+
+- [x] Trace current owner sourcing for new-label creation and owner-mismatch issue generation.
+- [x] Make PLSR authoritative when creating a label for the first time.
+- [x] Suppress owner-mismatch reporting that is invalid under the new PLSR-first rule.
+- [x] Rebuild, run decision tests, and document the result here.
+
+## Review (PLSR Owner Must Win For First-Time Labels, 2026-03-05)
+
+- Root cause from current source/runtime behavior:
+  - ProcessDispositionPolylines(...) was always building new-label owner text from disposition OD/company mapping before PLSR review ran.
+  - when Disposition labels + Check PLSR created a label for the first time, that fresh label could immediately disagree with XML owner and show up as a false Owner mismatch on the same run.
+  - the same bad owner would also flow into PLSR missing-label creation from disposition geometry because those labels reuse DispositionInfo source data.
+- Updated source:
+  - src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs
+    - added BuildPlsrOwnerOverridesByDispNum(...) to parse current PLSR XML inputs once up front into a DISP->owner override map using the same compare-name normalization as the audit.
+    - latest report date wins per DISP when multiple XML files disagree; same-date conflicts are logged and left stable.
+  - src/AtsBackgroundBuilder/Core/Plugin.cs
+    - ProcessDispositionPolylines(...) now checks that override map before building label text / DispositionInfo.MappedCompany.
+    - new labels now use PLSR owner by default when XML contains that DISP.
+    - layer/client classification still follows the original disposition mapping so this fix stays scoped to owner text rather than relayering geometry.
+    - runtime log now reports how many disposition label sources received a PLSR owner override.
+- Result:
+  - first-time labels created before PLSR audit now start with XML owner, so the audit no longer fabricates owner mismatches caused by the build itself.
+  - existing labels with wrong owners are still eligible for real Owner mismatch review rows.
+- Verification:
+  - dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal succeeded.
+  - dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal passed (Decision tests passed.).
+  - only remaining build warning was NU1900 because the restricted environment could not fetch NuGet vulnerability metadata from https://api.nuget.org/v3/index.json.
+# Follow-up (PLSR Expired Marker + Version-Date Aggregation, 2026-03-05)
+
+- [x] Inspect expired-marker and version-date mismatch generation paths in the current PLSR flow.
+- [x] Make first-time PLSR-backed labels inherit `(Expired)` before review/audit.
+- [x] Aggregate repeated standalone version-date mismatch rows by DISP with quarter `MULTIPLE`.
+- [x] Rebuild, run focused verification, and document the result here.
+
+## Review (PLSR Expired Marker + Version-Date Aggregation, 2026-03-05)
+
+- Root cause from current PLSR flow:
+  - first-time labels created before PLSR review were inheriting the new XML owner override, but not the XML expired state, so the same run could still fabricate Expired in PLSR rows for labels it had just created.
+  - standalone version-date mismatch rows were emitted once per quarter, which repeated the same DISP across multiple quarters even when the issue was really one repeated DISP-level mismatch.
+- Updated source:
+  - src/AtsBackgroundBuilder/Core/Plugin.cs
+    - replaced the owner-only PLSR override map with a label-override map that carries both authoritative owner and whether (Expired) must be appended.
+    - ProcessDispositionPolylines(...) now propagates that expired flag into every new DispositionInfo label source and logs how many label sources were affected.
+  - src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs
+    - added AppendExpiredMarkerIfMissing(...) and applies it during label placement whenever a disposition source is marked expired by PLSR.
+  - src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs
+    - missing-label review rows now carry ShouldAddExpiredMarker so accepted template/XML fallback creates also include (Expired) immediately.
+    - added post-scan consolidation for repeated standalone Version date mismatch rows: duplicate DISP rows are collapsed into one row with quarter MULTIPLE and the contributing quarter keys listed in Detail.
+- Result:
+  - fresh shape-based labels should no longer self-trigger Expired in PLSR when XML already says they are expired.
+  - accepted missing-label creates from template/XML will also include (Expired) on first creation when required.
+  - repeated standalone version-date mismatches now show one review row per DISP with quarter MULTIPLE instead of one row per quarter.
+- Verification:
+  - dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal succeeded.
+  - dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal passed (Decision tests passed.).
+  - only remaining warning was NU1900 because the restricted environment could not fetch NuGet vulnerability metadata from https://api.nuget.org/v3/index.json.
+# Follow-up (Crash After PLSR Expired Marker + Version-Date Aggregation, 2026-03-05)
+
+- [x] Inspect the newest ATS runtime log and isolate the crash boundary.
+- [x] Trace the failing code path introduced by the latest PLSR label/review changes.
+- [x] Implement the smallest safe fix, rebuild, and verify.
+- [x] Document the result here.
+
+## Review (Crash After PLSR Expired Marker + Version-Date Aggregation, 2026-03-05)
+
+- Crash boundary remained native `Importer.Import()` during `ATSBUILD stage: disposition_import` for `DAB_APPL.shp`; the newest failed run logged `CheckPLSR=OFF`, so the recent PLSR expired-marker/version-date changes were not on the executed path.
+- Earlier successful runs in the same log imported the same scoped `DAB_APPL` subset (`112/415348` records kept), which points to nondeterministic Map importer instability on the generated filtered chunk file rather than a deterministic bad PLSR record.
+- Hardened `ShapefileImporter` so large scoped imports now use the first filtered subset directly when it already fits within one safe import file; chunking is still used only when the filtered subset exceeds the chunk threshold or scoped subset prep fails.
+- `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal` succeeded.
+- `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal` passed.

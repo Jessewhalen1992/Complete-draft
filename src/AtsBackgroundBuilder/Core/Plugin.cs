@@ -533,6 +533,9 @@ namespace AtsBackgroundBuilder
 
             var layerManager = new LayerManager(database);
             var result = new SummaryResult();
+            var plsrLabelOverridesByDispNum = executionPlan.ShouldRunPlsrCheck
+                ? BuildPlsrLabelOverridesByDispNum(input.PlsrXmlPaths, companyLookup, logger)
+                : new Dictionary<string, PlsrDispositionLabelOverride>(StringComparer.OrdinalIgnoreCase);
             var dispositions = ProcessDispositionPolylines(
                 database,
                 editor,
@@ -548,7 +551,8 @@ namespace AtsBackgroundBuilder
                 currentClient,
                 layerManager,
                 SetExitStage,
-                result);
+                result,
+                plsrLabelOverridesByDispNum);
 
             var quarterLabelContext = BuildQuarterLabelContext(
                 database,
@@ -764,9 +768,12 @@ namespace AtsBackgroundBuilder
             string currentClient,
             LayerManager layerManager,
             Action<string> setExitStage,
-            SummaryResult result)
+            SummaryResult result,
+            Dictionary<string, PlsrDispositionLabelOverride> plsrLabelOverridesByDispNum)
         {
             var dispositions = new List<DispositionInfo>();
+            var plsrOwnerOverrideCount = 0;
+            var plsrExpiredMarkerOverrideCount = 0;
             var shouldLoadSupplementalSectionInfos = executionPlan.ShouldLoadSupplementalSectionInfos(dispositionPolylines.Count);
             var supplementalSectionInfos = shouldLoadSupplementalSectionInfos
                 ? LoadSupplementalSectionSpatialInfos(input.SectionRequests, config, logger)
@@ -827,6 +834,31 @@ namespace AtsBackgroundBuilder
                         var mappedPurpose = MapValue(purposeLookup, purpose, purpose);
                         var purposeExtra = purposeLookup.Lookup(purpose)?.Extra ?? string.Empty;
                         var dispNumFormatted = FormatDispNum(dispNum);
+                        var labelCompany = mappedCompany;
+                        var shouldAddExpiredMarker = false;
+                        var normalizedDispNum = NormalizeDispNum(dispNum);
+                        if (!string.IsNullOrWhiteSpace(normalizedDispNum) &&
+                            plsrLabelOverridesByDispNum.TryGetValue(normalizedDispNum, out var plsrLabelOverride) &&
+                            plsrLabelOverride != null)
+                        {
+                            if (!string.IsNullOrWhiteSpace(plsrLabelOverride.Owner))
+                            {
+                                labelCompany = plsrLabelOverride.Owner;
+                                if (!string.Equals(
+                                        NormalizeOwner(mappedCompany ?? string.Empty),
+                                        NormalizeOwner(plsrLabelOverride.Owner),
+                                        StringComparison.OrdinalIgnoreCase))
+                                {
+                                    plsrOwnerOverrideCount++;
+                                }
+                            }
+
+                            if (plsrLabelOverride.ShouldAddExpiredMarker)
+                            {
+                                shouldAddExpiredMarker = true;
+                                plsrExpiredMarkerOverrideCount++;
+                            }
+                        }
 
                         var normalizedPurpose = NormalizePurposeCode(purpose);
                         var isMixedWellsiteAccessRoad =
@@ -1041,21 +1073,22 @@ namespace AtsBackgroundBuilder
                                     AllowLabelOutsideDisposition = config.AllowOutsideDispositionForWidthPurposes,
                                     AddLeader = true,
                                     RequiresWidth = true,
-                                    MappedCompany = mappedCompany ?? string.Empty,
+                                    MappedCompany = labelCompany ?? string.Empty,
                                     MappedPurpose = mixedAccessRoadMappedPurpose ?? string.Empty,
                                     PurposeTitleCase = ToTitleCaseWords(mixedAccessRoadMappedPurpose ?? string.Empty),
                                     DispNumFormatted = dispNumFormatted,
                                     OdDimension = odDimension ?? string.Empty,
                                     OdVerDateRaw = odVerDate ?? string.Empty,
                                     OdEffDateRaw = odEffDate ?? string.Empty,
-                                    ReuseVariantKey = DispositionInfo.ReuseVariantMixedAccessRoad
+                                    ReuseVariantKey = DispositionInfo.ReuseVariantMixedAccessRoad,
+                                    ShouldAddExpiredMarker = shouldAddExpiredMarker
                                 };
                                 dispositions.Add(accessRoadInfo);
                             }
 
                             if (mixedEmitWellsiteLabel)
                             {
-                                var mixedWellsiteLabelText = mappedCompany + "\\P" + mixedWellsiteMappedPurpose + "\\P" + dispNumFormatted;
+                                var mixedWellsiteLabelText = labelCompany + "\\P" + mixedWellsiteMappedPurpose + "\\P" + dispNumFormatted;
                                 var mixedWellsiteInfo = new DispositionInfo(id, clone, mixedWellsiteLabelText, mixedWellsiteLineLayer, mixedWellsiteTextLayer, safePoint)
                                 {
                                     AllowLabelOutsideDisposition = false,
@@ -1063,7 +1096,8 @@ namespace AtsBackgroundBuilder
                                     DispNumFormatted = dispNumFormatted,
                                     OdVerDateRaw = odVerDate ?? string.Empty,
                                     OdEffDateRaw = odEffDate ?? string.Empty,
-                                    ReuseVariantKey = DispositionInfo.ReuseVariantMixedWellsitePad
+                                    ReuseVariantKey = DispositionInfo.ReuseVariantMixedWellsitePad,
+                                    ShouldAddExpiredMarker = shouldAddExpiredMarker
                                 };
                                 dispositions.Add(mixedWellsiteInfo);
                             }
@@ -1079,20 +1113,21 @@ namespace AtsBackgroundBuilder
                                 AllowLabelOutsideDisposition = config.AllowOutsideDispositionForWidthPurposes,
                                 AddLeader = true,
                                 RequiresWidth = true,
-                                MappedCompany = mappedCompany ?? string.Empty,
+                                MappedCompany = labelCompany ?? string.Empty,
                                 MappedPurpose = mappedPurpose ?? string.Empty,
                                 PurposeTitleCase = ToTitleCaseWords(mappedPurpose ?? purpose),
                                 DispNumFormatted = dispNumFormatted,
                                 OdDimension = odDimension ?? string.Empty,
                                 OdVerDateRaw = odVerDate ?? string.Empty,
                                 OdEffDateRaw = odEffDate ?? string.Empty,
-                                ReuseVariantKey = string.Empty
+                                ReuseVariantKey = string.Empty,
+                                ShouldAddExpiredMarker = shouldAddExpiredMarker
                             };
                             dispositions.Add(info);
                             continue;
                         }
 
-                        var labelText = mappedCompany + "\\P" + mappedPurpose + "\\P" + dispNumFormatted;
+                        var labelText = labelCompany + "\\P" + mappedPurpose + "\\P" + dispNumFormatted;
                         var nonWidthInfo = new DispositionInfo(id, clone, labelText, lineLayer, textLayer, safePoint)
                         {
                             AllowLabelOutsideDisposition = false,
@@ -1100,7 +1135,8 @@ namespace AtsBackgroundBuilder
                             DispNumFormatted = dispNumFormatted,
                             OdVerDateRaw = odVerDate ?? string.Empty,
                             OdEffDateRaw = odEffDate ?? string.Empty,
-                            ReuseVariantKey = string.Empty
+                            ReuseVariantKey = string.Empty,
+                            ShouldAddExpiredMarker = shouldAddExpiredMarker
                         };
                         dispositions.Add(nonWidthInfo);
                     }
@@ -1112,6 +1148,16 @@ namespace AtsBackgroundBuilder
                 }
 
                 transaction.Commit();
+            }
+
+            if (plsrOwnerOverrideCount > 0)
+            {
+                logger.WriteLine($"PLSR owner overrides applied to disposition label sources: {plsrOwnerOverrideCount} disposition(s).");
+            }
+
+            if (plsrExpiredMarkerOverrideCount > 0)
+            {
+                logger.WriteLine($"PLSR expired marker overrides applied to disposition label sources: {plsrExpiredMarkerOverrideCount} disposition(s).");
             }
 
             return dispositions;

@@ -253,6 +253,11 @@ namespace AtsBackgroundBuilder.Dispositions
                                         dispositions);
                                 }
 
+                                if (disposition.ShouldAddExpiredMarker)
+                                {
+                                    labelText = AppendExpiredMarkerIfMissing(labelText);
+                                }
+
                                 // Defensive: if the intersection target landed just outside due to numerical issues,
                                 // find a valid in-both point; do NOT fall back to SafePoint outside this quarter.
                                 if (!GeometryUtils.IsPointInsidePolyline(quarterClone, searchTarget) ||
@@ -830,6 +835,25 @@ namespace AtsBackgroundBuilder.Dispositions
                 return;
 
             dimStyleId = dimStyleTable[_config.DimensionStyleName];
+        }
+
+        internal static string AppendExpiredMarkerIfMissing(string labelText)
+        {
+            if (string.IsNullOrWhiteSpace(labelText))
+            {
+                return labelText ?? string.Empty;
+            }
+
+            var flattened = labelText
+                .Replace("\\P", "\n")
+                .Replace("\\X", "\n");
+            if (Regex.IsMatch(flattened, @"\bEXPIRED\b", RegexOptions.IgnoreCase))
+            {
+                return labelText;
+            }
+
+            var delimiter = labelText.IndexOf("\\X", StringComparison.OrdinalIgnoreCase) >= 0 ? "\\X" : "\\P";
+            return labelText + delimiter + "(Expired)";
         }
 
         private static string ConvertLabelTextForDimension(string labelText)
@@ -1884,6 +1908,7 @@ namespace AtsBackgroundBuilder.Dispositions
         public string OdVerDateRaw { get; set; } = string.Empty;
         public string OdEffDateRaw { get; set; } = string.Empty;
         public string ReuseVariantKey { get; set; } = string.Empty;
+        public bool ShouldAddExpiredMarker { get; set; }
 
         // For width-required purposes, allow label to be placed in the quarter (not necessarily in the disposition)
         public bool AllowLabelOutsideDisposition { get; set; }
