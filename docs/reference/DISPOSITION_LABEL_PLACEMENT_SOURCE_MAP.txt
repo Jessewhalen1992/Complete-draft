@@ -1,22 +1,77 @@
-/////////////////////////////////////////////////////////////////////
+Disposition Label Placement Source Map (Current Code)
+====================================================
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
-using AtsBackgroundBuilder.Core;
-using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.EditorInput;
-using Autodesk.AutoCAD.Geometry;
-using Autodesk.AutoCAD.Runtime;
+Purpose
+-------
+This file is a current-only reference for the live disposition label placement path.
+It has been refreshed to match the post-collision-refactor code in LabelPlacer.cs.
 
-namespace AtsBackgroundBuilder.Dispositions
-{
-    public sealed class LabelPlacer
-    {
-        private readonly Database _database;
-        private readonly Editor _editor;
+Scope covered here
+------------------
+- shape-based disposition label placement
+- collision-aware candidate ranking and entity creation
+- aligned-dimension anchor/text-position logic
+- leader and plain MText creation
+- collision-box seeding from existing model-space labels
+- PLSR missing-label creation reuse of PlaceLabels(...)
+- PLSR aligned-dimension quarter-anchor safeguards
+
+Current caller paths
+--------------------
+- src\AtsBackgroundBuilder\Core\Plugin.cs:1661-1662
+  Main ATSBUILD shape-based label placement:
+    var placer = new LabelPlacer(..., useAlignedDimensions: true);
+    var placement = placer.PlaceLabels(quarters, dispositions, currentClient, existingDispNumsByQuarter);
+
+- src\AtsBackgroundBuilder\Dispositions\Plugin.Dispositions.LabelingPlsr.cs:1317,1429
+  PLSR missing-label creation reuses the same placement engine:
+    var placer = new LabelPlacer(..., useAlignedDimensions: true);
+    var placement = placer.PlaceLabels(...);
+
+Current live rules
+------------------
+- overlap handling is decided during PlaceLabels(...), not by a later label cleanup pass
+- one shared collision index is seeded from already-existing label text footprints in model space
+- final label text is resolved before candidate scoring, including (Expired)
+- width labels try aligned dimension first, then leader, then plain MText
+- aligned dimensions preserve both along-span and normal components of labelPoint
+- aligned-dimension collisions are checked against the estimated text box, not the whole dimension extents
+
+Cleanup note
+------------
+Current cleanup still only controls helper/imported geometry retention after placement, not label overlap resolution.
+Relevant files:
+- src\AtsBackgroundBuilder\Core\CleanupPlan.cs:36-52
+- src\AtsBackgroundBuilder\Core\Plugin.cs:1692-1694
+- src\AtsBackgroundBuilder\Diagnostics\Plugin.Diagnostics.CleanupDiagnostics.cs:87-89
+
+Current entry points in LabelPlacer.cs
+-------------------------------------
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:57    LabelCollisionIndex
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:206   PlaceLabels(...)
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:653   CreateLabelEntity(...)
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:739   CreateAlignedDimensionLabel(...)
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1074  CreateLeader(...)
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1137  CreateLabel(...)
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1171  BuildCollisionIndex(...)
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1224  TryGetEntityCollisionBox(...)
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1426  EstimateCenteredTextBox(...)
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1450  EstimateDimensionTextBox(...)
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1506  AppendExpiredMarkerIfMissing(...)
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1677  GetCandidateLabelPoints(...)
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1902  ShouldSkipExistingQuarterLabel(...)
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1929  RegisterPlacedQuarterLabel(...)
+
+PLSR aligned-dimension anchor safeguard
+---------------------------------------
+- src\AtsBackgroundBuilder\Dispositions\Plugin.Dispositions.LabelingPlsr.cs:3504  GetDimensionAnchorPoint(...)
+- src\AtsBackgroundBuilder\Dispositions\Plugin.Dispositions.LabelingPlsr.cs:3528  GetDimensionQuarterTestPoints(...)
+
+1. Shared Collision Structures
+------------------------------
+File: src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:20-170
+
+```csharp
         private readonly LayerManager _layerManager;
         private readonly Config _config;
         private readonly Logger _logger;
@@ -168,41 +223,22 @@ namespace AtsBackgroundBuilder.Dispositions
             public double MaxLeaderLength { get; }
             public bool AllowOutsideDisposition { get; }
             public bool IsLeaderOrPlainText { get; }
-            public int CandidateCount { get; }
-            public double QuarterFootprintArea { get; }
-            public string DispositionIdentity { get; }
-            public string NormalizedDispNum { get; }
-            public string NormalizedReuseVariant { get; }
-            public string DispositionReuseKey { get; }
+```
 
-            public void Dispose()
-            {
-                if (IntersectionPiece == null)
-                {
-                    return;
-                }
+2. Main Placement Flow
+----------------------
+File: src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:206-651
 
-                try
-                {
-                    IntersectionPiece.Dispose();
-                }
-                catch
-                {
-                    // ignore transient geometry disposal failures
-                }
-            }
-        }
+Key live behavior inside this method:
+- seeds one collision index from existing model-space label text footprints
+- builds per-quarter placement requests first
+- finalizes label text before candidate scoring by calling AppendExpiredMarkerIfMissing(...)
+- sorts constrained requests first: width labels, then fewer candidates, then smaller quarter footprint
+- scores candidates with overlap-aware text boxes for MText/MLeader requests
+- updates the same collision index as each label is created
+- uses CreateLabelEntity(...) so aligned-dimension failure can fall back to leader/MText
 
-        public LabelPlacer(Database database, Editor editor, LayerManager layerManager, Config config, Logger logger, bool useAlignedDimensions = false)
-        {
-            _database = database;
-            _editor = editor;
-            _layerManager = layerManager;
-            _config = config;
-            _logger = logger;
-            _useAlignedDimensions = useAlignedDimensions;
-        }
-
+```csharp
         public PlacementResult PlaceLabels(
             List<QuarterInfo> quarters,
             List<DispositionInfo> dispositions,
@@ -649,7 +685,18 @@ namespace AtsBackgroundBuilder.Dispositions
             }
 
             return result;
-        }
+```
+
+3. Entity Switch / Fallback Path
+--------------------------------
+File: src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:653-737
+
+This is the current entity decision tree:
+- width + aligned dimensions enabled -> try aligned dimension
+- if that fails and leaders are enabled -> try leader
+- otherwise -> plain MText
+
+```csharp
         private Entity? CreateLabelEntity(
             Transaction tr,
             BlockTableRecord modelSpace,
@@ -735,7 +782,22 @@ namespace AtsBackgroundBuilder.Dispositions
                 resolvedTextColorIndex,
                 collisions,
                 allowOverlap);
-        }
+```
+
+4. Aligned Dimension Placement
+------------------------------
+File: src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:739-1072
+
+This is the current live aligned-dimension logic the user asked to track:
+- anchor span comes from TryGetPerpendicularSpanAcrossDisposition(...)
+- labelPoint is decomposed into along-span and normal components
+- along component drives explicit text position along the measured span
+- normal component drives dim-line offset
+- multiple normal lanes are searched
+- collisions are checked against the dimension text box only
+- if no legal lane works, the method returns null and caller fallback engages
+
+```csharp
         private AlignedDimension? CreateAlignedDimensionLabel(
             Transaction tr,
             BlockTableRecord modelSpace,
@@ -1070,7 +1132,22 @@ namespace AtsBackgroundBuilder.Dispositions
                 return false;
             }
         }
+```
 
+5. MLeader and Plain MText Creation
+-----------------------------------
+File: src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1074-1169
+
+Current attachment / anchor behavior:
+- MLeader text location = labelPoint
+- MLeader line start = target
+- MLeader line end = labelPoint
+- MLeader attachment comes from GetLeaderAttachment(target, labelPoint)
+- plain MText location = labelPoint
+- plain MText attachment = AttachmentPoint.MiddleCenter
+- both paths add their text footprint to the shared collision index
+
+```csharp
         private MLeader? CreateLeader(
             Transaction tr,
             BlockTableRecord modelSpace,
@@ -1167,7 +1244,20 @@ namespace AtsBackgroundBuilder.Dispositions
             collisions?.Add(textBox);
             return mtext;
         }
+```
 
+6. Collision Index Seeding and Text-Box Helpers
+-----------------------------------------------
+File: src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1171-1499
+
+Important current rules here:
+- only MText, MLeader, and AlignedDimension are seeded into the collision index
+- layer filtering prefers known disposition text layers, but valid-looking disposition text can still seed collisions
+- MText and MLeader use centered text boxes
+- aligned dimensions use the dimension text box rotated by span direction
+- collision tests are text-content-based, not whole-entity-extents-based
+
+```csharp
         private LabelCollisionIndex BuildCollisionIndex(
             Transaction tr,
             BlockTableRecord modelSpace,
@@ -1497,12 +1587,22 @@ namespace AtsBackgroundBuilder.Dispositions
             if (tr == null || dimension == null) return;
 
             var dimStyleTable = (DimStyleTable)tr.GetObject(_database.DimStyleTableId, OpenMode.ForRead);
-            if (!dimStyleTable.Has(_config.DimensionStyleName))
-                return;
+```
 
-            dimStyleId = dimStyleTable[_config.DimensionStyleName];
-        }
+7. Final Text and Candidate Ranking Helpers
+-------------------------------------------
+Files:
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1506-1548
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1677-1754
+- src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs:1902-1971
 
+These helpers control:
+- when (Expired) is appended
+- how dimension text is sanitized
+- how candidate points are overlap-ranked for MText / MLeader labels
+- how already-present quarter labels are skipped and newly placed ones are registered
+
+```csharp
         internal static string AppendExpiredMarkerIfMissing(string labelText)
         {
             if (string.IsNullOrWhiteSpace(labelText))
@@ -1546,134 +1646,10 @@ namespace AtsBackgroundBuilder.Dispositions
             var match = Regex.Match(firstLine, @"(\d+(?:\.\d+)?)");
             if (!match.Success)
                 return 0.0;
-
-            if (double.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed) && parsed > 0)
-                return parsed;
-
-            return 0.0;
-        }
-
-        private void ApplyLeaderStyle(Transaction tr, MLeader mleader)
-        {
-            if (tr == null || mleader == null) return;
-
-            var leaderStyleDictionary = (DBDictionary)tr.GetObject(_database.MLeaderStyleDictionaryId, OpenMode.ForRead);
-            if (!leaderStyleDictionary.Contains("Dispo-Labels"))
-                return;
-
-            mleader.MLeaderStyle = leaderStyleDictionary.GetAt("Dispo-Labels");
-        }
-
-        private static AttachmentPoint GetLeaderAttachment(Point2d target, Point2d labelPoint)
-        {
-            var dx = labelPoint.X - target.X;
-            if (Math.Abs(dx) < 1e-6)
-                return AttachmentPoint.MiddleCenter;
-
-            return dx < 0 ? AttachmentPoint.MiddleRight : AttachmentPoint.MiddleLeft;
-        }
-
-        private static TextAttachmentType GetLeaderTextAttachment(AttachmentPoint attachment)
-        {
-            // AutoCAD 2025's TextAttachmentType enum does not define MiddleLeft/MiddleRight/MiddleCenter.
-            // Use a neutral attachment type that aligns text to the middle for both left and right leaders.
-            return TextAttachmentType.AttachmentMiddle;
-        }
-
-        private ObjectId GetLeaderArrowId(Transaction tr)
-        {
-            var blockTable = (BlockTable)tr.GetObject(_database.BlockTableId, OpenMode.ForRead);
-            var preferred = _config.LeaderArrowBlockName?.Trim();
-            var candidateNames = new List<string>();
-            if (!string.IsNullOrWhiteSpace(preferred))
-            {
-                candidateNames.Add(preferred);
-                candidateNames.Add("_" + preferred);
-                candidateNames.Add(preferred.ToUpperInvariant());
-                candidateNames.Add("_" + preferred.ToUpperInvariant());
-            }
-
-            candidateNames.AddRange(new[]
-            {
-                "DotBlank",
-                "_DotBlank",
-                "_DOTBLANK",
-                "DOTBLANK",
-                "_Dot",
-                "_DOT",
-                "DOT",
-                "_DotSmall",
-                "_DOTSMALL",
-                "DOTSMALL"
-            });
-
-            foreach (var name in candidateNames)
-            {
-                if (blockTable.Has(name))
-                {
-                    return blockTable[name];
-                }
-            }
-
-            return ObjectId.Null;
-        }
-
-        private static void EnsureLayerInTransaction(Database db, Transaction tr, string layerName)
-        {
-            var layerTable = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
-            if (layerTable.Has(layerName))
-                return;
-
-            layerTable.UpgradeOpen();
-            var layer = new LayerTableRecord
-            {
-                Name = layerName,
-                IsPlottable = true
-            };
-
-            layerTable.Add(layer);
-            tr.AddNewlyCreatedDBObject(layer, true);
-        }
-
-        private static Extents3d EstimateTextExtents(Point2d center, string labelText, double textHeight)
-        {
-            if (textHeight <= 0) textHeight = 10.0;
-            var lines = (labelText ?? string.Empty).Split(new[] { "\\P" }, StringSplitOptions.None);
-            int lineCount = Math.Max(1, lines.Length);
-
-            int maxChars = 0;
-            foreach (var ln in lines)
-            {
-                int c = 0;
-                for (int i = 0; i < ln.Length; i++)
-                {
-                    char ch = ln[i];
-                    if (ch == '\\')
-                    {
-                        if (i + 1 < ln.Length) i++;
-                        continue;
-                    }
-                    if (ch == '{' || ch == '}') continue;
-                    c++;
-                }
-                if (c > maxChars) maxChars = c;
-            }
-
-            // Conservative footprint estimate so collision checks better match actual MLeader text.
-            double charWidth = textHeight * 0.92;
-            double width = Math.Max(textHeight, maxChars * charWidth);
-            double height = lineCount * textHeight * 1.55;
-
-            double pad = textHeight * 0.9;
-            width += pad * 2;
-            height += pad * 2;
-
-            var min = new Point3d(center.X - width / 2, center.Y - height / 2, 0);
-            var max = new Point3d(center.X + width / 2, center.Y + height / 2, 0);
-            return new Extents3d(min, max);
-        }
+```
 
 
+```csharp
         private static IEnumerable<Point2d> GetCandidateLabelPoints(
             Polyline quarter,
             Polyline disposition,
@@ -1752,153 +1728,10 @@ namespace AtsBackgroundBuilder.Dispositions
                 yield return item.pt;
             }
         }
-        private static double DistanceToPolyline(Polyline polyline, Point3d p3d)
-        {
-            try
-            {
-                var closest = polyline.GetClosestPointTo(p3d, false);
-                return closest.DistanceTo(p3d);
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+```
 
-        private static bool IsWithinLeaderLength(Point2d target, Point2d candidate, double maxLeaderLength)
-        {
-            if (double.IsInfinity(maxLeaderLength) || maxLeaderLength <= 0)
-                return true;
-            return target.GetDistanceTo(candidate) <= maxLeaderLength;
-        }
 
-        private static bool TryFindMixedWellsitePadTarget(
-            Polyline quarter,
-            Polyline disposition,
-            Polyline padSource,
-            Point2d safeFallback,
-            double textHeight,
-            out Point2d target)
-        {
-            target = safeFallback;
-            if (quarter == null || disposition == null || padSource == null)
-            {
-                return false;
-            }
-
-            var hasBest = false;
-            var bestPoint = target;
-            var bestClearance = double.NegativeInfinity;
-
-            void Consider(Point2d candidate)
-            {
-                if (!GeometryUtils.IsPointInsidePolyline(quarter, candidate) ||
-                    !GeometryUtils.IsPointInsidePolyline(disposition, candidate))
-                {
-                    return;
-                }
-
-                var p3d = new Point3d(candidate.X, candidate.Y, 0.0);
-                var quarterClearance = DistanceToPolyline(quarter, p3d);
-                var dispClearance = DistanceToPolyline(disposition, p3d);
-                var clearance = Math.Min(quarterClearance, dispClearance);
-                if (!IsFinite(clearance) || clearance <= 0.0)
-                {
-                    return;
-                }
-
-                if (clearance > bestClearance)
-                {
-                    bestClearance = clearance;
-                    bestPoint = candidate;
-                    hasBest = true;
-                }
-            }
-
-            try
-            {
-                var measurement = GeometryUtils.MeasureCorridorWidth(
-                    padSource,
-                    25,
-                    Math.Max(0.20, textHeight * 0.05),
-                    0.10);
-                Consider(measurement.MaxCenter);
-                Consider(measurement.MedianCenter);
-            }
-            catch
-            {
-                // Fall through to geometric candidates.
-            }
-
-            Consider(safeFallback);
-            Consider(GeometryUtils.GetSafeInteriorPoint(padSource));
-            try
-            {
-                Consider(GetExtentsOverlapCenter(quarter.GeometricExtents, disposition.GeometricExtents));
-            }
-            catch
-            {
-                // ignore extents failures
-            }
-
-            try
-            {
-                if (TryGetOverlapExtents(
-                        quarter.GeometricExtents,
-                        disposition.GeometricExtents,
-                        out var minX,
-                        out var minY,
-                        out var maxX,
-                        out var maxY))
-                {
-                    var xSpan = maxX - minX;
-                    var ySpan = maxY - minY;
-                    const int gridSteps = 22;
-                    for (var ix = 0; ix <= gridSteps; ix++)
-                    {
-                        var x = minX + (xSpan * ix / gridSteps);
-                        for (var iy = 0; iy <= gridSteps; iy++)
-                        {
-                            var y = minY + (ySpan * iy / gridSteps);
-                            Consider(new Point2d(x, y));
-                        }
-                    }
-                }
-            }
-            catch
-            {
-                // ignore grid fallback failures
-            }
-
-            if (!hasBest)
-            {
-                return false;
-            }
-
-            target = bestPoint;
-            return true;
-        }
-
-        private static bool TryGetOverlapExtents(
-            Extents3d a,
-            Extents3d b,
-            out double minX,
-            out double minY,
-            out double maxX,
-            out double maxY)
-        {
-            minX = Math.Max(a.MinPoint.X, b.MinPoint.X);
-            minY = Math.Max(a.MinPoint.Y, b.MinPoint.Y);
-            maxX = Math.Min(a.MaxPoint.X, b.MaxPoint.X);
-            maxY = Math.Min(a.MaxPoint.Y, b.MaxPoint.Y);
-
-            return IsFinite(minX) &&
-                   IsFinite(minY) &&
-                   IsFinite(maxX) &&
-                   IsFinite(maxY) &&
-                   maxX > minX &&
-                   maxY > minY;
-        }
+```csharp
         private static bool ShouldSkipExistingQuarterLabel(
             Dictionary<string, HashSet<string>>? existingDispNumsByQuarter,
             string quarterKey,
@@ -1969,600 +1802,25 @@ namespace AtsBackgroundBuilder.Dispositions
                 {
                     // fall through
                 }
-            }
+```
 
-            if (TryGetOverlapExtents(
-                    quarter.Bounds,
-                    disposition.Bounds,
-                    out var minX,
-                    out var minY,
-                    out var maxX,
-                    out var maxY))
-            {
-                return Math.Abs((maxX - minX) * (maxY - minY));
-            }
+8. PLSR Aligned-Dimension Anchor Safeguard
+------------------------------------------
+File: src\AtsBackgroundBuilder\Dispositions\Plugin.Dispositions.LabelingPlsr.cs:3504-3568
 
-            return double.PositiveInfinity;
-        }
-        private bool TryGetQuarterIntersectionTarget(
-            Polyline quarter,
-            Polyline disposition,
-            out Polyline? intersectionPiece,
-            out Point2d target)
-        {
-            intersectionPiece = null;
-            target = default;
+This is the current safeguard to keep quarter assignment anchor-based even though aligned-dimension text can move:
+- primary anchor comes from the midpoint of XLine1Point / XLine2Point
+- text position is sampled, but only as supplemental evidence
+- extension-line endpoints and entity extents are also sampled for touch testing
 
-            // First try true polygon intersection: disposition intersection quarter
-            if (GeometryUtils.TryIntersectPolylines(disposition, quarter, out var pieces) && pieces.Count > 0)
-            {
-                // keep only closed pieces
-                var closed = pieces.Where(p => p != null && p.Closed && p.NumberOfVertices >= 3).ToList();
-                if (closed.Count > 0)
-                {
-                    // pick the piece with the largest area (fallback to extents area if Area throws)
-                    Polyline best = closed[0];
-                    double bestScore = -1;
-
-                    foreach (var p in closed)
-                    {
-                        double score;
-                        try { score = Math.Abs(p.Area); }
-                        catch
-                        {
-                            var e = p.GeometricExtents;
-                            score = Math.Abs((e.MaxPoint.X - e.MinPoint.X) * (e.MaxPoint.Y - e.MinPoint.Y));
-                        }
-
-                        if (score > bestScore)
-                        {
-                            bestScore = score;
-                            best = p;
-                        }
-                    }
-
-                    intersectionPiece = best;
-
-                    // target = safe interior of intersection piece
-                    target = GeometryUtils.GetSafeInteriorPoint(best);
-
-                    // Dispose non-best pieces (TryIntersectPolylines returns DBObjects the caller owns).
-                    // IMPORTANT: dispose BOTH the closed and any open/degenerate pieces we aren't returning,
-                    // otherwise repeated quarter processing leaks DBObjects.
-                    foreach (var p in pieces)
-                    {
-                        if (p != null && !ReferenceEquals(p, best))
-                            p.Dispose();
-                    }
-                    return true;
-                }
-
-                // Dispose pieces if none were usable
-                foreach (var p in pieces) p.Dispose();
-            }
-
-            // Fallback: spiral search inside BOTH polygons within overlap extents
-            var overlap = GetExtentsOverlapCenter(quarter.GeometricExtents, disposition.GeometricExtents);
-            double step = Math.Max(_config.TextHeight, 5.0);
-            foreach (var p in GeometryUtils.GetSpiralOffsets(overlap, step, 200))
-            {
-                if (GeometryUtils.IsPointInsidePolyline(quarter, p) &&
-                    GeometryUtils.IsPointInsidePolyline(disposition, p))
-                {
-                    target = p;
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private Point2d GetTargetPoint(Polyline quarter, Polyline disposition, Point2d fallback)
-        {
-            // Best: centroid of intersection region(s)
-            if (_config.UseRegionIntersection && GeometryUtils.TryIntersectRegions(disposition, quarter, out var regions))
-            {
-                foreach (var region in regions)
-                {
-                    using (region)
-                    {
-                        var c = GetRegionCentroidSafe(region);
-                        if (GeometryUtils.IsPointInsidePolyline(quarter, c) && GeometryUtils.IsPointInsidePolyline(disposition, c))
-                            return c;
-                    }
-                }
-            }
-
-            // If safe point lies in this quarter
-            if (GeometryUtils.IsPointInsidePolyline(quarter, fallback) && GeometryUtils.IsPointInsidePolyline(disposition, fallback))
-                return fallback;
-
-            // Try extents overlap center
-            var overlap = GetExtentsOverlapCenter(quarter.GeometricExtents, disposition.GeometricExtents);
-            if (GeometryUtils.IsPointInsidePolyline(quarter, overlap) && GeometryUtils.IsPointInsidePolyline(disposition, overlap))
-                return overlap;
-
-            // Closest point on disposition to a known interior point of quarter
-            var qInterior = GeometryUtils.GetSafeInteriorPoint(quarter);
-            try
-            {
-                var closest = disposition.GetClosestPointTo(new Point3d(qInterior.X, qInterior.Y, 0), false);
-                var cp = new Point2d(closest.X, closest.Y);
-                if (GeometryUtils.IsPointInsidePolyline(quarter, cp))
-                    return cp;
-            }
-            catch { }
-
-            return fallback;
-        }
-
-        private static Point2d GetRegionCentroidSafe(Region region)
+```csharp
+        private static Point2d GetDimensionAnchorPoint(AlignedDimension dimension)
         {
             try
             {
-                var centroid = Point3d.Origin;
-                var normal = Vector3d.ZAxis;
-                var axes = Vector3d.XAxis;
-                region.AreaProperties(ref centroid, ref normal, ref axes);
-
-                if (IsFinite(centroid.X) && IsFinite(centroid.Y))
-                    return new Point2d(centroid.X, centroid.Y);
-            }
-            catch (Autodesk.AutoCAD.Runtime.Exception)
-            {
-                // ignore
-            }
-            catch
-            {
-                // ignore
-            }
-
-            try
-            {
-                var ext = region.GeometricExtents;
-                return new Point2d(
-                    (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
-                    (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
-                );
-            }
-            catch
-            {
-                return new Point2d(0, 0);
-            }
-        }
-
-        private static Point2d GetExtentsOverlapCenter(Extents3d a, Extents3d b)
-        {
-            double minX = Math.Max(a.MinPoint.X, b.MinPoint.X);
-            double maxX = Math.Min(a.MaxPoint.X, b.MaxPoint.X);
-
-            double minY = Math.Max(a.MinPoint.Y, b.MinPoint.Y);
-            double maxY = Math.Min(a.MaxPoint.Y, b.MaxPoint.Y);
-
-            return new Point2d((minX + maxX) / 2.0, (minY + maxY) / 2.0);
-        }
-
-
-        private static bool IsFinite(double v)
-        {
-            return !(double.IsNaN(v) || double.IsInfinity(v));
-        }
-
-        private static Extents3d InflateExtents(Extents3d extents, double pad)
-        {
-            if (pad <= 0)
-                return extents;
-
-            return new Extents3d(
-                new Point3d(extents.MinPoint.X - pad, extents.MinPoint.Y - pad, extents.MinPoint.Z),
-                new Point3d(extents.MaxPoint.X + pad, extents.MaxPoint.Y + pad, extents.MaxPoint.Z));
-        }
-
-        private static int CountIntersectingDispositionLinework(
-            Extents3d labelExtents,
-            List<DispositionInfo> dispositions,
-            DispositionInfo currentDisposition)
-        {
-            if (dispositions == null || dispositions.Count == 0)
-                return 0;
-
-            int count = 0;
-            foreach (var disposition in dispositions)
-            {
-                if (disposition?.Polyline == null)
-                    continue;
-
-                if (currentDisposition != null)
-                {
-                    if (ReferenceEquals(disposition, currentDisposition))
-                        continue;
-
-                    if (!disposition.ObjectId.IsNull &&
-                        !currentDisposition.ObjectId.IsNull &&
-                        disposition.ObjectId == currentDisposition.ObjectId)
-                    {
-                        continue;
-                    }
-                }
-
-                if (!GeometryUtils.ExtentsIntersect(labelExtents, disposition.Bounds))
-                    continue;
-
-                if (RectangleIntersectsPolyline(labelExtents, disposition.Polyline))
-                    count++;
-            }
-
-            return count;
-        }
-
-        private static int CountNearbyPlacedLabels(List<Extents3d> placedLabelExtents, Extents3d candidate, double radius)
-        {
-            if (placedLabelExtents == null || placedLabelExtents.Count == 0 || radius <= 0)
-                return 0;
-
-            var expanded = InflateExtents(candidate, radius);
-            int count = 0;
-            foreach (var ext in placedLabelExtents)
-            {
-                if (GeometryUtils.ExtentsIntersect(expanded, ext))
-                    count++;
-            }
-
-            return count;
-        }
-
-        private static bool IsPointInRectBounds(Point2d point, Point2d min, Point2d max)
-        {
-            return point.X >= min.X &&
-                   point.X <= max.X &&
-                   point.Y >= min.Y &&
-                   point.Y <= max.Y;
-        }
-
-        private static bool RectangleIntersectsPolyline(Extents3d rect, Polyline polyline)
-        {
-            if (polyline == null || polyline.NumberOfVertices < 2)
-                return false;
-
-            var min = rect.MinPoint;
-            var max = rect.MaxPoint;
-            var rmin = new Point2d(min.X, min.Y);
-            var rmax = new Point2d(max.X, max.Y);
-            var rbl = new Point2d(rmin.X, rmin.Y);
-            var rbr = new Point2d(rmax.X, rmin.Y);
-            var rtr = new Point2d(rmax.X, rmax.Y);
-            var rtl = new Point2d(rmin.X, rmax.Y);
-
-            int last = polyline.Closed ? polyline.NumberOfVertices : polyline.NumberOfVertices - 1;
-            for (int i = 0; i < last; i++)
-            {
-                int j = (i + 1) % polyline.NumberOfVertices;
-                var a = polyline.GetPoint2dAt(i);
-                var b = polyline.GetPoint2dAt(j);
-
-                if (IsPointInRectBounds(a, rmin, rmax) || IsPointInRectBounds(b, rmin, rmax))
-                    return true;
-
-                if (SegmentsIntersect(a, b, rbl, rbr) ||
-                    SegmentsIntersect(a, b, rbr, rtr) ||
-                    SegmentsIntersect(a, b, rtr, rtl) ||
-                    SegmentsIntersect(a, b, rtl, rbl))
-                    return true;
-            }
-
-            // Rectangle center inside closed disposition still means the label sits on/in that polygon.
-            if (polyline.Closed)
-            {
-                var center = new Point2d((rmin.X + rmax.X) * 0.5, (rmin.Y + rmax.Y) * 0.5);
-                if (GeometryUtils.IsPointInsidePolyline(polyline, center))
-                    return true;
-            }
-
-            return false;
-        }
-
-        private static bool SegmentsIntersect(Point2d p1, Point2d p2, Point2d q1, Point2d q2)
-        {
-            var d1 = CrossForSegmentIntersection(p1, p2, q1);
-            var d2 = CrossForSegmentIntersection(p1, p2, q2);
-            var d3 = CrossForSegmentIntersection(q1, q2, p1);
-            var d4 = CrossForSegmentIntersection(q1, q2, p2);
-
-            if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
-                ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0)))
-                return true;
-
-            if (Math.Abs(d1) <= 1e-9 && IsPointOnSegmentForIntersection(p1, p2, q1)) return true;
-            if (Math.Abs(d2) <= 1e-9 && IsPointOnSegmentForIntersection(p1, p2, q2)) return true;
-            if (Math.Abs(d3) <= 1e-9 && IsPointOnSegmentForIntersection(q1, q2, p1)) return true;
-            if (Math.Abs(d4) <= 1e-9 && IsPointOnSegmentForIntersection(q1, q2, p2)) return true;
-
-            return false;
-        }
-
-        private static Point2d ChooseLeaderTargetAvoidingOtherDispositions(
-            Point2d preferred,
-            Point2d intersectionTarget,
-            Polyline quarter,
-            Polyline targetCorridor,
-            DispositionInfo current,
-            List<DispositionInfo> allDispositions)
-        {
-            var candidates = new List<Point2d>();
-            AddUniqueCandidatePoint(candidates, preferred);
-            AddUniqueCandidatePoint(candidates, intersectionTarget);
-
-            var safe = GeometryUtils.GetSafeInteriorPoint(targetCorridor);
-            AddUniqueCandidatePoint(candidates, safe);
-
-            if (GeometryUtils.TryGetCrossSectionMidpoint(targetCorridor, intersectionTarget, out var mid, out _))
-                AddUniqueCandidatePoint(candidates, mid);
-
-            if (GeometryUtils.TryFindPointInsideBoth(quarter, targetCorridor, out var overlapPoint))
-                AddUniqueCandidatePoint(candidates, overlapPoint);
-
-            foreach (var p in candidates)
-            {
-                if (!GeometryUtils.IsPointInsidePolyline(quarter, p) || !GeometryUtils.IsPointInsidePolyline(targetCorridor, p))
-                    continue;
-                if (!IsPointInsideAnyOtherDisposition(p, current, allDispositions))
-                    return p;
-            }
-
-            foreach (var p in candidates)
-            {
-                if (GeometryUtils.IsPointInsidePolyline(quarter, p) && GeometryUtils.IsPointInsidePolyline(targetCorridor, p))
-                    return p;
-            }
-
-            return preferred;
-        }
-
-        private static double CrossForSegmentIntersection(Point2d a, Point2d b, Point2d c)
-        {
-            return ((b.X - a.X) * (c.Y - a.Y)) - ((b.Y - a.Y) * (c.X - a.X));
-        }
-
-        private static bool IsPointOnSegmentForIntersection(Point2d a, Point2d b, Point2d p)
-        {
-            return p.X >= Math.Min(a.X, b.X) - 1e-9 &&
-                   p.X <= Math.Max(a.X, b.X) + 1e-9 &&
-                   p.Y >= Math.Min(a.Y, b.Y) - 1e-9 &&
-                   p.Y <= Math.Max(a.Y, b.Y) + 1e-9;
-        }
-
-        private static void AddUniqueCandidatePoint(ICollection<Point2d> candidates, Point2d point)
-        {
-            foreach (var candidate in candidates)
-            {
-                if (Math.Abs(candidate.X - point.X) < 1e-6 &&
-                    Math.Abs(candidate.Y - point.Y) < 1e-6)
-                {
-                    return;
-                }
-            }
-
-            candidates.Add(point);
-        }
-
-        private static bool IsPointInsideAnyOtherDisposition(
-            Point2d point,
-            DispositionInfo current,
-            List<DispositionInfo> allDispositions)
-        {
-            if (allDispositions == null || allDispositions.Count == 0)
-                return false;
-
-            foreach (var other in allDispositions)
-            {
-                if (other == null || ReferenceEquals(other, current))
-                    continue;
-                if (!other.ObjectId.IsNull && other.ObjectId == current.ObjectId)
-                    continue;
-
-                var b = other.Bounds;
-                if (point.X < b.MinPoint.X || point.X > b.MaxPoint.X || point.Y < b.MinPoint.Y || point.Y > b.MaxPoint.Y)
-                    continue;
-
-                if (GeometryUtils.IsPointInsidePolyline(other.Polyline, point))
-                    return true;
-            }
-
-            return false;
-        }
-
-        private static bool TryParseOdDimensionWidth(string raw, out double widthMeters)
-        {
-            widthMeters = 0.0;
-            if (string.IsNullOrWhiteSpace(raw))
-                return false;
-
-            // Examples: "15 M X 2.4", "15.24m", "20 x ..."
-            var match = Regex.Match(raw, @"(?<!\d)(\d+(?:\.\d+)?)\s*(?:M|m)?");
-            if (!match.Success)
-                return false;
-
-            if (!double.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
-                return false;
-
-            if (!IsFinite(parsed) || parsed <= 0)
-                return false;
-
-            widthMeters = parsed;
-            return true;
-        }
-
-        private static string BuildQuarterKey(SectionKey? key, QuarterSelection quarter)
-        {
-            if (!key.HasValue || quarter == QuarterSelection.None)
-            {
-                return string.Empty;
-            }
-
-            var quarterToken = quarter switch
-            {
-                QuarterSelection.NorthWest => "NW",
-                QuarterSelection.NorthEast => "NE",
-                QuarterSelection.SouthWest => "SW",
-                QuarterSelection.SouthEast => "SE",
-                _ => string.Empty
-            };
-
-            if (string.IsNullOrWhiteSpace(quarterToken))
-            {
-                return string.Empty;
-            }
-
-            var sectionKey = key.Value;
-            var meridian = NormalizeMeridianToken(sectionKey.Meridian);
-            var range = NormalizeNumberToken(sectionKey.Range);
-            var township = NormalizeNumberToken(sectionKey.Township);
-            var section = NormalizeNumberToken(sectionKey.Section);
-            return $"{meridian}|{range}|{township}|{section}|{quarterToken}";
-        }
-
-        private static string NormalizeMeridianToken(string token)
-        {
-            if (string.IsNullOrWhiteSpace(token))
-            {
-                return string.Empty;
-            }
-
-            var digits = new string(token.Where(char.IsDigit).ToArray());
-            if (int.TryParse(digits, out var num))
-            {
-                return num.ToString();
-            }
-
-            return token.Trim().ToUpperInvariant();
-        }
-
-        private static string NormalizeNumberToken(string token)
-        {
-            if (string.IsNullOrWhiteSpace(token))
-            {
-                return string.Empty;
-            }
-
-            if (int.TryParse(token.Trim(), out var num))
-            {
-                return num.ToString();
-            }
-
-            return token.Trim().TrimStart('0');
-        }
-
-        private static string NormalizeDispNum(string dispNum)
-        {
-            if (string.IsNullOrWhiteSpace(dispNum))
-            {
-                return string.Empty;
-            }
-
-            var compact = Regex.Replace(dispNum.ToUpperInvariant(), "\\s+", string.Empty);
-            compact = Regex.Replace(compact, "[^A-Z0-9]", string.Empty);
-            if (string.IsNullOrWhiteSpace(compact))
-            {
-                return string.Empty;
-            }
-
-            var prefixMatch = Regex.Match(compact, "^[A-Z]{3}");
-            if (!prefixMatch.Success)
-            {
-                return compact;
-            }
-
-            var prefix = prefixMatch.Value;
-            var suffix = compact.Substring(prefix.Length);
-            if (string.IsNullOrWhiteSpace(suffix))
-            {
-                return prefix;
-            }
-
-            var digits = new string(suffix.Where(char.IsDigit).ToArray());
-            if (digits.Length > 0)
-            {
-                var trimmedDigits = digits.TrimStart('0');
-                if (trimmedDigits.Length == 0)
-                {
-                    trimmedDigits = "0";
-                }
-
-                return prefix + trimmedDigits;
-            }
-
-            return prefix + suffix;
-        }
-        private static string NormalizeDispositionReuseVariant(string? variantKey)
-        {
-            return string.IsNullOrWhiteSpace(variantKey)
-                ? string.Empty
-                : variantKey.Trim().ToUpperInvariant();
-        }
-
-        private static string BuildDispositionReuseKey(string normalizedDispNum, string normalizedVariantKey)
-        {
-            if (string.IsNullOrWhiteSpace(normalizedDispNum))
-            {
-                return string.Empty;
-            }
-
-            if (string.IsNullOrWhiteSpace(normalizedVariantKey))
-            {
-                return normalizedDispNum;
-            }
-
-            return $"{normalizedDispNum}|{normalizedVariantKey}";
-        }
-
-        private static string BuildDispositionIdentity(DispositionInfo disposition)
-        {
-            if (disposition == null)
-            {
-                return string.Empty;
-            }
-
-            var objectToken = disposition.ObjectId.IsNull
-                ? (disposition.DispNumFormatted ?? string.Empty)
-                : disposition.ObjectId.Handle.ToString();
-            var variantToken = NormalizeDispositionReuseVariant(disposition.ReuseVariantKey);
-
-            return string.IsNullOrWhiteSpace(variantToken)
-                ? objectToken
-                : $"{objectToken}|{variantToken}";
-        }
-
-    }
-
-    public sealed class QuarterInfo
-    {
-        public QuarterInfo(Polyline polyline, SectionKey? sectionKey = null, QuarterSelection quarter = QuarterSelection.None)
-        {
-            Polyline = polyline;
-            Bounds = TryGetBounds(polyline, out var bounds)
-                ? bounds
-                : new Extents3d(Point3d.Origin, Point3d.Origin);
-            SectionKey = sectionKey;
-            Quarter = quarter;
-        }
-
-        public Polyline Polyline { get; }
-        public Extents3d Bounds { get; }
-        public SectionKey? SectionKey { get; }
-        public QuarterSelection Quarter { get; }
-
-        private static bool TryGetBounds(Polyline polyline, out Extents3d bounds)
-        {
-            bounds = new Extents3d(Point3d.Origin, Point3d.Origin);
-            if (polyline == null)
-            {
-                return false;
-            }
-
-            try
-            {
-                bounds = polyline.GeometricExtents;
-                return true;
+                var a = dimension.XLine1Point;
+                var b = dimension.XLine2Point;
+                return new Point2d((a.X + b.X) * 0.5, (a.Y + b.Y) * 0.5);
             }
             catch
             {
@@ -2571,197 +1829,59 @@ namespace AtsBackgroundBuilder.Dispositions
 
             try
             {
-                var count = polyline.NumberOfVertices;
-                if (count <= 0)
-                {
-                    return false;
-                }
-
-                var minX = double.PositiveInfinity;
-                var minY = double.PositiveInfinity;
-                var maxX = double.NegativeInfinity;
-                var maxY = double.NegativeInfinity;
-                var found = false;
-                for (var i = 0; i < count; i++)
-                {
-                    Point2d vertex;
-                    try
-                    {
-                        vertex = polyline.GetPoint2dAt(i);
-                    }
-                    catch
-                    {
-                        continue;
-                    }
-
-                    if (vertex.X < minX) minX = vertex.X;
-                    if (vertex.Y < minY) minY = vertex.Y;
-                    if (vertex.X > maxX) maxX = vertex.X;
-                    if (vertex.Y > maxY) maxY = vertex.Y;
-                    found = true;
-                }
-
-                if (!found ||
-                    double.IsNaN(minX) || double.IsInfinity(minX) ||
-                    double.IsNaN(minY) || double.IsInfinity(minY) ||
-                    double.IsNaN(maxX) || double.IsInfinity(maxX) ||
-                    double.IsNaN(maxY) || double.IsInfinity(maxY))
-                {
-                    return false;
-                }
-
-                bounds = new Extents3d(
-                    new Point3d(minX, minY, 0.0),
-                    new Point3d(maxX, maxY, 0.0));
-                return true;
+                var textPos = dimension.TextPosition;
+                return new Point2d(textPos.X, textPos.Y);
             }
             catch
             {
-                return false;
+                return new Point2d(0.0, 0.0);
             }
         }
-    }
 
-    public sealed class DispositionInfo
-    {
-        public const string ReuseVariantMixedAccessRoad = "MIXED_ACCESS_ROAD";
-        public const string ReuseVariantMixedWellsitePad = "MIXED_WELLSITE_PAD";
-
-        public DispositionInfo(ObjectId objectId, Polyline polyline, string labelText, string layerName, string textLayerName, Point2d safePoint)
+        private static List<PlsrQuarterMatchPoint> GetDimensionQuarterTestPoints(AlignedDimension dimension, Point2d anchorLocation)
         {
-            ObjectId = objectId;
-            Polyline = polyline;
-            Bounds = TryGetBounds(polyline, out var bounds)
-                ? bounds
-                : new Extents3d(Point3d.Origin, Point3d.Origin);
-            LabelText = labelText;
-            LayerName = layerName;
-            TextLayerName = textLayerName;
-            SafePoint = safePoint;
-        }
+            PlsrQuarterMatchPoint? textPoint = null;
+            PlsrQuarterMatchPoint? firstExtensionPoint = null;
+            PlsrQuarterMatchPoint? secondExtensionPoint = null;
 
-        public ObjectId ObjectId { get; }
-        public Polyline Polyline { get; }
-        public Extents3d Bounds { get; }
-
-        public string LabelText { get; }
-        public string LayerName { get; }
-        public string TextLayerName { get; }
-        public Point2d SafePoint { get; }
-        public int TextColorIndex { get; set; } = 256;
-        public bool RequiresWidth { get; set; }
-        public string MappedCompany { get; set; } = string.Empty;
-        public string MappedPurpose { get; set; } = string.Empty;
-        public string PurposeTitleCase { get; set; } = string.Empty;
-        public string DispNumFormatted { get; set; } = string.Empty;
-        public string OdDimension { get; set; } = string.Empty;
-        public string OdVerDateRaw { get; set; } = string.Empty;
-        public string OdEffDateRaw { get; set; } = string.Empty;
-        public string ReuseVariantKey { get; set; } = string.Empty;
-        public bool ShouldAddExpiredMarker { get; set; }
-
-        // For width-required purposes, allow label to be placed in the quarter (not necessarily in the disposition)
-        public bool AllowLabelOutsideDisposition { get; set; }
-
-        // Draw leader entities (circle + line) from target to label
-        public bool AddLeader { get; set; }
-
-        private static bool TryGetBounds(Polyline polyline, out Extents3d bounds)
-        {
-            bounds = new Extents3d(Point3d.Origin, Point3d.Origin);
-            if (polyline == null)
+            try
             {
-                return false;
+                var textPos = dimension.TextPosition;
+                textPoint = new PlsrQuarterMatchPoint(textPos.X, textPos.Y);
+            }
+            catch
+            {
+                // ignore
             }
 
             try
             {
-                bounds = polyline.GeometricExtents;
-                return true;
+                var a = dimension.XLine1Point;
+                var b = dimension.XLine2Point;
+                firstExtensionPoint = new PlsrQuarterMatchPoint(a.X, a.Y);
+                secondExtensionPoint = new PlsrQuarterMatchPoint(b.X, b.Y);
             }
             catch
             {
-                // fallback below
+                // ignore
             }
 
-            try
+            var points = PlsrQuarterPointBuilder.BuildDimensionPoints(
+                new PlsrQuarterMatchPoint(anchorLocation.X, anchorLocation.Y),
+                textPoint,
+                firstExtensionPoint,
+                secondExtensionPoint);
+
+            foreach (var extentPoint in GetEntityExtentQuarterTestPoints(dimension, anchorLocation))
             {
-                var count = polyline.NumberOfVertices;
-                if (count <= 0)
-                {
-                    return false;
-                }
-
-                var minX = double.PositiveInfinity;
-                var minY = double.PositiveInfinity;
-                var maxX = double.NegativeInfinity;
-                var maxY = double.NegativeInfinity;
-                var found = false;
-                for (var i = 0; i < count; i++)
-                {
-                    Point2d vertex;
-                    try
-                    {
-                        vertex = polyline.GetPoint2dAt(i);
-                    }
-                    catch
-                    {
-                        continue;
-                    }
-
-                    if (vertex.X < minX) minX = vertex.X;
-                    if (vertex.Y < minY) minY = vertex.Y;
-                    if (vertex.X > maxX) maxX = vertex.X;
-                    if (vertex.Y > maxY) maxY = vertex.Y;
-                    found = true;
-                }
-
-                if (!found ||
-                    double.IsNaN(minX) || double.IsInfinity(minX) ||
-                    double.IsNaN(minY) || double.IsInfinity(minY) ||
-                    double.IsNaN(maxX) || double.IsInfinity(maxX) ||
-                    double.IsNaN(maxY) || double.IsInfinity(maxY))
-                {
-                    return false;
-                }
-
-                bounds = new Extents3d(
-                    new Point3d(minX, minY, 0.0),
-                    new Point3d(maxX, maxY, 0.0));
-                return true;
+                AddQuarterTestPoint(points, extentPoint);
             }
-            catch
-            {
-                return false;
-            }
+
+            return points;
         }
-    }
+```
 
-    public sealed class PlacementResult
-    {
-        public int LabelsPlaced { get; set; }
-        public int SkippedNoLayerMapping { get; set; }
-        public int SkippedNoIntersection { get; set; }
-        public int OverlapForced { get; set; }
-        public int MultiQuarterProcessed { get; set; }
-    }
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+End note
+--------
+If this file drifts again, regenerate it from the live code blocks above rather than patching an older version.
+This reference is intended to track the current implementation only.

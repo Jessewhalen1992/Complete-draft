@@ -1654,7 +1654,7 @@
 ## Review (Section 11 NW Snap Over-Drift From Raw Seed, 2026-02-26)
 
 - Updated `Sections/Plugin.Sections.SectionDrawingLsd.cs`:
-  - Added raw-lock stage for blind `NW` from apparent westÃƒâ€”north intersection with explicit diagnostics:
+  - Added raw-lock stage for blind `NW` from apparent west????????????north intersection with explicit diagnostics:
     - `VERIFY-QTR-NW-NW-RAW`
     - `VERIFY-QTR-NW-NW-RAWLOCK`
   - Blind `NW-NW-SNAP` now only applies when candidate is `priority<=0` and movement is within local cap:
@@ -3408,7 +3408,7 @@
     - `py -m ats_viewer --sections "9-65-3-W6" --zone auto --debug --road-width-targets "20.11,30.17" --out ".\out-debug\sec-9-65-3-w6-after"`
   - Note: `ats_viewer` validates index/edge-pair inference and does not execute ATS AutoCAD quarter-corner heuristics; before/after viewer artifacts are unchanged and serve as secondary scope sanity only.
 - Iteration after user retest reported "no changes":
-  - Added stricter non-correction NE handling so `N.E. N.E.` uses strict eastÃƒâ€”north segment intersection (`VERIFY-QTR-NE-NE-STRICT`) instead of apparent infinite-line intersection.
+  - Added stricter non-correction NE handling so `N.E. N.E.` uses strict east????????????north segment intersection (`VERIFY-QTR-NE-NE-STRICT`) instead of apparent infinite-line intersection.
   - Enabled quarter verify logging for section 9 to expose the exact NE authority path during user retest.
   - Rebuilt and redeployed `AtsBackgroundBuilder.dll` + `.pdb` to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows`.
 
@@ -3603,7 +3603,7 @@
 
 - Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`:
   - added `TryResolvePreferredQuarterViewEastBoundary(...)`.
-  - moved the callsiteÃ¯Â¿Â½s inline east mid-U calculation into the helper while reusing existing `TryResolvePreferredQuarterViewEastBoundarySegment(...)` behavior.
+  - moved the callsite????????????s inline east mid-U calculation into the helper while reusing existing `TryResolvePreferredQuarterViewEastBoundarySegment(...)` behavior.
   - preserved assignment/logging behavior at the callsite (now consumes `preferredEastMidU`).
 - Verification:
   - `$env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'; $env:HOME = $env:DOTNET_CLI_HOME; dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore /m:1 -v:n`
@@ -4617,7 +4617,7 @@
   - added mixed-purpose detection (`IsWellSiteAndAccessRoadPurpose(...)`).
   - added geometry classification (`TryClassifyMixedWellsiteAccessRoadAsAccessRoad(...)`) using:
     - acceptable-width snap proximity,
-    - compactness (`4pA/P�`) and extents aspect ratio,
+    - compactness (`4pA/P???`) and extents aspect ratio,
     - representative-width guard (`<= 40m`).
   - for mixed purposes:
     - road-like polygons are labeled as `ACCESS ROAD` and forced to width-label path,
@@ -4837,3 +4837,46 @@
 - Hardened `ShapefileImporter` so large scoped imports now use the first filtered subset directly when it already fits within one safe import file; chunking is still used only when the filtered subset exceeds the chunk threshold or scoped subset prep fails.
 - `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal` succeeded.
 - `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal` passed.
+# Follow-up (Disposition Label Placement Collision + Aligned Dimension Positioning, 2026-03-07)
+
+- [x] Inspect current placement flow, aligned-dimension text positioning, and PLSR label-anchor assumptions.
+- [x] Add a shared label collision index seeded from existing label text footprints in model space.
+- [x] Make candidate scoring overlap-aware for MText/MLeader and finalize expired text before scoring.
+- [x] Rework aligned-dimension creation to preserve along-span motion, search normal lanes, and fall back cleanly when no legal lane exists.
+- [x] Rebuild the project, verify the changed PLSR quarter-anchor behavior remains anchor-based, and document results here.
+
+## Review (Disposition Label Placement Collision + Aligned Dimension Positioning, 2026-03-07)
+
+- Updated source:
+  - `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`
+    - `PlaceLabels(...)` now builds placement requests, seeds one shared label collision index from existing model-space label text footprints, sorts constrained requests first, and reuses that same collision state for newly placed labels.
+    - `CreateAlignedDimensionLabel(...)` now preserves both along-span and normal components of `labelPoint`, searches multiple normal lanes, sets `TextPosition` explicitly, and returns `null` when no non-forced lane works so caller fallback can engage.
+    - `CreateLabelEntity(...)` now uses try/fallback behavior: aligned dimension -> leader (when leaders are enabled) -> plain `MText`.
+    - `GetCandidateLabelPoints(...)` now accepts final label text plus the shared collision index and ranks `MText` / `MLeader` candidates by overlap-aware text boxes instead of only proximity/clearance.
+    - collision tests now use estimated text-content boxes for `MText`, `MLeader`, and aligned-dimension text, not whole-entity extents.
+- PLSR safeguard:
+  - quarter assignment logic remains in `Plugin.Dispositions.LabelingPlsr.cs` and still anchors aligned dimensions by extension-line midpoint via `GetDimensionAnchorPoint(...)`, with text/extents only used as supplemental touch evidence. No quarter-assignment logic was changed.
+- Verification:
+  - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v:minimal` succeeded.
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal` passed (`Decision tests passed.`).
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal` still failed only in the post-build copy target because `build\net8.0-windows\AtsBackgroundBuilder.dll` is locked by another process.
+  - NuGet vulnerability metadata remained unavailable in this environment (`NU1900` against `https://api.nuget.org/v3/index.json`).
+
+# Follow-up (Refresh Disposition Label Placement Reference Map, 2026-03-07)
+
+- [x] Re-read the updated disposition label placement and PLSR anchor code paths.
+- [x] Rewrite the reference file so it reflects current code only, including the new collision-aware placement and aligned-dimension fallback flow.
+- [x] Remove stale pre-refactor notes/excerpts and verify the refreshed reference file matches the live source.
+
+## Review (Refresh Disposition Label Placement Reference Map, 2026-03-07)
+
+- Updated file:
+  - `docs/reference/DISPOSITION_LABEL_PLACEMENT_SOURCE_MAP.txt`
+    - replaced the older mixed source map with a current-only reference tied to the live post-refactor `LabelPlacer.cs` code
+    - refreshed the entry-point list, current rules, cleanup note, and PLSR safeguard note
+    - replaced stale excerpts with current blocks for `PlaceLabels(...)`, `CreateLabelEntity(...)`, `CreateAlignedDimensionLabel(...)`, `CreateLeader(...)`, `CreateLabel(...)`, collision seeding helpers, text-box helpers, candidate ranking helpers, and the current PLSR aligned-dimension anchor logic
+- Verification:
+  - checked the rewritten file head/tail to confirm the new sections and code fences rendered cleanly
+  - verified the file now references the current live entry points from `LabelPlacer.cs`, `Plugin.cs`, and `Plugin.Dispositions.LabelingPlsr.cs`
+  - verified the old pre-refactor map content is no longer present as the file was rewritten wholesale rather than patched in place
+
