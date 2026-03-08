@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using AtsBackgroundBuilder.Core;
@@ -54,6 +55,19 @@ namespace AtsBackgroundBuilder.Dispositions
             }
         }
 
+        private readonly struct DimensionTextCandidate
+        {
+            public DimensionTextCandidate(Point2d textPoint, double dimLineOffset, double score)
+            {
+                TextPoint = textPoint;
+                DimLineOffset = dimLineOffset;
+                Score = score;
+            }
+
+            public Point2d TextPoint { get; }
+            public double DimLineOffset { get; }
+            public double Score { get; }
+        }
         private sealed class LabelCollisionIndex
         {
             private readonly List<Aabb2d> _boxes = new List<Aabb2d>();
@@ -118,6 +132,7 @@ namespace AtsBackgroundBuilder.Dispositions
                 string quarterKey,
                 DispositionInfo disposition,
                 Polyline? intersectionPiece,
+                Point2d measurementTarget,
                 Point2d searchTarget,
                 Point2d leaderTarget,
                 string labelText,
@@ -138,6 +153,7 @@ namespace AtsBackgroundBuilder.Dispositions
                 QuarterKey = quarterKey;
                 Disposition = disposition;
                 IntersectionPiece = intersectionPiece;
+                MeasurementTarget = measurementTarget;
                 SearchTarget = searchTarget;
                 LeaderTarget = leaderTarget;
                 LabelText = labelText;
@@ -159,6 +175,7 @@ namespace AtsBackgroundBuilder.Dispositions
             public string QuarterKey { get; }
             public DispositionInfo Disposition { get; }
             public Polyline? IntersectionPiece { get; }
+            public Point2d MeasurementTarget { get; }
             public Point2d SearchTarget { get; }
             public Point2d LeaderTarget { get; }
             public string LabelText { get; }
@@ -290,6 +307,7 @@ namespace AtsBackgroundBuilder.Dispositions
                                 var labelText = disposition.LabelText;
                                 var textColorIndex = disposition.TextColorIndex;
                                 var measuredWidth = 0.0;
+                                var measurementTarget = intersectionTarget;
                                 var searchTarget = intersectionTarget;
                                 var leaderTarget = intersectionTarget;
 
@@ -306,6 +324,7 @@ namespace AtsBackgroundBuilder.Dispositions
                                             _config.TextHeight,
                                             out var padTarget))
                                     {
+                                        measurementTarget = padTarget;
                                         searchTarget = padTarget;
                                         leaderTarget = padTarget;
                                     }
@@ -371,37 +390,49 @@ namespace AtsBackgroundBuilder.Dispositions
                                         textColorIndex = (matches && !usedOdFallbackWidth) ? 256 : 3;
                                     }
 
-                                    var leaderCandidate = measurement.MedianCenter;
-                                    if (!GeometryUtils.IsPointInsidePolyline(quarter.Polyline, leaderCandidate) ||
-                                        !GeometryUtils.IsPointInsidePolyline(polyForWidth, leaderCandidate))
+                                    measurementTarget = measurement.MedianCenter;
+                                    if (!GeometryUtils.IsPointInsidePolyline(quarter.Polyline, measurementTarget) ||
+                                        !GeometryUtils.IsPointInsidePolyline(polyForWidth, measurementTarget))
                                     {
-                                        leaderCandidate = intersectionTarget;
+                                        measurementTarget = intersectionTarget;
                                     }
 
-                                    if (GeometryUtils.TryGetCrossSectionMidpoint(polyForWidth, leaderCandidate, out var mid, out _))
+                                    if (GeometryUtils.TryGetCrossSectionMidpoint(polyForWidth, measurementTarget, out var primaryMid, out _) &&
+                                        GeometryUtils.IsPointInsidePolyline(quarter.Polyline, primaryMid) &&
+                                        GeometryUtils.IsPointInsidePolyline(polyForWidth, primaryMid))
                                     {
-                                        leaderCandidate = mid;
+                                        measurementTarget = primaryMid;
                                     }
 
-                                    if (!GeometryUtils.IsPointInsidePolyline(quarter.Polyline, leaderCandidate) ||
-                                        !GeometryUtils.IsPointInsidePolyline(polyForWidth, leaderCandidate))
+                                    if (!GeometryUtils.IsPointInsidePolyline(quarter.Polyline, measurementTarget) ||
+                                        !GeometryUtils.IsPointInsidePolyline(polyForWidth, measurementTarget))
                                     {
-                                        leaderCandidate = intersectionTarget;
-                                        if (GeometryUtils.TryGetCrossSectionMidpoint(polyForWidth, leaderCandidate, out var mid2, out _) &&
-                                            GeometryUtils.IsPointInsidePolyline(quarter.Polyline, mid2) &&
-                                            GeometryUtils.IsPointInsidePolyline(polyForWidth, mid2))
+                                        if (!TryResolveLocalWidthMeasurementTarget(
+                                                quarter.Polyline,
+                                                polyForWidth,
+                                                intersectionTarget,
+                                                measurement.MedianCenter,
+                                                measuredWidth,
+                                                out measurementTarget))
                                         {
-                                            leaderCandidate = mid2;
+                                            measurementTarget = intersectionTarget;
+                                            if (GeometryUtils.TryGetCrossSectionMidpoint(polyForWidth, measurementTarget, out var localMid, out _) &&
+                                                GeometryUtils.IsPointInsidePolyline(quarter.Polyline, localMid) &&
+                                                GeometryUtils.IsPointInsidePolyline(polyForWidth, localMid))
+                                            {
+                                                measurementTarget = localMid;
+                                            }
                                         }
                                     }
 
                                     leaderTarget = ChooseLeaderTargetAvoidingOtherDispositions(
-                                        leaderCandidate,
+                                        measurementTarget,
                                         intersectionTarget,
                                         quarter.Polyline,
                                         polyForWidth,
                                         disposition,
                                         dispositions);
+                                    searchTarget = leaderTarget;
                                 }
 
                                 if (disposition.ShouldAddExpiredMarker)
@@ -434,29 +465,49 @@ namespace AtsBackgroundBuilder.Dispositions
                                 var maxLeaderLength = disposition.AddLeader ? 300.0 : double.PositiveInfinity;
                                 if (_useAlignedDimensions && disposition.RequiresWidth)
                                 {
-                                    maxLeaderLength = Math.Max(45.0, _config.TextHeight * 10.0);
+                                    maxLeaderLength = Math.Max(120.0, _config.TextHeight * 20.0);
                                 }
 
                                 var allowOutsideDisposition = disposition.AllowLabelOutsideDisposition;
                                 if (_useAlignedDimensions && disposition.RequiresWidth)
                                 {
-                                    allowOutsideDisposition = false;
+                                    allowOutsideDisposition = true;
                                 }
 
-                                var isLeaderOrPlainText = !(_useAlignedDimensions && disposition.RequiresWidth);
-                                var candidateCount = GetCandidateLabelPoints(
-                                        quarter.Polyline,
-                                        disposition.Polyline,
-                                        searchTarget,
-                                        allowOutsideDisposition,
-                                        _config.TextHeight,
-                                        maxPoints,
-                                        measuredWidth,
-                                        maxLeaderLength,
-                                        labelText,
-                                        collisions: null,
-                                        isLeaderOrPlainText: false)
-                                    .Count();
+                                var isWidthAligned = _useAlignedDimensions && disposition.RequiresWidth;
+                                var isLeaderOrPlainText = !isWidthAligned;
+                                int candidateCount;
+                                if (isWidthAligned)
+                                {
+                                    candidateCount = GetCandidateDimensionTextPoints(
+                                            quarter.Polyline,
+                                            intersectionPiece ?? disposition.Polyline,
+                                            measurementTarget,
+                                            searchTarget,
+                                            labelText,
+                                            collisions: null,
+                                            allDispositions: dispositions,
+                                            currentDisposition: disposition,
+                                            maxDistance: maxLeaderLength)
+                                        .Count();
+                                }
+                                else
+                                {
+                                    candidateCount = GetCandidateLabelPoints(
+                                            quarter.Polyline,
+                                            disposition.Polyline,
+                                            searchTarget,
+                                            allowOutsideDisposition,
+                                            _config.TextHeight,
+                                            maxPoints,
+                                            measuredWidth,
+                                            maxLeaderLength,
+                                            labelText,
+                                            collisions: null,
+                                            isLeaderOrPlainText: false)
+                                        .Count();
+                                }
+
                                 if (candidateCount == 0 &&
                                     GeometryUtils.IsPointInsidePolyline(quarter.Polyline, searchTarget) &&
                                     GeometryUtils.IsPointInsidePolyline(disposition.Polyline, searchTarget))
@@ -469,6 +520,7 @@ namespace AtsBackgroundBuilder.Dispositions
                                     quarterKey,
                                     disposition,
                                     intersectionPiece,
+                                    measurementTarget,
                                     searchTarget,
                                     leaderTarget,
                                     labelText,
@@ -517,19 +569,54 @@ namespace AtsBackgroundBuilder.Dispositions
                             continue;
                         }
 
-                        var candidates = GetCandidateLabelPoints(
-                                request.Quarter.Polyline,
-                                request.Disposition.Polyline,
-                                request.SearchTarget,
-                                request.AllowOutsideDisposition,
-                                _config.TextHeight,
-                                request.MaxPoints,
-                                request.MeasuredWidth,
-                                request.MaxLeaderLength,
-                                request.LabelText,
-                                collisionIndex,
-                                request.IsLeaderOrPlainText)
-                            .ToList();
+                        var isWidthAligned = _useAlignedDimensions && request.Disposition.RequiresWidth;
+                        List<Point2d> candidates;
+                        List<DimensionTextCandidate>? dimCandidates = null;
+                        var widthSource = request.IntersectionPiece ?? request.Disposition.Polyline;
+                        var dimText = string.Empty;
+                        var haveDimSpan = false;
+                        var dimSpanUnit = default(Vector2d);
+
+                        if (isWidthAligned)
+                        {
+                            dimCandidates = GetCandidateDimensionTextPoints(
+                                    request.Quarter.Polyline,
+                                    widthSource,
+                                    request.MeasurementTarget,
+                                    request.SearchTarget,
+                                    request.LabelText,
+                                    collisionIndex,
+                                    dispositions,
+                                    request.Disposition,
+                                    request.MaxLeaderLength)
+                                .ToList();
+                            candidates = dimCandidates.Select(x => x.TextPoint).ToList();
+                            dimText = ConvertLabelTextForDimension(request.LabelText);
+                            haveDimSpan = TryGetDimensionSpanGeometry(
+                                widthSource,
+                                request.MeasurementTarget,
+                                out _,
+                                out _,
+                                out _,
+                                out dimSpanUnit,
+                                out _);
+                        }
+                        else
+                        {
+                            candidates = GetCandidateLabelPoints(
+                                    request.Quarter.Polyline,
+                                    request.Disposition.Polyline,
+                                    request.SearchTarget,
+                                    request.AllowOutsideDisposition,
+                                    _config.TextHeight,
+                                    request.MaxPoints,
+                                    request.MeasuredWidth,
+                                    request.MaxLeaderLength,
+                                    request.LabelText,
+                                    collisionIndex,
+                                    request.IsLeaderOrPlainText)
+                                .ToList();
+                        }
 
                         if (candidates.Count == 0)
                         {
@@ -548,23 +635,54 @@ namespace AtsBackgroundBuilder.Dispositions
                         var bestFallbackScore = double.MaxValue;
                         var scoreTextHeight = ResolveLabelTextHeight(0.0);
 
-                        foreach (var pt in candidates)
+                        for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
                         {
-                            var scoreBox = EstimateCenteredTextBox(
-                                pt,
-                                request.LabelText,
-                                scoreTextHeight,
-                                scoreTextHeight * 0.30);
-                            var overlapArea = collisionIndex.OverlapArea(scoreBox);
-                            var crowdednessCount = collisionIndex.CountNearby(scoreBox, scoreTextHeight * 3.0);
-                            var lineworkOverlapCount = CountIntersectingDispositionLinework(
-                                scoreBox.ToExtents3d(),
-                                dispositions,
-                                request.Disposition);
-                            var fallbackScore = (overlapArea * 1000000.0) +
+                            var pt = candidates[candidateIndex];
+                            Aabb2d scoreBox;
+                            double overlapArea;
+                            int crowdednessCount;
+                            int lineworkOverlapCount;
+                            double fallbackScore;
+
+                            if (isWidthAligned && haveDimSpan)
+                            {
+                                scoreBox = EstimateDimensionTextBox(
+                                    pt,
+                                    dimText,
+                                    scoreTextHeight,
+                                    dimSpanUnit,
+                                    scoreTextHeight * 0.35);
+                                overlapArea = collisionIndex.OverlapArea(scoreBox);
+                                crowdednessCount = collisionIndex.CountNearby(scoreBox, scoreTextHeight * 3.0);
+                                lineworkOverlapCount = CountIntersectingDispositionLinework(
+                                    scoreBox.ToExtents3d(),
+                                    dispositions,
+                                    request.Disposition);
+                                fallbackScore = dimCandidates != null && candidateIndex < dimCandidates.Count
+                                    ? dimCandidates[candidateIndex].Score
+                                    : (overlapArea * 1000000.0) +
+                                      (lineworkOverlapCount * 10000.0) +
+                                      (crowdednessCount * 500.0) +
+                                      pt.GetDistanceTo(request.SearchTarget);
+                            }
+                            else
+                            {
+                                scoreBox = EstimateCenteredTextBox(
+                                    pt,
+                                    request.LabelText,
+                                    scoreTextHeight,
+                                    scoreTextHeight * 0.30);
+                                overlapArea = collisionIndex.OverlapArea(scoreBox);
+                                crowdednessCount = collisionIndex.CountNearby(scoreBox, scoreTextHeight * 3.0);
+                                lineworkOverlapCount = CountIntersectingDispositionLinework(
+                                    scoreBox.ToExtents3d(),
+                                    dispositions,
+                                    request.Disposition);
+                                fallbackScore = (overlapArea * 1000000.0) +
                                                 (lineworkOverlapCount * 1000.0) +
                                                 (crowdednessCount * 200.0) +
                                                 pt.GetDistanceTo(request.SearchTarget);
+                            }
 
                             if (fallbackScore < bestFallbackScore)
                             {
@@ -572,18 +690,20 @@ namespace AtsBackgroundBuilder.Dispositions
                                 bestFallback = pt;
                             }
 
-                            if (request.IsLeaderOrPlainText &&
-                                (overlapArea > 0.0 || lineworkOverlapCount > 0))
+                            if (overlapArea > 0.0 || lineworkOverlapCount > 0)
                             {
                                 continue;
                             }
 
+                            var creationTarget = isWidthAligned ? request.MeasurementTarget : request.LeaderTarget;
                             var created = CreateLabelEntity(
                                 transaction,
                                 modelSpace,
-                                request.LeaderTarget,
+                                request.Quarter.Polyline,
+                                dispositions,
+                                creationTarget,
                                 pt,
-                                request.IntersectionPiece ?? request.Disposition.Polyline,
+                                widthSource,
                                 request.Disposition,
                                 request.LabelText,
                                 request.TextColorIndex,
@@ -606,12 +726,15 @@ namespace AtsBackgroundBuilder.Dispositions
 
                         if (!placed && _config.PlaceWhenOverlapFails && candidates.Count > 0)
                         {
+                            var creationTarget = isWidthAligned ? request.MeasurementTarget : request.LeaderTarget;
                             var forced = CreateLabelEntity(
                                 transaction,
                                 modelSpace,
-                                request.LeaderTarget,
+                                request.Quarter.Polyline,
+                                dispositions,
+                                creationTarget,
                                 bestFallback,
-                                request.IntersectionPiece ?? request.Disposition.Polyline,
+                                widthSource,
                                 request.Disposition,
                                 request.LabelText,
                                 request.TextColorIndex,
@@ -653,6 +776,8 @@ namespace AtsBackgroundBuilder.Dispositions
         private Entity? CreateLabelEntity(
             Transaction tr,
             BlockTableRecord modelSpace,
+            Polyline quarterPolyline,
+            IReadOnlyCollection<DispositionInfo> allDispositions,
             Point2d target,
             Point2d labelPoint,
             Polyline polyForWidth,
@@ -669,6 +794,8 @@ namespace AtsBackgroundBuilder.Dispositions
                 var dimension = CreateAlignedDimensionLabel(
                     tr,
                     modelSpace,
+                    quarterPolyline,
+                    allDispositions,
                     target,
                     labelPoint,
                     polyForWidth,
@@ -739,6 +866,8 @@ namespace AtsBackgroundBuilder.Dispositions
         private AlignedDimension? CreateAlignedDimensionLabel(
             Transaction tr,
             BlockTableRecord modelSpace,
+            Polyline quarterPolyline,
+            IReadOnlyCollection<DispositionInfo> allDispositions,
             Point2d target,
             Point2d labelPoint,
             Polyline polyForWidth,
@@ -749,16 +878,15 @@ namespace AtsBackgroundBuilder.Dispositions
             LabelCollisionIndex? collisions,
             bool allowOverlap = false)
         {
-            Point2d a2d;
-            Point2d b2d;
             var widthSource = polyForWidth ?? disposition.Polyline;
-            var spanTarget = target;
-            if (GeometryUtils.TryGetCrossSectionMidpoint(widthSource, spanTarget, out var midTarget, out _))
-            {
-                spanTarget = midTarget;
-            }
-
-            if (!TryGetPerpendicularSpanAcrossDisposition(widthSource, spanTarget, out a2d, out b2d))
+            if (!TryGetDimensionSpanGeometry(
+                    widthSource,
+                    target,
+                    out var a2d,
+                    out var b2d,
+                    out var mid,
+                    out var spanUnit,
+                    out var normal))
             {
                 return null;
             }
@@ -786,111 +914,92 @@ namespace AtsBackgroundBuilder.Dispositions
                 return null;
             }
 
-            var spanUnit = span / span.Length;
-            var normal = new Vector2d(-spanUnit.Y, spanUnit.X);
-            var mid = new Point2d((a2d.X + b2d.X) * 0.5, (a2d.Y + b2d.Y) * 0.5);
-            var requested = labelPoint - mid;
-            var along = requested.DotProduct(spanUnit);
-            var signedOffset = requested.DotProduct(normal);
+            spanUnit = span / span.Length;
+            normal = new Vector2d(-spanUnit.Y, spanUnit.X);
+            mid = new Point2d((a2d.X + b2d.X) * 0.5, (a2d.Y + b2d.Y) * 0.5);
 
-            var maxAlong = Math.Max(span.Length * 0.45, _config.TextHeight * 2.0);
-            if (along > maxAlong) along = maxAlong;
-            if (along < -maxAlong) along = -maxAlong;
-
-            var maxOffset = Math.Max(_config.TextHeight * 6.0, 25.0);
-            if (signedOffset > maxOffset) signedOffset = maxOffset;
-            if (signedOffset < -maxOffset) signedOffset = -maxOffset;
-            if (Math.Abs(signedOffset) < (_config.TextHeight * 0.75))
+            var textHeight = ResolveLabelTextHeight(0.0);
+            var dimText = ConvertLabelTextForDimension(labelText);
+            var textPoint = labelPoint;
+            var textSignedOffset = (labelPoint - mid).DotProduct(normal);
+            if (!GeometryUtils.IsPointInsidePolyline(quarterPolyline, textPoint))
             {
-                signedOffset = (_config.TextHeight * 1.5) * (signedOffset < 0 ? -1.0 : 1.0);
+                return null;
             }
 
-            var insideMargin = Math.Max(_config.TextHeight * 0.9, 1.0);
-            var laneStep = Math.Max(_config.TextHeight * 1.5, 4.0);
-            var offsetCandidates = new[]
+            var measuredLineGap = Math.Max(textHeight * 0.9, 2.0);
+            if (!HasDimensionTextClearanceFromMeasuredLine(widthSource, textPoint, dimText, textHeight, measuredLineGap))
             {
-                signedOffset,
-                signedOffset + laneStep,
-                signedOffset - laneStep,
-                signedOffset + laneStep * 2.0,
-                signedOffset - laneStep * 2.0,
-                signedOffset + laneStep * 3.0,
-                signedOffset - laneStep * 3.0,
+                return null;
+            }
+
+            var textBox = EstimateDimensionTextBox(
+                textPoint,
+                dimText,
+                textHeight,
+                spanUnit,
+                textHeight * 0.35);
+
+            if (!allowOverlap)
+            {
+                if (collisions != null && collisions.Intersects(textBox))
+                {
+                    return null;
+                }
+
+                if (CountIntersectingDispositionLinework(textBox.ToExtents3d(), allDispositions, disposition) > 0)
+                {
+                    return null;
+                }
+            }
+
+            var dimLineOffset = textSignedOffset;
+            if (TryGetSignedRangeAcrossDisposition(widthSource, mid, normal, out var minS, out var maxS))
+            {
+                var edgeGap = Math.Max(textHeight * 0.75, 2.0);
+                dimLineOffset = textSignedOffset >= 0.0
+                    ? maxS + edgeGap
+                    : minS - edgeGap;
+            }
+
+            var dimLinePoint = new Point3d(
+                mid.X + normal.X * dimLineOffset,
+                mid.Y + normal.Y * dimLineOffset,
+                0.0);
+            var dimension = new AlignedDimension(p1, p2, dimLinePoint, dimText, ObjectId.Null)
+            {
+                Layer = layerName,
+                ColorIndex = colorIndex
             };
 
-            var dimText = ConvertLabelTextForDimension(labelText);
-            var textHeight = ResolveLabelTextHeight(0.0);
-            var triedOffsets = new List<double>();
-
-            foreach (var rawOffset in offsetCandidates)
+            ApplyDimensionStyle(tr, dimension, out var dimStyleId);
+            if (!dimStyleId.IsNull)
             {
-                var clampedOffset = ClampSignedOffsetInsideDisposition(widthSource, mid, normal, rawOffset, insideMargin);
-                if (triedOffsets.Any(x => Math.Abs(x - clampedOffset) < 1e-6))
-                {
-                    continue;
-                }
-
-                triedOffsets.Add(clampedOffset);
-
-                var textPoint = new Point2d(
-                    mid.X + spanUnit.X * along + normal.X * clampedOffset,
-                    mid.Y + spanUnit.Y * along + normal.Y * clampedOffset);
-                var textBox = EstimateDimensionTextBox(
-                    textPoint,
-                    dimText,
-                    textHeight,
-                    spanUnit,
-                    textHeight * 0.35);
-                if (collisions != null && !allowOverlap && collisions.Intersects(textBox))
-                {
-                    continue;
-                }
-
-                var dimLinePoint = new Point3d(
-                    mid.X + normal.X * clampedOffset,
-                    mid.Y + normal.Y * clampedOffset,
-                    0.0);
-                var dimension = new AlignedDimension(p1, p2, dimLinePoint, dimText, ObjectId.Null)
-                {
-                    Layer = layerName,
-                    ColorIndex = colorIndex
-                };
-
-                ApplyDimensionStyle(tr, dimension, out var dimStyleId);
-                if (!dimStyleId.IsNull)
-                {
-                    dimension.DimensionStyle = dimStyleId;
-                }
-
-                if (_config.TextHeight > 0)
-                {
-                    dimension.Dimtxt = _config.TextHeight;
-                }
-
-                dimension.DimensionText = dimText;
-
-                modelSpace.AppendEntity(dimension);
-                tr.AddNewlyCreatedDBObject(dimension, true);
-
-                try
-                {
-                    dimension.TextPosition = new Point3d(textPoint.X, textPoint.Y, 0.0);
-                    var usingDefaultTextPosition = dimension.GetType().GetProperty("UsingDefaultTextPosition");
-                    if (usingDefaultTextPosition != null && usingDefaultTextPosition.CanWrite)
-                    {
-                        usingDefaultTextPosition.SetValue(dimension, false, null);
-                    }
-                }
-                catch
-                {
-                    // leave style/default placement if the API does not expose text override
-                }
-
-                collisions?.Add(textBox);
-                return dimension;
+                dimension.DimensionStyle = dimStyleId;
             }
 
-            return null;
+            if (_config.TextHeight > 0)
+            {
+                dimension.Dimtxt = _config.TextHeight;
+            }
+
+            dimension.DimensionText = dimText;
+
+            modelSpace.AppendEntity(dimension);
+            tr.AddNewlyCreatedDBObject(dimension, true);
+
+            try
+            {
+                dimension.TextPosition = new Point3d(textPoint.X, textPoint.Y, 0.0);
+                TrySetUsingDefaultTextPosition(dimension, false);
+            }
+            catch
+            {
+                // leave style/default placement if the API does not expose text override
+            }
+
+            collisions?.Add(textBox);
+            return dimension;
         }
         private static double ClampSignedOffsetInsideDisposition(
             Polyline disposition,
@@ -1358,6 +1467,193 @@ namespace AtsBackgroundBuilder.Dispositions
             }
         }
 
+        internal static void ReapplyAlignedDimensionTextPlacement(AlignedDimension dimension)
+        {
+            if (dimension == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var a = dimension.XLine1Point;
+                var b = dimension.XLine2Point;
+                var span = new Vector2d(b.X - a.X, b.Y - a.Y);
+                var spanLength = span.Length;
+                if (spanLength <= 1e-6)
+                {
+                    return;
+                }
+
+                var spanUnit = span / spanLength;
+                var normal = new Vector2d(-spanUnit.Y, spanUnit.X);
+                var mid = new Point2d((a.X + b.X) * 0.5, (a.Y + b.Y) * 0.5);
+                var dimText = dimension.DimensionText ?? string.Empty;
+                var textHeight = ResolveDimensionTextHeight(dimension);
+                var pad = textHeight * 0.35;
+
+                if (!TryGetDimensionTextPoint(dimension, out var textPoint))
+                {
+                    textPoint = mid;
+                }
+
+                var requested = textPoint - mid;
+                var textAlong = ClampDimensionTextAlongOffset(
+                    requested.DotProduct(spanUnit),
+                    spanLength,
+                    dimText,
+                    textHeight,
+                    pad);
+                var textSignedOffset = requested.DotProduct(normal);
+
+                if (TryGetAlignedDimensionLinePoint(dimension, out var currentDimLinePoint))
+                {
+                    var dimRequest = new Point2d(currentDimLinePoint.X, currentDimLinePoint.Y) - mid;
+                    var dimOffset = dimRequest.DotProduct(normal);
+                    var clampedDimLinePoint = new Point3d(
+                        mid.X + spanUnit.X * textAlong + normal.X * dimOffset,
+                        mid.Y + spanUnit.Y * textAlong + normal.Y * dimOffset,
+                        0.0);
+                    TrySetAlignedDimensionLinePoint(dimension, clampedDimLinePoint);
+                }
+
+                var clampedTextPoint = new Point3d(
+                    mid.X + spanUnit.X * textAlong + normal.X * textSignedOffset,
+                    mid.Y + spanUnit.Y * textAlong + normal.Y * textSignedOffset,
+                    0.0);
+                dimension.TextPosition = clampedTextPoint;
+                TrySetUsingDefaultTextPosition(dimension, false);
+                TryRecomputeAlignedDimensionBlock(dimension);
+                dimension.RecordGraphicsModified(true);
+            }
+            catch
+            {
+                // best effort only
+            }
+        }
+
+        private static double ResolveDimensionTextHeight(Dimension dimension)
+        {
+            if (dimension == null)
+            {
+                return 10.0;
+            }
+
+            try
+            {
+                if (dimension.Dimtxt > 0.0)
+                {
+                    return dimension.Dimtxt;
+                }
+            }
+            catch
+            {
+                // fall through
+            }
+
+            return 10.0;
+        }
+
+        private static bool TryGetAlignedDimensionLinePoint(AlignedDimension dimension, out Point3d dimLinePoint)
+        {
+            dimLinePoint = default;
+            if (dimension == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var property = dimension.GetType().GetProperty("DimLinePoint", BindingFlags.Instance | BindingFlags.Public);
+                if (property != null && property.CanRead)
+                {
+                    var value = property.GetValue(dimension, null);
+                    if (value is Point3d point)
+                    {
+                        dimLinePoint = point;
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // reflection fallback below
+            }
+
+            return false;
+        }
+
+        private static bool TrySetAlignedDimensionLinePoint(AlignedDimension dimension, Point3d dimLinePoint)
+        {
+            if (dimension == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var property = dimension.GetType().GetProperty("DimLinePoint", BindingFlags.Instance | BindingFlags.Public);
+                if (property != null && property.CanWrite)
+                {
+                    property.SetValue(dimension, dimLinePoint, null);
+                    return true;
+                }
+            }
+            catch
+            {
+                // best effort only
+            }
+
+            return false;
+        }
+
+        private static void TrySetUsingDefaultTextPosition(Dimension dimension, bool value)
+        {
+            if (dimension == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var property = dimension.GetType().GetProperty("UsingDefaultTextPosition", BindingFlags.Instance | BindingFlags.Public);
+                if (property != null && property.CanWrite)
+                {
+                    property.SetValue(dimension, value, null);
+                }
+            }
+            catch
+            {
+                // best effort only
+            }
+        }
+
+        private static void TryRecomputeAlignedDimensionBlock(AlignedDimension dimension)
+        {
+            if (dimension == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var method = dimension.GetType().GetMethod(
+                    "RecomputeDimensionBlock",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    null,
+                    new[] { typeof(bool) },
+                    null);
+                if (method != null)
+                {
+                    method.Invoke(dimension, new object[] { true });
+                }
+            }
+            catch
+            {
+                // best effort only
+            }
+        }
+
         private static bool LooksLikeDispositionLabel(string labelText)
         {
             var flattened = ConvertLabelTextForDimension(labelText);
@@ -1475,6 +1771,89 @@ namespace AtsBackgroundBuilder.Dispositions
                 center.Y - halfY,
                 center.X + halfX,
                 center.Y + halfY);
+        }
+
+        private static double EstimateDimensionTextNormalHalfExtent(
+            string text,
+            double textHeight,
+            double pad)
+        {
+            if (textHeight <= 0.0)
+            {
+                textHeight = 10.0;
+            }
+
+            var lines = SplitLabelLines(text);
+            var lineCount = Math.Max(1, lines.Count);
+            var height = lineCount * textHeight * 1.35;
+            return (height * 0.5) + pad;
+        }
+
+        private static double EstimateDimensionTextAlongHalfExtent(
+            string text,
+            double textHeight,
+            double pad)
+        {
+            if (textHeight <= 0.0)
+            {
+                textHeight = 10.0;
+            }
+
+            var lines = SplitLabelLines(text);
+            var maxChars = Math.Max(1, lines.Max(s => Math.Max(1, s.Length)));
+            var width = Math.Max(textHeight * 2.0, maxChars * textHeight * 0.62);
+            return (width * 0.5) + pad;
+        }
+
+        private static double ClampDimensionTextAlongOffset(
+            double requestedAlong,
+            double spanLength,
+            string text,
+            double textHeight,
+            double pad)
+        {
+            if (spanLength <= 1e-6)
+            {
+                return 0.0;
+            }
+
+            var halfTextAlong = EstimateDimensionTextAlongHalfExtent(text, textHeight, pad);
+            var edgeMargin = Math.Max(textHeight * 0.25, 1.0);
+            var maxAlong = Math.Max(0.0, (spanLength * 0.5) - halfTextAlong - edgeMargin);
+            if (maxAlong <= 1e-6)
+            {
+                return 0.0;
+            }
+
+            if (requestedAlong > maxAlong)
+            {
+                return maxAlong;
+            }
+
+            if (requestedAlong < -maxAlong)
+            {
+                return -maxAlong;
+            }
+
+            return requestedAlong;
+        }
+
+        private static bool HasDimensionTextClearanceFromMeasuredLine(
+            Polyline widthSource,
+            Point2d textPoint,
+            string dimText,
+            double textHeight,
+            double extraGap)
+        {
+            if (widthSource == null)
+            {
+                return false;
+            }
+
+            var requiredCenterClearance =
+                EstimateDimensionTextNormalHalfExtent(dimText, textHeight, textHeight * 0.35) + extraGap;
+            var actualClearance = DistanceToPolyline(widthSource, new Point3d(textPoint.X, textPoint.Y, 0.0));
+            return actualClearance >= requiredCenterClearance;
         }
         private void ApplyDimensionStyle(Transaction tr, MText mtext, out ObjectId dimStyleId)
         {
@@ -1674,6 +2053,174 @@ namespace AtsBackgroundBuilder.Dispositions
         }
 
 
+        private static bool TryGetDimensionSpanGeometry(
+            Polyline widthSource,
+            Point2d spanTarget,
+            out Point2d a2d,
+            out Point2d b2d,
+            out Point2d mid,
+            out Vector2d spanUnit,
+            out Vector2d normal)
+        {
+            a2d = default;
+            b2d = default;
+            mid = default;
+            spanUnit = default;
+            normal = default;
+
+            if (widthSource == null)
+            {
+                return false;
+            }
+
+            var refinedTarget = spanTarget;
+            if (GeometryUtils.TryGetCrossSectionMidpoint(widthSource, refinedTarget, out var midTarget, out _))
+            {
+                refinedTarget = midTarget;
+            }
+
+            if (!TryGetPerpendicularSpanAcrossDisposition(widthSource, refinedTarget, out a2d, out b2d))
+            {
+                return false;
+            }
+
+            var span = b2d - a2d;
+            if (span.Length <= 1e-6)
+            {
+                return false;
+            }
+
+            spanUnit = span / span.Length;
+            normal = new Vector2d(-spanUnit.Y, spanUnit.X);
+            mid = new Point2d((a2d.X + b2d.X) * 0.5, (a2d.Y + b2d.Y) * 0.5);
+            return true;
+        }
+
+        private IEnumerable<DimensionTextCandidate> GetCandidateDimensionTextPoints(
+            Polyline quarter,
+            Polyline widthSource,
+            Point2d spanTarget,
+            Point2d seedPoint,
+            string labelText,
+            LabelCollisionIndex? collisions,
+            IReadOnlyCollection<DispositionInfo> allDispositions,
+            DispositionInfo currentDisposition,
+            double maxDistance)
+        {
+            if (!TryGetDimensionSpanGeometry(widthSource, spanTarget, out var a2d, out var b2d, out var mid, out var spanUnit, out var normal))
+            {
+                yield break;
+            }
+
+            var textHeight = ResolveLabelTextHeight(0.0);
+            if (!TryGetSignedRangeAcrossDisposition(widthSource, mid, normal, out var minS, out var maxS))
+            {
+                yield break;
+            }
+
+            double preferredSign = Math.Sign((seedPoint - mid).DotProduct(normal));
+            if (preferredSign == 0.0)
+            {
+                preferredSign = 1.0;
+            }
+
+            var dimText = ConvertLabelTextForDimension(labelText);
+            var measuredLineGap = Math.Max(textHeight * 0.9, 2.0);
+            var outsideCenterClearance =
+                EstimateDimensionTextNormalHalfExtent(dimText, textHeight, textHeight * 0.35) + measuredLineGap;
+            var insideCenterClearance =
+                EstimateDimensionTextNormalHalfExtent(dimText, textHeight, textHeight * 0.35) + Math.Max(textHeight * 0.35, 1.0);
+            var laneStep = Math.Max(textHeight * 1.5, 4.0);
+            var spanLength = a2d.GetDistanceTo(b2d);
+            var alongStep = Math.Max(spanLength * 0.15, textHeight * 2.0);
+            var alongOffsets = new[]
+            {
+                0.0,
+                alongStep,
+                -alongStep,
+                alongStep * 2.0,
+                -alongStep * 2.0,
+                alongStep * 3.0,
+                -alongStep * 3.0
+            };
+
+            IEnumerable<double> BuildOffsets(double edge, double sign)
+            {
+                yield return edge + sign * outsideCenterClearance;
+                yield return edge + sign * (outsideCenterClearance + laneStep);
+                yield return edge + sign * (outsideCenterClearance + laneStep * 2.0);
+                yield return edge + sign * (outsideCenterClearance + laneStep * 3.0);
+                yield return edge - sign * insideCenterClearance;
+                yield return edge - sign * (insideCenterClearance + laneStep);
+                yield return 0.0;
+            }
+
+            var normalOffsets = preferredSign >= 0.0
+                ? BuildOffsets(maxS, +1.0).Concat(BuildOffsets(minS, -1.0))
+                : BuildOffsets(minS, -1.0).Concat(BuildOffsets(maxS, +1.0));
+
+            var ranked = new List<DimensionTextCandidate>();
+
+            foreach (var normalOffset in normalOffsets)
+            {
+                foreach (var along in alongOffsets)
+                {
+                    var textPoint = new Point2d(
+                        mid.X + spanUnit.X * along + normal.X * normalOffset,
+                        mid.Y + spanUnit.Y * along + normal.Y * normalOffset);
+
+                    if (!GeometryUtils.IsPointInsidePolyline(quarter, textPoint))
+                    {
+                        continue;
+                    }
+
+                    if (!IsWithinLeaderLength(mid, textPoint, maxDistance))
+                    {
+                        continue;
+                    }
+
+                    var quarterClearance = DistanceToPolyline(quarter, new Point3d(textPoint.X, textPoint.Y, 0.0));
+                    if (quarterClearance < textHeight * 0.35)
+                    {
+                        continue;
+                    }
+
+                    if (!HasDimensionTextClearanceFromMeasuredLine(widthSource, textPoint, dimText, textHeight, measuredLineGap))
+                    {
+                        continue;
+                    }
+
+                    var textBox = EstimateDimensionTextBox(
+                        textPoint,
+                        dimText,
+                        textHeight,
+                        spanUnit,
+                        textHeight * 0.35);
+
+                    var overlapArea = collisions?.OverlapArea(textBox) ?? 0.0;
+                    var crowdedness = collisions?.CountNearby(textBox, textHeight * 3.0) ?? 0;
+                    var lineworkOverlap = CountIntersectingDispositionLinework(
+                        textBox.ToExtents3d(),
+                        allDispositions,
+                        currentDisposition);
+                    var insideDisposition = GeometryUtils.IsPointInsidePolyline(widthSource, textPoint);
+
+                    var score =
+                        overlapArea * 1000000.0 +
+                        lineworkOverlap * 10000.0 +
+                        crowdedness * 500.0 +
+                        (insideDisposition ? textHeight * 8.0 : 0.0) +
+                        textPoint.GetDistanceTo(mid);
+
+                    ranked.Add(new DimensionTextCandidate(textPoint, normalOffset, score));
+                }
+            }
+
+            foreach (var item in ranked.OrderBy(x => x.Score))
+            {
+                yield return item;
+            }
+        }
         private static IEnumerable<Point2d> GetCandidateLabelPoints(
             Polyline quarter,
             Polyline disposition,
@@ -1898,6 +2445,167 @@ namespace AtsBackgroundBuilder.Dispositions
                    IsFinite(maxY) &&
                    maxX > minX &&
                    maxY > minY;
+        }
+        private static double GetNearestVertexDistance(Polyline polyline, Point2d point)
+        {
+            if (polyline == null || polyline.NumberOfVertices <= 0)
+            {
+                return double.PositiveInfinity;
+            }
+
+            var best = double.PositiveInfinity;
+            for (var i = 0; i < polyline.NumberOfVertices; i++)
+            {
+                var vertex = polyline.GetPoint2dAt(i);
+                var distance = vertex.GetDistanceTo(point);
+                if (distance < best)
+                {
+                    best = distance;
+                }
+            }
+
+            return best;
+        }
+
+        private bool TryResolveLocalWidthMeasurementTarget(
+            Polyline quarter,
+            Polyline corridor,
+            Point2d preferredInsidePoint,
+            Point2d fallbackInsidePoint,
+            double expectedWidth,
+            out Point2d measurementTarget)
+        {
+            measurementTarget = preferredInsidePoint;
+            if (quarter == null || corridor == null)
+            {
+                return false;
+            }
+
+            var bestPoint = measurementTarget;
+            var bestScore = double.MaxValue;
+            var haveBest = false;
+            var preferredVertexClearance = Math.Max(
+                expectedWidth > 1e-6 ? expectedWidth * 0.75 : 0.0,
+                Math.Max(_config.TextHeight * 2.0, 8.0));
+
+            void Consider(Point2d seed, double seedPenalty)
+            {
+                if (!GeometryUtils.IsPointInsidePolyline(quarter, seed) ||
+                    !GeometryUtils.IsPointInsidePolyline(corridor, seed))
+                {
+                    return;
+                }
+
+                if (!GeometryUtils.TryGetCrossSectionMidpoint(corridor, seed, out var mid, out var width))
+                {
+                    return;
+                }
+
+                if (!GeometryUtils.IsPointInsidePolyline(quarter, mid) ||
+                    !GeometryUtils.IsPointInsidePolyline(corridor, mid))
+                {
+                    return;
+                }
+
+                var widthPenalty = expectedWidth > 1e-6
+                    ? Math.Abs(width - expectedWidth) * 20.0
+                    : 0.0;
+                var vertexClearance = GetNearestVertexDistance(corridor, mid);
+                var bendPenalty = vertexClearance < preferredVertexClearance
+                    ? (preferredVertexClearance - vertexClearance) * 60.0
+                    : 0.0;
+                var score = mid.GetDistanceTo(preferredInsidePoint) + widthPenalty + bendPenalty + seedPenalty;
+                if (!haveBest || score < bestScore)
+                {
+                    bestScore = score;
+                    bestPoint = mid;
+                    haveBest = true;
+                }
+            }
+
+            Consider(preferredInsidePoint, 0.0);
+            Consider(fallbackInsidePoint, 5.0);
+
+            try
+            {
+                var safeInterior = GeometryUtils.GetSafeInteriorPoint(corridor);
+                Consider(safeInterior, 20.0);
+            }
+            catch
+            {
+                // ignore safe-point failures
+            }
+
+            double length;
+            try
+            {
+                length = corridor.Length;
+            }
+            catch
+            {
+                length = 0.0;
+            }
+
+            if (length > 1e-6)
+            {
+                var sampleCount = Math.Max(_config.WidthSampleCount * 4, 48);
+                const double probe = 0.5;
+                for (var i = 1; i <= sampleCount; i++)
+                {
+                    var frac = (double)i / (sampleCount + 1);
+                    var dist = frac * length;
+
+                    double param;
+                    Point3d onEdge;
+                    try
+                    {
+                        param = corridor.GetParameterAtDistance(dist);
+                        onEdge = corridor.GetPointAtParameter(param);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    Vector3d derivative;
+                    try
+                    {
+                        derivative = corridor.GetFirstDerivative(param);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    var tangent = new Vector2d(derivative.X, derivative.Y);
+                    if (tangent.Length <= 1e-6)
+                    {
+                        continue;
+                    }
+
+                    var normal = new Vector2d(-tangent.Y, tangent.X).GetNormal();
+                    var plus = new Point2d(onEdge.X + normal.X * probe, onEdge.Y + normal.Y * probe);
+                    var minus = new Point2d(onEdge.X - normal.X * probe, onEdge.Y - normal.Y * probe);
+
+                    if (GeometryUtils.IsPointInsidePolyline(corridor, plus))
+                    {
+                        Consider(plus, 1.0);
+                    }
+
+                    if (GeometryUtils.IsPointInsidePolyline(corridor, minus))
+                    {
+                        Consider(minus, 1.0);
+                    }
+                }
+            }
+
+            if (!haveBest)
+            {
+                return false;
+            }
+
+            measurementTarget = bestPoint;
+            return true;
         }
         private static bool ShouldSkipExistingQuarterLabel(
             Dictionary<string, HashSet<string>>? existingDispNumsByQuarter,
@@ -2160,7 +2868,7 @@ namespace AtsBackgroundBuilder.Dispositions
 
         private static int CountIntersectingDispositionLinework(
             Extents3d labelExtents,
-            List<DispositionInfo> dispositions,
+            IReadOnlyCollection<DispositionInfo> dispositions,
             DispositionInfo currentDisposition)
         {
             if (dispositions == null || dispositions.Count == 0)
@@ -2746,17 +3454,6 @@ namespace AtsBackgroundBuilder.Dispositions
         public int MultiQuarterProcessed { get; set; }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
 
 
 

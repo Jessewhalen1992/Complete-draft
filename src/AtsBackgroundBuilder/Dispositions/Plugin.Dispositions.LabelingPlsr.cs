@@ -4245,6 +4245,14 @@ namespace AtsBackgroundBuilder
 
             if (label.IsDimension)
             {
+                if (tr.GetObject(label.Id, OpenMode.ForWrite) is AlignedDimension alignedDimension)
+                {
+                    alignedDimension.DimensionText = updated;
+                    label.RawContents = updated;
+                    label.Owner = expectedOwner.Trim();
+                    return true;
+                }
+
                 if (tr.GetObject(label.Id, OpenMode.ForWrite) is Dimension dimension)
                 {
                     dimension.DimensionText = updated;
@@ -4296,6 +4304,13 @@ namespace AtsBackgroundBuilder
 
             if (label.IsDimension)
             {
+                if (tr.GetObject(label.Id, OpenMode.ForWrite) is AlignedDimension alignedDimension)
+                {
+                    alignedDimension.DimensionText = updated;
+                    label.RawContents = updated;
+                    return true;
+                }
+
                 if (tr.GetObject(label.Id, OpenMode.ForWrite) is Dimension dimension)
                 {
                     dimension.DimensionText = updated;
@@ -4325,6 +4340,150 @@ namespace AtsBackgroundBuilder
             }
 
             return false;
+        }
+
+        private readonly struct AlignedDimensionPlacementSnapshot
+        {
+            public AlignedDimensionPlacementSnapshot(
+                bool hasTextPosition,
+                Point3d textPosition,
+                bool hasDimLinePoint,
+                Point3d dimLinePoint,
+                bool? usingDefaultTextPosition)
+            {
+                HasTextPosition = hasTextPosition;
+                TextPosition = textPosition;
+                HasDimLinePoint = hasDimLinePoint;
+                DimLinePoint = dimLinePoint;
+                UsingDefaultTextPosition = usingDefaultTextPosition;
+            }
+
+            public bool HasTextPosition { get; }
+            public Point3d TextPosition { get; }
+            public bool HasDimLinePoint { get; }
+            public Point3d DimLinePoint { get; }
+            public bool? UsingDefaultTextPosition { get; }
+        }
+
+        private static AlignedDimensionPlacementSnapshot CaptureAlignedDimensionPlacement(AlignedDimension dimension)
+        {
+            var hasTextPosition = false;
+            var textPosition = default(Point3d);
+            try
+            {
+                textPosition = dimension.TextPosition;
+                hasTextPosition = true;
+            }
+            catch
+            {
+                // best effort only
+            }
+
+            var hasDimLinePoint = false;
+            var dimLinePoint = default(Point3d);
+            try
+            {
+                var property = dimension.GetType().GetProperty("DimLinePoint", BindingFlags.Instance | BindingFlags.Public);
+                if (property != null && property.CanRead && property.GetValue(dimension, null) is Point3d point)
+                {
+                    dimLinePoint = point;
+                    hasDimLinePoint = true;
+                }
+            }
+            catch
+            {
+                // best effort only
+            }
+
+            bool? usingDefaultTextPosition = null;
+            try
+            {
+                var property = dimension.GetType().GetProperty("UsingDefaultTextPosition", BindingFlags.Instance | BindingFlags.Public);
+                if (property != null && property.CanRead && property.PropertyType == typeof(bool))
+                {
+                    var value = property.GetValue(dimension, null);
+                    if (value is bool boolValue)
+                    {
+                        usingDefaultTextPosition = boolValue;
+                    }
+                }
+            }
+            catch
+            {
+                // best effort only
+            }
+
+            return new AlignedDimensionPlacementSnapshot(
+                hasTextPosition,
+                textPosition,
+                hasDimLinePoint,
+                dimLinePoint,
+                usingDefaultTextPosition);
+        }
+
+        private static void RestoreAlignedDimensionPlacement(
+            AlignedDimension dimension,
+            AlignedDimensionPlacementSnapshot placement)
+        {
+            if (dimension == null)
+            {
+                return;
+            }
+
+            try
+            {
+                if (placement.HasDimLinePoint)
+                {
+                    var dimLineProperty = dimension.GetType().GetProperty("DimLinePoint", BindingFlags.Instance | BindingFlags.Public);
+                    if (dimLineProperty != null && dimLineProperty.CanWrite)
+                    {
+                        dimLineProperty.SetValue(dimension, placement.DimLinePoint, null);
+                    }
+                }
+
+                if (placement.HasTextPosition)
+                {
+                    dimension.TextPosition = placement.TextPosition;
+                }
+
+                try
+                {
+                    var property = dimension.GetType().GetProperty("UsingDefaultTextPosition", BindingFlags.Instance | BindingFlags.Public);
+                    if (property != null && property.CanWrite)
+                    {
+                        var value = placement.HasTextPosition ? false : (placement.UsingDefaultTextPosition ?? true);
+                        property.SetValue(dimension, value, null);
+                    }
+                }
+                catch
+                {
+                    // best effort only
+                }
+
+                try
+                {
+                    var recompute = dimension.GetType().GetMethod(
+                        "RecomputeDimensionBlock",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                        null,
+                        new[] { typeof(bool) },
+                        null);
+                    if (recompute != null)
+                    {
+                        recompute.Invoke(dimension, new object[] { true });
+                    }
+                }
+                catch
+                {
+                    // best effort only
+                }
+
+                dimension.RecordGraphicsModified(true);
+            }
+            catch
+            {
+                // best effort only
+            }
         }
 
         private static void WritePlsrLog(Database database, string text, Logger logger)
@@ -4659,3 +4818,11 @@ namespace AtsBackgroundBuilder
         }
     }
 }
+
+
+
+
+
+
+
+

@@ -4880,3 +4880,207 @@
   - verified the file now references the current live entry points from `LabelPlacer.cs`, `Plugin.cs`, and `Plugin.Dispositions.LabelingPlsr.cs`
   - verified the old pre-refactor map content is no longer present as the file was rewritten wholesale rather than patched in place
 
+# Follow-up (Width Label Search Shape + Dim Text Decoupling, 2026-03-07)
+
+- [x] Add a dedicated aligned-dimension text candidate generator instead of reusing the generic spiral search.
+- [x] Route width/aligned labels through that generator in PlaceLabels(...) and widen the search radius / outside-disposition allowance.
+- [x] Decouple aligned-dimension TextPosition from dimLinePoint so width text can live in nearby whitespace.
+- [x] Rebuild, run decision tests, and document the result here.
+
+## Review (Width Label Search Shape + Dim Text Decoupling, 2026-03-07)
+
+- Updated source:
+  - `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`
+    - added `DimensionTextCandidate` plus `GetCandidateDimensionTextPoints(...)` so width labels now search dedicated quarter-contained whitespace lanes around the measured span instead of reusing the generic spiral.
+    - updated `PlaceLabels(...)` so aligned-width requests use the new dimension candidate set, allow text outside the disposition body, widen the search radius, and score/reject candidates with aligned-dimension text boxes plus disposition-linework overlap checks.
+    - updated `CreateAlignedDimensionLabel(...)` so the aligned dimension still measures the corridor span, but `TextPosition` now stays at the chosen whitespace candidate while `dimLinePoint` is pushed just outside the corridor edge on the same side.
+    - kept the existing fallback chain in `CreateLabelEntity(...)`: aligned dimension -> leader -> plain `MText`.
+- PLSR safeguard:
+  - no quarter-assignment logic changed; `Plugin.Dispositions.LabelingPlsr.cs` still treats the dimension span midpoint as the primary aligned-dimension anchor and uses text/extents only as supplemental touch evidence.
+- Verification:
+  - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v:minimal` succeeded.
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal` passed (`Decision tests passed.`).
+  - NuGet vulnerability metadata was still unavailable in this environment (`NU1900` against `https://api.nuget.org/v3/index.json`).
+# Follow-up (Width Label Self-Clearance From Measured Line, 2026-03-07)
+
+- [x] Tighten width-label candidate generation so the text block clears the measured corridor line by the full text-box height, not just center-point gap.
+- [x] Reject aligned-dimension text points that still sit too close to the measured line, even on fallback.
+- [x] Rebuild, rerun decision tests, and document the result here.
+
+## Review (Width Label Self-Clearance From Measured Line, 2026-03-07)
+
+- Updated source:
+  - `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`
+    - added measured-line clearance helpers so aligned width-label spacing now uses the estimated dimension-text block height, not just a center-point edge gap.
+    - updated `GetCandidateDimensionTextPoints(...)` so outside lanes start far enough away for the full text box to clear the measured corridor, and candidate points that still sit too close to the measured line are rejected before scoring.
+    - updated `CreateAlignedDimensionLabel(...)` so a fallback candidate is still rejected if its text block would sit too close to the measured corridor line.
+- Effect:
+  - width labels should no longer settle with the top text line hugging the corridor edge the way your screenshot showed; if no aligned-dimension text point clears the measured line, the aligned-dimension creation now fails cleanly instead of drawing a too-tight label.
+- Verification:
+  - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v:minimal` succeeded.
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal` passed (`Decision tests passed.`).
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal` built the project but still failed in the post-build copy target because `build\net8.0-windows\AtsBackgroundBuilder.dll` is locked by another process.
+  - NuGet vulnerability metadata remained unavailable in this environment (`NU1900` against `https://api.nuget.org/v3/index.json`).
+# Follow-up (Width Measurement Anchor Split From Text Search, 2026-03-07)
+
+- [x] Add a dedicated width measurement target to placement requests instead of reusing the text-search target.
+- [x] Use that measurement target for aligned-dimension span geometry while keeping text-search seeding independent.
+- [x] Rebuild, rerun decision tests, and document the result here.
+
+## Review (Width Measurement Anchor Split From Text Search, 2026-03-07)
+
+- Updated source:
+  - `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`
+    - added `MeasurementTarget` to `PlacementRequest` so width labels now carry a dedicated in-corridor cross-section anchor separate from text-search and leader-avoidance targets.
+    - width-request building now preserves the refined corridor midpoint as `measurementTarget` before running `ChooseLeaderTargetAvoidingOtherDispositions(...)` for text placement bias.
+    - aligned-dimension candidate generation and final A-DIM creation now use `request.MeasurementTarget` for span geometry, while text search still uses `request.SearchTarget` for side/whitespace preference.
+    - width fallback creation now also anchors leaders back to the preserved measurement target rather than the displaced text-search anchor.
+- Effect:
+  - bent-corridor width labels should keep their aligned-dimension extension lines on the intended corridor cross-section even when the text-search target moves past a bend to find whitespace.
+- Verification:
+  - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v:minimal` succeeded.
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal` passed (`Decision tests passed.`).
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal` succeeded.
+  - current build outputs are synced at `2026-03-07 19:28:37` in both `src\AtsBackgroundBuilder\bin\Release\net8.0-windows` and `build\net8.0-windows`.
+  - NuGet vulnerability metadata remained unavailable in this environment (`NU1900` against `https://api.nuget.org/v3/index.json`).
+# Follow-up (Local Width Target Resolution On Bent Corridors, 2026-03-07)
+
+- [x] Resolve width measurement targets from local cross-sections near the quarter/intersection area instead of relying on a single global median sample.
+- [x] Keep aligned-dimension span geometry anchored to that local width target while preserving separate text-search behavior.
+- [x] Rebuild, rerun decision tests, and document the result here.
+
+## Review (Local Width Target Resolution On Bent Corridors, 2026-03-07)
+
+- Updated source:
+  - `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`
+    - width-label target selection no longer starts from `measurement.MedianCenter` alone.
+    - added `TryResolveLocalWidthMeasurementTarget(...)`, which samples many local corridor cross-sections, evaluates their midpoint proximity to the quarter/intersection target, and uses the best local midpoint as the aligned-dimension measurement anchor.
+    - width-request setup now uses that locally resolved midpoint as `measurementTarget`, then separately runs leader/text-placement avoidance from that anchor.
+- Effect:
+  - bent-corridor width labels should stop jumping to another leg simply because a global median width sample happened to land past the bend.
+- Verification:
+  - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v:minimal` succeeded.
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal` passed (`Decision tests passed.`).
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal` still failed only in the post-build copy target because `build\net8.0-windows\AtsBackgroundBuilder.dll` was locked by another process.
+  - NuGet vulnerability metadata remained unavailable in this environment (`NU1900` against `https://api.nuget.org/v3/index.json`).
+# Follow-up (Bend-Proximity Penalty For Width Targets, 2026-03-07)
+
+- [x] Penalize local width-target candidates that sit too close to corridor vertices/bends.
+- [x] Rebuild, rerun decision tests, and verify the bend-avoidance pass is in the current output DLL.
+- [x] Document the result here.
+
+## Review (Bend-Proximity Penalty For Width Targets, 2026-03-07)
+
+- Updated source:
+  - `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`
+    - added `GetNearestVertexDistance(...)` and updated `TryResolveLocalWidthMeasurementTarget(...)` so local width-target scoring now penalizes bend-adjacent cross-sections instead of treating proximity to the overlap target as the only dominant factor.
+    - the local width-target resolver still prefers nearby, width-consistent samples, but now strongly prefers ones that are farther from corridor vertices, which should move A-DIM anchors off transition nodes and onto straighter legs.
+- Effect:
+  - bent-corridor width labels should be less willing to measure right at the kink when a nearby straight-section cross-section is available in the same local area.
+- Verification:
+  - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v:minimal` succeeded.
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal` passed (`Decision tests passed.`).
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal` succeeded.
+  - current synced outputs:
+    - `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+    - `build\net8.0-windows\AtsBackgroundBuilder.dll`
+    - both at `2026-03-07 22:21:10`, size `1065984`, SHA-256 `056C4D239111CDB2305A3E523681F8307C2EB6A0C949E776DAA7653AE4F2A12A`.
+  - NuGet vulnerability metadata remained unavailable in this environment (`NU1900` against `https://api.nuget.org/v3/index.json`).
+# Follow-up (Sticky Width Span Anchor, 2026-03-07)
+
+- [x] Preserve the original measured width span anchor when it is valid instead of relocating it to satisfy text-placement heuristics.
+- [x] Rebuild and redeploy the matching DLL/PDB so AutoCAD loads the sticky-anchor behavior.
+- [x] Document the result here.
+
+## Review (Sticky Width Span Anchor, 2026-03-07)
+
+- Updated source:
+  - src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs
+    - width-label setup now keeps measurement.MedianCenter as the primary measurement anchor when it is valid inside the quarter/corridor.
+    - local bent-corridor width-target resolution is now fallback-only; it no longer replaces a valid original measured span just because text-placement search prefers another area.
+- Effect:
+  - if the original aligned-dimension measured points were already correct, the code should now keep those points fixed and only solve text placement separately.
+- Verification:
+  - dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v:minimal succeeded.
+  - dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal passed (Decision tests passed.).
+  - forced rebuild via dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Rebuild -p:Configuration=Release -p:NuGetAudit=false -v:minimal succeeded.
+  - current synced outputs:
+    - src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll
+    - uild\net8.0-windows\AtsBackgroundBuilder.dll
+    - deployed C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows\AtsBackgroundBuilder.dll
+    - all three at 2026-03-07 22:33:12, size 1065984, SHA-256 1EA1A1CD1122A7741396DABB98CAB7CE20A74F8D7AEA9C12C8C45180962A9097.
+  - NuGet vulnerability metadata remained unavailable in this environment (NU1900 against https://api.nuget.org/v3/index.json).
+
+# Follow-up (Keep A-DIM Text And Hinge On Measured Span, 2026-03-07)
+
+- [x] Clamp aligned-dimension text along-span placement so the label body stays over the measured span.
+- [x] Move the aligned-dimension hinge/dim-line point to the same along-span position as the text instead of leaving it fixed at midpoint.
+- [x] Rebuild, rerun decision tests, deploy the matching DLL/PDB, and document the result here.
+
+## Review (Keep A-DIM Text And Hinge On Measured Span, 2026-03-07)
+
+- Updated source:
+  - src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs
+    - added EstimateDimensionTextAlongHalfExtent(...) and ClampDimensionTextAlongOffset(...) so moved aligned-dimension text is clamped by the actual measured span length and estimated text width instead of only by generic candidate distance.
+    - updated GetCandidateDimensionTextPoints(...) so width-label candidate text stations are pre-clamped to legal along-span positions before scoring.
+    - updated CreateAlignedDimensionLabel(...) so the final TextPosition and the dimension-line hinge (dimLinePoint) use the same clamped along-span projection, keeping both on the measured segment while preserving independent normal offset for whitespace placement.
+- Effect:
+  - moved aligned-dimension text should no longer push the hinge/jog off the measured segment, which was causing missing or misleading return lines in bend-adjacent width labels.
+- Verification:
+  - dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v:minimal succeeded.
+  - dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal passed (Decision tests passed.).
+  - dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal compiled the project but still failed only in the post-build copy step because uild\net8.0-windows\AtsBackgroundBuilder.dll was locked by another process.
+  - deployed src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll and matching .pdb directly to C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows.
+  - current source/deploy DLLs are synced at 2026-03-07 22:43:38, size 1067008, SHA-256 9DA4F08198D745A14AAF0B790CFD80E2474CE1F69D6A7CC9F8A50A4EC973AF3A.
+  - NuGet vulnerability metadata remained unavailable in this environment (NU1900 against https://api.nuget.org/v3/index.json).
+# Follow-up (Preserve A-DIM Placement During Post-Placement Text Updates, 2026-03-08)
+
+- [x] Review all post-placement aligned-dimension mutation paths and confirm which ones can trigger AutoCAD recompute.
+- [x] Back out the generic post-creation re-clamp that regressed many aligned-dimension labels.
+- [x] Preserve existing aligned-dimension placement during PLSR owner/expired text rewrites instead of recomputing geometry.
+- [x] Build, test, deploy the corrected DLL/PDB, and document the verified result here.
+
+## Review (Preserve A-DIM Placement During Post-Placement Text Updates, 2026-03-08)
+
+- Findings:
+  - CleanupAfterBuild(...) only erases temporary/helper geometry and imported disposition linework. It does not move label entities.
+  - The regression came from the generic aligned-dimension re-clamp path added in the previous pass; that normalization step was moving many width labels off their intended lines.
+  - The legitimate post-placement mutator is the PLSR owner/expired text-update flow in Plugin.Dispositions.LabelingPlsr.cs.
+- Updated source:
+  - src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs
+    - removed the post-creation call that re-normalized aligned-dimension placement after creation, so width labels now keep the geometry chosen by CreateAlignedDimensionLabel(...).
+  - src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs
+    - added aligned-dimension placement snapshot/restore helpers that capture TextPosition, DimLinePoint, and UsingDefaultTextPosition before a PLSR text rewrite.
+    - after owner or expired-marker updates, aligned dimensions now restore that captured placement instead of recomputing a new one.
+    - generic non-aligned Dimension fallback behavior remains unchanged.
+- Effect:
+  - aligned dimensions that were already on the correct measured line should stay there through PLSR text updates instead of being re-solved onto a worse line or hinge position.
+- Verification:
+  - dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v:minimal succeeded.
+  - dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal passed (Decision tests passed.).
+  - dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal compiled the project but still failed only in the post-build copy step because uild\net8.0-windows\AtsBackgroundBuilder.dll was locked by another process.
+  - deployed src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll and matching .pdb directly to C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows.
+  - current source/deploy DLLs are synced at 2026-03-08 10:33:08, size 1070592, SHA-256 78EE314EAE305441D00C1F9A0C8487FF4973F767D02FDFE92DC8C434ED88D5F4.
+  - NuGet vulnerability metadata remained unavailable in this environment (NU1900 against https://api.nuget.org/v3/index.json).
+# Follow-up (Rollback Recent A-DIM Line-Preservation Experiments, 2026-03-08)
+
+- [x] Revert the recent A-DIM along-span clamp changes while keeping the earlier overlap search improvements.
+- [x] Revert the new PLSR aligned-dimension placement snapshot/restore path.
+- [x] Rebuild, test, deploy, and verify the rollback output.
+
+## Review (Rollback Recent A-DIM Line-Preservation Experiments, 2026-03-08)
+
+- Updated source:
+  - src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs
+    - restored the earlier width-label creation behavior: CreateAlignedDimensionLabel(...) again uses the chosen labelPoint directly for text position and puts dimLinePoint back on the dimension line through the span midpoint instead of the recent along-span clamp.
+    - restored the earlier width-label candidate lanes by removing the recent along-span clamping from GetCandidateDimensionTextPoints(...).
+  - src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs
+    - removed the new aligned-dimension placement-preservation calls from the owner/expired text-update path so PLSR is back to the simpler pre-experiment behavior.
+- Effect:
+  - this rolls back the last few experimental line-preservation changes that made many labels worse, while keeping the earlier collision/whitespace improvements in place.
+- Verification:
+  - dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v:minimal succeeded.
+  - dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal passed (Decision tests passed.).
+  - fresh rebuild via dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:NuGetAudit=false -v minimal succeeded with no warnings.
+  - deployed src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll and matching .pdb directly to C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows.
+  - current source/deploy DLLs are synced at 2026-03-08 11:04:42, size 1070080, SHA-256 3D52F323428FA3CF685272B67936070B6A505FADFBDA28E76985EB4596C75865.
