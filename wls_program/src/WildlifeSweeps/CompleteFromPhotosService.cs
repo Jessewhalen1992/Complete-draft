@@ -21,7 +21,6 @@ namespace WildlifeSweeps
         private const double BoundaryEdgeTolerance = 0.01;
         private const double BoundarySamplingStepMeters = 2.0;
         private const double BoundarySampleMergeTolerance = 0.01;
-        private const string ProposedOutsideBufferBlockName = "proposed";
         private const string QuarterValidationLayerName = "L-QUARTER";
         private const string QuarterLegacySourceLayerName = "L-QUATER";
         private const string DefaultAtsSectionIndexFolder = @"C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\RES MANAGER";
@@ -52,7 +51,7 @@ namespace WildlifeSweeps
                 var bufferMode = ResolveBufferMode(settings);
                 BufferBoundary? proposedBoundary = null;
                 BufferBoundary? hundredMeterBoundary = null;
-                if (bufferMode == BufferMode.IncludeBufferExcludeOutside)
+                if (UsesAreaSpecificBufferPrompts(bufferMode))
                 {
                     proposedBoundary = PromptForBuffer(
                         editor,
@@ -72,19 +71,12 @@ namespace WildlifeSweeps
                         return;
                     }
                 }
-                else
-                {
-                    hundredMeterBoundary = PromptForBuffer(editor, doc.Database, bufferMode);
-                    if (bufferMode != BufferMode.None && hundredMeterBoundary == null)
-                    {
-                        return;
-                    }
-                }
 
                 string? sampleBlockName = null;
                 string? proposedBlockName = null;
                 string? hundredMeterBlockName = null;
-                if (bufferMode == BufferMode.IncludeBufferExcludeOutside)
+                string? outsideBufferBlockName = null;
+                if (UsesAreaSpecificBufferPrompts(bufferMode))
                 {
                     proposedBlockName = PromptForSamplePhotoBlock(
                         editor,
@@ -103,23 +95,24 @@ namespace WildlifeSweeps
                     {
                         return;
                     }
+
+                    if (bufferMode == BufferMode.IncludeBufferAndAll)
+                    {
+                        outsideBufferBlockName = PromptForSamplePhotoBlock(
+                            editor,
+                            doc.Database,
+                            "\nSelect ONE Photo_Location block for OUTSIDE area: ");
+                        if (string.IsNullOrWhiteSpace(outsideBufferBlockName))
+                        {
+                            return;
+                        }
+                    }
                 }
                 else
                 {
                     sampleBlockName = PromptForSamplePhotoBlock(editor, doc.Database, "\nSelect ONE Photo_Location block (sample): ");
                     if (string.IsNullOrWhiteSpace(sampleBlockName))
                     {
-                        return;
-                    }
-                }
-
-                string? outsideBufferBlockName = null;
-                if (bufferMode == BufferMode.IncludeBufferAndAll)
-                {
-                    outsideBufferBlockName = ProposedOutsideBufferBlockName;
-                    if (!BlockExists(doc.Database, outsideBufferBlockName))
-                    {
-                        editor.WriteMessage($"\nRequired block \"{outsideBufferBlockName}\" was not found in this drawing.");
                         return;
                     }
                 }
@@ -328,7 +321,7 @@ namespace WildlifeSweeps
                 }
 
                 var duplicateBlockNames = new List<string>();
-                if (bufferMode == BufferMode.IncludeBufferExcludeOutside)
+                if (UsesAreaSpecificBufferPrompts(bufferMode))
                 {
                     if (!string.IsNullOrWhiteSpace(proposedBlockName))
                     {
@@ -339,15 +332,15 @@ namespace WildlifeSweeps
                     {
                         duplicateBlockNames.Add(hundredMeterBlockName);
                     }
+                    
+                    if (bufferMode == BufferMode.IncludeBufferAndAll && !string.IsNullOrWhiteSpace(outsideBufferBlockName))
+                    {
+                        duplicateBlockNames.Add(outsideBufferBlockName);
+                    }
                 }
                 else if (!string.IsNullOrWhiteSpace(sampleBlockName))
                 {
                     duplicateBlockNames.Add(sampleBlockName);
-                }
-
-                if (bufferMode == BufferMode.IncludeBufferAndAll && !string.IsNullOrWhiteSpace(outsideBufferBlockName))
-                {
-                    duplicateBlockNames.Add(outsideBufferBlockName);
                 }
 
                 var duplicateNumbers = FindDuplicatePhotoNumbers(doc.Database, duplicateBlockNames, settings.PhotoStartNumber, activeFindings.Count);
@@ -379,7 +372,7 @@ namespace WildlifeSweeps
                 {
                     var area = BufferArea.Outside;
                     string? blockName;
-                    if (bufferMode == BufferMode.IncludeBufferExcludeOutside)
+                    if (UsesAreaSpecificBufferPrompts(bufferMode))
                     {
                         area = ClassifyBufferArea(
                             new Point3d(finding.Easting, finding.Northing, 0.0),
@@ -389,6 +382,7 @@ namespace WildlifeSweeps
                         {
                             BufferArea.Proposed => proposedBlockName,
                             BufferArea.HundredMeter => hundredMeterBlockName,
+                            BufferArea.Outside when bufferMode == BufferMode.IncludeBufferAndAll => outsideBufferBlockName,
                             _ => null
                         };
                     }
@@ -560,7 +554,7 @@ namespace WildlifeSweeps
                         records,
                         tableStyleId,
                         outsideLast: bufferMode == BufferMode.IncludeBufferAndAll,
-                        insertProposedHundredSpacer: bufferMode == BufferMode.IncludeBufferExcludeOutside);
+                        insertProposedHundredSpacer: UsesAreaSpecificBufferPrompts(bufferMode));
                     trTable.Commit();
                 }
 
@@ -746,6 +740,12 @@ namespace WildlifeSweeps
                 : BufferMode.None;
         }
 
+        private static bool UsesAreaSpecificBufferPrompts(BufferMode bufferMode)
+        {
+            return bufferMode == BufferMode.IncludeBufferExcludeOutside ||
+                   bufferMode == BufferMode.IncludeBufferAndAll;
+        }
+
         private static bool BlockExists(Database db, string blockName)
         {
             using var tr = db.TransactionManager.StartTransaction();
@@ -770,16 +770,6 @@ namespace WildlifeSweeps
             }
 
             return BlockSelectionHelper.GetEffectiveName(sampleRef, tr);
-        }
-
-        private static BufferBoundary? PromptForBuffer(Editor editor, Database db, BufferMode mode)
-        {
-            if (mode == BufferMode.None)
-            {
-                return null;
-            }
-
-            return PromptForBuffer(editor, db, "\nSelect a closed polyline boundary for the 100m buffer:");
         }
 
         private static BufferBoundary? PromptForBuffer(Editor editor, Database db, string promptMessage)
@@ -2798,13 +2788,16 @@ namespace WildlifeSweeps
                 return Array.Empty<FindingProjectedRecord>();
             }
 
-            if (bufferMode != BufferMode.IncludeBufferExcludeOutside)
+            if (!UsesAreaSpecificBufferPrompts(bufferMode))
             {
                 return SortRecords(records, order, bufferMode == BufferMode.IncludeBufferAndAll).ToList();
             }
 
             var proposed = new List<FindingProjectedRecord>(records.Count);
             var hundredMeter = new List<FindingProjectedRecord>(records.Count);
+            var outside = bufferMode == BufferMode.IncludeBufferAndAll
+                ? new List<FindingProjectedRecord>(records.Count)
+                : null;
             foreach (var record in records)
             {
                 var area = ClassifyBufferArea(
@@ -2819,11 +2812,20 @@ namespace WildlifeSweeps
                 {
                     hundredMeter.Add(record);
                 }
+                else if (outside != null)
+                {
+                    outside.Add(record);
+                }
             }
 
-            return SortRecordsByDirection(proposed, order)
-                .Concat(SortRecordsByDirection(hundredMeter, order))
-                .ToList();
+            var ordered = SortRecordsByDirection(proposed, order)
+                .Concat(SortRecordsByDirection(hundredMeter, order));
+            if (outside != null)
+            {
+                ordered = ordered.Concat(SortRecordsByDirection(outside, order));
+            }
+
+            return ordered.ToList();
         }
 
         private static IEnumerable<FindingProjectedRecord> SortRecordsByDirection(

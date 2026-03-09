@@ -296,7 +296,7 @@ namespace WildlifeSweeps
             _toolTip.SetToolTip(_findingsLookupPath, "Optional XLSX workbook path with findings lookup tables.");
             _toolTip.SetToolTip(
                 _completeFromPhotosBufferIncludeAll,
-                "Uses the selected 100m boundary and keeps all findings; outside findings use block \"proposed\".");
+                "Prompts for PROPOSED and 100m boundaries, then selects separate blocks for PROPOSED, 100m-only, and OUTSIDE findings.");
             _toolTip.SetToolTip(
                 _completeFromPhotosBufferExcludeOutside,
                 "Prompts for PROPOSED and 100m boundaries plus one block for each area; PROPOSED takes priority to avoid duplicates.");
