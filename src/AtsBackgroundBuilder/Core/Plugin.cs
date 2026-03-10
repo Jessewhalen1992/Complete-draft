@@ -426,182 +426,21 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            const int sectionSummaryLimit = 12;
-            string sectionSummary;
-            if (input.SectionRequests.Count == 0)
-            {
-                sectionSummary = "(none)";
-            }
-            else
-            {
-                var sectionRequestSummaries = input.SectionRequests
-                    .Take(sectionSummaryLimit)
-                    .Select(request =>
-                        $"{request.Key.Zone}/{request.Key.Township}-{request.Key.Range}-{request.Key.Section} [{request.Quarter}]");
-                var additionalSectionRequests = Math.Max(0, input.SectionRequests.Count - sectionSummaryLimit);
-                sectionSummary = string.Join(", ", sectionRequestSummaries) + (additionalSectionRequests > 0 ? $" +{additionalSectionRequests} more" : string.Empty);
-            }
-
-            logger.WriteLine($"ATSBUILD sections: {sectionSummary}");
-
-            var selectedXmlCount = input.PlsrXmlPaths?.Count ?? 0;
-            logger.WriteLine(
-                "UI options: CheckPLSR=" +
-                (input.CheckPlsr ? "ON" : "OFF") +
-                ", SurfaceImpact=" +
-                (input.IncludeSurfaceImpact ? "ON" : "OFF") +
-                ", XML files=" +
-                selectedXmlCount +
-                ".");
-
-            try
-            {
-            var executionPlan = BuildExecutionPlan.Create(input, EnableQuarterViewByEnvironment);
-            var showQuarterDefinitionLinework = executionPlan.ShowQuarterDefinitionLinework;
-            drawQuarterView = executionPlan.DrawQuarterViewForBuild;
-            // Keep per-quarter disposition label/intersection logic enabled regardless of
-            // whether quarter-definition linework is shown.
-            config.AllowMultiQuarterDispositions = executionPlan.EnableInternalQuarterDefinitionProcessing;
-            config.TextHeight = input.TextHeight;
-            config.MaxOverlapAttempts = input.MaxOverlapAttempts;
-            logger.WriteLine($"Quarter view (UI): {(showQuarterDefinitionLinework ? "ON" : "OFF")} (UI 1/4 Definition linework={(input.AllowMultiQuarterDispositions ? "ON" : "OFF")}, envOverride={(EnableQuarterViewByEnvironment ? "ON" : "OFF")}, internalBuild=ON).");
-            logger.WriteLine("Disposition 1/4 definition mode: ON (always enabled for per-quarter label logic).");
-            if (executionPlan.ShouldAutoUpdateShapes)
-            {
-                AutoUpdateSelectedShapeSetsIfNeeded(input, config, logger);
-            }
-
-            if (!config.UseSectionIndex)
-            {
-                SetExitStage("config_use_section_index_false");
-                editor.WriteMessage("\nConfig.UseSectionIndex=false. This build requires the section index workflow.");
-                EmitExit("error");
-                logger.Dispose();
-                return;
-            }
-
-            // Build the section geometry used to determine 1/4s.
-            // NOTE: These entities are considered "temporary" unless ATS fabric is enabled (see cleanup at the end).
-            SetExitStage("sections_building");
-            var sectionDrawResult = DrawSectionsFromRequests(
-                editor,
-                database,
-                input.SectionRequests,
-                config,
-                logger,
-                executionPlan.DrawLsdSubdivisionLines,
-                drawQuarterView,
-                executionPlan.IncludeAtsFabric);
-            SetExitStage("sections_built");
-            var quarterPolylinesForLabelling = sectionDrawResult.LabelQuarterPolylineIds;
-            if (quarterPolylinesForLabelling.Count == 0)
-            {
-                SetExitStage("no_quarters_generated");
-                editor.WriteMessage("\nNo quarter polylines generated from the section index (check your grid inputs)." );
-
-                // Ensure we don't leave temporary section outlines behind when ATS fabric is unchecked.
-                CleanupAfterBuild(database, sectionDrawResult, new List<ObjectId>(), input, logger);
-
-                EmitExit("error");
-                logger.Dispose();
-                return;
-            }
-
-            var dispositionPreparation = PrepareDispositionInputs(
-                database,
-                editor,
-                logger,
-                config,
-                input,
-                executionPlan,
-                sectionDrawResult,
-                SetExitStage);
-            var shouldGenerateDispositionLabels = dispositionPreparation.ShouldGenerateDispositionLabels;
-            var dispositionPolylines = dispositionPreparation.DispositionPolylines;
-            var importedDispositionPolylines = dispositionPreparation.ImportedDispositionPolylines;
-            var importSummary = dispositionPreparation.ImportSummary;
-
-            var currentClient = input.CurrentClient;
-            if (string.IsNullOrWhiteSpace(currentClient))
-            {
-                SetExitStage("missing_current_client");
-                editor.WriteMessage("\nCurrent client is required.");
-                EmitExit("error");
-                logger.Dispose();
-                return;
-            }
-
-            var layerManager = new LayerManager(database);
-            var result = new SummaryResult();
-            var plsrLabelOverridesByDispNum = executionPlan.ShouldRunPlsrCheck
-                ? BuildPlsrLabelOverridesByDispNum(input.PlsrXmlPaths, companyLookup, logger)
-                : new Dictionary<string, PlsrDispositionLabelOverride>(StringComparer.OrdinalIgnoreCase);
-            var dispositions = ProcessDispositionPolylines(
-                database,
-                editor,
-                logger,
-                companyLookup,
-                purposeLookup,
-                config,
-                input,
-                executionPlan,
-                sectionDrawResult,
-                dispositionPolylines,
-                shouldGenerateDispositionLabels,
-                currentClient,
-                layerManager,
-                SetExitStage,
-                result,
-                plsrLabelOverridesByDispNum);
-
-            var quarterLabelContext = BuildQuarterLabelContext(
-                database,
-                logger,
-                sectionDrawResult,
-                quarterPolylinesForLabelling,
-                executionPlan.ShouldLoadQuartersForLabeling,
-                shouldGenerateDispositionLabels);
-            ExecutePostQuarterPipeline(
-                database,
-                editor,
-                logger,
-                companyLookup,
-                config,
-                dllFolder,
-                input,
-                executionPlan,
-                sectionDrawResult,
-                importedDispositionPolylines,
-                importSummary,
-                currentClient,
-                layerManager,
-                dispositions,
-                quarterLabelContext,
-                SetExitStage,
-                result);
-            SetExitStage("completed");
-            EmitExit("ok");
-            logger.Dispose();
-            }
-            catch (System.Exception ex)
-            {
-                SetExitStage("fatal_exception");
-                var failureText = $"ATSBUILD failed at stage '{exitStage}': {ex.Message}";
-                logger.WriteLine(failureText);
-                logger.WriteLine(ex.ToString());
-                try
-                {
-                    editor.WriteMessage("\n" + failureText);
-                }
-                catch
-                {
-                    // best effort
-                }
-
-                EmitExit("error");
-                logger.Dispose();
-                return;
-            }
+            ExecuteAtsBuildFromInput(
+                commandName: "ATSBUILD",
+                inputSourceLabel: "UI",
+                editor: editor,
+                database: database,
+                logger: logger,
+                dllFolder: dllFolder,
+                config: config,
+                companyLookup: companyLookup,
+                purposeLookup: purposeLookup,
+                input: input,
+                drawQuarterView: drawQuarterView,
+                setExitStage: SetExitStage,
+                getExitStage: () => exitStage,
+                emitExit: EmitExit);
         }
 
         private DispositionPreparationResult PrepareDispositionInputs(
@@ -1692,6 +1531,7 @@ namespace AtsBackgroundBuilder
             //  - Quarter boxes used to determine 1/4s are ALWAYS removed.
             //  - If ATS fabric is unchecked, section outlines/labels created for calculation are removed.
             //  - If Dispositions (linework) is unchecked, imported disposition polylines are removed (labels remain).
+            PersistLastAtsBuildPlotWindow(database, sectionDrawResult, importedDispositionPolylines, logger);
             setExitStage("cleanup");
             CleanupAfterBuild(database, sectionDrawResult, importedDispositionPolylines, input, logger);
             if (EnableCadGeoJsonExport)
