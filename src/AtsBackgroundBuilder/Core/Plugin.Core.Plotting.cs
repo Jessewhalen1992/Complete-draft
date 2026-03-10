@@ -236,11 +236,21 @@ namespace AtsBackgroundBuilder
             var modelLayout = (Layout)tr.GetObject(modelLayoutId, OpenMode.ForRead);
 
             var outputPath = BuildAutoPlotOutputPath(doc);
-            WarnIfPlotMayNotFit(editor, modelLayout.PlotPaperSize, windowExtents);
+            var fitsAtMapScale5000 = WarnIfPlotMayNotFit(editor, modelLayout.PlotPaperSize, windowExtents);
+            var shouldUseFitScale = !fitsAtMapScale5000;
+            if (shouldUseFitScale)
+            {
+                editor.WriteMessage(
+                    "\nATSPLOT_AUTO: map scale 1:5000 exceeds current paper; using Fit scale so the full ATSBUILD window plots.");
+            }
             var plotConfigurationName = modelLayout.PlotConfigurationName ?? string.Empty;
             var currentStyleSheet = modelLayout.CurrentStyleSheet ?? string.Empty;
             var canonicalMediaName = modelLayout.CanonicalMediaName ?? string.Empty;
             var plotPaperUnits = modelLayout.PlotPaperUnits;
+            var usesCurrentPdfDevice = ShouldReuseCurrentPdfDevice(plotConfigurationName);
+            var effectiveDevice = usesCurrentPdfDevice
+                ? plotConfigurationName
+                : AtsPlotDeviceName;
 
             var activeDevice = string.IsNullOrWhiteSpace(plotConfigurationName)
                 ? "current"
@@ -253,6 +263,11 @@ namespace AtsBackgroundBuilder
                 : canonicalMediaName;
 
             editor.WriteMessage($"\nATSPLOT_AUTO: using native plot flow from model config '{activeDevice}', media '{activeMedia}', style '{activeStyle}'.");
+            if (!usesCurrentPdfDevice && !string.IsNullOrWhiteSpace(plotConfigurationName))
+            {
+                editor.WriteMessage(
+                    $"\nATSPLOT_AUTO: overriding unsupported model device '{plotConfigurationName}' with '{effectiveDevice}'.");
+            }
 
             tr.Commit();
 
@@ -270,6 +285,7 @@ namespace AtsBackgroundBuilder
                     plotConfigurationName,
                     currentStyleSheet,
                     plotPaperUnits,
+                    shouldUseFitScale,
                     windowExtents,
                     outputPath,
                     originalFileDia,
@@ -285,23 +301,21 @@ namespace AtsBackgroundBuilder
             string plotConfigurationName,
             string currentStyleSheet,
             PlotPaperUnit plotPaperUnits,
+            bool useFitScale,
             Extents3d windowExtents,
             string outputPath,
             int originalFileDia,
             int originalBackgroundPlot)
         {
-            var usesCurrentPdfDevice =
-                !string.IsNullOrWhiteSpace(plotConfigurationName) &&
-                plotConfigurationName.IndexOf("PDF", StringComparison.OrdinalIgnoreCase) >= 0;
-            var deviceResponse = usesCurrentPdfDevice
-                ? string.Empty
-                : AtsPlotDeviceName;
+            var deviceResponse = ResolvePlotDeviceResponse(plotConfigurationName);
 
             var styleResponse = currentStyleSheet.EndsWith(".ctb", StringComparison.OrdinalIgnoreCase)
                 ? string.Empty
                 : AtsPlotStyleSheet;
 
-            var scaleResponse = BuildMapScale5000Prompt(plotPaperUnits);
+            var scaleResponse = useFitScale
+                ? "Fit"
+                : BuildMapScale5000Prompt(plotPaperUnits);
             var minPoint = new Point2d(windowExtents.MinPoint.X, windowExtents.MinPoint.Y);
             var maxPoint = new Point2d(windowExtents.MaxPoint.X, windowExtents.MaxPoint.Y);
 
@@ -333,7 +347,6 @@ namespace AtsBackgroundBuilder
                         QuoteForLisp(styleResponse),
                         QuoteForLisp("_Yes"),
                         QuoteForLisp("As displayed"),
-                        QuoteForLisp("_Yes"),
                         QuoteForLisp(NormalizePathForLisp(outputPath)),
                         QuoteForLisp("_No"),
                         QuoteForLisp("_Yes"),
@@ -369,6 +382,28 @@ namespace AtsBackgroundBuilder
                 : "1=5";
         }
 
+        private static string ResolvePlotDeviceResponse(string plotConfigurationName)
+        {
+            return ShouldReuseCurrentPdfDevice(plotConfigurationName)
+                ? string.Empty
+                : AtsPlotDeviceName;
+        }
+
+        private static bool ShouldReuseCurrentPdfDevice(string plotConfigurationName)
+        {
+            if (string.IsNullOrWhiteSpace(plotConfigurationName))
+            {
+                return false;
+            }
+
+            if (plotConfigurationName.IndexOf("Adobe PDF", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return false;
+            }
+
+            return plotConfigurationName.IndexOf("DWG To PDF", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         private static int GetIntegerSystemVariable(string name, int fallback)
         {
             try
@@ -391,7 +426,7 @@ namespace AtsBackgroundBuilder
             return value.ToString("0.###############", CultureInfo.InvariantCulture);
         }
 
-        private static void WarnIfPlotMayNotFit(Editor editor, Point2d paperSize, Extents3d windowExtents)
+        private static bool WarnIfPlotMayNotFit(Editor editor, Point2d paperSize, Extents3d windowExtents)
         {
             var windowWidthMeters = Math.Abs(windowExtents.MaxPoint.X - windowExtents.MinPoint.X);
             var windowHeightMeters = Math.Abs(windowExtents.MaxPoint.Y - windowExtents.MinPoint.Y);
@@ -406,12 +441,15 @@ namespace AtsBackgroundBuilder
             var fitsWithRotation =
                 requiredWidthMm <= paperSize.Y &&
                 requiredHeightMm <= paperSize.X;
+            var fitsAtMapScale5000 = fitsWithoutRotation || fitsWithRotation;
 
-            if (!fitsWithoutRotation && !fitsWithRotation)
+            if (!fitsAtMapScale5000)
             {
                 editor.WriteMessage(
                     $"\nATSPLOT_AUTO warning: saved build window is about {requiredWidthMm:F1}mm x {requiredHeightMm:F1}mm at 1:5000, which may exceed the selected paper size {paperSize.X:F1}mm x {paperSize.Y:F1}mm.");
             }
+
+            return fitsAtMapScale5000;
         }
 
         private static string BuildAutoPlotOutputPath(Document doc)

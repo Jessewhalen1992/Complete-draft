@@ -5192,3 +5192,48 @@
   - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
   - deployed `build\net8.0-windows\AtsBackgroundBuilder.dll` and matching `.pdb` to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows` after clearing the AutoCAD file lock.
   - current build/deploy DLL SHA-256 now matches at `B69EBCEC3C71B8DDCEBB961AC9F1079712B02B0372805A6326CA83C0A157B2A2`.
+
+# Follow-up (ATSPLOT_AUTO Adobe PDF Device Guard, 2026-03-09)
+
+- [x] Reproduce/trace the Adobe PDF PostScript-font popup path in native `-PLOT`.
+- [x] Restrict device reuse so only AutoCAD `DWG To PDF` devices are kept; force `DWG To PDF.pc3` for Adobe PDF.
+- [x] Add runtime diagnostics when an unsupported model device is overridden.
+- [x] Build plugin and run decision tests.
+
+## Review (ATSPLOT_AUTO Adobe PDF Device Guard, 2026-03-09)
+
+- Updated source:
+  - `src/AtsBackgroundBuilder/Core/Plugin.Core.Plotting.cs`
+    - changed native plot device reuse logic to whitelist only current devices containing `DWG To PDF`.
+    - explicitly rejects `Adobe PDF` reuse and forces `DWG To PDF.pc3` in the scripted `-PLOT` call.
+    - logs a command-line message when overriding a non-supported model plot device so runtime behavior is visible.
+- Effect:
+  - `ATSPLOT_AUTO` no longer inherits `Adobe PDF` from model layout configs, preventing the PostScript font popup that stops unattended plotting.
+- Verification:
+  - `dotnet build -c Release src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj` succeeded (`0` errors; `NU1900` warning only from blocked NuGet vulnerability feed).
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - verified compiled outputs match: `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll` and `build\net8.0-windows\AtsBackgroundBuilder.dll` both hash to `52747DCECF85BE6C1193F21F1A63A613EDFC689D7C3428C84322968D22EEE2F1`.
+  - Runtime AutoCAD execution could not be verified in this shell; this pass verifies compile/test correctness and the guarded device-selection path.
+
+# Follow-up (ATSPLOT_AUTO Prompt Alignment + Full-Window Fallback, 2026-03-09)
+
+- [x] Fix native `-PLOT` scripted prompt ordering for `DWG To PDF.pc3` so file-name/save/proceed prompts are answered correctly.
+- [x] When 1:5000 cannot fit the selected paper, auto-fallback to `Fit` scale so the entire saved ATSBUILD window plots.
+- [x] Keep the existing warning and add an explicit command-line message when the scale fallback is applied.
+- [x] Build plugin, run decision tests, and verify `bin`/`build` DLL hash parity.
+
+## Review (ATSPLOT_AUTO Prompt Alignment + Full-Window Fallback, 2026-03-09)
+
+- Updated source:
+  - `src/AtsBackgroundBuilder/Core/Plugin.Core.Plotting.cs`
+    - corrected `BuildNativePlotLispScript(...)` token order by removing the extra `_Yes` before file-name input; this aligns scripted responses with `DWG To PDF` prompt flow.
+    - changed `WarnIfPlotMayNotFit(...)` to return fit status and kept the same warning output when 1:5000 cannot fit.
+    - added `shouldUseFitScale` flow in `QueueLastAtsBuildWindowNativePlot(...)`; when fit fails at 1:5000, the script now uses `Fit` scale and logs that fallback.
+- Effect:
+  - `ATSPLOT_AUTO` no longer falls into interactive `Yes or No` prompt loops caused by misaligned scripted responses.
+  - Oversized ATS windows now plot as full-window PDFs on the current paper instead of clipping to a near-empty page at forced 1:5000.
+- Verification:
+  - `dotnet build -c Release src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj` succeeded (`0` errors; `NU1900` warning only from blocked NuGet vulnerability feed).
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
+  - verified compiled outputs match: `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll` and `build\net8.0-windows\AtsBackgroundBuilder.dll` both hash to `6C775A755C4B2CEB366AC8524B7BD180DAE4A5F128B9D4052440B4A758C681EF`.
+  - Runtime AutoCAD execution could not be verified in this shell; this pass validates compile/test correctness plus script/scale fallback logic.
