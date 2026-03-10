@@ -5084,3 +5084,111 @@
   - fresh rebuild via dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:NuGetAudit=false -v minimal succeeded with no warnings.
   - deployed src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll and matching .pdb directly to C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows.
   - current source/deploy DLLs are synced at 2026-03-08 11:04:42, size 1070080, SHA-256 3D52F323428FA3CF685272B67936070B6A505FADFBDA28E76985EB4596C75865.
+# ATSBUILD_XLS (2026-03-08)
+
+- [x] Trace the existing ATSBUILD command/UI build path and identify the reusable execution entry point.
+- [x] Reuse existing Excel reading support or add a minimal workbook reader for Blank_Template / ATSBUILD_Input.
+- [x] Implement ATSBUILD_XLS to prompt for a workbook, parse client/zone/legal rows, apply the fixed preset options, and run the same build workflow.
+- [x] Emit command-line progress messages during long-running build stages.
+- [x] Build and verify the new command path.
+
+## Review (ATSBUILD_XLS, 2026-03-08)
+
+- Updated source:
+  - src/AtsBackgroundBuilder/Core/Plugin.cs
+    - extracted the post-input ATSBUILD execution block into a shared `ExecuteAtsBuildFromInput(...)` path so the UI command and the Excel-driven command run the same build workflow.
+  - src/AtsBackgroundBuilder/Core/Plugin.Core.AtsBuildXls.cs
+    - added the new `ATSBUILD_XLS` AutoCAD command.
+    - prompts for a workbook path from the command line and falls back to a file picker when the user presses Enter.
+    - writes stage/progress messages to the AutoCAD command line for workbook prompt/loading and each existing ATSBUILD build stage.
+  - src/AtsBackgroundBuilder/Core/AtsBuildExcelInputLoader.cs
+    - reads `ATSBUILD_Input` or `Blank_Template` from Excel via OleDb.
+    - reads client from `B1`, zone from `E1`, finds the legal-description header row, and converts rows into `SectionRequest`s using the existing parser.
+    - applies the fixed preset options requested for ATSBUILD_XLS.
+- Workbook verification:
+  - inspected the example workbook at `src/AtsBackgroundBuilder/REFERENCE ONLY/ATSBUILD_Simple_Input.xlsx`.
+  - confirmed the workbook contains both `ATSBUILD_Input` and `Blank_Template` sheets and that the legal-description header row is on row 8 with `1/4`, `Sec.`, `Twp.`, `Rge.`, `M`.
+- Verification:
+  - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false /v:minimal` succeeded.
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:NuGetAudit=false -v minimal` compiled the plugin and produced a fresh `bin\Release` DLL, but failed in the post-build copy step because `build\net8.0-windows\AtsBackgroundBuilder.dll` was locked by AutoCAD.
+  - current compiled output: `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll` at 2026-03-08 19:41:02, size 1083392.
+  - runtime AutoCAD execution of `ATSBUILD_XLS` was not verifiable in this shell; the validation here is workbook-shape inspection plus compile success.
+
+# Follow-up (WLS Proposed/100m/Outside Prompt Parity, 2026-03-09)
+
+- [x] Inspect the existing WLS `PROPOSED / 100m` and `PROPOSED / 100m / OUTSIDE` flows to identify the selection/classification mismatch.
+- [x] Update the WLS Complete From Photos flow so `PROPOSED / 100m / OUTSIDE` prompts for `PROPOSED` and `100m` boundaries plus three sample blocks (`PROPOSED`, `100m`, `OUTSIDE`).
+- [x] Verify numbering/sorting/table grouping still behave like `PROPOSED / 100m`, with `OUTSIDE` appended as the third group.
+- [x] Build `WildlifeSweeps` and record the verification result here.
+
+## Review (WLS Proposed/100m/Outside Prompt Parity, 2026-03-09)
+
+- Findings:
+  - `PROPOSED / 100m / OUTSIDE` had drifted from the `PROPOSED / 100m` flow: it only prompted for one `100m` boundary, used one generic sample block for all in-buffer findings, and hardcoded outside findings to block `proposed`.
+- Updated source:
+  - `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`
+    - introduced shared area-specific prompt handling so both buffer modes now prompt for `PROPOSED` and `100m` boundaries.
+    - `PROPOSED / 100m / OUTSIDE` now also prompts for a third `OUTSIDE` sample block instead of forcing block `proposed`.
+    - insertion/classification logic now uses `ClassifyBufferArea(...)` for both area-specific modes, so block selection, duplicate-number checks, and record ordering stay aligned across `PROPOSED`, `100m`, and `OUTSIDE`.
+    - table creation now keeps the `PROPOSED -> 100m` spacer behavior for the three-area mode while still appending `OUTSIDE` last.
+  - `wls_program/src/WildlifeSweeps/Ui/PaletteControl.cs`
+    - updated the tooltip so the UI description matches the actual prompt flow.
+- Verification:
+  - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+  - Runtime AutoCAD prompt behavior was not directly verifiable in this shell; validation here is compile success plus the code-path diff showing prompt/classification parity.
+
+# ATSPLOT_AUTO (2026-03-09)
+
+- [x] Inspect the ATSBUILD flow for a safe “last build extents” source and confirm there is no existing plotting helper to reuse.
+- [x] Persist the last ATSBUILD window so plotting can run later as a separate command instead of piggybacking on build.
+- [x] Add `ATSPLOT_AUTO` to plot model space from the last ATSBUILD window at map scale `1:5000`.
+- [x] Build, deploy, and verify the updated plugin DLL.
+
+## Review (ATSPLOT_AUTO, 2026-03-09)
+
+- Updated source:
+  - `src/AtsBackgroundBuilder/Core/Plugin.cs`
+    - persists the ATSBUILD plot window just before cleanup so the saved extents reflect the build area even when helper geometry is later erased.
+  - `src/AtsBackgroundBuilder/Core/Plugin.Core.Plotting.cs`
+    - added `ATSPLOT_AUTO`.
+    - stores the last ATSBUILD window in the drawing Named Objects Dictionary under an `ATSBUILD / LAST_BUILD_WINDOW` Xrecord.
+    - reads that saved window later and plots model space to PDF using `DWG To PDF.pc3`, `acad.ctb`, and a custom print scale equivalent to map scale `1:5000` for meter-based ATSBUILD geometry (`1 mm : 5 m`).
+    - chooses a large available media size, centers the saved build window, and warns if the saved build extents may not fit on the selected paper at `1:5000`.
+    - writes the PDF beside the drawing as `<drawing>_ATSPLOT_AUTO.pdf` and appends a timestamp if that file already exists.
+- Assumptions:
+  - ATSBUILD geometry is drawn in meters, so a map scale of `1:5000` is represented in AutoCAD plot custom scale as `1 mm : 5 drawing units`.
+  - `acad.ctb` and `DWG To PDF.pc3` are available on this workstation, which was confirmed from the AutoCAD user plotter/plot-style directories.
+- Verification:
+  - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false /v:minimal` succeeded.
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+  - deployed plugin DLL/PDB were recopied after the build completed; the current `build` DLL and deployed AutoCAD DLL match exactly at SHA-256 `741D372B24AF070E7370888A5B045420A30669B7C70C3C9F2E9B3A8B5A982294`.
+  - runtime AutoCAD plotting behavior was not directly verifiable in this shell; the validation here is compile success, local availability of the target PC3/CTB assets, and the deployed DLL hash match.
+
+## Follow-up (ATSPLOT_AUTO Runtime Hardening, 2026-03-09)
+
+- Hardened plot setup to start from the current model layout configuration instead of assuming AutoCAD will accept a forced device/media reset.
+- Added step-specific runtime diagnostics so plot setup failures now report which stage failed (for example plot window, scale, style sheet, or rotation) instead of surfacing only a generic `eInvalidInput`.
+- Rebuilt and redeployed the plugin; current deployed DLL hash matches build hash `7C2C18DCA14C48FFF2E62C13D1902F40C9125F4E9C2C19758BD25CC6EA97F83F`.
+
+# Follow-up (ATSPLOT_AUTO Native Plot Fallback, 2026-03-09)
+
+- [x] Replace the managed plot-engine execution path with a native AutoCAD `-PLOT` command script that reuses the current model page setup.
+- [x] Keep the saved ATSBUILD extents and output-path logic, but feed the extents into the native plot window/scale prompts instead of `PlotInfoValidator`.
+- [x] Rebuild, verify the DLL output, deploy it if AutoCAD is closed, and capture the runtime result.
+
+## Review (ATSPLOT_AUTO Native Plot Fallback, 2026-03-09)
+
+- Updated source:
+  - `src/AtsBackgroundBuilder/Core/Plugin.Core.Plotting.cs`
+    - removed the managed `PlotInfoValidator` / `PlotFactory` execution path that kept failing on this workstation's model-space media configuration.
+    - `ATSPLOT_AUTO` now queues a native AutoCAD `-PLOT` command through `SendStringToExecute`, using the saved ATSBUILD extents as the plot window and the current model layout as the plot baseline.
+    - preserves the current model plot config, media, and CTB when they are already suitable; otherwise falls back to `DWG To PDF.pc3` and `Plot Color.ctb`.
+    - keeps the `1:5000` map-scale intent by feeding `1=5` for metric layouts and `1=127` for inch-based layouts into the native plot prompt.
+- Effect:
+  - plotting no longer depends on `PlotInfoValidator`, which was rejecting this workstation's current PDF/media setup with `eInvalidInput` / `eNoMatchingMedia` even though the same setup was valid in the AutoCAD UI.
+- Verification:
+  - `dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v:minimal` succeeded.
+  - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -v minimal` passed (`Decision tests passed.`).
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+  - deployed `build\net8.0-windows\AtsBackgroundBuilder.dll` and matching `.pdb` to `C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\net8.0-windows` after clearing the AutoCAD file lock.
+  - current build/deploy DLL SHA-256 now matches at `B69EBCEC3C71B8DDCEBB961AC9F1079712B02B0372805A6326CA83C0A157B2A2`.
