@@ -184,7 +184,14 @@ namespace WildlifeSweeps
                         continue;
                     }
 
-                    projectedPhotos.Add(new PhotoProjectedRecord(photo.ImagePath, photo.FileName, photo.Latitude, photo.Longitude, northing, easting));
+                    projectedPhotos.Add(new PhotoProjectedRecord(
+                        photo.ImagePath,
+                        photo.FileName,
+                        photo.PhotoCreatedDate,
+                        photo.Latitude,
+                        photo.Longitude,
+                        northing,
+                        easting));
                 }
 
                 var projectedResult = BuildProjectedFindings(projectedPhotos, selectedTextFindings, utmConverter, editor, hundredMeterBoundary, bufferMode);
@@ -462,6 +469,7 @@ namespace WildlifeSweeps
                             finding.ImagePath,
                             finding.OriginalText,
                             finding.SourceImageName,
+                            finding.PhotoCreatedDate,
                             finding.Latitude,
                             finding.Longitude,
                             finding.Northing,
@@ -2301,7 +2309,7 @@ namespace WildlifeSweeps
         private static void WriteCsv(string path, IReadOnlyList<PhotoStandardizationRecord> standardizedRows)
         {
             using var writer = new StreamWriter(path);
-            writer.WriteLine("FindingRef,OriginalText,CleanedOriginal,Species,FindingType,StandardDescription,PhotoRef,Lat,Long,LatDDMMSS,LongDDMMSS,Northing,Easting,Image");
+            writer.WriteLine("FindingRef,OriginalText,CleanedOriginal,Species,FindingType,StandardDescription,PhotoRef,Lat,Long,LatDDMMSS,LongDDMMSS,Northing,Easting,Image,PhotoCreatedDate");
             foreach (var row in standardizedRows)
             {
                 var record = row.Record;
@@ -2320,7 +2328,8 @@ namespace WildlifeSweeps
                     EscapeCsv(DmsFormatter.ToDmsString(record.Longitude, false)),
                     record.Northing.ToString("F3", CultureInfo.InvariantCulture),
                     record.Easting.ToString("F3", CultureInfo.InvariantCulture),
-                    EscapeCsv(record.SourceImageName)));
+                    EscapeCsv(record.SourceImageName),
+                    EscapeCsv(FormatPhotoCreatedDate(record.PhotoCreatedDate))));
             }
         }
 
@@ -2448,6 +2457,7 @@ namespace WildlifeSweeps
                         photo.ImagePath,
                         matchedText?.Text ?? photo.FileName,
                         photo.FileName,
+                        photo.PhotoCreatedDate,
                         photo.Latitude,
                         photo.Longitude,
                         photo.Northing,
@@ -2463,6 +2473,7 @@ namespace WildlifeSweeps
                         photo.ImagePath,
                         photo.FileName,
                         photo.FileName,
+                        photo.PhotoCreatedDate,
                         photo.Latitude,
                         photo.Longitude,
                         photo.Northing,
@@ -2527,6 +2538,7 @@ namespace WildlifeSweeps
                     null,
                     textFinding.Text,
                     string.Empty,
+                    null,
                     lat,
                     lon,
                     textFinding.Location.Y,
@@ -2596,6 +2608,7 @@ namespace WildlifeSweeps
                     finding.ImagePath,
                     finding.OriginalText,
                     finding.SourceImageName,
+                    finding.PhotoCreatedDate,
                     finding.Latitude,
                     finding.Longitude,
                     finding.Northing,
@@ -2743,6 +2756,18 @@ namespace WildlifeSweeps
             return $"\"{escaped}\"";
         }
 
+        private static string FormatPhotoCreatedDate(DateTime? photoCreatedDate)
+        {
+            if (!photoCreatedDate.HasValue)
+            {
+                return string.Empty;
+            }
+
+            return photoCreatedDate.Value
+                .ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture)
+                .ToUpperInvariant();
+        }
+
         private static List<PhotoGpsRecord> LoadGpsPhotos(string folder, Editor editor)
         {
             var gpsPhotos = PhotoGpsMetadataReader.LoadGpsPhotos(
@@ -2754,6 +2779,7 @@ namespace WildlifeSweeps
                 .Select(photo => new PhotoGpsRecord(
                     photo.ImagePath,
                     photo.FileName,
+                    photo.PhotoCreatedDate,
                     photo.Latitude,
                     photo.Longitude))
                 .ToList();
@@ -2906,11 +2932,17 @@ namespace WildlifeSweeps
             }
         }
 
-        private sealed record PhotoGpsRecord(string ImagePath, string FileName, double Latitude, double Longitude);
+        private sealed record PhotoGpsRecord(
+            string ImagePath,
+            string FileName,
+            DateTime? PhotoCreatedDate,
+            double Latitude,
+            double Longitude);
 
         private sealed record PhotoProjectedRecord(
             string ImagePath,
             string FileName,
+            DateTime? PhotoCreatedDate,
             double Latitude,
             double Longitude,
             double Northing,
@@ -2925,6 +2957,7 @@ namespace WildlifeSweeps
             string? ImagePath,
             string OriginalText,
             string SourceImageName,
+            DateTime? PhotoCreatedDate,
             double Latitude,
             double Longitude,
             double Northing,
@@ -2936,6 +2969,7 @@ namespace WildlifeSweeps
             string? ImagePath,
             string OriginalText,
             string SourceImageName,
+            DateTime? PhotoCreatedDate,
             double Latitude,
             double Longitude,
             double Northing,
@@ -2999,6 +3033,7 @@ namespace WildlifeSweeps
             string? ImagePath,
             string OriginalText,
             string SourceImageName,
+            DateTime? PhotoCreatedDate,
             double Latitude,
             double Longitude,
             double Northing,

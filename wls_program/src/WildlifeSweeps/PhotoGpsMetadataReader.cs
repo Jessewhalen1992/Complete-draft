@@ -16,8 +16,16 @@ namespace WildlifeSweeps
         private const int GpsLatitudeId = 0x0002;
         private const int GpsLongitudeRefId = 0x0003;
         private const int GpsLongitudeId = 0x0004;
+        private const int ExifDateTimeId = 0x0132;
+        private const int ExifDateTimeOriginalId = 0x9003;
+        private const int ExifDateTimeDigitizedId = 0x9004;
 
-        internal sealed record GpsPhotoMetadata(string ImagePath, string FileName, double Latitude, double Longitude);
+        internal sealed record GpsPhotoMetadata(
+            string ImagePath,
+            string FileName,
+            double Latitude,
+            double Longitude,
+            DateTime? PhotoCreatedDate);
 
         public static List<GpsPhotoMetadata> LoadGpsPhotos(
             string folder,
@@ -53,11 +61,16 @@ namespace WildlifeSweeps
                             }
                         }
 
+                        var photoCreatedDate =
+                            TryReadPhotoCreatedDate(image) ??
+                            TryReadFileSystemPhotoCreatedDate(path);
+
                         photos.Add(new GpsPhotoMetadata(
                             path,
                             Path.GetFileNameWithoutExtension(path) ?? path,
                             lat,
-                            lon));
+                            lon,
+                            photoCreatedDate));
                     }
                     else
                     {
@@ -91,6 +104,64 @@ namespace WildlifeSweeps
             return photos;
         }
 
+        private static DateTime? TryReadPhotoCreatedDate(DrawingImage image)
+        {
+            var rawDate =
+                TryReadAsciiProperty(image, ExifDateTimeOriginalId) ??
+                TryReadAsciiProperty(image, ExifDateTimeDigitizedId) ??
+                TryReadAsciiProperty(image, ExifDateTimeId);
+            if (string.IsNullOrWhiteSpace(rawDate))
+            {
+                return null;
+            }
+
+            var trimmed = rawDate.Trim('\0', ' ');
+            if (DateTime.TryParseExact(
+                    trimmed,
+                    "yyyy:MM:dd HH:mm:ss",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var parsed))
+            {
+                return parsed;
+            }
+
+            if (DateTime.TryParse(
+                    trimmed,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out parsed))
+            {
+                return parsed;
+            }
+
+            return null;
+        }
+
+        private static DateTime? TryReadFileSystemPhotoCreatedDate(string path)
+        {
+            try
+            {
+                var created = File.GetCreationTime(path);
+                if (created > DateTime.MinValue && created.Year > 1900)
+                {
+                    return created;
+                }
+
+                var modified = File.GetLastWriteTime(path);
+                if (modified > DateTime.MinValue && modified.Year > 1900)
+                {
+                    return modified;
+                }
+            }
+            catch
+            {
+                // Fall through to null when file metadata is unavailable.
+            }
+
+            return null;
+        }
+
         private static bool TryReadGpsCoordinate(DrawingImage image, int refId, int valueId, out double coordinate)
         {
             coordinate = 0.0;
@@ -121,6 +192,16 @@ namespace WildlifeSweeps
 
             coordinate = decimalValue;
             return true;
+        }
+
+        private static string? TryReadAsciiProperty(DrawingImage image, int id)
+        {
+            if (!TryGetPropertyItem(image, id, out var item))
+            {
+                return null;
+            }
+
+            return ReadAscii(item);
         }
 
         private static bool TryGetPropertyItem(DrawingImage image, int id, out DrawingPropertyItem? item)
