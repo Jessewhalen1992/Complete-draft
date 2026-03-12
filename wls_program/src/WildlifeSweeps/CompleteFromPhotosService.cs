@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO.Compression;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Xml.Linq;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Colors;
@@ -360,7 +362,7 @@ namespace WildlifeSweeps
                 }
 
                 var records = new List<PhotoPointRecord>();
-                var standardizedRows = new List<PhotoStandardizationRecord>();
+                var pointsCsvRows = new List<PhotoCsvExportRow>();
                 var photoOnlyNumbers = new List<int>();
                 var quarterValidationPolygonsByKey =
                     settings.CompleteFromPhotosIncludeQuarterLinework
@@ -416,19 +418,18 @@ namespace WildlifeSweeps
                         var wildlifeFinding = string.IsNullOrWhiteSpace(primary.StandardDescription)
                             ? finding.OriginalText
                             : primary.StandardDescription;
-                        var location = string.Empty;
                         var findingPoint2d = new Point2d(finding.Easting, finding.Northing);
+                        var atsLocation = AtsLocationDetails.Empty;
                         if (TryResolveFromQuarterLayer(findingPoint2d, quarterLayerMatches, out var quarterLayerMatch))
                         {
                             quarterLayerContainmentMatches++;
-                            if (TryResolveLsdLocationFromQuarterLayer(findingPoint2d, quarterLayerMatch, locationResolver, out var quarterLayerLocation))
+                            if (TryResolveAtsLocationFromQuarterLayer(findingPoint2d, quarterLayerMatch, locationResolver, out var quarterLayerLocation))
                             {
-                                location = quarterLayerLocation;
+                                atsLocation = quarterLayerLocation;
                             }
-                            else if (locationResolver != null &&
-                                locationResolver.TryResolveLsdMatch(findingPoint2d, out var lsdMatchFromQuarterLayer))
+                            else if (TryResolveAtsLocationFromResolver(findingPoint2d, locationResolver, out var resolverLocation))
                             {
-                                location = lsdMatchFromQuarterLayer.Location;
+                                atsLocation = resolverLocation;
                             }
 
                             if (quarterValidationPolygonsByKey != null)
@@ -436,18 +437,17 @@ namespace WildlifeSweeps
                                 quarterValidationPolygonsByKey[BuildPolygonKey(quarterLayerMatch.Vertices)] = quarterLayerMatch.Vertices;
                             }
                         }
-                        else if (locationResolver != null &&
-                            locationResolver.TryResolveLsdMatch(findingPoint2d, out var lsdMatch))
+                        else if (TryResolveAtsLocationFromResolver(findingPoint2d, locationResolver, out var resolverLocation))
                         {
-                            location = lsdMatch.Location;
+                            atsLocation = resolverLocation;
                             if (quarterValidationPolygonsByKey != null &&
-                                lsdMatch.QuarterVertices != null &&
-                                lsdMatch.QuarterVertices.Count >= 3)
+                                resolverLocation.QuarterVertices != null &&
+                                resolverLocation.QuarterVertices.Count >= 3)
                             {
-                                var resolverKey = BuildPolygonKey(lsdMatch.QuarterVertices);
+                                var resolverKey = BuildPolygonKey(resolverLocation.QuarterVertices);
                                 if (!quarterValidationPolygonsByKey.ContainsKey(resolverKey))
                                 {
-                                    quarterValidationPolygonsByKey[resolverKey] = lsdMatch.QuarterVertices;
+                                    quarterValidationPolygonsByKey[resolverKey] = resolverLocation.QuarterVertices;
                                     quarterResolverFallbackAdds++;
                                 }
                             }
@@ -474,20 +474,21 @@ namespace WildlifeSweeps
                             finding.Longitude,
                             finding.Northing,
                             finding.Easting,
-                            location,
+                            atsLocation.Location,
                             wildlifeFinding,
                             finding.IsOutsideBuffer,
-                            area);
+                            area,
+                            atsLocation.QuarterToken,
+                            atsLocation.Section,
+                            atsLocation.Township,
+                            atsLocation.Range,
+                            atsLocation.Meridian);
                         records.Add(record);
+                        pointsCsvRows.Add(new PhotoCsvExportRow(record, finding.OriginalText));
 
                         if (finding.ImagePath != null && finding.SourceTextId.IsNull)
                         {
                             photoOnlyNumbers.Add(number);
-                        }
-
-                        foreach (var standardization in finding.Standardizations)
-                        {
-                            standardizedRows.Add(new PhotoStandardizationRecord(record, finding.OriginalText, standardization));
                         }
 
                         number++;
@@ -542,11 +543,11 @@ namespace WildlifeSweeps
                     return;
                 }
 
-                var csvPath = PromptForCsvPath();
-                if (!string.IsNullOrWhiteSpace(csvPath))
+                var workbookPath = PromptForWorkbookPath();
+                if (!string.IsNullOrWhiteSpace(workbookPath))
                 {
-                    WriteCsv(csvPath, standardizedRows);
-                    editor.WriteMessage($"\nCSV written to: {csvPath}");
+                    WritePointsWorkbook(workbookPath, pointsCsvRows);
+                    editor.WriteMessage($"\nPoints workbook written to: {workbookPath}");
                 }
 
                 var tableInsertPoint = PromptForTableLocation(editor);
@@ -729,10 +730,10 @@ namespace WildlifeSweeps
             return findings;
         }
 
-        private static string? PromptForCsvPath()
+        private static string? PromptForWorkbookPath()
         {
-            var defaultPath = Path.Combine(Path.GetTempPath(), "photo_points.csv");
-            var dialog = new SaveFileDialog("Save CSV file as", defaultPath, "csv", "csv", SaveFileDialog.SaveFileDialogFlags.DoNotTransferRemoteFiles);
+            var defaultPath = Path.Combine(Path.GetTempPath(), "Points.xlsx");
+            var dialog = new SaveFileDialog("Save Excel file as", defaultPath, "xlsx", "xlsx", SaveFileDialog.SaveFileDialogFlags.DoNotTransferRemoteFiles);
             return dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK ? dialog.Filename : null;
         }
 
@@ -1894,13 +1895,13 @@ namespace WildlifeSweeps
             return true;
         }
 
-        private static bool TryResolveLsdLocationFromQuarterLayer(
+        private static bool TryResolveAtsLocationFromQuarterLayer(
             Point2d point,
             QuarterLayerMatch match,
             AtsQuarterLocationResolver? locationResolver,
-            out string location)
+            out AtsLocationDetails details)
         {
-            location = string.Empty;
+            details = AtsLocationDetails.Empty;
             if (match == null)
             {
                 return false;
@@ -1955,7 +1956,55 @@ namespace WildlifeSweeps
             }
 
             var lsd = LsdNumberingHelper.GetLsdNumber(row, col);
-            location = $"{lsd}-{section}-{township}-{range}-W{meridian}";
+            details = new AtsLocationDetails(
+                $"{lsd}-{section}-{township}-{range}-W{meridian}",
+                quarterToken,
+                section,
+                township,
+                range,
+                meridian,
+                match.Vertices);
+            return true;
+        }
+
+        private static bool TryResolveAtsLocationFromResolver(
+            Point2d point,
+            AtsQuarterLocationResolver? locationResolver,
+            out AtsLocationDetails details)
+        {
+            details = AtsLocationDetails.Empty;
+            if (locationResolver == null ||
+                !locationResolver.TryResolveLsdMatch(point, out var lsdMatch))
+            {
+                return false;
+            }
+
+            var quarterToken = lsdMatch.QuarterToken ?? string.Empty;
+            var section = string.Empty;
+            var township = string.Empty;
+            var range = string.Empty;
+            var meridian = string.Empty;
+            if (locationResolver.TryResolveQuarterMatch(point, out var quarterMatch))
+            {
+                if (string.IsNullOrWhiteSpace(quarterToken))
+                {
+                    quarterToken = quarterMatch.QuarterToken;
+                }
+
+                section = quarterMatch.Section ?? string.Empty;
+                township = quarterMatch.Township ?? string.Empty;
+                range = quarterMatch.Range ?? string.Empty;
+                meridian = quarterMatch.Meridian ?? string.Empty;
+            }
+
+            details = new AtsLocationDetails(
+                lsdMatch.Location ?? string.Empty,
+                quarterToken,
+                section,
+                township,
+                range,
+                meridian,
+                lsdMatch.QuarterVertices);
             return true;
         }
 
@@ -2306,32 +2355,131 @@ namespace WildlifeSweeps
             return duplicates.ToList();
         }
 
-        private static void WriteCsv(string path, IReadOnlyList<PhotoStandardizationRecord> standardizedRows)
+        private static void WritePointsWorkbook(string path, IReadOnlyList<PhotoCsvExportRow> rows)
         {
-            using var writer = new StreamWriter(path);
-            writer.WriteLine("FindingRef,OriginalText,CleanedOriginal,Species,FindingType,StandardDescription,PhotoRef,Lat,Long,LatDDMMSS,LongDDMMSS,Northing,Easting,Image,PhotoCreatedDate");
-            foreach (var row in standardizedRows)
+            var earliestPhotoDate = rows
+                .Where(row => row.Record.PhotoCreatedDate.HasValue)
+                .Select(row => (DateTime?)row.Record.PhotoCreatedDate.Value.Date)
+                .Min();
+            var latestPhotoDate = rows
+                .Where(row => row.Record.PhotoCreatedDate.HasValue)
+                .Select(row => (DateTime?)row.Record.PhotoCreatedDate.Value.Date)
+                .Max();
+
+            var worksheetRows = rows
+                .Select(row => BuildPointsWorksheetRow(row, earliestPhotoDate, latestPhotoDate))
+                .ToList();
+            var hiddenColumns = GetBlankWorksheetColumns(worksheetRows);
+            PointsWorkbookWriter.Write(path, worksheetRows, hiddenColumns);
+        }
+
+        private static string[] BuildPointsWorksheetRow(PhotoCsvExportRow row, DateTime? earliestPhotoDate, DateTime? latestPhotoDate)
+        {
+            var record = row.Record;
+            var cells = new string[ColumnNameToZeroBasedIndex("GT") + 1];
+            SetCsvCell(cells, "A", "Random Observation - Wildlife -RANDOMOBSV");
+            SetCsvCell(cells, "B", FormatPointsPhotoDate(earliestPhotoDate));
+            SetCsvCell(cells, "C", FormatPointsPhotoDate(latestPhotoDate));
+            SetCsvCell(cells, "S", "Site -SITE");
+            SetCsvCell(cells, "U", "GPS Specified -GPS");
+            SetCsvCell(cells, "V", "NAD 83 -NAD 83");
+            SetCsvCell(cells, "X", "Y");
+            SetCsvCell(cells, "Y", record.Latitude.ToString("F6", CultureInfo.InvariantCulture));
+            SetCsvCell(cells, "Z", record.Longitude.ToString("F6", CultureInfo.InvariantCulture));
+            SetCsvCell(cells, "AD", record.Location);
+            SetCsvCell(cells, "AE", FormatQuarterCsvValue(record.QuarterToken));
+            SetCsvCell(cells, "AF", record.Section);
+            SetCsvCell(cells, "AG", record.Township);
+            SetCsvCell(cells, "AH", record.Range);
+            SetCsvCell(cells, "AI", FormatMeridianCsvValue(record.Meridian));
+            SetCsvCell(cells, "GP", record.Number.ToString(CultureInfo.InvariantCulture));
+            SetCsvCell(cells, "GQ", FormatPointsPhotoDate(record.PhotoCreatedDate));
+            SetCsvCell(cells, "GR", "Confirmed Occurrence -CONFIRMED");
+            SetCsvCell(cells, "GS", record.WildlifeFinding);
+            SetCsvCell(cells, "GT", row.OriginalText);
+            return cells;
+        }
+
+        private static IReadOnlyCollection<int> GetBlankWorksheetColumns(IReadOnlyList<string[]> rows)
+        {
+            if (rows == null || rows.Count == 0)
             {
-                var record = row.Record;
-                var standardization = row.Standardization;
-                writer.WriteLine(string.Join(",",
-                    record.Number,
-                    EscapeCsv(row.OriginalText),
-                    EscapeCsv(standardization.CleanedOriginal),
-                    EscapeCsv(standardization.Species),
-                    EscapeCsv(standardization.FindingType),
-                    EscapeCsv(standardization.StandardDescription),
-                    EscapeCsv(standardization.PhotoRef),
-                    record.Latitude.ToString("F6", CultureInfo.InvariantCulture),
-                    record.Longitude.ToString("F6", CultureInfo.InvariantCulture),
-                    EscapeCsv(DmsFormatter.ToDmsString(record.Latitude, true)),
-                    EscapeCsv(DmsFormatter.ToDmsString(record.Longitude, false)),
-                    record.Northing.ToString("F3", CultureInfo.InvariantCulture),
-                    record.Easting.ToString("F3", CultureInfo.InvariantCulture),
-                    EscapeCsv(record.SourceImageName),
-                    EscapeCsv(FormatPhotoCreatedDate(record.PhotoCreatedDate))));
+                return Array.Empty<int>();
+            }
+
+            var hidden = new List<int>();
+            var columnCount = rows.Max(row => row.Length);
+            for (var index = 0; index < columnCount; index++)
+            {
+                var hasValue = rows.Any(row => index < row.Length && !string.IsNullOrWhiteSpace(row[index]));
+                if (!hasValue)
+                {
+                    hidden.Add(index + 1);
+                }
+            }
+
+            return hidden;
+        }
+
+        private static void SetCsvCell(string[] cells, string columnName, string? value)
+        {
+            var index = ColumnNameToZeroBasedIndex(columnName);
+            if (index >= 0 && index < cells.Length)
+            {
+                cells[index] = value ?? string.Empty;
             }
         }
+
+        private static int ColumnNameToZeroBasedIndex(string columnName)
+        {
+            if (string.IsNullOrWhiteSpace(columnName))
+            {
+                return 0;
+            }
+
+            var sum = 0;
+            foreach (var ch in columnName.Trim().ToUpperInvariant())
+            {
+                sum *= 26;
+                sum += ch - 'A' + 1;
+            }
+
+            return Math.Max(0, sum - 1);
+        }
+
+        private static string FormatQuarterCsvValue(string? quarterToken)
+        {
+            return NormalizeQuarterToken(quarterToken) switch
+            {
+                "NW" => "NW -NW",
+                "NE" => "NE -NE",
+                "SW" => "SW -SW",
+                "SE" => "SE -SE",
+                _ => string.Empty
+            };
+        }
+
+        private static string FormatMeridianCsvValue(string? meridian)
+        {
+            if (string.IsNullOrWhiteSpace(meridian))
+            {
+                return string.Empty;
+            }
+
+            var trimmed = meridian.Trim();
+            return $"{trimmed} -{trimmed}";
+        }
+
+        private static string FormatPointsPhotoDate(DateTime? photoCreatedDate)
+        {
+            if (!photoCreatedDate.HasValue)
+            {
+                return string.Empty;
+            }
+
+            return photoCreatedDate.Value.ToString("dd-MM-yyyy", CultureInfo.InvariantCulture);
+        }
+
 
         private static BuildProjectedFindingsResult BuildProjectedFindings(
             IReadOnlyList<PhotoProjectedRecord> photos,
@@ -2907,6 +3055,298 @@ namespace WildlifeSweeps
             return builder.ToString();
         }
 
+        private static class PointsWorkbookWriter
+        {
+            private static readonly XNamespace SpreadsheetNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+            private static readonly XNamespace RelationshipsNs = "http://schemas.openxmlformats.org/package/2006/relationships";
+            private static readonly XNamespace DocumentRelationshipsNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+            private static readonly XNamespace ContentTypesNs = "http://schemas.openxmlformats.org/package/2006/content-types";
+            private const int StyledCellFormatIndex = 1;
+
+            public static void Write(string path, IReadOnlyList<string[]> rows, IReadOnlyCollection<int> hiddenColumns)
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
+                WriteXmlEntry(archive, "[Content_Types].xml", BuildContentTypesDocument());
+                WriteXmlEntry(archive, "_rels/.rels", BuildRootRelationshipsDocument());
+                WriteXmlEntry(archive, "xl/workbook.xml", BuildWorkbookDocument());
+                WriteXmlEntry(archive, "xl/_rels/workbook.xml.rels", BuildWorkbookRelationshipsDocument());
+                WriteXmlEntry(archive, "xl/styles.xml", BuildStylesDocument());
+                WriteXmlEntry(archive, "xl/worksheets/sheet1.xml", BuildWorksheetDocument(rows, hiddenColumns));
+            }
+
+            private static XDocument BuildContentTypesDocument()
+            {
+                return new XDocument(
+                    new XDeclaration("1.0", "UTF-8", "yes"),
+                    new XElement(ContentTypesNs + "Types",
+                        new XElement(ContentTypesNs + "Default",
+                            new XAttribute("Extension", "rels"),
+                            new XAttribute("ContentType", "application/vnd.openxmlformats-package.relationships+xml")),
+                        new XElement(ContentTypesNs + "Default",
+                            new XAttribute("Extension", "xml"),
+                            new XAttribute("ContentType", "application/xml")),
+                        new XElement(ContentTypesNs + "Override",
+                            new XAttribute("PartName", "/xl/workbook.xml"),
+                            new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml")),
+                        new XElement(ContentTypesNs + "Override",
+                            new XAttribute("PartName", "/xl/styles.xml"),
+                            new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml")),
+                        new XElement(ContentTypesNs + "Override",
+                            new XAttribute("PartName", "/xl/worksheets/sheet1.xml"),
+                            new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"))));
+            }
+
+            private static XDocument BuildRootRelationshipsDocument()
+            {
+                return new XDocument(
+                    new XDeclaration("1.0", "UTF-8", "yes"),
+                    new XElement(RelationshipsNs + "Relationships",
+                        new XElement(RelationshipsNs + "Relationship",
+                            new XAttribute("Id", "rId1"),
+                            new XAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"),
+                            new XAttribute("Target", "xl/workbook.xml"))));
+            }
+
+            private static XDocument BuildWorkbookDocument()
+            {
+                return new XDocument(
+                    new XDeclaration("1.0", "UTF-8", "yes"),
+                    new XElement(SpreadsheetNs + "workbook",
+                        new XAttribute(XNamespace.Xmlns + "r", DocumentRelationshipsNs.NamespaceName),
+                        new XElement(SpreadsheetNs + "sheets",
+                            new XElement(SpreadsheetNs + "sheet",
+                                new XAttribute("name", "Points"),
+                                new XAttribute("sheetId", 1),
+                                new XAttribute(DocumentRelationshipsNs + "id", "rId1")))));
+            }
+
+            private static XDocument BuildWorkbookRelationshipsDocument()
+            {
+                return new XDocument(
+                    new XDeclaration("1.0", "UTF-8", "yes"),
+                    new XElement(RelationshipsNs + "Relationships",
+                        new XElement(RelationshipsNs + "Relationship",
+                            new XAttribute("Id", "rId1"),
+                            new XAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"),
+                            new XAttribute("Target", "worksheets/sheet1.xml")),
+                        new XElement(RelationshipsNs + "Relationship",
+                            new XAttribute("Id", "rId2"),
+                            new XAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"),
+                            new XAttribute("Target", "styles.xml"))));
+            }
+
+            private static XDocument BuildStylesDocument()
+            {
+                return new XDocument(
+                    new XDeclaration("1.0", "UTF-8", "yes"),
+                    new XElement(SpreadsheetNs + "styleSheet",
+                        new XElement(SpreadsheetNs + "fonts",
+                            new XAttribute("count", 1),
+                            new XElement(SpreadsheetNs + "font",
+                                new XElement(SpreadsheetNs + "sz", new XAttribute("val", 11)),
+                                new XElement(SpreadsheetNs + "name", new XAttribute("val", "Calibri")),
+                                new XElement(SpreadsheetNs + "family", new XAttribute("val", 2)),
+                                new XElement(SpreadsheetNs + "scheme", new XAttribute("val", "minor")))),
+                        new XElement(SpreadsheetNs + "fills",
+                            new XAttribute("count", 2),
+                            new XElement(SpreadsheetNs + "fill",
+                                new XElement(SpreadsheetNs + "patternFill", new XAttribute("patternType", "none"))),
+                            new XElement(SpreadsheetNs + "fill",
+                                new XElement(SpreadsheetNs + "patternFill", new XAttribute("patternType", "gray125")))),
+                        new XElement(SpreadsheetNs + "borders",
+                            new XAttribute("count", 1),
+                            new XElement(SpreadsheetNs + "border",
+                                new XElement(SpreadsheetNs + "left"),
+                                new XElement(SpreadsheetNs + "right"),
+                                new XElement(SpreadsheetNs + "top"),
+                                new XElement(SpreadsheetNs + "bottom"),
+                                new XElement(SpreadsheetNs + "diagonal"))),
+                        new XElement(SpreadsheetNs + "cellStyleXfs",
+                            new XAttribute("count", 1),
+                            new XElement(SpreadsheetNs + "xf",
+                                new XAttribute("numFmtId", 0),
+                                new XAttribute("fontId", 0),
+                                new XAttribute("fillId", 0),
+                                new XAttribute("borderId", 0))),
+                        new XElement(SpreadsheetNs + "cellXfs",
+                            new XAttribute("count", 2),
+                            new XElement(SpreadsheetNs + "xf",
+                                new XAttribute("numFmtId", 0),
+                                new XAttribute("fontId", 0),
+                                new XAttribute("fillId", 0),
+                                new XAttribute("borderId", 0),
+                                new XAttribute("xfId", 0)),
+                            new XElement(SpreadsheetNs + "xf",
+                                new XAttribute("numFmtId", 0),
+                                new XAttribute("fontId", 0),
+                                new XAttribute("fillId", 0),
+                                new XAttribute("borderId", 0),
+                                new XAttribute("xfId", 0),
+                                new XAttribute("applyAlignment", 1),
+                                new XElement(SpreadsheetNs + "alignment",
+                                    new XAttribute("horizontal", "left"),
+                                    new XAttribute("vertical", "top")))),
+                        new XElement(SpreadsheetNs + "cellStyles",
+                            new XAttribute("count", 1),
+                            new XElement(SpreadsheetNs + "cellStyle",
+                                new XAttribute("name", "Normal"),
+                                new XAttribute("xfId", 0),
+                                new XAttribute("builtinId", 0)))));
+            }
+
+            private static XDocument BuildWorksheetDocument(IReadOnlyList<string[]> rows, IReadOnlyCollection<int> hiddenColumns)
+            {
+                var sheetData = new XElement(SpreadsheetNs + "sheetData");
+                for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+                {
+                    var rowValues = rows[rowIndex];
+                    var rowElement = new XElement(SpreadsheetNs + "row", new XAttribute("r", rowIndex + 1));
+                    for (var columnIndex = 0; columnIndex < rowValues.Length; columnIndex++)
+                    {
+                        var value = rowValues[columnIndex] ?? string.Empty;
+                        if (string.IsNullOrEmpty(value))
+                        {
+                            continue;
+                        }
+
+                        var rowNumber = rowIndex + 1;
+                        var columnNumber = columnIndex + 1;
+                        rowElement.Add(ShouldWriteNumberCell(columnNumber, value)
+                            ? CreateNumberCell(rowNumber, columnNumber, value)
+                            : CreateInlineStringCell(rowNumber, columnNumber, value));
+                    }
+                    sheetData.Add(rowElement);
+                }
+
+                var worksheet = new XElement(SpreadsheetNs + "worksheet",
+                    new XElement(SpreadsheetNs + "sheetViews",
+                        new XElement(SpreadsheetNs + "sheetView", new XAttribute("workbookViewId", 0))));
+
+                var columns = BuildColumnsElement(hiddenColumns);
+                if (columns != null)
+                {
+                    worksheet.Add(columns);
+                }
+
+                worksheet.Add(sheetData);
+
+                return new XDocument(new XDeclaration("1.0", "UTF-8", "yes"), worksheet);
+            }
+
+            private static XElement? BuildColumnsElement(IReadOnlyCollection<int> hiddenColumns)
+            {
+                if (hiddenColumns == null || hiddenColumns.Count == 0)
+                {
+                    return null;
+                }
+
+                var cols = new XElement(SpreadsheetNs + "cols");
+                var ordered = hiddenColumns.OrderBy(index => index).ToList();
+                var start = ordered[0];
+                var previous = start;
+                for (var i = 1; i < ordered.Count; i++)
+                {
+                    var current = ordered[i];
+                    if (current == previous + 1)
+                    {
+                        previous = current;
+                        continue;
+                    }
+
+                    cols.Add(CreateHiddenColumnRange(start, previous));
+                    start = current;
+                    previous = current;
+                }
+
+                cols.Add(CreateHiddenColumnRange(start, previous));
+                return cols;
+            }
+
+            private static XElement CreateHiddenColumnRange(int start, int end)
+            {
+                return new XElement(SpreadsheetNs + "col",
+                    new XAttribute("min", start),
+                    new XAttribute("max", end),
+                    new XAttribute("width", 2),
+                    new XAttribute("hidden", 1),
+                    new XAttribute("customWidth", 1));
+            }
+
+            private static XElement CreateInlineStringCell(int rowNumber, int columnNumber, string value)
+            {
+                return new XElement(SpreadsheetNs + "c",
+                    new XAttribute("r", BuildCellReference(columnNumber, rowNumber)),
+                    new XAttribute("s", StyledCellFormatIndex),
+                    new XAttribute("t", "inlineStr"),
+                    new XElement(SpreadsheetNs + "is",
+                        new XElement(SpreadsheetNs + "t",
+                            new XAttribute(XNamespace.Xml + "space", "preserve"),
+                            value)));
+            }
+
+            private static XElement CreateNumberCell(int rowNumber, int columnNumber, string value)
+            {
+                return new XElement(SpreadsheetNs + "c",
+                    new XAttribute("r", BuildCellReference(columnNumber, rowNumber)),
+                    new XAttribute("s", StyledCellFormatIndex),
+                    new XElement(SpreadsheetNs + "v", value));
+            }
+
+            private static bool ShouldWriteNumberCell(int columnNumber, string value)
+            {
+                if (!IsNumberColumn(columnNumber))
+                {
+                    return false;
+                }
+
+                return double.TryParse(
+                    value,
+                    NumberStyles.Float | NumberStyles.AllowLeadingSign,
+                    CultureInfo.InvariantCulture,
+                    out _);
+            }
+
+            private static bool IsNumberColumn(int columnNumber)
+            {
+                return BuildColumnName(columnNumber) switch
+                {
+                    "Y" or "Z" or "AF" or "AG" or "AH" or "GP" => true,
+                    _ => false
+                };
+            }
+
+            private static string BuildCellReference(int columnNumber, int rowNumber)
+            {
+                return $"{BuildColumnName(columnNumber)}{rowNumber}";
+            }
+
+            private static string BuildColumnName(int columnNumber)
+            {
+                var index = columnNumber;
+                var chars = new Stack<char>();
+                while (index > 0)
+                {
+                    index--;
+                    chars.Push((char)("A"[0] + (index % 26)));
+                    index /= 26;
+                }
+
+                return new string(chars.ToArray());
+            }
+
+            private static void WriteXmlEntry(ZipArchive archive, string entryPath, XDocument document)
+            {
+                var entry = archive.CreateEntry(entryPath);
+                using var stream = entry.Open();
+                document.Save(stream);
+            }
+        }
+
         private sealed record BufferBoundary(IReadOnlyList<Point3d> Vertices)
         {
             public bool IsWithinBuffer(Point3d point, double bufferDistanceMeters)
@@ -3020,6 +3460,25 @@ namespace WildlifeSweeps
             string LayerName,
             List<QuarterLayerMatch> Matches);
 
+        private sealed record AtsLocationDetails(
+            string Location,
+            string QuarterToken,
+            string Section,
+            string Township,
+            string Range,
+            string Meridian,
+            IReadOnlyList<Point2d> QuarterVertices)
+        {
+            public static AtsLocationDetails Empty { get; } = new(
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                Array.Empty<Point2d>());
+        }
+
         private enum CornerKey
         {
             NorthWest,
@@ -3041,11 +3500,15 @@ namespace WildlifeSweeps
             string Location,
             string WildlifeFinding,
             bool IsOutsideBuffer,
-            BufferArea Area);
+            BufferArea Area,
+            string QuarterToken,
+            string Section,
+            string Township,
+            string Range,
+            string Meridian);
 
-        private sealed record PhotoStandardizationRecord(
+        private sealed record PhotoCsvExportRow(
             PhotoPointRecord Record,
-            string OriginalText,
-            FindingsDescriptionStandardizer.StandardizedFinding Standardization);
+            string OriginalText);
     }
 }

@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Linq;
 using System.Text;
 using Autodesk.AutoCAD.ApplicationServices;
 
@@ -8,19 +7,13 @@ namespace WildlifeSweeps
 {
     internal static class FindingsStandardizationHelper
     {
-        private const string OtherValue = "Other";
-
         internal static FindingsDescriptionStandardizer.PromptResult PromptForUnmappedFinding(
             FindingsDescriptionStandardizer.PromptContext context,
             FindingsDescriptionStandardizer standardizer)
         {
             while (true)
             {
-                using var dialog = new UnmappedFindingDialog(
-                    context.CleanedOriginal,
-                    standardizer.SpeciesOptions,
-                    standardizer.FindingTypesBySpecies,
-                    standardizer.StandardDescriptionOptions);
+                using var dialog = new UnmappedFindingDialog(context.CleanedOriginal);
                 var result = dialog.ShowDialog();
                 if (result == System.Windows.Forms.DialogResult.Ignore)
                 {
@@ -28,107 +21,29 @@ namespace WildlifeSweeps
                         string.Empty,
                         string.Empty,
                         string.Empty,
-                        false,
+                        true,
                         true,
                         false);
                 }
 
                 if (result == System.Windows.Forms.DialogResult.OK)
                 {
-                    var description = FindingOtherValueHelper.NormalizeOtherValue(dialog.StandardizedDescription, OtherValue);
-                    var species = FindingOtherValueHelper.NormalizeOtherValue(dialog.SelectedSpecies, OtherValue);
-                    var findingType = FindingOtherValueHelper.NormalizeOtherValue(dialog.SelectedFindingType, OtherValue);
-
-                    if (FindingOtherValueHelper.IsOtherValue(description, OtherValue))
-                    {
-                        if (string.IsNullOrWhiteSpace(species))
-                        {
-                            species = OtherValue;
-                        }
-
-                        if (string.IsNullOrWhiteSpace(findingType))
-                        {
-                            findingType = OtherValue;
-                        }
-                    }
-
-                    if (string.IsNullOrWhiteSpace(description)
-                        && (string.IsNullOrWhiteSpace(species) || string.IsNullOrWhiteSpace(findingType)))
+                    var description = dialog.ReplacementText.Trim();
+                    if (string.IsNullOrWhiteSpace(description))
                     {
                         System.Windows.Forms.MessageBox.Show(
-                            "Provide a species/finding type or a recognized standard description.",
+                            "Provide replacement text or choose Skip/Ignore.",
                             "Missing Information",
                             System.Windows.Forms.MessageBoxButtons.OK,
                             System.Windows.Forms.MessageBoxIcon.Warning);
                         continue;
                     }
 
-                    if (string.IsNullOrWhiteSpace(species) || string.IsNullOrWhiteSpace(findingType))
-                    {
-                        if (!standardizer.TryResolveStandardDescription(description, out species, out findingType))
-                        {
-                            System.Windows.Forms.MessageBox.Show(
-                                "That description is not recognized. Please choose a species and finding type.",
-                                "Unknown Description",
-                                System.Windows.Forms.MessageBoxButtons.OK,
-                                System.Windows.Forms.MessageBoxIcon.Warning);
-                            continue;
-                        }
-                    }
-
-                    if (!standardizer.IsValidPair(species, findingType))
-                    {
-                        if (FindingOtherValueHelper.IsOtherValue(species, OtherValue) ||
-                            FindingOtherValueHelper.IsOtherValue(findingType, OtherValue))
-                        {
-                            if (string.IsNullOrWhiteSpace(description))
-                            {
-                                description = OtherValue;
-                            }
-
-                            return new FindingsDescriptionStandardizer.PromptResult(
-                                description,
-                                species,
-                                findingType,
-                                dialog.RememberMapping,
-                                false,
-                                false);
-                        }
-
-                        var isKnownSpecies = standardizer.SpeciesOptions.Any(option =>
-                            option.Equals(species, StringComparison.OrdinalIgnoreCase));
-                        var isKnownFindingType = standardizer.FindingTypesBySpecies.Values.Any(list =>
-                            list.Any(option => option.Equals(findingType, StringComparison.OrdinalIgnoreCase)));
-
-                        if (isKnownSpecies && isKnownFindingType)
-                        {
-                            System.Windows.Forms.MessageBox.Show(
-                                "That species/finding type combination is not valid.",
-                                "Invalid Combination",
-                                System.Windows.Forms.MessageBoxButtons.OK,
-                                System.Windows.Forms.MessageBoxIcon.Warning);
-                            continue;
-                        }
-                    }
-
-                    if (string.IsNullOrWhiteSpace(description))
-                    {
-                        if (FindingOtherValueHelper.IsOtherValue(species, OtherValue) ||
-                            FindingOtherValueHelper.IsOtherValue(findingType, OtherValue))
-                        {
-                            description = OtherValue;
-                        }
-                        else
-                        {
-                            standardizer.TryGetDefaultDescriptionForPair(species, findingType, out description);
-                        }
-                    }
-
                     return new FindingsDescriptionStandardizer.PromptResult(
                         description,
-                        species,
-                        findingType,
-                        dialog.RememberMapping,
+                        string.Empty,
+                        string.Empty,
+                        true,
                         false,
                         false);
                 }
@@ -149,7 +64,7 @@ namespace WildlifeSweeps
             builder.AppendLine("Wildlife Sweeps Findings Standardization Log");
             builder.AppendLine($"Drawing: {doc.Name}");
             builder.AppendLine($"Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            builder.AppendLine("OriginalText\tCleanedOriginal\tSpecies\tFindingType\tStandardDescription\tPhotoRef\tSource");
+            builder.AppendLine("OriginalText\tCleanedOriginal\tStandardDescription\tPhotoRef\tSource");
             return builder;
         }
 
@@ -173,8 +88,6 @@ namespace WildlifeSweeps
             logBuilder.AppendLine(string.Join("\t",
                 originalText ?? string.Empty,
                 standardization.CleanedOriginal,
-                standardization.Species,
-                standardization.FindingType,
                 standardization.StandardDescription,
                 standardization.PhotoRef,
                 standardization.Source));
@@ -203,6 +116,5 @@ namespace WildlifeSweeps
             File.WriteAllText(logPath, content);
             return logPath;
         }
-
     }
 }

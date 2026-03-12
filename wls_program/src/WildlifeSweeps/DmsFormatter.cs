@@ -31,7 +31,7 @@ namespace WildlifeSweeps
 
             var secondsText = seconds.ToString("00.00", CultureInfo.InvariantCulture);
             var minutesText = minutes.ToString("00", CultureInfo.InvariantCulture);
-            return $"{degrees}Â°{minutesText}'{secondsText}\" {hemi}";
+            return $"{degrees}°{minutesText}'{secondsText}\" {hemi}";
         }
 
         public static double ToSecondsDifference(double valueA, double valueB)

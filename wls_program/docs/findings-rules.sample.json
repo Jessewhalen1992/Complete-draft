@@ -1,6 +1,6 @@
-[
+﻿[
   {
-    "description": "Rabbit Scat",
+    "description": "Snowshoe Hare Scat",
     "pattern": "(?=.*\\brabbit\\b)(?=.*\\b(scat|droppings)\\b)"
   },
   {
@@ -12,3 +12,4 @@
     "pattern": "(?=.*\\bmoose\\b)(?=.*\\bscat\\b)"
   }
 ]
+

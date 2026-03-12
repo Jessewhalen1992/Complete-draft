@@ -5237,3 +5237,240 @@
   - `dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore` passed (`Decision tests passed.`).
   - verified compiled outputs match: `src\AtsBackgroundBuilder\bin\Release\net8.0-windows\AtsBackgroundBuilder.dll` and `build\net8.0-windows\AtsBackgroundBuilder.dll` both hash to `6C775A755C4B2CEB366AC8524B7BD180DAE4A5F128B9D4052440B4A758C681EF`.
   - Runtime AutoCAD execution could not be verified in this shell; this pass validates compile/test correctness plus script/scale fallback logic.
+# Follow-up (Workspace Build, 2026-03-10)
+
+- [x] Build `src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj` in Release.
+- [x] Build `wls_program/src/WildlifeSweeps/WildlifeSweeps.csproj` in Release.
+- [x] Record the build results and any blocking warnings/errors.
+
+## Review (Workspace Build, 2026-03-10)
+
+- Verification:
+  - `dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors after an escalated restore/build, because sandboxed restore could not reach `api.nuget.org` for `System.Data.OleDb`.
+  - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+- Notes:
+  - Initial sandboxed `dotnet` runs also tried to create first-run state under `C:\Users\CodexSandboxOffline\.dotnet`; using a workspace-local `DOTNET_CLI_HOME` resolved that for in-sandbox builds.
+  - No source files were changed during the build; only `tasks/todo.md` was updated to record the result.
+
+# Follow-up (Points.csv + Unmatched Resolver, 2026-03-10)
+
+- [x] Confirm remaining CSV column/layout ambiguities with user.
+- [x] Replace the current 15-column CSV export with the requested wide `Points.csv` layout.
+- [x] Fix DMS degree-symbol output so exported coordinates do not contain `°`.
+- [x] Simplify the unmatched finding dialog to show the found text, accept a replacement value, keep `Ignore`, and persist the mapping into the lookup workbook.
+- [x] Build `wls_program/src/WildlifeSweeps/WildlifeSweeps.csproj` and record verification.
+
+## Review (Points.csv + Unmatched Resolver, 2026-03-10)
+
+- Updated source:
+  - `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`
+    - replaced the old 15-column export with a fixed-position `Points.csv` writer that emits one row per finding, no header row, global earliest photo date in column `B`, per-row photo date in `GQ`, fixed literals in `A/S/U/V/X/GR`, and ATS location pieces in `AD` through `AJ`.
+    - changed the suggested export filename to `Points.csv`.
+    - carries quarter token, section, township, range, and meridian alongside the full ATS LSD location so the CSV can populate `AE` through `AJ` directly.
+  - `wls_program/src/WildlifeSweeps/FindingsStandardizationHelper.cs`
+    - simplified the unmapped prompt flow to a single replacement-text input with `OK`, `Skip`, and `Ignore`.
+    - removed species/finding-type validation from the manual prompt path and simplified the non-automatic log columns.
+  - `wls_program/src/WildlifeSweeps/Ui/UnmappedFindingDialog.cs`
+    - replaced the species/finding-type/description picker UI with a read-only found-text box and one editable replacement-text field.
+  - `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs`
+    - allows description-only keyword rules.
+    - persists manual unmapped resolutions back into the lookup workbook `RecognitionKeywords` sheet instead of relying on the prior JSON-only save path.
+    - keeps the mapping live for the current run immediately after the user enters it.
+  - `wls_program/src/WildlifeSweeps/DmsFormatter.cs`
+    - corrected the bad degree symbol literal.
+- Verification:
+  - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+- Residual risk:
+  - Workbook writeback was verified by compile only in this shell; runtime confirmation still depends on exercising the unmapped dialog against a writable lookup workbook from AutoCAD.
+
+# Follow-up (Points.csv Meridian Text Preservation, 2026-03-10)
+
+- [x] Stop Excel from auto-converting column `AJ` meridian values like `5 -5` into dates on CSV open.
+- [x] Verify the code compiles after the meridian export change.
+- [x] Document the CSV formatting limitation for hidden/shrunk blank columns.
+
+## Review (Points.csv Meridian Text Preservation, 2026-03-10)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` so column `AJ` is emitted in an Excel text-preserving form instead of raw `5 -5`, which Excel was interpreting as `05-May` when opening the CSV directly.
+- Verification:
+  - `dotnet msbuild wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v minimal` succeeded.
+  - A full `dotnet build` retry after this change hit only a locked `bin\Release\net8.0-windows\WildlifeSweeps.dll`, not a compile error.
+- Limitation:
+  - CSV cannot store hidden columns or column widths. If you want the blank columns hidden/shrunk automatically, the export needs to be `.xlsx`, not `.csv`.
+# Follow-up (Points.xlsx Export, 2026-03-10)
+
+- [x] Switch the findings export from `Points.csv` to `Points.xlsx`.
+- [x] Keep the same fixed data mapping while preserving meridian as plain text in column `AJ`.
+- [x] Hide worksheet columns that are blank across the exported dataset.
+- [x] Compile `WildlifeSweeps` after the workbook export change.
+
+## Review (Points.xlsx Export, 2026-03-10)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` so the export prompt now saves `Points.xlsx` and writes a minimal OpenXML workbook instead of CSV.
+- The workbook writer outputs the same point rows as before, but stores values as worksheet text cells, so Excel no longer auto-converts meridian values like `5 -5` into dates.
+- Blank columns are now hidden automatically when every exported row leaves that column empty.
+- Verification:
+  - `dotnet msbuild wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v minimal` succeeded.
+- Note:
+  - I used compile-only verification here because the full `bin\Release` DLL can be locked by another process on this machine.
+
+# Follow-up (Snowshoe Hare Resolver Alias, 2026-03-10)
+
+- [x] Find the rabbit/hare matcher paths that still emit `Rabbit` outputs.
+- [x] Canonicalize resolver output and prompt/custom mappings to `Snowshoe Hare`.
+- [x] Align the lookup workbook and sample matcher docs with the `Snowshoe Hare` wording.
+- [x] Build `wls_program/src/WildlifeSweeps/WildlifeSweeps.csproj` in Release and record verification.
+
+## Review (Snowshoe Hare Resolver Alias, 2026-03-10)
+
+- Updated `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs` so regex rules, keyword rules, workbook-derived species options, custom mappings, and prompt-entered descriptions all canonicalize `Rabbit` / `Rabbit / Hare` outputs to `Snowshoe Hare` before the result is used or persisted.
+- Updated `wls_program/wildlife_parsing_codex_lookup.xlsx` so the matcher workbook now stores `Snowshoe Hare` species and `Snowshoe Hare ...` standard descriptions in `SpeciesFindingTypes`, `RecognitionKeywords`, and `RecognitionRegex`, while leaving raw rabbit/hare keywords and regex patterns intact for matching.
+- Updated `wls_program/docs/findings-rules.sample.json` to use `Snowshoe Hare Scat` in the sample description.
+- Verification:
+  - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors using a workspace-local `DOTNET_CLI_HOME`.
+  - A workbook XML check confirmed the relevant lookup sheets now store `Snowshoe Hare` / `Snowshoe Hare ...` labels instead of the prior rabbit output labels.
+
+# Follow-up (Points.xlsx Numeric Cell Types + Meridian Column, 2026-03-10)
+
+- [x] Inspect the current Points.xlsx writer and confirm which columns should be numeric.
+- [x] Update the export so lat/long, AF-AI, and GP are written as numeric cells, and move meridian from AJ to AI.
+- [x] Build `wls_program/src/WildlifeSweeps/WildlifeSweeps.csproj` in Release and record verification.
+
+## Review (Points.xlsx Numeric Cell Types + Meridian Column, 2026-03-10)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` so the Points workbook now writes latitude/longitude (`Y`/`Z`), ATS numeric fields (`AF`/`AG`/`AH`/`AI`), and finding number (`GP`) as numeric worksheet cells instead of inline strings.
+- Moved the meridian export from column `AJ` to column `AI`; `AI` now receives the raw meridian value and `AJ` is left blank.
+- Verification:
+  - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors using a workspace-local `DOTNET_CLI_HOME`.
+
+
+# Follow-up (Points.xlsx Cell Style, 2026-03-10)
+
+- [x] Inspect the current workbook writer and locate the style/relationship points needed for XLSX cell styling.
+- [x] Add a shared cell style so exported Points.xlsx cells use Calibri with top vertical alignment and left horizontal alignment.
+- [x] Build `wls_program/src/WildlifeSweeps/WildlifeSweeps.csproj` in Release and record verification.
+
+## Review (Points.xlsx Cell Style, 2026-03-10)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` so the generated Points workbook now includes an `xl/styles.xml` part, a workbook styles relationship, and one shared styled cell format.
+- All emitted Points.xlsx value cells now use that style, which sets Calibri font and applies left horizontal alignment plus top vertical alignment for both text and numeric cells.
+- Verification:
+  - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors using a workspace-local `DOTNET_CLI_HOME`.
+
+
+# Follow-up (Points.xlsx Latest Photo Date Column, 2026-03-10)
+
+- [x] Confirm the current Points row builder leaves column `C` blank.
+- [x] Populate column `C` with the latest photo date across the export while keeping column `B` as the earliest photo date.
+- [x] Build `wls_program/src/WildlifeSweeps/WildlifeSweeps.csproj` in Release and record verification.
+
+## Review (Points.xlsx Latest Photo Date Column, 2026-03-10)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` so the Points workbook now computes both the earliest and latest photo date across the export and writes the latest date into column `C` for every row.
+- Column `B` remains the earliest photo date. When there is only one photo date in the export, columns `B` and `C` will naturally be the same value.
+- Verification:
+  - `dotnet msbuild wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v minimal` succeeded.
+  - A full `dotnet build` retry was blocked only because `bin\Release\net8.0-windows\WildlifeSweeps.dll` was locked by another process.
+
+
+# Follow-up (Points.xlsx Site Label + Meridian Display, 2026-03-10)
+
+- [x] Confirm the current Points row builder still uses `Site-SITE` and raw meridian in `AI`.
+- [x] Update column `S` to `Site -SITE` and emit column `AI` as `5 -5` style text.
+- [x] Verify `WildlifeSweeps` still compiles and record the correction.
+
+## Review (Points.xlsx Site Label + Meridian Display, 2026-03-10)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` so column `S` now exports `Site -SITE` with the missing space.
+- Updated column `AI` to use the `5 -5` display format again via `FormatMeridianCsvValue(...)`. Because Excel cannot treat `5 -5` as a true numeric value and still display it exactly that way, `AI` is no longer included in the numeric-cell column set.
+- Verification:
+  - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors using a workspace-local `DOTNET_CLI_HOME`.
+
+
+# Follow-up (Points.xlsx GS Leading Number Cleanup, 2026-03-10)
+
+- [x] Confirm column `GS` is using the cleaned finding text and identify why leading numbers can still survive there.
+- [x] Sanitize the exported `GS` value so leading list/count numbers are removed while leaving `GT` unchanged.
+- [x] Verify `WildlifeSweeps` builds and record the correction.
+
+## Review (Points.xlsx GS Leading Number Cleanup, 2026-03-10)
+
+- Confirmed `GS` was being written from the cleaned finding text (`row.FindingNormalized`) in `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`.
+- Updated the Points export to pass `GS` through a small sanitizer that strips leading list/count tokens like `1`, `#2`, or `3)` before writing the workbook cell. `GT` still writes the original finding text unchanged.
+- Verification:
+  - `dotnet msbuild wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v minimal` succeeded.
+  - A full `dotnet build` retry was blocked only because `bin\Release\net8.0-windows\WildlifeSweeps.dll` was locked by another process.
+
+
+# Follow-up (Snowshoe Hare Scat Description, 2026-03-10)
+
+- [x] Confirm the runtime canonicalization and lookup workbook still resolve Snowshoe hare scat to a `...Droppings` description.
+- [x] Update the canonical description and workbook lookup rows so Snowshoe hare scat exports as `Snowshoe Hare Scat`.
+- [x] Verify `WildlifeSweeps` builds and record the correction.
+
+## Review (Snowshoe Hare Scat Description, 2026-03-10)
+
+- Updated `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs` so both legacy rabbit-source descriptions and the old `Snowshoe Hare Scat / Droppings` description canonicalize forward to `Snowshoe Hare Scat`.
+- Updated `wls_program/wildlife_parsing_codex_lookup.xlsx` so the Snowshoe hare scat keyword/regex rows now store `Snowshoe Hare Scat` instead of `Snowshoe Hare Scat / Droppings`.
+- Verification:
+  - `dotnet msbuild wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v minimal` succeeded.
+  - A full `dotnet build` retry was blocked only because `bin\Release\net8.0-windows\WildlifeSweeps.dll` was locked by another process.
+
+
+# Follow-up (Points.xlsx Table Alignment + Woodpecker Rule, 2026-03-10)
+
+- [x] Confirm workbook `GS` is still sourced from cleaned finding text instead of the table-standardized value.
+- [x] Update the Points export so `GS` uses the same finding text as the inserted table.
+- [x] Remove the unexpected `Pileated Woodpecker Feeding Cavity` remap path and preserve that phrase as-is.
+- [x] Verify `WildlifeSweeps` compiles and record the correction.
+
+## Review (Points.xlsx Table Alignment + Woodpecker Rule, 2026-03-10)
+
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` so Points workbook column `GS` now writes the same `record.WildlifeFinding` value used in the inserted table instead of the separate cleaned-finding export path.
+- Removed the old now-dead `GS` normalization/sanitizer path from `CompleteFromPhotosService.cs` so the workbook and table no longer diverge by source.
+- Updated `wls_program/wildlife_parsing_codex_lookup.xlsx` so the generic woodpecker cavity regex now requires `cavity tree` semantics, and added an exact preserve regex for `Pileated Woodpecker Feeding Cavity` so that phrase stays literal instead of collapsing to `Woodpecker Cavity Tree`.
+- Verification:
+  - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+
+# Follow-up (Exact Finding Preserve Rules, 2026-03-10)
+
+- [x] Confirm the active generic lookup rules are remapping user-approved exact phrases into broader wildlife buckets.
+- [x] Add workbook preserve rules so the listed phrases stay as cleaned original output, including numbered-prefix variants like `2_...`.
+- [x] Verify `WildlifeSweeps` still builds and record the correction.
+
+## Review (Exact Finding Preserve Rules, 2026-03-10)
+
+- Updated `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs` so a workbook rule can now emit `[Keep Original]`, which resolves to the cleaned original finding text at runtime instead of forcing a generic standardized label.
+- Updated `wls_program/wildlife_parsing_codex_lookup.xlsx` with high-priority preserve regex rules for `Pileated Woodpecker Feeding Cavity`, `Moose Browsing Activity`, `Moose Hair`, `Inactive/Nactive Small Mammal Den`, and `Red Squirrel Midden`, including optional leading number prefixes like `2_...`.
+- This preserves exact accepted phrases while leaving the broader woodpecker/moose/squirrel/den rules available for other findings.
+- Verification:
+  - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+
+# Follow-up (Additional Exact Finding Overrides, 2026-03-10)
+
+- [x] Confirm the newly reported phrases are still being remapped by broader lookup rules.
+- [x] Add targeted exact overrides so accepted phrases stay unchanged and `Field mouse hole (mouse visual)` maps to `Small Rodent Sighting`.
+- [x] Verify `WildlifeSweeps` still builds and record the correction.
+
+## Review (Additional Exact Finding Overrides, 2026-03-10)
+
+- Confirmed the stock workbook was still remapping the reported phrases through broader coyote/den/squirrel/mouse rules, while saved custom mappings were not the source for these cases.
+- Updated `wls_program/wildlife_parsing_codex_lookup.xlsx` with priority-`1` regex overrides so `Coyote Tracks`, `Inactive Mammal Den`, and `Red Squirrel Burrow` now preserve the cleaned original phrase, including optional leading-number variants.
+- Added a priority-`1` exact regex override so `Field mouse hole (mouse visual)` resolves to `Small Rodent Sighting` with the `Small Mammal (Unidentified)` / `Sighting` pair.
+- Verification:
+  - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+
+# Follow-up (Leading Number Prefix Cleanup, 2026-03-10)
+
+- [x] Confirm why leading prefixes like `2_` are surviving into cleaned-original finding text.
+- [x] Update shared finding preprocessing so leading numbered prefixes like `2_` and `#2_` are removed before cleaned titles are built.
+- [x] Verify `WildlifeSweeps` still builds and record the correction.
+
+## Review (Leading Number Prefix Cleanup, 2026-03-10)
+
+- Updated `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs` so the shared leading-prefix regex now strips underscore-attached and hash-prefixed number tags like `2_`, `#2_`, and `2 ` before cleaned-original titles are built.
+- This fix applies across the standardization pipeline, so exact preserve outputs no longer keep those prefixes in the final title.
+- Verification:
+  - A regex sanity check confirmed `2_Pileated Woodpecker Feeding Cavity`, `#2_Pileated Woodpecker Feeding Cavity`, and `2 Pileated Woodpecker Feeding Cavity` all reduce to `Pileated Woodpecker Feeding Cavity` before further cleaning.
+  - `dotnet msbuild wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v minimal` succeeded.
+  - A full `dotnet build` retry was blocked only because `bin\Release\net8.0-windows\WildlifeSweeps.dll` was locked by another process.
