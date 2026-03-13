@@ -219,7 +219,7 @@ namespace WildlifeSweeps
 
                 // Standardize descriptions before numbering so ignored findings never consume bubble/table numbers.
                 var standardizer = new FindingsDescriptionStandardizer(
-                    settings.FindingsLookupPath,
+                    null,
                     warning => editor.WriteMessage($"\n{warning}"));
                 var logBuilder = FindingsStandardizationHelper.BuildLogHeader(doc);
                 var curatedFindings = CurateFindings(ordered, standardizer, logBuilder);

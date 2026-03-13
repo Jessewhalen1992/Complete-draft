@@ -5474,3 +5474,34 @@
   - A regex sanity check confirmed `2_Pileated Woodpecker Feeding Cavity`, `#2_Pileated Woodpecker Feeding Cavity`, and `2 Pileated Woodpecker Feeding Cavity` all reduce to `Pileated Woodpecker Feeding Cavity` before further cleaning.
   - `dotnet msbuild wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v minimal` succeeded.
   - A full `dotnet build` retry was blocked only because `bin\Release\net8.0-windows\WildlifeSweeps.dll` was locked by another process.
+
+# Follow-up (Default Findings Lookup Workbook, 2026-03-13)
+
+- [x] Remove the configurable findings lookup workbook field from the WLS palette.
+- [x] Stop storing/passing a user-configured lookup path so WLS always uses the bundled default workbook.
+- [x] Update lookup warnings to match the new always-default behavior.
+- [x] Verify `WildlifeSweeps` still builds and record the correction.
+
+## Review (Default Findings Lookup Workbook, 2026-03-13)
+
+- Updated `wls_program/src/WildlifeSweeps/Ui/PaletteControl.cs` to remove the `Findings lookup workbook` textbox, its settings writeback, tooltip, and the now-empty settings group from the palette.
+- Updated `wls_program/src/WildlifeSweeps/PluginSettings.cs` to remove the unused `FindingsLookupPath` property so future settings saves stop carrying that field.
+- Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` to construct the findings standardizer with `null`, which forces the built-in workbook resolution path every time.
+- Updated `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs` to replace the outdated “provide a valid path in settings” warning with a default-workbook message that matches the new behavior.
+- Verification:
+  - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+
+# Follow-up (Dual Findings Lookup Workbook Copies, 2026-03-13)
+
+- [x] Inspect how the findings lookup workbook is stored, copied into build output, and updated at runtime.
+- [x] Implement a two-copy workbook strategy and make workbook updates write to both copies together.
+- [x] Verify the build and record the change in tasks files and lessons.
+
+## Review (Dual Findings Lookup Workbook Copies, 2026-03-13)
+
+- Added a second repo copy at `wls_program/wildlife_parsing_codex_lookup_backup.xlsx` so the project now carries both a primary and backup findings lookup workbook.
+- Updated `wls_program/src/WildlifeSweeps/WildlifeSweeps.csproj` so both workbook files are copied into the plugin output on build.
+- Updated `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs` so default lookup resolution can load either copy, creates the missing mirror if one is absent, and syncs keyword writebacks across both copies instead of updating only one file.
+- Verification:
+  - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+  - Verified both `wildlife_parsing_codex_lookup.xlsx` and `wildlife_parsing_codex_lookup_backup.xlsx` exist in `wls_program\src\WildlifeSweeps\bin\Release\net8.0-windows` after the build.

@@ -15,7 +15,6 @@ namespace WildlifeSweeps
         public int PhotoStartNumber { get; set; } = 1;
         public string NumberOrder { get; set; } = "LeftToRight";
         public string UtmZone { get; set; } = "11";
-        public string FindingsLookupPath { get; set; } = string.Empty;
         public bool CompleteFromPhotosIncludeBufferExcludeOutside { get; set; } = false;
         public bool CompleteFromPhotosIncludeBufferIncludeAll { get; set; } = false;
         public bool CompleteFromPhotosIncludeQuarterLinework { get; set; } = false;

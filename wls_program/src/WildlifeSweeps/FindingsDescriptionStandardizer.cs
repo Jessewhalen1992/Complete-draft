@@ -666,6 +666,8 @@ namespace WildlifeSweeps
             private const string TypesSheet = "SpeciesFindingTypes";
             private const string SkipsSheet = "Skips";
             private const string SkippedSheet = "Skipped";
+            private const string PrimaryLookupFileName = "wildlife_parsing_codex_lookup.xlsx";
+            private const string MirrorLookupFileName = "wildlife_parsing_codex_lookup_backup.xlsx";
             private static readonly XNamespace SpreadsheetNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
             private static readonly XNamespace RelationshipsNs = "http://schemas.openxmlformats.org/package/2006/relationships";
             private static readonly XNamespace DocumentRelationshipsNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -693,30 +695,51 @@ namespace WildlifeSweeps
 
             public static LookupWorkbook Load(string? path, Action<string>? logWarning)
             {
-                var resolvedPath = ResolveLookupPath(path, logWarning);
-                if (string.IsNullOrWhiteSpace(resolvedPath) || !File.Exists(resolvedPath))
+                var candidatePaths = ResolveLookupPaths(path, logWarning);
+                if (candidatePaths.Count == 0)
                 {
-                    logWarning?.Invoke("Findings lookup workbook not found. Provide a valid path in settings.");
+                    logWarning?.Invoke($"Findings lookup workbooks not found. Expected {PrimaryLookupFileName} and {MirrorLookupFileName} beside the plugin.");
                     return new LookupWorkbook();
                 }
 
-                try
+                foreach (var candidatePath in candidatePaths)
                 {
-                    var workbook = ReadWorkbook(resolvedPath);
-                    return workbook;
+                    try
+                    {
+                        var workbook = ReadWorkbook(candidatePath);
+                        EnsureMirrorLookupCopies(candidatePath, logWarning);
+                        return workbook;
+                    }
+                    catch (Exception ex)
+                    {
+                        logWarning?.Invoke($"Failed to load findings lookup workbook '{Path.GetFileName(candidatePath)}': {ex.Message}");
+                    }
                 }
-                catch (Exception ex)
-                {
-                    logWarning?.Invoke($"Failed to load findings lookup workbook: {ex.Message}");
-                    return new LookupWorkbook();
-                }
+
+                return new LookupWorkbook();
             }
 
-            private static string ResolveLookupPath(string? configuredPath, Action<string>? logWarning)
+            private static IReadOnlyList<string> ResolveLookupPaths(string? configuredPath, Action<string>? logWarning)
             {
+                var paths = new List<string>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                void AddPath(string? candidate)
+                {
+                    if (!string.IsNullOrWhiteSpace(candidate) && seen.Add(candidate))
+                    {
+                        paths.Add(candidate);
+                    }
+                }
+
                 if (!string.IsNullOrWhiteSpace(configuredPath) && File.Exists(configuredPath))
                 {
-                    return configuredPath;
+                    foreach (var candidate in GetLookupReplicaPaths(configuredPath))
+                    {
+                        AddPath(candidate);
+                    }
+
+                    return paths;
                 }
 
                 if (!string.IsNullOrWhiteSpace(configuredPath))
@@ -724,20 +747,16 @@ namespace WildlifeSweeps
                     logWarning?.Invoke($"Configured findings lookup not found: {configuredPath}. Falling back to plugin folder.");
                 }
 
-                var defaultPath = ResolveDefaultLookupPath();
-                if (!string.IsNullOrWhiteSpace(defaultPath))
+                foreach (var candidate in ResolveDefaultLookupPaths())
                 {
-                    return defaultPath;
+                    AddPath(candidate);
                 }
 
-                return string.Empty;
+                return paths;
             }
 
-            private static string ResolveDefaultLookupPath()
+            private static IReadOnlyList<string> ResolveDefaultLookupPaths()
             {
-                const string lookupFileName = "wildlife_parsing_codex_lookup.xlsx";
-
-                // Prefer the folder containing WildlifeSweeps.dll first.
                 var candidateDirectories = new List<string>();
                 var seenDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -759,16 +778,73 @@ namespace WildlifeSweeps
                 AddDirectory(Environment.CurrentDirectory);
                 AddDirectory(AppContext.BaseDirectory);
 
+                var paths = new List<string>();
+                var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var directory in candidateDirectories)
                 {
-                    var candidate = Path.Combine(directory, lookupFileName);
-                    if (File.Exists(candidate))
+                    foreach (var fileName in new[] { PrimaryLookupFileName, MirrorLookupFileName })
                     {
-                        return candidate;
+                        var candidate = Path.Combine(directory, fileName);
+                        if (File.Exists(candidate) && seenPaths.Add(candidate))
+                        {
+                            paths.Add(candidate);
+                        }
                     }
                 }
 
-                return string.Empty;
+                return paths;
+            }
+
+            private static IReadOnlyList<string> GetLookupReplicaPaths(string path)
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    return Array.Empty<string>();
+                }
+
+                var directory = Path.GetDirectoryName(path);
+                var fileName = Path.GetFileName(path);
+                if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(fileName))
+                {
+                    return new[] { path };
+                }
+
+                if (string.Equals(fileName, PrimaryLookupFileName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(fileName, MirrorLookupFileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return new[]
+                    {
+                        Path.Combine(directory, PrimaryLookupFileName),
+                        Path.Combine(directory, MirrorLookupFileName)
+                    };
+                }
+
+                return new[] { path };
+            }
+
+            private static void EnsureMirrorLookupCopies(string sourcePath, Action<string>? logWarning)
+            {
+                if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+                {
+                    return;
+                }
+
+                foreach (var replicaPath in GetLookupReplicaPaths(sourcePath))
+                {
+                    if (string.Equals(replicaPath, sourcePath, StringComparison.OrdinalIgnoreCase) || File.Exists(replicaPath))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        File.Copy(sourcePath, replicaPath, overwrite: false);
+                    }
+                    catch (Exception ex)
+                    {
+                        logWarning?.Invoke($"Failed to create backup findings lookup workbook '{Path.GetFileName(replicaPath)}': {ex.Message}");
+                    }
+                }
             }
 
             private static LookupWorkbook ReadWorkbook(string path)
@@ -919,27 +995,61 @@ namespace WildlifeSweeps
                 return normalized;
             }
 
-            public static bool TryUpsertKeywordMapping(string path, string keyword, string standardDescription, Action<string>? logWarning)
+                        public static bool TryUpsertKeywordMapping(string path, string keyword, string standardDescription, Action<string>? logWarning)
             {
                 if (string.IsNullOrWhiteSpace(path) ||
-                    !File.Exists(path) ||
                     string.IsNullOrWhiteSpace(keyword) ||
                     string.IsNullOrWhiteSpace(standardDescription))
                 {
                     return false;
                 }
 
-                try
+                var replicaPaths = GetLookupReplicaPaths(path)
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (replicaPaths.Count == 0)
                 {
-                    UpsertKeywordMapping(path, keyword.Trim(), standardDescription.Trim());
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    logWarning?.Invoke($"Failed to update findings lookup workbook: {ex.Message}");
                     return false;
                 }
+
+                var seedPath = replicaPaths.FirstOrDefault(File.Exists);
+                if (string.IsNullOrWhiteSpace(seedPath))
+                {
+                    return false;
+                }
+
+                var trimmedKeyword = keyword.Trim();
+                var trimmedDescription = standardDescription.Trim();
+                var updatedCount = 0;
+                var failures = new List<string>();
+
+                foreach (var replicaPath in replicaPaths)
+                {
+                    try
+                    {
+                        if (!File.Exists(replicaPath))
+                        {
+                            File.Copy(seedPath, replicaPath, overwrite: false);
+                        }
+
+                        UpsertKeywordMapping(replicaPath, trimmedKeyword, trimmedDescription);
+                        updatedCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        failures.Add($"{Path.GetFileName(replicaPath)}: {ex.Message}");
+                    }
+                }
+
+                if (failures.Count > 0)
+                {
+                    logWarning?.Invoke($"Failed to sync one or more findings lookup workbook copies: {string.Join(" | ", failures)}");
+                }
+
+                return updatedCount > 0;
             }
+
 
             private static void UpsertKeywordMapping(string path, string keyword, string standardDescription)
             {

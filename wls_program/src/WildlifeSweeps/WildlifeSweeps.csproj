@@ -10,6 +10,7 @@
     <NoWarn>CS8632;MSB3277</NoWarn>
     <ACAD_DIR Condition="'$(ACAD_DIR)' == ''">C:\Program Files\Autodesk\AutoCAD 2025</ACAD_DIR>
     <WildlifeLookupSourceFile>$(MSBuildProjectDirectory)\..\..\wildlife_parsing_codex_lookup.xlsx</WildlifeLookupSourceFile>
+    <WildlifeLookupMirrorSourceFile>$(MSBuildProjectDirectory)\..\..\wildlife_parsing_codex_lookup_backup.xlsx</WildlifeLookupMirrorSourceFile>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\..\src\AtsBackgroundBuilder\Sections\SectionIndexReader.cs" Link="Shared\Ats\SectionIndexReader.cs" />
@@ -27,10 +28,15 @@
     </Reference>
   </ItemGroup>
 
-  <Target Name="CopyWildlifeLookup" AfterTargets="Build" Condition="Exists('$(WildlifeLookupSourceFile)')">
+  <Target Name="CopyWildlifeLookup" AfterTargets="Build">
+    <ItemGroup>
+      <WildlifeLookupFiles Include="$(WildlifeLookupSourceFile)" Condition="Exists('$(WildlifeLookupSourceFile)')" />
+      <WildlifeLookupFiles Include="$(WildlifeLookupMirrorSourceFile)" Condition="Exists('$(WildlifeLookupMirrorSourceFile)')" />
+    </ItemGroup>
     <Copy
-      SourceFiles="$(WildlifeLookupSourceFile)"
+      SourceFiles="@(WildlifeLookupFiles)"
       DestinationFolder="$(OutputPath)"
-      SkipUnchangedFiles="true" />
+      SkipUnchangedFiles="true"
+      Condition="'@(WildlifeLookupFiles)' != ''" />
   </Target>
 </Project>

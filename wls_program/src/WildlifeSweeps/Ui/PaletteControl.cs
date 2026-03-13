@@ -16,7 +16,6 @@ namespace WildlifeSweeps
         private readonly ToolStripStatusLabel _statusLabel = new ToolStripStatusLabel();
 
         private readonly TextBox _photoStartNumber = new TextBox();
-        private readonly TextBox _findingsLookupPath = new TextBox();
         private readonly CheckBox _completeFromPhotosBufferExcludeOutside = new CheckBox();
         private readonly CheckBox _completeFromPhotosBufferIncludeAll = new CheckBox();
         private readonly CheckBox _completeFromPhotosIncludeQuarterLinework = new CheckBox();
@@ -68,28 +67,6 @@ namespace WildlifeSweeps
             _toolTip.SetToolTip(
                 sortBufferPhotosButton,
                 "Select a 100m buffer and photo folder, then copy in-buffer GPS photos into a \"within 100m\" subfolder.");
-
-            var completeFromPhotosSettingsGroup = new GroupBox
-            {
-                Text = "Complete From Photos Settings",
-                Dock = DockStyle.Top,
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink
-            };
-
-            var completeFromPhotosSettingsLayout = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 2,
-                RowCount = 2,
-                AutoSize = true
-            };
-            AddRow(
-                completeFromPhotosSettingsLayout,
-                "Findings lookup workbook",
-                _findingsLookupPath,
-                _settings.FindingsLookupPath);
-            completeFromPhotosSettingsGroup.Controls.Add(completeFromPhotosSettingsLayout);
 
             _completeFromPhotosBufferIncludeAll.Text = "BUFFERS: PROPOSED / 100m / OUTSIDE";
             _completeFromPhotosBufferExcludeOutside.Text = "BUFFERS: PROPOSED / 100m";
@@ -171,7 +148,6 @@ namespace WildlifeSweeps
             Controls.Add(enviroSweepGroup);
             Controls.Add(photoToTextCheckButton);
             Controls.Add(completeFromPhotosOptionsGroup);
-            Controls.Add(completeFromPhotosSettingsGroup);
             Controls.Add(sortBufferPhotosButton);
             Controls.Add(completeFromPhotosButton);
             Controls.Add(photoGroup);
@@ -198,7 +174,6 @@ namespace WildlifeSweeps
         private bool TryUpdateSettings(Editor editor)
         {
             ClearValidation();
-            _settings.FindingsLookupPath = _findingsLookupPath.Text.Trim();
             _settings.CompleteFromPhotosIncludeBufferExcludeOutside = _completeFromPhotosBufferExcludeOutside.Checked;
             _settings.CompleteFromPhotosIncludeBufferIncludeAll = _completeFromPhotosBufferIncludeAll.Checked;
             _settings.CompleteFromPhotosIncludeQuarterLinework = _completeFromPhotosIncludeQuarterLinework.Checked;
@@ -293,7 +268,6 @@ namespace WildlifeSweeps
         private void ApplyTooltips()
         {
             _toolTip.SetToolTip(_photoStartNumber, "Starting number for photo blocks and photo layout.");
-            _toolTip.SetToolTip(_findingsLookupPath, "Optional XLSX workbook path with findings lookup tables.");
             _toolTip.SetToolTip(
                 _completeFromPhotosBufferIncludeAll,
                 "Prompts for PROPOSED and 100m boundaries, then selects separate blocks for PROPOSED, 100m-only, and OUTSIDE findings.");
