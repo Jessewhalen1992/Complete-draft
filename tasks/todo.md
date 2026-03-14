@@ -5487,7 +5487,7 @@
 - Updated `wls_program/src/WildlifeSweeps/Ui/PaletteControl.cs` to remove the `Findings lookup workbook` textbox, its settings writeback, tooltip, and the now-empty settings group from the palette.
 - Updated `wls_program/src/WildlifeSweeps/PluginSettings.cs` to remove the unused `FindingsLookupPath` property so future settings saves stop carrying that field.
 - Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` to construct the findings standardizer with `null`, which forces the built-in workbook resolution path every time.
-- Updated `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs` to replace the outdated “provide a valid path in settings” warning with a default-workbook message that matches the new behavior.
+- Updated `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs` to replace the outdated ï¿½provide a valid path in settingsï¿½ warning with a default-workbook message that matches the new behavior.
 - Verification:
   - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
 
@@ -5505,3 +5505,205 @@
 - Verification:
   - `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
   - Verified both `wildlife_parsing_codex_lookup.xlsx` and `wildlife_parsing_codex_lookup_backup.xlsx` exist in `wls_program\src\WildlifeSweeps\bin\Release\net8.0-windows` after the build.
+# Follow-up (ATS Builder Session Runner Refactor, 2026-03-13)
+
+- [x] Review the current `ATSBUILD` / `ATSBUILD_XLS` execution path and isolate a low-risk refactor seam around the shared runner.
+- [x] Extract a staged ATS build session runner/context so the shared execution path is easier to follow without changing drawing behavior.
+- [x] Build ATS Builder, run the decision tests, and record retest instructions for in-drawing validation.
+
+## Review (ATS Builder Session Runner Refactor, 2026-03-13)
+
+- Extracted the shared `ExecuteAtsBuildFromInput` flow into a small staged runner in `src/AtsBackgroundBuilder/Core/Plugin.Core.AtsBuildSession.cs`, with an `AtsBuildSessionContext` that carries command/session state through the existing ATS phases.
+- Kept the underlying ATS drawing, disposition processing, and post-quarter pipeline logic intact; the refactor only reorganizes orchestration, validation exits, and summary logging around those existing calls.
+- Simplified `src/AtsBackgroundBuilder/Core/Plugin.Core.AtsBuildXls.cs` so the shared runner now handles session logging, staged execution, error reporting, and logger disposal in one place.
+- Verification:
+  - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release` reported `Decision tests passed.`
+  - Manual AutoCAD retest remains recommended for `ATSBUILD` and `ATSBUILD_XLS` because this refactor touches command orchestration around drawing-time flows.
+
+# Follow-up (ATS Import Sysvar Warning Cleanup, 2026-03-13)
+
+- [x] Trace the recurring `MAPUSEMPOLYGON` / `POLYDISPLAY` warnings to the shapefile import helper.
+- [x] Downgrade known harmless `eInvalidInput` writes for those two optimization sysvars so they no longer log as import failures every run.
+- [x] Verify ATS Builder still compiles and decision tests still pass, then note the runtime retest expectation.
+
+## Review (ATS Import Sysvar Warning Cleanup, 2026-03-13)
+
+- Updated `src/AtsBackgroundBuilder/Dispositions/ShapefileImporter.cs` so `MAPUSEMPOLYGON` and `POLYDISPLAY` write failures with AutoCAD `eInvalidInput` are treated as unsupported optimization writes, not import failures.
+- Added a once-per-variable log gate so the importer writes one explanatory message instead of repeating the same warning on every shapefile import pass.
+- Verification:
+  - `dotnet msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:NuGetAudit=false -v minimal` succeeded.
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` reported `Decision tests passed.`
+  - A full `dotnet build` was blocked only because `src/AtsBackgroundBuilder/bin/Release/net8.0-windows/AtsBackgroundBuilder.dll` is currently locked by AutoCAD.
+
+# Follow-up (ATS Road Allowance Cleanup Pipeline Refactor, 2026-03-13)
+
+- [x] Review the current road-allowance cleanup orchestration inside `DrawSectionsFromRequests` and identify a safe extraction seam.
+- [x] Extract the cleanup pass order into a structured pipeline/context without changing geometry behavior.
+- [x] Build ATS Builder, run decision tests, and document the runtime retest path.
+
+## Review (ATS Road Allowance Cleanup Pipeline Refactor, 2026-03-13)
+
+- Extracted the long road-allowance cleanup/orchestration block from `src/AtsBackgroundBuilder/Core/Plugin.cs` into a dedicated cleanup pipeline partial at `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CleanupPipeline.cs`.
+- Added `RoadAllowanceCleanupContext` plus named phase helpers for generation, canonical cleanup, trim/re-layer, endpoint cleanup, and final post-restore cleanup, while preserving the existing geometry pass order and underlying cleanup/enforcement calls.
+- Left `DrawSectionsFromRequests` responsible for setup and final result assembly, but moved the high-risk cleanup sequencing out of the middle of the method so the build path is easier to review and extend.
+- Verification:
+  - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` reported `Decision tests passed.`
+  - A manual AutoCAD retest is still recommended because this refactor touches the ordered road-allowance cleanup path inside ATS section generation.
+# Follow-up (ATS Correction Seam Spike Guard, 2026-03-13)
+
+- [x] Trace the `63-12-6` correction-line regression against the extracted cleanup pipeline and runtime log.
+- [x] Tighten correction post-processing so C-0-to-vertical seam snaps stay local instead of creating long extension spikes.
+- [x] Build ATS Builder, rerun decision tests, and record the focused retest path.
+
+## Review (ATS Correction Seam Spike Guard, 2026-03-13)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` so `ConnectCorrectionInnerEndpointsToVerticalUsecBoundaries(...)` no longer allows 500m+ seam-facing pulls when selecting or extending vertical 0/20 targets for correction inner (`L-USEC-C-0`) lines.
+- Replaced the broad `520m` vertical target gap / endpoint move caps with a local correction-span cap (`CorrectionLinePostExpectedUsecWidthMeters * 6.0`), which is intended to stop the long south spikes reported below sections 1 and 2 in `63-12-6` while preserving nearby seam cleanup.
+- Verification:
+  - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_regression_20260313_1/ -v minimal` succeeded with `0` warnings and `0` errors.
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` reported `Decision tests passed.`# Follow-up (ATS SE Correction South-Band Fallback, 2026-03-13)
+
+- [x] Trace why the SE correction connector reported `withH=0` on `63-12-6` even though correction seam geometry existed in the build.
+- [x] Update the SE south-band connector so it prefers the normal `20.11` band and only falls back to the `10.06` correction-pair band when the primary band is absent.
+- [x] Build ATS Builder, rerun decision tests, and record the focused AutoCAD retest path.
+
+## Review (ATS SE Correction South-Band Fallback, 2026-03-13)
+
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs` so `ConnectUsecSeSouthTwentyTwelveLinesToEastOriginalBoundary(...)` no longer looks only at the `10.06` south band (`CorrectionLinePairGapMeters`) when resolving SE correction connectors.
+- The SE pass now mirrors the safer SW pattern: try the primary `20.11` south band first and fall back to `10.06` only if that band is absent for the local section window.
+- This is intended to restore missing section-5/6 correction east extensions and prevent the later generic 0/20 cleanup from inventing long `L-USEC2012` south spikes when the dedicated SE connector never claimed the correct target.
+- Verification:
+  - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal` succeeded with `0` warnings and `0` errors.
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` reported `Decision tests passed.`
+
+## ATS SE Bounded Extension Bridge, 2026-03-13
+- [x] Check the newest 63-12-6 ATSBUILD log and confirm the active failure path.
+- [x] Run the Python DXF classifier before the next delivery to anchor the fix to the known correction-line mismatch classes.
+- [x] Patch the SE south 20.11 bridge so bounded apparent joins are allowed when the horizontal stops short of the selected east boundary by a local correction-width amount.
+- [x] Rebuild ATS and rerun decision tests.
+
+### Review
+- The latest log still showed Cleanup: SE L-USEC south 20.11 connect found no candidates (sections=32, withBoundary=24, withH=0, candidates=0) on the newest 63-12-6 run, so the previous offset-band tweak was not enough.
+- Updated src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs so ConnectUsecSeSouthTwentyTwelveLinesToEastOriginalBoundary(...) no longer rejects bounded apparent joins just because the target point is off the current horizontal segment by about one 20.11m road-allowance width.
+- Verification:
+  - dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal
+  - dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build
+  - python "src/AtsBackgroundBuilder/REFERENCE ONLY/dxf_layer_diff.py" "src/AtsBackgroundBuilder/REFERENCE ONLY/actual_bad.dxf" "src/AtsBackgroundBuilder/REFERENCE ONLY/expected_clean.dxf"
+  - inline Python sanity check confirmed the old strict path rejects a 20.11m shortfall while the new bounded-extension rule accepts it.
+
+## ATS SE Cleanup Protection, 2026-03-13
+- [x] Re-check the newest `63-12-6` ATSBUILD log and confirm whether the SE bridge is now succeeding before later cleanup runs.
+- [x] Carry the SE-corrected boundary IDs through the road-allowance cleanup context and skip those IDs in downstream generic `0/20` cleanup passes.
+- [x] Rebuild ATS, rerun decision tests, rerun the Python verification, and capture the retest signal to look for in AutoCAD/logs.
+
+### Review
+- Re-checked the newest `63-12-6` run in `src/AtsBackgroundBuilder/bin/Release/net8.0-windows/AtsBackgroundBuilder.log`: the SE bridge is now active (`connected 5 SE L-USEC south 20.11...`), but the later generic `0/20 dangling endpoint connect` passes still moved large endpoint counts immediately afterward.
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs` so `ConnectUsecSeSouthTwentyTwelveLinesToEastOriginalBoundary(...)` returns the vertical boundary IDs it actually moved.
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CleanupPipeline.cs` so those SE-connected IDs are carried through the cleanup context, logged once, and skipped by downstream generic `0/20` cleanup passes (`ConnectDangling...`, overlap cleanup, no-crossing enforcement, pass-through trim, and endpoint-intersection overlap snap).
+- Verification:
+  - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_se_cleanup_protection/ -v minimal`
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_se_cleanup_protection_tests/`
+  - `python "src/AtsBackgroundBuilder/REFERENCE ONLY/dxf_layer_diff.py" "src/AtsBackgroundBuilder/REFERENCE ONLY/actual_bad.dxf" "src/AtsBackgroundBuilder/REFERENCE ONLY/expected_clean.dxf"`
+  - inline Python source verification confirmed the SE-protection wiring is present in the updated ATS source.
+
+## ATS Correction Seam Final Guard, 2026-03-13
+- [x] Re-check the latest 63-12-6 regression against the current cleanup order and confirm whether the remaining failures are late-stage seam classification / post-correction trim gaps.
+- [x] Broaden the final correction outer consistency pass so surveyed seam horizontals can still be promoted to correction where they overlap resolved correction outers.
+- [x] Rerun the 100m trim after correction-line post-processing so late endpoint moves do not leave long buffer spikes ahead of the final LSD rebuild.
+- [x] Rebuild ATS, rerun decision tests, and rerun a Python verification before delivery.
+
+### Review
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` so the late correction outer promotion accepts overlapping surveyed seam horizontals (`L-SEC`, `L-SEC-0`, `L-SEC-2012`) in addition to USEC 0/20/30 bands.
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CleanupPipeline.cs` so ATS reruns the 100m trim after `ApplyCorrectionLinePostBuildRules(...)` and before the final quarter/LSD output passes, which should clip correction-line spikes that are introduced after the earlier trim stage.
+- Verification:
+  - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_corr_regression_fix/ -v minimal`
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_corr_regression_fix_tests/`
+  - `python "src/AtsBackgroundBuilder/REFERENCE ONLY/dxf_layer_diff.py" "src/AtsBackgroundBuilder/REFERENCE ONLY/actual_bad.dxf" "src/AtsBackgroundBuilder/REFERENCE ONLY/expected_clean.dxf"`
+  - inline Python source verification confirmed the late retrim and surveyed-seam correction promotion are present in the ATS source.
+- Follow-up: the latest runtime log proved the late correction pass was executing, but the wrong north seam was still coming through as plain `L-USEC`, so the final correction promotion now includes base `L-USEC` as well as surveyed/usec offset variants.
+- Follow-up: the late post-correction retrim originally skipped every generated RA line that touched the requested core (`protectedSkip=126`), which meant it could not clip the visible south spikes at all; the late retrim now runs on generated RA without the core-skip guard.
+- Verification:
+  - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal`
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_corr_regression_fix_tests2/`
+  - inline Python source verification confirmed the late correction promotion now includes `L-USEC`/`LayerUsecBase` and that the post-correction generated retrim is unprotected.
+
+## ATS Correction Companion Consistency, 2026-03-13
+- [x] Re-check the latest 63-12-6 log and confirm whether the remaining correction seam failure is a missing companion-band classification problem rather than another 100m trim regression.
+- [x] Update the final correction consistency pass so surviving ordinary seam horizontals can be promoted from either direct correction-band overlap or the expected 5.02m companion offset from an existing correction band.
+- [x] Rebuild ATS, rerun decision tests, and rerun a Python sanity check before delivery.
+
+### Review
+- Re-checked the newest 63-12-6 quarter diagnostics in src/AtsBackgroundBuilder/bin/Release/net8.0-windows/AtsBackgroundBuilder.log: southSource=L-USEC-C-0 was already present on the bad seam, while the opposite boundary was still coming through as ordinary L-USEC / L-USEC-0, which pointed at a missing companion-band relayer rather than another missing trim.
+- Updated src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs so EnforceFinalCorrectionOuterLayerConsistency(...) now seeds from both L-USEC-C and L-USEC-C-0, promotes ordinary horizontals that sit directly on either correction band, and also promotes the missing companion band when an ordinary seam horizontal sits at the expected 5.02m offset from an existing correction band.
+- Added an unsuppressed cleanup summary log for that final correction consistency pass so future retests show how many outer/inner seam segments were promoted.
+- Verification:
+  - dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal
+  - dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_correction_seam_tests/
+  - inline Python source verification confirmed the final correction pass now includes both direct correction-band matching and 5.02m companion-band promotion.
+  - inline Python geometry sanity check confirmed the companion-band rule accepts an ordinary horizontal whose span overlaps an inner correction band at the expected 5.02m offset.
+
+## ATS Correction South Owner-Band Suppression, 2026-03-14
+- [x] Re-check the newest runtime log and confirm whether the final correction consistency pass fired but left the visible seam unchanged.
+- [x] Add a targeted cleanup pass to suppress ordinary south L-USEC-0 / L-USEC2012 owner bands that still survive one standard RA width below resolved correction seams.
+- [x] Rebuild ATS, rerun decision tests, and rerun Python sanity checks before delivery.
+
+### Review
+- Re-checked the newest runtime log and confirmed the prior final correction pass did execute (Cleanup: final correction layer consistency outerAnchors=20, innerAnchors=27, outerConverted=4, innerConverted=0.), but the same correction seam still rendered wrong immediately afterward.
+- That shifted the root cause from “late seam-band relayer did not run” to “ordinary south owner bands still survive below the correction seam,” which lines up with the earlier ~30m screenshot measurements and the persisted southSource=L-USEC-C-0 diagnostics.
+- Updated src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs so ApplyCorrectionLinePostBuildRules(...) now calls SuppressStandardSouthOwnerBandsBelowCorrectionSeams(...) after the C-0 endpoint cleanup, removing surviving horizontal L-USEC-0 / L-USEC2012 owner bands that overlap a correction seam span and sit at the normal south-owner offsets below that seam.
+- Verification:
+  - dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -v minimal
+  - dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_correction_seam_tests2/
+  - inline Python source verification confirmed the new south-band suppression helper and call are present.
+## ATS Correction Seam Survivor Cleanup, 2026-03-14
+- [ ] Compare current correction seam behavior against reference-only bad/good screenshots and DXF root-cause reports.
+- [ ] Broaden correction-seam cleanup so ordinary seam-adjacent horizontal survivors do not remain on L-USEC / L-USEC-0 around resolved correction seams.
+- [ ] Verify with ATS release build, decision tests, and Python-side sanity/diff checks before reporting back.
+## ATS Correction Seam Survivor Cleanup, 2026-03-14 Review
+- [x] Compared current correction seam behavior against reference-only bad/good screenshots and DXF root-cause reports.
+- [x] Broadened correction-seam cleanup to suppress ordinary seam-adjacent horizontal survivors using the actual north fallback / south owner offset map.
+- [x] Verified with ATS release build, decision tests, and Python-side seam sanity checks.
+- [x] Added a seam-driven correction relayer so seam-overlap horizontals are classified to L-USEC-C / L-USEC-C-0 from resolved correction seam positions before survivor cleanup runs.
+- [x] Rebuilt ATS, reran decision tests, and reran Python direct-classification sanity checks.
+
+## ATS Correction Seam Exact Geometry, 2026-03-14
+- [x] Replace correction seam band fallback selection with exact seam-derived outer/inner generation.
+- [x] Remove late seam relayer fallback calls from correction post-processing.
+- [x] Remove ordinary horizontal survivors inside the correction seam band after exact correction generation.
+- [x] Verify with Release build, decision tests, and Python source sanity.
+
+## ATS Correction Seam Exact Geometry, 2026-03-14 Review
+- Root cause: the correction-line post pass was relayering nearby ordinary seam-band geometry when strict candidates were missing instead of generating the exact correction outer/inner bands from the fitted seam itself.
+- Result: correction seam geometry is now created from seam targets directly, with no one-sided band fallback in the main path.
+
+## ATS Correction Width Selection Reset, 2026-03-14
+- [x] Inspect the ATS correction-line path and confirm whether correction relayering is driven by measured road-allowance width or by seam/layer heuristics.
+- [x] Replace the broad seam-band selector with a single measured correction-axis bucket per seam side so we stop relayering every near-band horizontal.
+- [x] Normalize any `L-USEC-C-0` segment that still sits directly on the resolved outer correction axis back to `L-USEC-C`.
+- [x] Verify with ATS Release build, decision tests, and a Python source sanity check before handing it back.
+
+### Review
+- Root-cause finding: ATS does measure perpendicular road-allowance gaps in section inference and some cleanup/connectivity passes, but the correction post-build selector was still mostly choosing correction bands from seam/evidence proximity rather than a single measured seam-axis decision.
+- Updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` so `SelectCorrectionHorizontalBand(...)` now chooses one closest axis bucket per seam side instead of relayering every candidate within the seam band.
+- Added `NormalizeCorrectionZeroSegmentsOnOuterAxis(...)` so any `L-USEC-C-0` segment that still lands directly on the resolved outer correction axis is relayered back to `L-USEC-C`; this targets the exact failure mode where quarter view was selecting a seam-boundary line as the correction inner.
+- Verification:
+  - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_width_root_fix_build/ -v minimal`
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_width_root_fix_tests/`
+  - inline Python source sanity check for the bucketed selector and misaligned-`C-0` normalization helper
+
+## ATS Correction Chain Reset, 2026-03-14
+- [x] Roll `Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` back to the simpler pre-experiment correction-line baseline instead of continuing the exact-geometry / seam-axis edits.
+- [x] Keep only the narrow local cap that prevents distant vertical target pulls from recreating the long south spikes.
+- [x] Broaden the final correction-chain promotion so plain `L-USEC` / `L-SEC*` seam segments can be promoted to correction when they are collinear/connected with the resolved correction outer chain.
+- [x] Verify with ATS Release build, decision tests, and a Python source sanity check.
+
+### Review
+- Reset `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` back to the simpler baseline from `HEAD`, preserving only the local `maxVerticalTargetGap` / `maxVerticalEndpointMove` cap that was keeping the old south spikes local.
+- Root-cause correction focus after reset: the baseline final correction-chain pass was only promoting `0/20/30`-style seam layers, so a bad seam segment left on plain `L-USEC` would stay regular even when it was collinear/connected with the correction chain.
+- Updated `EnforceFinalCorrectionOuterLayerConsistency(...)` so that same connected-chain promotion now also accepts plain `L-USEC` and `L-SEC*` seam candidates.
+- Verification:
+  - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_correction_chain_reset_build/ -v minimal`
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_correction_chain_reset_tests/`
+  - inline Python source sanity confirming the rollback and the broadened final correction-chain promotion

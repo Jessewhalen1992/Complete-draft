@@ -41,6 +41,8 @@ namespace AtsBackgroundBuilder.Dispositions
         private const int MinLargeImportChunkRecordCount = 1000;
         private const int MaxLargeImportChunkRecordCount = 200000;
         private const string EnableSingleSubsetImportEnvVar = "ATSBUILD_ENABLE_SINGLE_SUBSET_IMPORT";
+        private static readonly object IgnoredSystemVariableWriteWarningLock = new object();
+        private static readonly HashSet<string> IgnoredSystemVariableWriteWarnings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         public static ShapefileImportSummary ImportShapefiles(
             Database database,
@@ -1829,11 +1831,45 @@ namespace AtsBackgroundBuilder.Dispositions
                 logger.WriteLine($"{name} set to {value} (previous: {previous ?? "null"})");
                 return true;
             }
+            catch (Autodesk.AutoCAD.Runtime.Exception ex) when (IsIgnoredSystemVariableWriteFailure(name, ex))
+            {
+                LogIgnoredSystemVariableWriteFailureOnce(name, value, ex, logger);
+                return false;
+            }
             catch (System.Exception ex)
             {
                 logger.WriteLine($"Failed to set system variable '{name}': {ex.Message}");
                 return false;
             }
+        }
+
+        private static bool IsIgnoredSystemVariableWriteFailure(string name, Autodesk.AutoCAD.Runtime.Exception ex)
+        {
+            if (!string.Equals(name, "MAPUSEMPOLYGON", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(name, "POLYDISPLAY", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return ex.ErrorStatus == Autodesk.AutoCAD.Runtime.ErrorStatus.InvalidInput;
+        }
+
+        private static void LogIgnoredSystemVariableWriteFailureOnce(
+            string name,
+            object value,
+            Autodesk.AutoCAD.Runtime.Exception ex,
+            Logger logger)
+        {
+            lock (IgnoredSystemVariableWriteWarningLock)
+            {
+                if (!IgnoredSystemVariableWriteWarnings.Add(name))
+                {
+                    return;
+                }
+            }
+
+            logger.WriteLine(
+                $"System variable optimization skipped for '{name}' (value '{value}', status {ex.ErrorStatus}); this AutoCAD build rejected the write, so import will continue without that optimization.");
         }
 
         private static bool TryImportShapefile(

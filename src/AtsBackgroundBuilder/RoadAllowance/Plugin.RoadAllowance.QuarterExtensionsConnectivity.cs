@@ -34,6 +34,7 @@ namespace AtsBackgroundBuilder
 
 
             var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
+            var protectedBoundaryIds = new HashSet<ObjectId>();
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var usecBoundarySegments = new List<(Point2d A, Point2d B)>();
@@ -585,6 +586,7 @@ namespace AtsBackgroundBuilder
             }
 
             var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
+            var protectedBoundaryIds = new HashSet<ObjectId>();
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var sourceSegments = new List<(ObjectId Id, Point2d A, Point2d B, bool IsUsec, bool IsSec)>();
@@ -1080,12 +1082,8 @@ namespace AtsBackgroundBuilder
 
             bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForQuarterExtensionsConnectivity(ent, allowCollinearOpenPolyline: false, out a, out b);
 
-
-
-            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
-                TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(a0, a1, b0, b1, out intersection);
-
             var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
+            var protectedBoundaryIds = new HashSet<ObjectId>();
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var horizontalSources = new List<(ObjectId Id, Point2d A, Point2d B, bool Generated)>();
@@ -1401,7 +1399,7 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!TryIntersectInfiniteLines(from, to, candidate.A, candidate.B, out var hit))
+                        if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(from, to, candidate.A, candidate.B, out var hit))
                         {
                             continue;
                         }
@@ -1953,7 +1951,7 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!TryIntersectInfiniteLines(v0, v1, horizontal.A, horizontal.B, out var joinPoint))
+                        if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(v0, v1, horizontal.A, horizontal.B, out var joinPoint))
                         {
                             continue;
                         }
@@ -2139,11 +2137,6 @@ namespace AtsBackgroundBuilder
                 : new HashSet<ObjectId>();
 
             bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForQuarterExtensionsConnectivity(a, b, clipWindows);
-
-
-
-            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
-                TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(a0, a1, b0, b1, out intersection);
 
                 bool TryGetUnitDirection(Point2d a, Point2d b, out Vector2d unit)
                 {
@@ -2879,7 +2872,7 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
 
-                            if (!TryIntersectInfiniteLines(source.A, source.B, target.A, target.B, out var intersection))
+                            if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(source.A, source.B, target.A, target.B, out var intersection))
                             {
                                 continue;
                             }
@@ -3050,6 +3043,7 @@ namespace AtsBackgroundBuilder
 
 
             var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
+            var protectedBoundaryIds = new HashSet<ObjectId>();
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 bool IsPointInWindow(Point2d p, Extents3d window) =>
@@ -3057,9 +3051,6 @@ namespace AtsBackgroundBuilder
 
                 bool DoesSegmentIntersectWindow(Point2d a, Point2d b, Extents3d window) =>
                     DoesSegmentIntersectWindowForQuarterExtensionsConnectivity(a, b, window);
-
-                bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
-                    TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(a0, a1, b0, b1, out intersection);
 
                 // Ownership note for 30.16/20.11 logic:
                 // - west-side road allowances belong to the section on their west (left)
@@ -3355,7 +3346,7 @@ namespace AtsBackgroundBuilder
                             .ThenBy(v => v.SouthPoint.GetDistanceTo(v.NorthPoint))
                             .First();
                         var forcedTarget = swCorner + (eastUnit * forcedVertical.ULine) + (northUnit * forcedHorizontal.VLine);
-                        if (TryIntersectInfiniteLines(
+                        if (TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(
                             forcedHorizontal.WestPoint,
                             forcedHorizontal.EastPoint,
                             forcedVertical.SouthPoint,
@@ -4039,7 +4030,7 @@ namespace AtsBackgroundBuilder
             }
         }
 
-        private static void ConnectUsecSeSouthTwentyTwelveLinesToEastOriginalBoundary(
+        private static HashSet<ObjectId> ConnectUsecSeSouthTwentyTwelveLinesToEastOriginalBoundary(
             Database database,
             IReadOnlyList<string> searchFolders,
             IEnumerable<QuarterLabelInfo> labelQuarterInfos,
@@ -4054,7 +4045,7 @@ namespace AtsBackgroundBuilder
                 generatedRoadAllowanceIds == null ||
                 generatedRoadAllowanceIds.Count == 0)
             {
-                return;
+                return new HashSet<ObjectId>();
             }
 
             var targetInfos = labelQuarterInfos
@@ -4065,7 +4056,7 @@ namespace AtsBackgroundBuilder
             if (targetInfos.Count == 0)
             {
                 logger?.WriteLine("Cleanup: SE L-USEC south 20.11 connect skipped (no target section info).");
-                return;
+                return new HashSet<ObjectId>();
             }
 
             var targetSectionIds = targetInfos
@@ -4170,7 +4161,7 @@ namespace AtsBackgroundBuilder
             if (clipWindows.Count == 0 || sectionTargets.Count == 0)
             {
                 logger?.WriteLine("Cleanup: SE L-USEC south 20.11 connect skipped (no clip windows).");
-                return;
+                return new HashSet<ObjectId>();
             }
 
             bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForQuarterExtensionsConnectivity(a, b, clipWindows);
@@ -4182,6 +4173,7 @@ namespace AtsBackgroundBuilder
 
 
             var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
+            var protectedBoundaryIds = new HashSet<ObjectId>();
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 bool IsPointInWindow(Point2d p, Extents3d window) =>
@@ -4190,8 +4182,50 @@ namespace AtsBackgroundBuilder
                 bool DoesSegmentIntersectWindow(Point2d a, Point2d b, Extents3d window) =>
                     DoesSegmentIntersectWindowForQuarterExtensionsConnectivity(a, b, window);
 
-                bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
-                    TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(a0, a1, b0, b1, out intersection);
+                bool TryIntersectInfiniteLineWithBoundedSegmentExtension(
+                    Point2d linePoint,
+                    Vector2d lineDir,
+                    Point2d segA,
+                    Point2d segB,
+                    double maxSegmentExtension,
+                    out Point2d intersection)
+                {
+                    intersection = default;
+                    var segDir = segB - segA;
+                    var segLen = segDir.Length;
+                    if (segLen <= 1e-9)
+                    {
+                        return false;
+                    }
+
+                    var denom = Cross2d(lineDir, segDir);
+                    if (Math.Abs(denom) <= 1e-9)
+                    {
+                        return false;
+                    }
+
+                    var diff = segA - linePoint;
+                    var t = Cross2d(diff, segDir) / denom;
+                    var u = Cross2d(diff, lineDir) / denom;
+
+                    var extension = 0.0;
+                    if (u < 0.0)
+                    {
+                        extension = -u * segLen;
+                    }
+                    else if (u > 1.0)
+                    {
+                        extension = (u - 1.0) * segLen;
+                    }
+
+                    if (extension > maxSegmentExtension)
+                    {
+                        return false;
+                    }
+
+                    intersection = linePoint + (lineDir * t);
+                    return true;
+                }
 
                 var usecHorizontals = new List<(ObjectId Id, Point2d A, Point2d B, bool IsGenerated, bool IsUsecTwentyLayer, bool IsUsecBaseLayer)>();
                 var originalVerticals = new List<(ObjectId Id, Point2d A, Point2d B, bool IsSecLayer, bool IsGenerated, bool IsUsecZeroLayer)>();
@@ -4249,19 +4283,18 @@ namespace AtsBackgroundBuilder
                 {
                     tr.Commit();
                     logger?.WriteLine("Cleanup: SE L-USEC south 20.11 connect skipped (missing horizontals or original vertical boundaries).");
-                    return;
+                    return new HashSet<ObjectId>();
                 }
 
                 const double endpointMoveTol = 0.05;
                 const double minExtend = 0.10;
                 const double maxExtend = 40.0;
-                const double expectedSouthOffset = CorrectionLinePairGapMeters;
+                const double primaryExpectedSouthOffset = RoadAllowanceSecWidthMeters;
+                const double secondaryExpectedSouthOffset = CorrectionLinePairGapMeters;
                 const double southOffsetTol = 3.0;
                 const double southBandMatchTol = 1.5;
                 const double originalSeSnapBuffer = 11.0;
-                // Allow small drafting noise/rotation drift while still requiring on-segment intersection.
-                const double targetOnHorizontalTol = 2.50;
-                var usedVerticalBoundaries = new HashSet<ObjectId>();
+                var usedVerticalBoundaries = protectedBoundaryIds;
                 var connected = 0;
                 var sectionsWithOriginalBoundary = 0;
                 var sectionsWithHorizontalCandidate = 0;
@@ -4292,34 +4325,47 @@ namespace AtsBackgroundBuilder
                         return ProjectPointToSectionV(swCorner, northUnit, p0) <= ProjectPointToSectionV(swCorner, northUnit, p1);
                     }
 
-                    var southBandHorizontalSpans = new List<(double MinU, double MaxU)>();
-                    for (var hi = 0; hi < usecHorizontals.Count; hi++)
+                    List<(double MinU, double MaxU)> CollectSouthBandHorizontalSpans(double expectedSouthOffsetForBand)
                     {
-                        var h = usecHorizontals[hi];
-                        if (!DoesSegmentIntersectWindow(h.A, h.B, sectionTarget.Window))
+                        var spans = new List<(double MinU, double MaxU)>();
+                        for (var hi = 0; hi < usecHorizontals.Count; hi++)
                         {
-                            continue;
+                            var h = usecHorizontals[hi];
+                            if (!DoesSegmentIntersectWindow(h.A, h.B, sectionTarget.Window))
+                            {
+                                continue;
+                            }
+
+                            var hd = h.B - h.A;
+                            var hEastComp = Math.Abs(hd.DotProduct(eastUnit));
+                            var hNorthComp = Math.Abs(hd.DotProduct(northUnit));
+                            if (hEastComp < hNorthComp)
+                            {
+                                continue;
+                            }
+
+                            var hVa = ProjectPointToSectionV(swCorner, northUnit, h.A);
+                            var hVb = ProjectPointToSectionV(swCorner, northUnit, h.B);
+                            var hVLine = 0.5 * (hVa + hVb);
+                            if (Math.Abs(Math.Abs(hVLine) - expectedSouthOffsetForBand) > southOffsetTol)
+                            {
+                                continue;
+                            }
+
+                            var hUa = ProjectPointToSectionU(swCorner, eastUnit, h.A);
+                            var hUb = ProjectPointToSectionU(swCorner, eastUnit, h.B);
+                            spans.Add((Math.Min(hUa, hUb), Math.Max(hUa, hUb)));
                         }
 
-                        var hd = h.B - h.A;
-                        var hEastComp = Math.Abs(hd.DotProduct(eastUnit));
-                        var hNorthComp = Math.Abs(hd.DotProduct(northUnit));
-                        if (hEastComp < hNorthComp)
-                        {
-                            continue;
-                        }
+                        return spans;
+                    }
 
-                        var hVa = ProjectPointToSectionV(swCorner, northUnit, h.A);
-                        var hVb = ProjectPointToSectionV(swCorner, northUnit, h.B);
-                        var hVLine = 0.5 * (hVa + hVb);
-                        if (Math.Abs(Math.Abs(hVLine) - expectedSouthOffset) > southOffsetTol)
-                        {
-                            continue;
-                        }
-
-                        var hUa = ProjectPointToSectionU(swCorner, eastUnit, h.A);
-                        var hUb = ProjectPointToSectionU(swCorner, eastUnit, h.B);
-                        southBandHorizontalSpans.Add((Math.Min(hUa, hUb), Math.Max(hUa, hUb)));
+                    var activeSouthOffset = primaryExpectedSouthOffset;
+                    var southBandHorizontalSpans = CollectSouthBandHorizontalSpans(activeSouthOffset);
+                    if (southBandHorizontalSpans.Count == 0)
+                    {
+                        activeSouthOffset = secondaryExpectedSouthOffset;
+                        southBandHorizontalSpans = CollectSouthBandHorizontalSpans(activeSouthOffset);
                     }
 
                     double ClosestSouthBandGap(double boundaryU)
@@ -4393,7 +4439,7 @@ namespace AtsBackgroundBuilder
                         var uLine = 0.5 * (uA + uB);
                         var minV = Math.Min(vA, vB);
                         var maxV = Math.Max(vA, vB);
-                        var southBandV = -expectedSouthOffset;
+                        var southBandV = -activeSouthOffset;
                         var containsSouthBand =
                             southBandV >= (minV - southBandMatchTol) &&
                             southBandV <= (maxV + southBandMatchTol);
@@ -4453,6 +4499,7 @@ namespace AtsBackgroundBuilder
 
                     var preferWestMostSeRaBoundary = IsWestMostSectionForSeRaBoundary(sectionNumber);
                     var trimHorizontalToBoundaryInSpecialSe = preferWestMostSeRaBoundary;
+                    var apparentBoundarySpanTol = preferWestMostSeRaBoundary ? 45.0 : 22.0;
 
                     var eastRoadAllowanceWestBand = preferWestMostSeRaBoundary ? 75.0 : 45.0;
                     var eastRoadAllowanceEastBand = preferWestMostSeRaBoundary ? 25.0 : 20.0;
@@ -4578,7 +4625,7 @@ namespace AtsBackgroundBuilder
                             var vA = ProjectPointToSectionV(swCorner, northUnit, seg.A);
                             var vB = ProjectPointToSectionV(swCorner, northUnit, seg.B);
                             var vLine = 0.5 * (vA + vB);
-                            if (Math.Abs(Math.Abs(vLine) - expectedSouthOffset) > southOffsetTol)
+                            if (Math.Abs(Math.Abs(vLine) - activeSouthOffset) > southOffsetTol)
                             {
                                 continue;
                             }
@@ -4595,26 +4642,26 @@ namespace AtsBackgroundBuilder
                                 boundaryGap = boundaryU - maxU;
                             }
 
-                            var apparentBoundarySpanTol = preferWestMostSeRaBoundary ? 45.0 : 22.0;
                             if (!spansBoundary && boundaryGap > apparentBoundarySpanTol)
                             {
                                 skippedHorizontalNonSpanning++;
                                 continue;
                             }
 
-                            if (!TryIntersectInfiniteLines(seg.A, seg.B, boundaryCandidate.A, boundaryCandidate.B, out var targetPoint))
+                            if (!TryIntersectInfiniteLineWithBoundedSegmentExtension(
+                                    southPoint,
+                                    boundaryDir,
+                                    seg.A,
+                                    seg.B,
+                                    apparentBoundarySpanTol,
+                                    out var targetPoint))
                             {
+                                skippedHorizontalNonSpanning++;
                                 continue;
                             }
 
                             if (!IsPointInWindow(targetPoint, sectionTarget.Window))
                             {
-                                continue;
-                            }
-
-                            if (DistancePointToSegment(targetPoint, seg.A, seg.B) > targetOnHorizontalTol)
-                            {
-                                skippedHorizontalNonSpanning++;
                                 continue;
                             }
 
@@ -4716,7 +4763,7 @@ namespace AtsBackgroundBuilder
                             }
 
                             var bestVLine = 0.5 * (ProjectPointToSectionV(swCorner, northUnit, best.SegmentA) + ProjectPointToSectionV(swCorner, northUnit, best.SegmentB));
-                            if (Math.Abs(Math.Abs(bestVLine) - expectedSouthOffset) > southBandMatchTol)
+                            if (Math.Abs(Math.Abs(bestVLine) - activeSouthOffset) > southBandMatchTol)
                             {
                                 continue;
                             }
@@ -4758,7 +4805,25 @@ namespace AtsBackgroundBuilder
                                         continue;
                                     }
 
-                                    if (!TryIntersectInfiniteLines(horizontalA, horizontalB, b0Special, b1Special, out var zeroTarget))
+                                    var specialSouthIsStart = FirstPointIsSouth(b0Special, b1Special);
+                                    var specialSouthPoint = specialSouthIsStart ? b0Special : b1Special;
+                                    var specialNorthPoint = specialSouthIsStart ? b1Special : b0Special;
+                                    var specialBoundaryDir = specialNorthPoint - specialSouthPoint;
+                                    var specialBoundaryLen = specialBoundaryDir.Length;
+                                    if (specialBoundaryLen <= 1e-6)
+                                    {
+                                        continue;
+                                    }
+
+                                    specialBoundaryDir = specialBoundaryDir / specialBoundaryLen;
+
+                                    if (!TryIntersectInfiniteLineWithBoundedSegmentExtension(
+                                            specialSouthPoint,
+                                            specialBoundaryDir,
+                                            horizontalA,
+                                            horizontalB,
+                                            apparentBoundarySpanTol,
+                                            out var zeroTarget))
                                     {
                                         continue;
                                     }
@@ -4768,12 +4833,7 @@ namespace AtsBackgroundBuilder
                                         continue;
                                     }
 
-                                    if (DistancePointToSegment(zeroTarget, horizontalA, horizontalB) > targetOnHorizontalTol)
-                                    {
-                                        continue;
-                                    }
-
-                                    var moveSouthStart = FirstPointIsSouth(b0Special, b1Special);
+                                    var moveSouthStart = specialSouthIsStart;
                                     var southEndpointSpecial = moveSouthStart ? b0Special : b1Special;
                                     var endpointMoveSpecial = southEndpointSpecial.GetDistanceTo(zeroTarget);
                                     if (endpointMoveSpecial <= endpointMoveTol || endpointMoveSpecial > maxExtend)
@@ -5046,6 +5106,7 @@ namespace AtsBackgroundBuilder
 
             // SE specific duplicate cleanup: equal-length blind-line twins can remain after SE connect.
             CleanupDuplicateBlindLineSegments(database, targetSectionIds, logger);
+            return protectedBoundaryIds;
         }
 
         private static bool IsHorizontalLikeForQuarterExtensionsConnectivity(Point2d a, Point2d b)
@@ -5393,4 +5454,8 @@ namespace AtsBackgroundBuilder
         }
     }
 }
+
+
+
+
 

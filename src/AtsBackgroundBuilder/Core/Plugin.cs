@@ -2278,257 +2278,32 @@ namespace AtsBackgroundBuilder
             logger.WriteLine("Cleanup: deferred context 100m trim until final geometry stage.");
             logger.WriteLine($"TIMING DrawSectionsFromRequests: context sections staged in {timer.ElapsedMilliseconds} ms");
 
-            var generatedRoadAllowanceIds = new HashSet<ObjectId>();
-            var activeSectionKeyIds = new HashSet<string>(
-                requests.Select(r => BuildSectionKeyId(r.Key)),
-                StringComparer.OrdinalIgnoreCase);
-            foreach (var contextInfo in contextRuleSectionInfos)
+            var roadAllowanceCleanupContext = new RoadAllowanceCleanupContext
             {
-                if (contextInfo == null)
-                {
-                    continue;
-                }
-
-                activeSectionKeyIds.Add(BuildSectionKeyId(contextInfo.SectionKey));
-            }
-
-            foreach (var id in DrawRoadAllowanceGapOffsetLines(
-                database,
-                searchFolders,
-                requests,
-                ruleScopeIds,
-                inferredSecTypes,
-                inferredQuarterSecTypes,
-                logger,
-                activeSectionKeyIds))
-            {
-                quarterHelperIds.Add(id);
-                generatedRoadAllowanceIds.Add(id);
-            }
-
-            // Canonical simplified road-allowance mode:
-            // - never move existing lines
-            // - only add 20.11 connector extensions to satisfy orthogonal endpoint rules
-            // - keep 30.16 as generated (no endpoint extension pass)
-            logger.WriteLine("Cleanup: canonical RA mode enabled; legacy RA extension/move passes are skipped.");
-            // Pre-trim overlap cleanup: remove only clearly redundant generated segments.
-            // Full "longest wins" cleanup is rerun after final 100m trim.
-            CleanupGeneratedRoadAllowanceOverlaps(
-                database,
-                generatedRoadAllowanceIds,
-                logger,
-                allowEraseExisting: false,
-                protectedExistingIds: requestedSectionBoundaryIds);
-            var sectionNumberByPolylineIdForUsec = new Dictionary<ObjectId, int>(sectionNumberById);
-            foreach (var sectionInfo in contextRuleSectionInfos)
-            {
-                if (sectionInfo == null || sectionInfo.SectionPolylineId.IsNull)
-                {
-                    continue;
-                }
-
-                var sectionNumber = ParseSectionNumber(sectionInfo.SectionKey.Section);
-                sectionNumberByPolylineIdForUsec[sectionInfo.SectionPolylineId] = sectionNumber;
-            }
-
-            var originalRangeEdgeSecAnchors = SnapshotOriginalRangeEdgeSecRoadAllowanceAnchors(
-                database,
-                ruleScopeIds,
-                generatedRoadAllowanceIds,
-                logger);
-            TraceTargetLayerSegmentState(database, ruleScopeIds, "snapshot-original-range-edge-sec", logger);
-
-            NormalizeUsecLayersToThreeBands(
-                database,
-                ruleScopeIds,
-                sectionNumberByPolylineIdForUsec,
-                generatedRoadAllowanceIds,
-                logger);
-            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-usec-three-bands-1", logger);
-            var quarterInfosForRoadAllowanceRules = labelQuarterInfos
-                .Concat(contextRuleSectionInfos)
-                .Where(info => info != null)
-                .ToList();
-            var correctionLineSectionInfos = lsdQuarterInfos
-                .Concat(correctionContextSectionInfos)
-                .Where(info => info != null)
-                .ToList();
-            ConnectUsecSeSouthTwentyTwelveLinesToEastOriginalBoundary(
-                database,
-                searchFolders,
-                quarterInfosForRoadAllowanceRules,
-                generatedRoadAllowanceIds,
-                logger);
-            CleanupDuplicateBlindLineSegments(database, ruleScopeIds, logger);
-            logger.WriteLine("Cleanup: context 100m trim deferred to final stage; context snap/stitch/seam-heal passes skipped in canonical RA mode.");
-            NormalizeGeneratedRoadAllowanceLayers(database, generatedRoadAllowanceIds, logger);
-            NormalizeShortRoadAllowanceLayersByNeighborhood(database, ruleScopeIds, generatedRoadAllowanceIds, logger);
-            NormalizeHorizontalSecRoadAllowanceLayers(database, ruleScopeIds, generatedRoadAllowanceIds, logger);
-            NormalizeBottomTownshipBoundaryLayers(database, ruleScopeIds, generatedRoadAllowanceIds, quarterInfosForRoadAllowanceRules, logger);
-            NormalizeThirtyEighteenCorridorLayers(database, ruleScopeIds, logger);
-            var runRangeEdgeRelayer = IsRangeEdgeRelayerEnabled();
-            if (runRangeEdgeRelayer)
-            {
-                logger.WriteLine("Cleanup: range-edge relayer enabled; running duplicate cleanup pass.");
-                CleanupDuplicateBlindLineSegments(database, ruleScopeIds, logger);
-            }
-            else
-            {
-                logger?.WriteLine(
-                    "Cleanup: range-edge relayer intentionally disabled pending deterministic fix for " +
-                    "R/A layer mix/match on perpendicular township/range boundaries.");
-            }
-
-            static bool IsRangeEdgeRelayerEnabled()
-            {
-                return EnableRangeEdgeRelayer;
-            }
-
-            logger?.WriteLine("Cleanup: legacy SW/NW/simple-west/stop-rule passes skipped in canonical RA mode; SE east-boundary bridge pass enabled.");
-            NormalizeBlindLineLayersBySecConnections(database, ruleScopeIds, logger);
-            NormalizeUsecLayersToThreeBands(
-                database,
-                ruleScopeIds,
-                sectionNumberByPolylineIdForUsec,
-                generatedRoadAllowanceIds,
-                logger);
-            NormalizeUsecCollinearComponentLayerConsistency(
-                database,
-                ruleScopeIds,
-                sectionNumberByPolylineIdForUsec,
-                logger);
-            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-usec-collinear-consistency", logger);
-            NormalizeWestRoadAllowanceBandsForKnownSections(
-                database,
-                ruleScopeIds,
-                sectionNumberByPolylineIdForUsec,
-                logger);
-            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-west-ra-bands-1", logger);
-            NormalizeUsecLayersBySectionEdgeOffsets(
-                database,
-                ruleScopeIds,
-                sectionNumberByPolylineIdForUsec,
-                logger);
-            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-section-edge-relayer-1", logger);
-            ReapplyOriginalRangeEdgeSecRoadAllowanceLayers(
-                database,
-                ruleScopeIds,
-                generatedRoadAllowanceIds,
-                originalRangeEdgeSecAnchors,
-                logger);
-            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-range-edge-reapply-1", logger);
-            logger?.WriteLine("Cleanup: context endpoint snap/stitch disabled (context is build-adjoining + 100m trim only).");
-            TrimContextSectionsToBufferedWindows(database, contextSectionIds, requestedScopeIds, logger);
-            if (generatedRoadAllowanceIds.Count > 0)
-            {
-                // "Build first, trim last": generated RA lines are now trimmed in the final stage
-                // so surrounding-context behavior matches regular section construction.
-                TrimContextSectionsToBufferedWindows(
-                    database,
-                    generatedRoadAllowanceIds.ToHashSet(),
-                    requestedScopeIds,
-                    logger,
-                    protectRequestedCore: true);
-                // Post-trim overlap cleanup: with final geometry in place, longest section line wins.
-                CleanupGeneratedRoadAllowanceOverlaps(
-                    database,
-                    generatedRoadAllowanceIds,
-                    logger,
-                    allowEraseExisting: true,
-                    protectedExistingIds: requestedSectionBoundaryIds);
-            }
-            // Keep final endpoint correction narrow and deterministic:
-            // enforce only explicit 0/20 dangling-to-3018 cleanup after final trim.
-            ConnectDanglingUsecZeroTwentyEndpoints(database, requestedScopeIds, logger);
-            CleanupOverlappingZeroTwentySectionLines(database, requestedScopeIds, logger);
-            // Final deterministic relayer + reconnect pass after endpoint moves keeps
-            // 0/20/30 assignment and cross-intersection continuity consistent on partial builds.
-            NormalizeUsecLayersBySectionEdgeOffsets(
-                database,
-                ruleScopeIds,
-                sectionNumberByPolylineIdForUsec,
-                logger);
-            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-section-edge-relayer-2", logger);
-            ReapplyOriginalRangeEdgeSecRoadAllowanceLayers(
-                database,
-                ruleScopeIds,
-                generatedRoadAllowanceIds,
-                originalRangeEdgeSecAnchors,
-                logger);
-            TraceTargetLayerSegmentState(database, ruleScopeIds, "after-range-edge-reapply-2", logger);
-            // Priority rule: baseline township seam allowances must remain L-SEC
-            // even if earlier relayer passes classify them differently.
-            NormalizeBottomTownshipBoundaryLayers(
-                database,
-                ruleScopeIds,
-                generatedRoadAllowanceIds,
-                quarterInfosForRoadAllowanceRules,
-                logger);
-            ConnectDanglingUsecZeroTwentyEndpoints(database, requestedScopeIds, logger);
-            CleanupOverlappingZeroTwentySectionLines(database, requestedScopeIds, logger);
-            EnforceSectionLineNoCrossingRules(database, requestedScopeIds, logger);
-            CleanupOverlappingZeroTwentySectionLines(database, requestedScopeIds, logger);
-            TrimZeroTwentyPassThroughExtensions(database, requestedScopeIds, logger);
-            ResolveZeroTwentyOverlapByEndpointIntersection(database, requestedScopeIds, logger);
-            CleanupOverlappingZeroTwentySectionLines(database, requestedScopeIds, logger);
-            EnforceSecLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
-            EnforceQuarterLineEndpointsOnSectionBoundaries(database, requestedScopeIds, logger);
-            EnforceBlindLineEndpointsOnSectionBoundaries(database, requestedScopeIds, logger);
-            logger?.WriteLine("Cleanup: section geometry finalized (SEC/QSEC/blind endpoint passes complete); deferred LSD draw begins.");
-            if (drawLsds)
-            {
-                DrawDeferredLsdSubdivisionLines(database, lsdQuarterInfos, logger);
-                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger, lsdQuarterInfos);
-            }
-            logger?.WriteLine("Cleanup: final endpoint convergence pass begins (all endpoint targets recalculated from final geometry).");
-            ConnectDanglingUsecZeroTwentyEndpoints(database, requestedScopeIds, logger);
-            CleanupOverlappingZeroTwentySectionLines(database, requestedScopeIds, logger);
-            EnforceSectionLineNoCrossingRules(database, requestedScopeIds, logger);
-            CleanupOverlappingZeroTwentySectionLines(database, requestedScopeIds, logger);
-            TrimZeroTwentyPassThroughExtensions(database, requestedScopeIds, logger);
-            ResolveZeroTwentyOverlapByEndpointIntersection(database, requestedScopeIds, logger);
-            CleanupOverlappingZeroTwentySectionLines(database, requestedScopeIds, logger);
-            EnforceSecLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger);
-            EnforceQuarterLineEndpointsOnSectionBoundaries(database, requestedScopeIds, logger);
-            EnforceBlindLineEndpointsOnSectionBoundaries(database, requestedScopeIds, logger);
-            if (drawLsds)
-            {
-                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger, lsdQuarterInfos);
-            }
-            var restoredNearbySectionIds = RestoreStashedSectionBuildingGeometry(database, stashedNearbySectionEntities, logger);
-            if (keepGeneratedAtsFabric)
-            {
-                var postRestoreCleanupWindows = ExpandClipWindows(
-                    requestedIsolationWindows,
-                    PostRestoreOverlapCleanupExpansionMeters);
-                CleanupOverlappingSectionLinesByShortest(
-                    database,
-                    postRestoreCleanupWindows,
-                    restoredNearbySectionIds,
-                    logger);
-            }
-            else
-            {
-                logger?.WriteLine("Cleanup: skipped overlap shortest-wins on restored existing section segments (ATS fabric disabled).");
-            }
-            ApplyCorrectionLinePostBuildRules(
-                database,
-                correctionLineSectionInfos,
-                requestedScopeIds,
-                drawLsds,
-                logger);
-            if (drawQuarterView)
-            {
-                DrawQuarterViewFromFinalRoadAllowanceGeometry(database, sectionIds, sectionNumberById, logger);
-            }
-            EnforceFinalCorrectionOuterLayerConsistency(database, requestedScopeIds, logger);
-            NormalizeCorrectionLayerEntityColorByLayer(database, logger);
-            if (drawLsds)
-            {
-                EnforceLsdLineEndpointsOnHardSectionBoundaries(database, requestedScopeIds, logger, lsdQuarterInfos);
-                RebuildLsdLabelsAtFinalIntersections(database, lsdQuarterInfos, logger);
-            }
-            logger?.WriteLine("Cleanup: final endpoint convergence pass complete.");
+                Database = database,
+                Logger = logger,
+                SearchFolders = searchFolders,
+                Requests = requests,
+                RuleScopeIds = ruleScopeIds,
+                RequestedScopeIds = requestedScopeIds,
+                InferredSecTypes = inferredSecTypes,
+                InferredQuarterSecTypes = inferredQuarterSecTypes,
+                RequestedSectionBoundaryIds = requestedSectionBoundaryIds,
+                ContextSectionIds = contextSectionIds,
+                ContextRuleSectionInfos = contextRuleSectionInfos,
+                CorrectionContextSectionInfos = correctionContextSectionInfos,
+                LabelQuarterInfos = labelQuarterInfos,
+                LsdQuarterInfos = lsdQuarterInfos,
+                SectionNumberById = sectionNumberById,
+                QuarterHelperIds = quarterHelperIds,
+                StashedNearbySectionEntities = stashedNearbySectionEntities,
+                RequestedIsolationWindows = requestedIsolationWindows,
+                SectionIds = sectionIds,
+                DrawLsds = drawLsds,
+                DrawQuarterView = drawQuarterView,
+                KeepGeneratedAtsFabric = keepGeneratedAtsFabric,
+            };
+            ExecuteRoadAllowanceCleanupPipeline(roadAllowanceCleanupContext);
             logger?.WriteLine($"TIMING DrawSectionsFromRequests: road allowances processed in {timer.ElapsedMilliseconds} ms");
 
             if (EnableBufferedQuarterWindowDrawing)
@@ -5353,7 +5128,8 @@ namespace AtsBackgroundBuilder
         private static void ConnectDanglingUsecZeroTwentyEndpoints(
             Database database,
             IEnumerable<ObjectId> requestedQuarterIds,
-            Logger? logger)
+            Logger? logger,
+            IReadOnlyCollection<ObjectId>? protectedIds = null)
         {
             if (database == null || requestedQuarterIds == null)
             {
@@ -5378,6 +5154,8 @@ namespace AtsBackgroundBuilder
 
             bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
                 TryIntersectInfiniteLinesForPluginGeometry(a0, a1, b0, b1, out intersection);
+
+            bool IsProtectedId(ObjectId id) => protectedIds != null && protectedIds.Contains(id);
 
             bool IsHorizontalLike(Point2d a, Point2d b)
             {
@@ -5895,6 +5673,11 @@ namespace AtsBackgroundBuilder
                 for (var si = 0; si < trackedSegments.Count; si++)
                 {
                     var source = trackedSegments[si];
+                    if (IsProtectedId(source.Id))
+                    {
+                        continue;
+                    }
+
                     if (!source.MovableSource)
                     {
                         continue;
@@ -6218,7 +6001,8 @@ namespace AtsBackgroundBuilder
         private static void CleanupOverlappingZeroTwentySectionLines(
             Database database,
             IEnumerable<ObjectId> requestedQuarterIds,
-            Logger? logger)
+            Logger? logger,
+            IReadOnlyCollection<ObjectId>? protectedIds = null)
         {
             if (database == null || requestedQuarterIds == null)
             {
@@ -6248,6 +6032,8 @@ namespace AtsBackgroundBuilder
             }
 
             bool IsZeroTwentyLayer(string layer) => IsZeroTwentyLayerForPlugin(layer);
+
+            bool IsProtectedId(ObjectId id) => protectedIds != null && protectedIds.Contains(id);
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -6338,6 +6124,13 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
+                        var aProtected = IsProtectedId(a.Id);
+                        var bProtected = IsProtectedId(b.Id);
+                        if (aProtected && bProtected)
+                        {
+                            continue;
+                        }
+
                         var nearDuplicate = AreSegmentEndpointsNear(a.A, a.B, b.A, b.B, endpointTol);
                         var collinearOverlap = AreSegmentsDuplicateOrCollinearOverlap(a.A, a.B, b.A, b.B);
                         if (!nearDuplicate && !collinearOverlap)
@@ -6356,7 +6149,11 @@ namespace AtsBackgroundBuilder
                         }
 
                         ObjectId eraseId;
-                        if (aContainsB && !bContainsA)
+                        if (aProtected ^ bProtected)
+                        {
+                            eraseId = aProtected ? b.Id : a.Id;
+                        }
+                        else if (aContainsB && !bContainsA)
                         {
                             eraseId = b.Id;
                         }
@@ -6400,7 +6197,8 @@ namespace AtsBackgroundBuilder
         private static void EnforceSectionLineNoCrossingRules(
             Database database,
             IEnumerable<ObjectId> requestedQuarterIds,
-            Logger? logger)
+            Logger? logger,
+            IReadOnlyCollection<ObjectId>? protectedIds = null)
         {
             if (database == null || requestedQuarterIds == null)
             {
@@ -6418,6 +6216,8 @@ namespace AtsBackgroundBuilder
             bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenSegmentForPlugin(ent, allowCollinearOpenPolyline: true, out a, out b);
 
             bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForPlugin(writable, moveStart, target, moveTol, allowAnyOpenPolylineEndpoint: true);
+
+            bool IsProtectedId(ObjectId id) => protectedIds != null && protectedIds.Contains(id);
 
             bool IsSectionTypeLayer(string layer)
             {
@@ -6572,6 +6372,11 @@ namespace AtsBackgroundBuilder
                     for (var si = 0; si < segments.Count; si++)
                     {
                         var source = segments[si];
+                        if (IsProtectedId(source.Id))
+                        {
+                            continue;
+                        }
+
                         if (!source.Alive)
                         {
                             continue;
@@ -6759,7 +6564,8 @@ namespace AtsBackgroundBuilder
         private static void TrimZeroTwentyPassThroughExtensions(
             Database database,
             IEnumerable<ObjectId> requestedQuarterIds,
-            Logger? logger)
+            Logger? logger,
+            IReadOnlyCollection<ObjectId>? protectedIds = null)
         {
             if (database == null || requestedQuarterIds == null)
             {
@@ -6781,6 +6587,8 @@ namespace AtsBackgroundBuilder
             bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForPlugin(writable, moveStart, target, moveTol, allowAnyOpenPolylineEndpoint: true);
 
             bool IsZeroTwentyLayer(string layer) => IsZeroTwentyLayerForPlugin(layer);
+
+            bool IsProtectedId(ObjectId id) => protectedIds != null && protectedIds.Contains(id);
 
             bool TryIntersectSegments(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection, out double tA, out double tB)
             {
@@ -6879,6 +6687,11 @@ namespace AtsBackgroundBuilder
                     for (var si = 0; si < segments.Count; si++)
                     {
                         var source = segments[si];
+                        if (IsProtectedId(source.Id))
+                        {
+                            continue;
+                        }
+
                         if (!source.Alive)
                         {
                             continue;
@@ -7041,7 +6854,8 @@ namespace AtsBackgroundBuilder
         private static void ResolveZeroTwentyOverlapByEndpointIntersection(
             Database database,
             IEnumerable<ObjectId> requestedQuarterIds,
-            Logger? logger)
+            Logger? logger,
+            IReadOnlyCollection<ObjectId>? protectedIds = null)
         {
             if (database == null || requestedQuarterIds == null)
             {
@@ -7063,6 +6877,8 @@ namespace AtsBackgroundBuilder
             bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForPlugin(writable, moveStart, target, moveTol, allowAnyOpenPolylineEndpoint: true);
 
             bool IsZeroTwentyLayer(string layer) => IsZeroTwentyLayerForPlugin(layer);
+
+            bool IsProtectedId(ObjectId id) => protectedIds != null && protectedIds.Contains(id);
 
             bool TryIntersectSegments(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection, out double tA, out double tB)
             {
@@ -7139,6 +6955,11 @@ namespace AtsBackgroundBuilder
                     for (var si = 0; si < segments.Count; si++)
                     {
                         var source = segments[si];
+                        if (IsProtectedId(source.Id))
+                        {
+                            continue;
+                        }
+
                         if (!source.Alive)
                         {
                             continue;
@@ -7147,6 +6968,11 @@ namespace AtsBackgroundBuilder
                         for (var ti = si + 1; ti < segments.Count; ti++)
                         {
                             var target = segments[ti];
+                            if (IsProtectedId(source.Id) || IsProtectedId(target.Id))
+                            {
+                                continue;
+                            }
+
                             if (!target.Alive)
                             {
                                 continue;
@@ -8154,6 +7980,9 @@ namespace AtsBackgroundBuilder
 }
 
 /////////////////////////////////////////////////////////////////////
+
+
+
 
 
 

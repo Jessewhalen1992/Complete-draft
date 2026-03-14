@@ -1,4 +1,4 @@
-/////////////////////////////////////////////////////////////////////
+﻿/////////////////////////////////////////////////////////////////////
 
 using System;
 using System.Collections.Generic;
@@ -1313,15 +1313,20 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    var isTwentyLikeLayer =
+                    var isCorrectionPromotableLayer =
+                        string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase);
-                    if (isTwentyLikeLayer)
+                        string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
+                    if (isCorrectionPromotableLayer)
                     {
                         twentyCandidates.Add((id, a, b));
                     }
@@ -1591,9 +1596,11 @@ namespace AtsBackgroundBuilder
                 const double endpointMoveTol = 0.05;
                 const double minMove = 0.05;
                 const double maxMove = 1200.0;
-                const double maxVerticalTargetGap = 520.0;
+                // Keep correction inner-to-vertical cleanup local; large seam-facing pulls can create
+                // false south spikes on correction-line townships when a distant vertical target wins.
+                const double maxVerticalTargetGap = CorrectionLinePostExpectedUsecWidthMeters * 6.0;
                 const double maxVerticalTargetLength = 2200.0;
-                const double maxVerticalEndpointMove = 520.0;
+                const double maxVerticalEndpointMove = CorrectionLinePostExpectedUsecWidthMeters * 6.0;
                 const double minRemainingLength = 2.0;
                 const double directionAxisTol = 0.05;
                 const double inlineVerticalTol = 0.80;
