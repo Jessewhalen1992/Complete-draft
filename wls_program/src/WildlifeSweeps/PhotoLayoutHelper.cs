@@ -277,7 +277,7 @@ namespace WildlifeSweeps
                 Location = labelPoint,
                 Attachment = AttachmentPoint.MiddleCenter,
                 Layer = "DETAIL-T",
-                Color = Autodesk.AutoCAD.Colors.Color.FromRgb(0, 255, 0),
+                Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, 3),
                 Rotation = 0.0
             };
 

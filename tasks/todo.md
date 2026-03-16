@@ -6357,3 +6357,18 @@ Regression follow-up:
 - Fix: replace that override with `SurveySecRoadAllowanceSecTargetPolicy`. For survey `ZERO/SEC` and `TWENTY/SEC` cases with no projected local ZERO/TWENTY/CORRZERO owner, the rule-matrix now uses `SEC` as the station target instead of forcing a survey anchor. That preserves endpoints already on the correct `L-SEC` line and still allows a snap onto the live `SEC` segment when needed.
 - Verification: `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` succeeded with 0 warnings / 0 errors. `Decision tests passed.` Both deployed and source DLLs updated at the same timestamp.
 - Python verification: the reported wrong target `601188.609,5999555.943` sits `20.11064 m` away from the expected `601168.503,5999555.511`. The logged pre-move outer endpoint for `126A5B8` already matched the expected point exactly before the bad override ran.
+
+# Follow-up (WLS Bunny Tracks + Photo Label Green, 2026-03-16)
+
+- [x] Verify why bunny-related findings fall back to unidentified tracks instead of Snowshoe Hare Tracks.
+- [x] Force photo labels to use AutoCAD GREEN instead of an RGB green variant.
+- [x] Rebuild the WLS plugin to verify the changes compile cleanly.
+
+## Review (WLS Bunny Tracks + Photo Label Green, 2026-03-16)
+
+- Root cause: the findings lookup workbook recognizes abbit|hare tracks, but not unny, so Bunny Tracks was falling through to the generic unidentified-track fallback.
+- Fix: updated FindingsDescriptionStandardizer so preprocessing and canonicalization normalize unny / unnies through the existing rabbit-hare rule path, which resolves to Snowshoe Hare Tracks.
+- Fix: updated PhotoLayoutHelper so photo labels use AutoCAD ACI 3 (GREEN) instead of a raw RGB green value.
+- Verification: dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore -p:OutDir=C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\artifacts\verify\WildlifeSweeps\ succeeded with 0 warnings / 0 errors. A normal Release build was blocked only because the live in\Release\net8.0-windows\WildlifeSweeps.dll is currently locked by another process.
+- Verification: targeted checks confirmed Bunny Tracks now normalizes to abbit tracks, and the lookup workbook already contains the abbit tracks -> Rabbit Tracks rule that canonicalizes to Snowshoe Hare Tracks.
+

@@ -24,6 +24,8 @@ namespace WildlifeSweeps
         private static readonly Regex PunctuationRegex = new Regex(@"[_\W]+", RegexOptions.Compiled);
         private static readonly Regex StandalonePossessiveRegex = new Regex(@"\b['’`´]?\s*s\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex MultiSpaceRegex = new Regex(@"\s+", RegexOptions.Compiled);
+        private static readonly Regex BunnyPluralRegex = new Regex(@"\bbunnies\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex BunnySingularRegex = new Regex(@"\bbunny\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly TextInfo TitleCase = CultureInfo.CurrentCulture.TextInfo;
         private static readonly Dictionary<string, string> RabbitDescriptionAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -404,9 +406,20 @@ namespace WildlifeSweeps
             cleaned = MultiSpaceRegex.Replace(cleaned, " ").Trim();
             var cleanedOriginal = string.IsNullOrWhiteSpace(cleaned) ? string.Empty : TitleCase.ToTitleCase(cleaned);
 
-            var normalized = cleaned.ToLowerInvariant();
+            var normalized = NormalizeRabbitHareSynonyms(cleaned).ToLowerInvariant();
 
             return new PreprocessResult(cleanedOriginal, normalized, string.Join(", ", refs));
+        }
+
+        private static string NormalizeRabbitHareSynonyms(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var normalized = BunnyPluralRegex.Replace(value, "rabbit");
+            return BunnySingularRegex.Replace(normalized, "rabbit");
         }
 
         private static string GetUnparsedFindingsPath()
@@ -486,9 +499,11 @@ namespace WildlifeSweeps
                 return string.Empty;
             }
 
-            return string.Equals(trimmed, RabbitHareSpecies, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(trimmed, "Rabbit/Hare", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(trimmed, "Rabbit", StringComparison.OrdinalIgnoreCase)
+            var synonymNormalized = NormalizeRabbitHareSynonyms(trimmed);
+
+            return string.Equals(synonymNormalized, RabbitHareSpecies, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(synonymNormalized, "Rabbit/Hare", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(synonymNormalized, "Rabbit", StringComparison.OrdinalIgnoreCase)
                     ? SnowshoeHareSpecies
                     : trimmed;
         }
@@ -501,13 +516,14 @@ namespace WildlifeSweeps
                 return string.Empty;
             }
 
-            if (RabbitDescriptionAliases.TryGetValue(trimmed, out var canonical))
+            var synonymNormalized = NormalizeRabbitHareSynonyms(trimmed);
+            if (RabbitDescriptionAliases.TryGetValue(synonymNormalized, out var canonical))
             {
                 return canonical;
             }
 
-            return trimmed.StartsWith("Rabbit ", StringComparison.OrdinalIgnoreCase)
-                ? SnowshoeHareSpecies + trimmed.Substring("Rabbit".Length)
+            return synonymNormalized.StartsWith("Rabbit ", StringComparison.OrdinalIgnoreCase)
+                ? SnowshoeHareSpecies + synonymNormalized.Substring("Rabbit".Length)
                 : trimmed;
         }
 
