@@ -55,19 +55,10 @@ namespace AtsBackgroundBuilder
             RunRoadAllowanceTrimAndDeterministicRelayer(context);
             RunRoadAllowanceEndpointCleanup(context);
 
-            context.Logger?.WriteLine("Cleanup: section geometry finalized (SEC/QSEC/blind endpoint passes complete); deferred LSD draw begins.");
-            if (context.DrawLsds)
-            {
-                DrawDeferredLsdSubdivisionLines(context.Database, context.LsdQuarterInfos.ToList(), context.Logger);
-                EnforceLsdLineEndpointsOnHardSectionBoundaries(
-                    context.Database,
-                    context.RequestedScopeIds,
-                    context.Logger,
-                    context.LsdQuarterInfos.ToList());
-            }
+            context.Logger?.WriteLine("Cleanup: section geometry finalized (SEC/QSEC/blind endpoint passes complete); LSD draw/enforcement remains deferred to the final stage.");
 
             context.Logger?.WriteLine("Cleanup: final endpoint convergence pass begins (all endpoint targets recalculated from final geometry).");
-            RunRoadAllowanceEndpointCleanup(context, includeLsdHardBoundaryPass: context.DrawLsds);
+            RunRoadAllowanceEndpointCleanup(context, includeLsdHardBoundaryPass: false);
             FinalizeRoadAllowanceCleanup(context);
         }
 
@@ -297,39 +288,49 @@ namespace AtsBackgroundBuilder
                 context.RequestedScopeIds,
                 context.Logger,
                 context.ProtectedRoadAllowanceCleanupIds);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-dangling-0-20-connect", context.Logger);
             CleanupOverlappingZeroTwentySectionLines(
                 context.Database,
                 context.RequestedScopeIds,
                 context.Logger,
                 context.ProtectedRoadAllowanceCleanupIds);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-overlap-cleanup-1", context.Logger);
             EnforceSectionLineNoCrossingRules(
                 context.Database,
                 context.RequestedScopeIds,
                 context.Logger,
                 context.ProtectedRoadAllowanceCleanupIds);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-no-crossing", context.Logger);
             CleanupOverlappingZeroTwentySectionLines(
                 context.Database,
                 context.RequestedScopeIds,
                 context.Logger,
                 context.ProtectedRoadAllowanceCleanupIds);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-overlap-cleanup-2", context.Logger);
             TrimZeroTwentyPassThroughExtensions(
                 context.Database,
                 context.RequestedScopeIds,
                 context.Logger,
                 context.ProtectedRoadAllowanceCleanupIds);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-pass-through-trim", context.Logger);
             ResolveZeroTwentyOverlapByEndpointIntersection(
                 context.Database,
                 context.RequestedScopeIds,
                 context.Logger,
                 context.ProtectedRoadAllowanceCleanupIds);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-overlap-endpoint-intersection", context.Logger);
             CleanupOverlappingZeroTwentySectionLines(
                 context.Database,
                 context.RequestedScopeIds,
                 context.Logger,
                 context.ProtectedRoadAllowanceCleanupIds);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-overlap-cleanup-3", context.Logger);
             EnforceSecLineEndpointsOnHardSectionBoundaries(context.Database, context.RequestedScopeIds, context.Logger);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-sec-endpoint-hard", context.Logger);
             EnforceQuarterLineEndpointsOnSectionBoundaries(context.Database, context.RequestedScopeIds, context.Logger);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-quarter-endpoint-hard", context.Logger);
             EnforceBlindLineEndpointsOnSectionBoundaries(context.Database, context.RequestedScopeIds, context.Logger);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-blind-endpoint-hard", context.Logger);
 
             if (includeLsdHardBoundaryPass)
             {
@@ -343,6 +344,26 @@ namespace AtsBackgroundBuilder
 
         private static void FinalizeRoadAllowanceCleanup(RoadAllowanceCleanupContext context)
         {
+            void TrimLateCorrectionSegments(string reason)
+            {
+                var lateCorrectionIds = CollectCorrectionLayerSegmentIdsForFinalTrim(
+                    context.Database,
+                    context.RequestedScopeIds);
+                if (lateCorrectionIds.Count == 0)
+                {
+                    return;
+                }
+
+                context.Logger?.WriteLine(
+                    $"Cleanup: final 100m trim considering {lateCorrectionIds.Count} late correction segment(s) {reason}.");
+                TrimContextSectionsToBufferedWindows(
+                    context.Database,
+                    lateCorrectionIds,
+                    context.RequestedScopeIds,
+                    context.Logger,
+                    protectRequestedCore: false);
+            }
+
             var restoredNearbySectionIds = RestoreStashedSectionBuildingGeometry(
                 context.Database,
                 context.StashedNearbySectionEntities,
@@ -369,6 +390,17 @@ namespace AtsBackgroundBuilder
                 context.RequestedScopeIds,
                 context.DrawLsds,
                 context.Logger);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-correction-postbuild-final", context.Logger);
+
+            var ordinaryUsecTieInsTrimmed = TrimOrdinaryUsecTieInOverhangsToVerticalBoundaries(
+                context.Database,
+                context.RequestedScopeIds,
+                context.Logger);
+            if (ordinaryUsecTieInsTrimmed)
+            {
+                context.Logger?.WriteLine("Cleanup: rerunning final 100m trim after ordinary USEC tie-in overhang trim.");
+            }
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-ordinary-usec-tiein-trim", context.Logger);
 
             context.Logger?.WriteLine("Cleanup: rerunning final 100m trim after correction-line post-processing.");
             TrimContextSectionsToBufferedWindows(
@@ -385,9 +417,36 @@ namespace AtsBackgroundBuilder
                     context.Logger,
                     protectRequestedCore: false);
             }
+            TrimLateCorrectionSegments("after correction-line post-processing.");
 
-            EnforceFinalCorrectionOuterLayerConsistency(context.Database, context.RequestedScopeIds, context.Logger);
+            var finalCorrectionOuterConsistencyChanged =
+                EnforceFinalCorrectionOuterLayerConsistency(context.Database, context.RequestedScopeIds, context.Logger);
+            if (finalCorrectionOuterConsistencyChanged)
+            {
+                context.Logger?.WriteLine("Cleanup: rerunning final 100m trim after final correction outer consistency.");
+                TrimContextSectionsToBufferedWindows(
+                    context.Database,
+                    context.ContextSectionIds,
+                    context.RequestedScopeIds,
+                    context.Logger);
+                if (context.GeneratedRoadAllowanceIds.Count > 0)
+                {
+                    TrimContextSectionsToBufferedWindows(
+                        context.Database,
+                    context.GeneratedRoadAllowanceIds,
+                    context.RequestedScopeIds,
+                    context.Logger,
+                    protectRequestedCore: false);
+                }
+                TrimLateCorrectionSegments("after final correction outer consistency.");
+            }
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-final-correction-outer-consistency", context.Logger);
             NormalizeCorrectionLayerEntityColorByLayer(context.Database, context.Logger);
+            EnforceZeroTwentyEndpointsOnCorrectionZeroBoundaries(
+                context.Database,
+                context.RequestedScopeIds,
+                context.Logger);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-late-correction-companion-snap", context.Logger);
             if (context.DrawQuarterView)
             {
                 DrawQuarterViewFromFinalRoadAllowanceGeometry(
@@ -398,6 +457,7 @@ namespace AtsBackgroundBuilder
             }
             if (context.DrawLsds)
             {
+                DrawDeferredLsdSubdivisionLines(context.Database, context.LsdQuarterInfos.ToList(), context.Logger);
                 EnforceLsdLineEndpointsOnHardSectionBoundaries(
                     context.Database,
                     context.RequestedScopeIds,
@@ -406,6 +466,59 @@ namespace AtsBackgroundBuilder
                 RebuildLsdLabelsAtFinalIntersections(context.Database, context.LsdQuarterInfos.ToList(), context.Logger);
             }
             context.Logger?.WriteLine("Cleanup: final endpoint convergence pass complete.");
+        }
+
+        private static List<ObjectId> CollectCorrectionLayerSegmentIdsForFinalTrim(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds)
+        {
+            var result = new List<ObjectId>();
+            if (database == null || requestedQuarterIds == null)
+            {
+                return result;
+            }
+
+            var clipWindows = MergeOverlappingClipWindows(BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0));
+            if (clipWindows.Count == 0)
+            {
+                return result;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    var layer = ent.Layer ?? string.Empty;
+                    var isCorrectionLayer =
+                        string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
+                    if (!isCorrectionLayer)
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenTwoPointSegment(ent, out var a, out var b))
+                    {
+                        continue;
+                    }
+
+                    if (!IntersectsAnyClipWindow(a, b, clipWindows))
+                    {
+                        continue;
+                    }
+
+                    result.Add(id);
+                }
+            }
+
+            return result;
         }
     }
 }

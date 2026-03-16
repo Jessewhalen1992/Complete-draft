@@ -5707,3 +5707,594 @@
   - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_correction_chain_reset_build/ -v minimal`
   - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -p:NuGetAudit=false -p:BaseOutputPath=.artifacts/ats_correction_chain_reset_tests/`
   - inline Python source sanity confirming the rollback and the broadened final correction-chain promotion
+
+## Repo Build Verification, 2026-03-14
+- [x] Confirm the repo build entry points and choose the build commands.
+- [x] Build the ATS solution in Release.
+- [x] Build the WLS solution in Release.
+- [x] Record the build results and any follow-up blockers.
+
+### Review
+- Confirmed the repo has two solution entry points to build from the root: `src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln` and `wls_program/src/WildlifeSweeps/WildlifeSweeps.sln`.
+- Built ATS in Release with the local SDK: `.\.local_dotnet\dotnet.exe build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal`.
+- ATS build succeeded and produced `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll`; the build reported 16 nullable warnings (`CS8602`) and 0 errors.
+- Built WLS in Release with the local SDK: `.\.local_dotnet\dotnet.exe build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release -p:NuGetAudit=false -v minimal`.
+- WLS build succeeded and produced `wls_program/src/WildlifeSweeps/bin/Release/net8.0-windows/WildlifeSweeps.dll` with 0 warnings and 0 errors.
+- Follow-up blocker: none for the build itself; the only notable issue is the existing ATS nullable-warning set.
+
+## ATS Correction Classification Perpendicular Gap Fix, 2026-03-14
+- [ ] Confirm the current correction-line root cause and capture the exact geometry path to change.
+- [ ] Replace section-type gap inference with perpendicular measurement between facing section edges.
+- [ ] Add a regression test for angled road-allowance gap measurement.
+- [ ] Build ATS and run decision tests.
+- [ ] Record the review and any remaining follow-up.
+## ATS Correction Classification Perpendicular Gap Fix, 2026-03-14 Review
+- [x] Confirmed the likely root cause: full-section AUTO type inference was still measuring east/south road-allowance gaps from projected section centers and half-widths, not the actual perpendicular gap between facing section edges.
+- [x] Updated `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionTypeInference.cs` to measure facing east/west and north/south section-edge gaps with a perpendicular sample path before falling back to the older box-gap logic.
+- [x] Extended `SectionSpatialInfo` / section spatial analysis to retain the actual section corner points needed for facing-edge measurement.
+- [x] Added a pure helper `src/AtsBackgroundBuilder/Core/PerpendicularGapMeasurement.cs` plus regression coverage in `src/AtsBackgroundBuilder.DecisionTests/Program.cs` for angled parallel edges and reversed edge direction.
+- [x] Verification:
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false` -> `Decision tests passed.`
+  - `dotnet msbuild src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release /p:NuGetAudit=false /v:minimal` -> compile succeeded; existing nullable warnings remain.
+  - Full `dotnet build` still cannot complete the final copy step while AutoCAD is holding `build/net8.0-windows/AtsBackgroundBuilder.dll` open.
+- [x] Follow-up: retest `63-12-6` after reloading the freshly compiled DLL; if the exact segment still misclassifies, the next place to instrument is the correction post seam-band selector, but the section-width inference path is now using perpendicular geometry instead of projected box widths.
+
+## ATS Correction Classification Path Trace, 2026-03-14
+- [ ] Confirm which runtime classifier actually owns the misclassified `63-12-6` segment after the fresh DLL reload.
+- [ ] Inspect the latest ATS runtime log / diagnostics for the seam containing `325614.237,6032915.344 -> 324823.466,6032945.842`.
+- [ ] Patch the actual classification path with targeted diagnostics or logic changes.
+- [ ] Rebuild and verify the result.
+
+## ATS Correction Classification Perpendicular Seam Distance Fix, 2026-03-14
+- [x] Trace the reported `63-12-6` correction-seam issue to the classifier that actually assigns correction layers.
+- [x] Replace world-Y seam-band / inset checks in correction post-processing with perpendicular signed-distance checks against the fitted seam lines.
+- [x] Point the targeted layer-trace hook at the reported bad segment `325614.237,6032915.344 -> 324823.466,6032945.842` for the next runtime log.
+- [x] Add a pure regression test for angled signed line distance and rebuild ATS.
+
+### Review
+- Root cause: `Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` was still classifying seam-band correction candidates by comparing `midY` to `seam.GetSouthYAt(midX)` / `GetNorthYAt(midX)`, which is a vertical offset in world coordinates, not a perpendicular distance to the fitted correction seam.
+- Fix: correction seam band selection, surveyed-evidence checks, late post-relayer promotion, and inner-companion pairing/creation now use perpendicular signed distance to the north/south/center seam fits via `PerpendicularLineDistanceMeasurement`.
+- Diagnostics: the existing `LAYER-TARGET` trace is now aimed at the user-reported bad segment so the next ATS runtime log will show exactly which cleanup passes touch it if anything still survives.
+- Verification:
+  - `./.local_dotnet/dotnet.exe run --project ./src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false`
+  - `./.local_dotnet/dotnet.exe build ./src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal`
+  - Result: decision tests passed; ATS Release build succeeded with the same 16 existing nullable warnings and 0 errors.
+
+## ATS Correction Classification Exact Segment Trace, 2026-03-14
+- [ ] Inspect the latest runtime log for the exact user-reported segment after the unchanged rerun.
+- [ ] Prove which pass last touches or skips that segment.
+- [ ] Patch the owning classifier/survivor path only.
+- [ ] Rebuild ATS and record the result.
+
+## ATS Correction Classification Perpendicular Seam Strip Fix, 2026-03-14
+- [x] Inspect the exact-segment runtime trace and confirm whether the bad line survives as ordinary `L-USEC-0`.
+- [x] Patch upstream correction seam candidate gates so angled segments are admitted by perpendicular strip intersection instead of world-axis `Y` windows / midpoint checks.
+- [x] Fix the late-post seam claim ordering so a segment is only marked seen after it actually qualifies for a seam.
+- [x] Add focused pure geometry regression coverage and rebuild ATS.
+
+### Review
+- Runtime trace confirmed the user-reported segment `325614.237,6032915.344 -> 324823.466,6032945.842` was surviving the cleanup pipeline as ordinary `L-USEC-0`, so the previous seam-band relayer fix was not enough on its own.
+- Root cause refinement: `Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` still had upstream world-axis / midpoint-only gates (`IntersectsAnyCorrectionSeamWindow`, seam-band candidate filters, and late-post band admission) that could exclude or skip long angled seam segments before the perpendicular relayer logic ever ran.
+- Fix: correction seam admission now uses endpoint-based perpendicular strip intersection through `PerpendicularLineBandMeasurement`, the target-segment trace now logs signed-distance ranges across the whole segment, and the late post-relayer only marks a segment as seen after it has actually qualified for the current seam.
+- Added decision-test coverage for angled strip intersection and outside-strip rejection alongside the earlier perpendicular gap / signed-distance tests.
+- Verification:
+  - `./.local_dotnet/dotnet.exe run --project ./src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false` -> `Decision tests passed.`
+  - `./.local_dotnet/dotnet.exe build ./src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` -> compilation succeeded and produced `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll`; final copy into `build/net8.0-windows` still failed only because AutoCAD is locking the destination DLL.
+- Follow-up: reload the freshly compiled DLL and rerun `63-12-6`; the new `LAYER-TARGET corr` lines now include seam distance ranges, so if the exact line still survives we will know whether it never intersects the seam strip, intersects but is not considered a fallback layer, or qualifies and still fails to relayer.
+
+## ATS Correction Seam LSD / 100m Buffer Follow-up, 2026-03-14
+- [x] Trace the post-fix regression affecting LSD endpoints and east-end 100m buffer cleanup around the correction seam.
+- [x] Tighten LSD `CORRZERO` endpoint targeting so correction-zero handoff stays on the quarter-interior side of the seam.
+- [x] Rerun the final 100m trim after late correction-outer consistency promotions when that pass changes geometry.
+- [x] Rebuild ATS and rerun the decision tests.
+
+### Review
+- Root cause split: the earlier seam-layer fix worked, but two downstream passes could still produce the new regression.
+- LSD root cause: `Plugin.RoadAllowance.EndpointEnforcement.cs` treated nearby correction-zero horizontals as interchangeable whenever an outer vertical LSD endpoint was within the generic `CORRZERO` override radius, so adjacent LSDs could snap to different correction-zero owners across an angled seam.
+- Cleanup root cause: `EnforceFinalCorrectionOuterLayerConsistency(...)` runs after the normal final 100 m trim, so any ordinary segments promoted to correction outer at that stage could survive without being re-trimmed on the east end.
+- Fix: added a quarter-aware `TryFindQuarterInteriorCorrectionZeroTarget(...)` path that prefers correction-zero targets on the interior side of the top/bottom quarter boundary before falling back to the generic midpoint selector, and rerun the final 100 m trim whenever the late correction-outer consistency pass actually converts segments.
+- Verification:
+  - `./.local_dotnet/dotnet.exe run --project ./src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false` -> `Decision tests passed.`
+  - `./.local_dotnet/dotnet.exe build ./src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` -> build succeeded and produced `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll` with the same 16 existing nullable warnings and 0 errors.
+- Follow-up: reload the freshly built DLL and rerun `63-12-6`; the LSD endpoint trace will now report `source=corrzero-interior` when the quarter-aware correction-zero target wins, which should make the remaining handoff behavior easy to confirm from the log if anything is still off.
+
+## ATS Correction Seam Station-Target LSD / Late Correction Trim Fix, 2026-03-14
+- [x] Prove whether the reported bad LSD endpoint is still being moved by the final hard-boundary pass.
+- [x] Replace midpoint-based boundary endpoint targeting with a station-preserving point on the chosen boundary segment.
+- [x] Include late correction-layer segments in the final 100m trim after correction post-processing / final correction consistency.
+- [x] Re-run decision tests and ATS Release build.
+
+### Review
+- Runtime trace proved the user-reported LSD endpoint `326835.758,6032873.575` was still being moved in the final `LSD-ENDPT` rule-matrix pass with `source=midpoint-kind`, so the last mover was targeting the midpoint of a long `CORRZERO` segment rather than the point on that boundary at the LSD station.
+- Root cause 1: `Plugin.RoadAllowance.EndpointEnforcement.cs` used segment midpoints in both the generic boundary-kind selector and the quarter-interior `CORRZERO` override, so long angled or over-extended correction-zero horizontals could drag vertical LSD endpoints south even when the correct local boundary line existed.
+- Root cause 2: late correction entities were still outside the normal final trim sets; post-built / post-promoted `L-USEC-C` and `L-USEC-C-0` segments could survive beyond the east-end 100m window and make the midpoint-target bug worse.
+- Fix: added `SegmentStationProjection` and changed LSD boundary targeting to resolve the point on the candidate boundary segment at the endpoint station (with a closest-point fallback only when the projected station is still within tolerance), renamed the runtime trace source to `station-kind`, and added a late correction-layer id collection so final 100m trim also clips correction-layer segments after correction post-processing and after late correction-outer consistency changes.
+- Verification:
+  - `./.local_dotnet/dotnet.exe run --project ./src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false` -> `Decision tests passed.`
+  - `./.local_dotnet/dotnet.exe build ./src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` -> build succeeded and produced `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll` with the same 16 existing nullable warnings and 0 errors.
+- Follow-up: reload the fresh DLL and rerun `63-12-6`; the bad LSD should now target a local correction-zero point instead of the long-segment midpoint, and the east-end extra correction/buffer survivor should also be retrimmed if it is correction-layer geometry.
+
+## ATS Correction Zero Outer-Axis Normalization, 2026-03-14
+- [x] Trace the latest rerun and prove whether the bad LSD still follows a real correction-zero owner after the station-target fix.
+- [x] Normalize any correction-zero horizontal that still sits on the seam outer axis back to correction outer before quarter/LSD selection.
+- [x] Add pure regression coverage for inner-vs-outer correction-zero axis classification.
+- [x] Re-run decision tests and ATS Release build.
+
+### Review
+- Fresh runtime evidence showed the bad sec 1 LSD no longer used a midpoint guess; it moved by `source=station-kind` onto a real `L-USEC-C-0` segment, and `VERIFY-QTR-SOUTHMID` still resolved the south boundary from `L-USEC-C-0`, so the remaining bug had shifted from endpoint targeting to correction-zero band semantics.
+- Root cause: correction post-processing could leave overlapping outer-band horizontals on `L-USEC-C-0` after the main and late companion passes. Because quarter/LSD south-boundary resolution only reads `L-USEC-C-0` for correction south boundaries, those outer-axis survivors were treated as the valid south correction boundary and pulled LSD endpoints onto the south side of the road allowance.
+- Fix: added `CorrectionBandAxisClassifier` and a new correction-post normalization pass that relayers any seam-overlapping horizontal `L-USEC-C-0` segment whose center distance is closer to the outer correction axis than the inner correction axis back to `L-USEC-C` before quarter/LSD selection runs.
+- Verification:
+  - `./.local_dotnet/dotnet.exe run --project ./src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false` -> `Decision tests passed.`
+  - `./.local_dotnet/dotnet.exe build ./src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` -> build succeeded and produced `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll` with the same 16 existing nullable warnings and 0 errors.
+- Follow-up: rerun `63-12-6` and check for the new `CorrectionLine: normalized ... outer-axis correction-zero` log line; if the east-end survivor is still visible after this, the next trace will need the specific surviving entity/layer near the user’s east-end coordinates rather than another LSD endpoint guess.
+
+## ATS Correction Zero Live-Snapshot Fix, 2026-03-14
+- [x] Prove whether the outer-axis correction-zero normalization was inspecting stale pre-relayer segment state.
+- [x] Change correction-zero normalization to rescan live model-space `L-USEC-C-0` horizontals immediately before normalization.
+- [x] Re-run decision tests and ATS Release build.
+
+### Review
+- Fresh log evidence after the previous patch still showed `VERIFY-QTR-SOUTHMID` resolving sec 1 from `L-USEC-C-0` and the bad LSD moving by `source=station-kind`, but there was no `outer-axis correction-zero` normalization activity in the rerun. That meant the semantic fix existed in code but was not seeing the live survivors that quarter/LSD selection actually used.
+- Root cause: the outer-axis normalization loop was iterating the earlier `segments` snapshot captured before later relayer / companion passes. By the time normalization ran, many real correction-zero survivors had been created or relayered after that snapshot, so the pass could silently miss the exact `L-USEC-C-0` entities that still owned the bad south boundary.
+- Fix: changed `Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` to rescan live model-space entities for horizontal `L-USEC-C-0` segments immediately before the normalization pass and added a runtime summary line reporting how many live C-0 horizontals were scanned, how many intersected seam candidates, and how many were relayered back to `L-USEC-C`.
+- Verification:
+  - `./.local_dotnet/dotnet.exe run --project ./src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false` -> `Decision tests passed.`
+  - `./.local_dotnet/dotnet.exe build ./src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` -> build succeeded and produced `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll` with the same 16 existing nullable warnings and 0 errors.
+- Follow-up: rerun `63-12-6` and inspect the new `CorrectionLine: outer-axis correction-zero normalization scanned ...` line together with `VERIFY-QTR-SOUTHMID sec=1` and `LSD-ENDPT line=1264817`; that will confirm whether the live survivors are now being normalized before quarter/LSD ownership resolves.
+
+## ATS Correction South-Crossing LSD Follow-Up, 2026-03-14
+- [ ] Inspect the newest ATS runtime log for the exact sec 1 south-boundary owner, bad LSD endpoint move, and live correction-zero normalization counts.
+- [ ] Patch the remaining owner-selection / cleanup path that still lets LSDs cross onto the south side of the road allowance.
+- [ ] Re-run decision tests and ATS Release build, then capture the result and lesson.
+
+## ATS Quarter Correction South-Boundary Preference Fix, 2026-03-14
+- [x] Inspect the newest ATS runtime log for the exact sec 1 south-boundary owner, bad LSD endpoint move, and live correction-zero normalization counts.
+- [x] Patch quarter south-boundary ownership so correction-adjacent LSDs stop on the near correction boundary instead of the far south correction-zero band when both survive.
+- [x] Re-run decision tests and ATS Release build, then capture the result and lesson.
+
+### Review
+- Fresh runtime evidence showed the bad endpoint was still moving by `source=station-kind`, but the real owner was earlier: `VERIFY-QTR-SOUTHMID sec=1` still resolved the quarter south boundary from `L-USEC-C-0`, and the local correction logs showed the selected south band sitting about 25-26m below the section frame, which matches the userâ€™s â€œcrossing the road allowance to the south sideâ€ symptom.
+- Root cause: `Plugin.Sections.SectionDrawingLsd.cs` was explicitly preferring the far `L-USEC-C-0` correction-zero south definition whenever both correction-zero bands existed. That quarter-owner decision happened before LSD endpoint enforcement, so later endpoint snapping faithfully followed an already-wrong south boundary.
+- Fix: added `CorrectionSouthBoundaryPreference` and changed both correction south-boundary selectors to prefer the near correction inset boundary when a candidate is closer to `CorrectionLineInsetMeters` than to the far hard-boundary width, only falling back to the far correction boundary if no usable near candidate exists. I also enabled quarter verify output for sec 1 so the next rerun prints the exact selected south segment for the bad case.
+- Verification:
+  - `./.local_dotnet/dotnet.exe run --project ./src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false` -> `Decision tests passed.`
+  - `./.local_dotnet/dotnet.exe build ./src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` -> build succeeded and updated both `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll` and `build/net8.0-windows/AtsBackgroundBuilder.dll` at `2026-03-14 7:42:38 PM`, with the same 16 existing nullable warnings and 0 errors.
+- Follow-up: rerun `63-12-6` and check `VERIFY-QTR-SOUTH-SELECT sec=1`, `VERIFY-QTR-SOUTHMID sec=1`, and `LSD-ENDPT line=1264817` in the log to confirm the chosen correction south segment has moved back to the near inset band.
+
+## ATS Quarter Correction South-Boundary Follow-Up, 2026-03-14
+- [ ] Inspect the newest ATS runtime log for sec 1-6 quarter south-boundary ownership and the affected correction-line LSD endpoints after the latest build.
+- [ ] Narrow the correction south-boundary chooser so it does not globally push correction-adjacent LSDs onto the wrong side of the road allowance.
+- [ ] Re-run decision tests and ATS Release build, then capture the result and lesson.
+
+### Review
+- The latest rerun showed the previous fix only corrected sec 1. `VERIFY-QTR-SOUTH-SELECT sec=1` was now using a near correction segment, but sec 6 still selected `L-USEC-C-0` with `dividerGap=79.138` and `dividerLinked=False`, which meant the correction-only south selector was still allowed to win with a far correction segment that did not reach the quarter divider.
+- Root cause: `TryResolveQuarterViewSouthCorrectionBoundaryV` was not applying the same divider-gap penalty / divider-link preference that the normal south boundary selector uses, and `ApplyCorrectionSouthOverridesPreClamp` could then re-pick a different correction segment again through `TryResolveQuarterViewSouthMostCorrectionBoundarySegment`, undoing the initial south-boundary choice.
+- Fix: the correction south selector now uses divider-gap scoring plus divider-linked preference before choosing a correction band, and the correction south corner override now reuses the already-selected correction south segment instead of independently reselecting another correction band. Quarter verify tracing was also widened to sec 1-6 so the next rerun shows the full correction seam row.
+- Verification:
+  - `./.local_dotnet/dotnet.exe run --project ./src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false` -> `Decision tests passed.`
+  - `./.local_dotnet/dotnet.exe build ./src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` -> build succeeded and updated both `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll` and `build/net8.0-windows/AtsBackgroundBuilder.dll` at `2026-03-14 7:51:08 PM`, with the same 16 existing nullable warnings and 0 errors.
+- Follow-up: rerun `63-12-6` and inspect `VERIFY-QTR-SOUTH-SELECT sec=1..6`, `VERIFY-QTR-SOUTHMID sec=1..6`, and the affected `LSD-ENDPT` lines to confirm the correction seam row now uses divider-linked correction south candidates consistently.
+
+## ATS Quarter Correction South-Boundary Re-Trace, 2026-03-14
+- [ ] Inspect the newest ATS runtime log for sec 1-6 correction south ownership and the affected correction-line LSD endpoints after the latest build.
+- [ ] Patch the actual remaining owner-selection or post-selection path based on the fresh trace.
+- [ ] Re-run decision tests and ATS Release build, then capture the result and lesson.
+
+### Review
+- Fresh tracing showed the latest quarter-selection fixes were working in a narrower sense: sec 1-5 quarter south ownership was already on the near correction band (`VERIFY-QTR-SW-SW-APP` / `SE-SE-APP` south offsets about 5m), but the vertical LSD endpoints were still being moved later by the rule-matrix `CORRZERO/SEC` override to a second parallel correction-zero band about 20m farther south.
+- Root cause: `TryFindQuarterInteriorCorrectionZeroTarget` in `Plugin.RoadAllowance.EndpointEnforcement.cs` ranked correction-zero candidates by boundary-gap first, so when two parallel `L-USEC-C-0` bands survived the seam it could jump from the already-near valid band to the farther south band purely because that farther band scored closer to the quarter boundary anchor. That bypassed the quarter owner the drawing had already selected.
+- Fix: added `CorrectionZeroTargetPreference` and changed the correction-zero endpoint override to prefer the nearest valid `CORRZERO` band first, using boundary-gap only as a tie-breaker. I also widened `VERIFY-LSD-OUTER` tracing to sections 1-6 so the next rerun will show every affected correction-seam vertical endpoint in that row.
+- Verification:
+  - `./.local_dotnet/dotnet.exe run --project ./src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false` -> `Decision tests passed.`
+  - `./.local_dotnet/dotnet.exe build ./src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` -> build succeeded and updated both `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll` and `build/net8.0-windows/AtsBackgroundBuilder.dll` at `2026-03-14 8:03:56 PM`, with the same 16 existing nullable warnings and 0 errors.
+- Follow-up: rerun `63-12-6` and inspect `VERIFY-LSD-OUTER sec=1..6`, the affected `LSD-ENDPT` lines with `kinds=CORRZERO/SEC`, and `VERIFY-QTR-SOUTHMID sec=1..6` to confirm the vertical LSD endpoints now stay on the already-near correction band instead of hopping to the farther south parallel band.
+
+## ATS Correction-Line Missing LSD Re-Trace, 2026-03-14
+- [ ] Inspect the newest ATS runtime log for sec 1-6 quarter ownership, correction-zero endpoint moves, and any missing correction-line LSD rebuild evidence after the latest build.
+- [ ] Patch the actual remaining correction-line endpoint or rebuild path based on the fresh trace.
+- [ ] Re-run decision tests and ATS Release build, then capture the result and lesson.
+
+## ATS Correction-Zero Station-Kind Re-Trace, 2026-03-14
+- [x] Inspect the newest ATS runtime log for the repeated sec 1-5 `CORRZERO/SEC` endpoint moves and confirm which endpoint-selection path still owns them.
+- [x] Patch the specific station-target preservation rule so repeated rule-matrix passes stop walking already-snapped correction LSDs onto a farther parallel south band.
+- [x] Re-run decision tests and ATS Release build, then capture the result and lesson.
+
+### Review
+- Fresh runtime evidence showed the remaining bad sec 1-5 vertical moves were not coming from `corrzero-interior` at all. The log kept reporting `outer source=station-kind` for the affected `CORRZERO/SEC` endpoints, and the same rule-matrix pass was running twice: first it snapped the endpoints onto a near correction-zero band, then the second pass moved those already-snapped endpoints another ~20 m farther south onto a second parallel band.
+- Root cause: `TryFindBoundaryStationTarget` already had a primary-boundary preservation scan, but it intentionally kept searching after finding that the endpoint already sat on the primary preferred boundary. That behavior was useful for stale midpoint rows in some generic cases, but it was wrong for `CORRZERO`: a second correction-zero candidate could still win later in scoring, so repeated cleanup passes kept marching the same LSD endpoints outward across the road allowance.
+- Fix: added `CorrectionZeroTargetPreference.ShouldPreserveExistingPrimaryBoundary` and changed `Plugin.RoadAllowance.EndpointEnforcement.cs` so once a vertical LSD endpoint already lies on the primary `CORRZERO` boundary, the station-target selector returns that existing endpoint immediately instead of continuing to rank farther parallel correction-zero rows.
+- Verification:
+  - `./.local_dotnet/dotnet.exe ./src/AtsBackgroundBuilder.DecisionTests/bin/Release/net8.0/AtsBackgroundBuilder.DecisionTests.dll` -> `Decision tests passed.`
+  - `./.local_dotnet/dotnet.exe build ./src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` -> build succeeded and updated both `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll` and `build/net8.0-windows/AtsBackgroundBuilder.dll` at `2026-03-14 8:18:36 PM`, with the same 16 existing nullable warnings and 0 errors.
+- Follow-up: rerun `63-12-6` and inspect whether the second rule-matrix block no longer emits `VERIFY-LSD-OUTER sec=1..5 ... kinds=CORRZERO/SEC` moves after the endpoints have already landed on the near correction band.
+
+## ATS SE-6 Quarter Correction Fallback, 2026-03-14
+- [x] Inspect the newest sec 6 SouthEast quarter logs for the remaining bad LSD endpoint and crossing quarter line.
+- [x] Patch the correction south-boundary chooser so an orphaned non-divider-linked correction segment cannot own that quarter.
+- [x] Re-run decision tests and ATS Release build, then capture the result and lesson.
+
+### Review
+- The final bad `SE 6` rerun showed both remaining symptoms shared the same owner: `VERIFY-QTR-SOUTH-SELECT sec=6` was still picking `L-USEC-C-0` with `dividerGap=79.138` and `dividerLinked=False`, and the same quarter then drove the remaining bad `CORRZERO/SEC` LSD endpoint. That meant the last failure had shifted fully upstream into quarter south ownership for that one quarter.
+- Root cause: `TryResolveQuarterViewSouthCorrectionBoundaryV` would still return a non-divider-linked correction candidate through its `foundAny` fallback when no divider-linked correction segment survived. In `SE 6`, that let an orphaned east-half correction segment own the quarter south edge even though it never reached the quarter divider, so both the quarter line and the LSD endpoint crossed the road allowance together.
+- Fix: added `CorrectionSouthBoundaryPreference.IsUnlinkedDividerGapAcceptable` and changed `Plugin.Sections.SectionDrawingLsd.cs` so the correction south chooser rejects orphaned non-divider-linked correction candidates once their divider gap exceeds a tolerant threshold (`RoadAllowanceSecWidthMeters * 0.6`), allowing that quarter to fall back to the normal south owner instead.
+- Verification:
+  - `./.local_dotnet/dotnet.exe build ./src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` -> build succeeded and updated both `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll` and `build/net8.0-windows/AtsBackgroundBuilder.dll` at `2026-03-14 8:28:50 PM`, with the same 16 existing nullable warnings and 0 errors.
+  - `./.local_dotnet/dotnet.exe ./src/AtsBackgroundBuilder.DecisionTests/bin/Release/net8.0/AtsBackgroundBuilder.DecisionTests.dll` -> `Decision tests passed.`
+- Follow-up: rerun `63-12-6` and check that `VERIFY-QTR-SOUTH-SELECT sec=6` no longer reports the `dividerGap=79.138 dividerLinked=False source=L-USEC-C-0` owner, and that the remaining `SE 6` quarter line plus LSD now stop on the same normal south boundary.
+
+## ATS SE-6 Missing South Owner Fallback, 2026-03-14
+- [x] Inspect the newest SE 6 quarter/LSD runtime traces after the previous patch to determine why the remaining LSD and quarter line became missing.
+- [x] Patch south-boundary resolution so SE 6 can recover a real ordinary south segment after the orphaned correction owner is rejected.
+- [x] Re-run decision tests and ATS Release build, then capture the result and lesson.
+
+### Review
+- The newest rerun showed a new state change in `SE 6`: the bad correction south owner was gone, but `VERIFY-QTR-SOUTHMID sec=6` now reported `southSource=fallback-20.12`, and there was no longer any `VERIFY-QTR-SOUTH-SELECT sec=6` line in that latest block. That meant the previous patch successfully rejected the orphaned correction owner, but the quarter then failed to recover any real ordinary south boundary segment and dropped to a synthetic fallback edge instead.
+- Root cause: `Plugin.Sections.SectionDrawingLsd.cs` still built `southResolutionSegments` from only `L-USEC-0` and `L-SEC*`. In the remaining `SE 6` case, once the orphaned `L-USEC-C-0` was rejected, the real surviving ordinary south owner was on the standard `L-USEC` / `L-USEC2012` family, so the resolver never saw it and the quarter linework fell back to `20.12` rather than selecting a real south segment.
+- Fix: added `QuarterSouthBoundaryLayerFilter` and changed south-boundary resolution to include ordinary non-correction `L-USEC`, `L-USEC2012`, `L-USEC-2012`, `L-USEC-0`, and `L-SEC*` layers when recovering the south owner after correction filtering. That keeps correction layers excluded, but lets `SE 6` recover a real ordinary south boundary instead of staying synthetic.
+- Verification:
+  - `./.local_dotnet/dotnet.exe build ./src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` -> build succeeded and updated both `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll` and `build/net8.0-windows/AtsBackgroundBuilder.dll` at `2026-03-14 9:06:48 PM`, with the same 16 existing nullable warnings and 0 errors.
+  - `./.local_dotnet/dotnet.exe ./src/AtsBackgroundBuilder.DecisionTests/bin/Release/net8.0/AtsBackgroundBuilder.DecisionTests.dll` -> `Decision tests passed.`
+- Follow-up: rerun `63-12-6` and confirm that the latest `SE 6` block now prints a real `VERIFY-QTR-SOUTH-SELECT sec=6 ... source=L-USEC...` owner instead of only `southSource=fallback-20.12`, and that the remaining LSD plus quarter line reappear on that same recovered south edge.
+## ATS SE 6 Local East Correction Tie, 2026-03-15
+- [x] Re-read the latest SE 6 quarter and LSD log path after the widened south fallback still missed.
+- [x] Patch quarter southeast construction so a section with no selected south owner can still tie its east corner to a local correction segment.
+- [x] Rebuild ATS and rerun the decision tests.
+
+Review:
+- Latest SE 6 logs showed the bad full-width correction owner was gone, but quarter construction had dropped to southSource=fallback-20.12 while the LSD endpoint pass still snapped the same quarter to CORRZERO/SEC.
+- Added a local southeast correction fallback in SectionDrawingLsd so the east corner can still resolve against an east-side correction segment when the full south owner is intentionally rejected.
+- Verification: dotnet build passed with the same 16 existing nullable warnings; decision tests passed.
+## ATS SE 6 Local West-East Correction Trend, 2026-03-15
+- [x] Inspect the newest sec 6 logs after the user reported SW 6 ending on L-USEC-C and SE 6 still crossing.
+- [x] Replace the east-only no-owner correction fallback with a west/east local correction trend rebuild and a rebuilt south-mid point.
+- [x] Rebuild ATS and rerun the decision tests.
+
+Review:
+- Latest logs showed VERIFY-QTR-SE-SE-CORR-FALLBACK was firing, but VERIFY-QTR-SOUTHMID sec=6 was still on southSource=fallback-20.12, so the southeast quarter was being stretched between a correction east corner and a synthetic south midpoint.
+- Added symmetric local correction fallbacks for west and east corners, scored from live L-USEC-C/L-USEC-C-0 geometry, plus a rebuilt south-mid intersection on the west-east correction trend when no full south owner exists.
+- Verification: dotnet build passed with the same 16 existing nullable warnings; decision tests passed.
+## ATS SE 6 Missing Inner Correction Companion, 2026-03-15
+- [x] Re-check the newest sec 6 logs after the west/east local fallback still left southSource=fallback-20.12.
+- [x] Patch correction post-processing so outer-axis L-USEC-C-0 normalization also recreates the missing inner companion before quarter/LSD selection runs.
+- [x] Rebuild ATS and rerun the decision tests.
+
+Review:
+- Latest sec 6 logs showed the east fallback was firing, but there was still no real south correction owner or west/mid correction trend, which pointed back upstream to missing inner correction geometry rather than another quarter-only scoring bug.
+- Outer-axis correction-zero normalization now relayers the misbucketed row back to L-USEC-C and immediately tries to recreate the matching inner L-USEC-C-0 companion in the same pass.
+- Verification: dotnet build passed with the same 16 existing nullable warnings; decision tests passed.
+## ATS SE 6 South Drift Regression, 2026-03-15
+- [ ] Inspect the newest sec 6 logs after the latest companion-creation change added an extra offset line and pulled both SW/SE south.
+- [ ] Patch the earliest bad correction companion / quarter ownership branch so sec 6 stops generating the extra south linework and both quarters stay north of the road allowance.
+- [ ] Rebuild ATS and rerun the decision tests.
+## ATS Sec 6 Partial Hard Correction South Owner, 2026-03-15
+- [x] Inspect latest sec 6 quarter/LSD logs and compare against sec 5 healthy correction ownership.
+- [x] Confirm the live sec 6 `L-USEC-C-0` owner is behaving like a partial hard-boundary row (`southOffset ~18-22m`) instead of the intended inset companion (`~5m`).
+- [x] Patch quarter south correction ownership to reject partial hard-boundary correction rows from owning the full section south boundary.
+- [x] Apply the same full-span gate to south-most correction promotion so fallback logic does not re-promote the same partial hard row.
+- [x] Add decision coverage for the new hard-boundary coverage rule and verify build/tests.
+
+### Review
+- Root cause: sec 6 had a live `L-USEC-C-0` row that only covered about half the section width, but the quarter south resolver still allowed hard-boundary correction rows to own the entire south edge. That forced both SW/SE quarter geometry south across the road allowance.
+- Fix: added `CorrectionSouthBoundaryPreference.IsHardBoundaryCoverageAcceptable(...)` and used it in the two full-boundary south correction selectors so only near-full-span hard correction rows can own/promote the whole quarter south boundary.
+- Verification: `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` passed with the same 16 existing nullable warnings and 0 errors; `dotnet .\\src\\AtsBackgroundBuilder.DecisionTests\\bin\\Release\\net8.0\\AtsBackgroundBuilder.DecisionTests.dll` passed.
+- Remaining runtime check: rerun `63-12-6` in AutoCAD and confirm sec 6 falls back to the local correction tie path instead of selecting the partial hard `L-USEC-C-0` owner.
+## ATS Sec 6 Local Correction Fallback And LSD Override, 2026-03-15
+- [x] Inspect the newest sec 6 log after the last rerun and confirm the full south-owner gate now falls back, but local correction corner fallback and LSD station snapping still reuse the bad row.
+- [x] Patch quarter local correction corner fallback to infer an inset companion from hard-like correction rows instead of intersecting the hard row directly.
+- [x] Patch LSD rule-matrix so a failed correction-specific interior lookup downgrades back to the normal fallback kinds instead of generic `CORRZERO/SEC` station snapping.
+- [x] Rebuild and rerun decision tests.
+
+### Review
+- Root cause: the earlier gate successfully rejected sec 6 as a full correction south owner, but two later paths were still reusing the same bad partial correction row: the local quarter correction-corner fallback extrapolated that row directly, and the LSD rule-matrix still fell back from `correctionOverride` into generic `CORRZERO/SEC` station snapping.
+- Fix: local correction corner fallback now infers the missing inset companion from hard-like correction rows before scoring the SW/SE corner tie, and LSD endpoint enforcement now downgrades back to the quarter’s normal fallback target kinds when the correction-specific interior target cannot actually be resolved.
+- Verification: `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` passed with the same 16 existing nullable warnings and 0 errors; `dotnet .\\src\\AtsBackgroundBuilder.DecisionTests\\bin\\Release\\net8.0\\AtsBackgroundBuilder.DecisionTests.dll` passed.
+- Remaining runtime check: rerun `63-12-6` and inspect the new `VERIFY-QTR-SW-SW-CORR-FALLBACK`, `VERIFY-QTR-SE-SE-CORR-FALLBACK`, `VERIFY-QTR-SOUTHMID-CORR-FALLBACK`, and `LSD-ENDPT ... correction-override-downgraded` lines.
+## ATS Correction Seam Regression Rebalance, 2026-03-15
+- [x] Re-check the current correction-seam runtime behavior after the downgrade patch started sending all affected LSD endpoints back to `L-USEC-C` / `TWENTY`.
+- [x] Patch quarter local-correction fallback so raw `L-USEC-C` corner intersections that sit too close to the section south edge are not accepted as inset owners; infer the inset companion before scoring instead.
+- [x] Patch LSD endpoint enforcement so failed direct `CORRZERO` lookup falls back to an inferred correction-zero target from `L-USEC-C` before downgrading to ordinary boundary kinds.
+- [x] Patch correction normalization so it reuses an existing inner companion before creating a new `L-USEC-C-0`, preventing duplicate correction-zero artifacts.
+- [x] Rebuild ATS and rerun decision tests.
+
+### Review
+- Root cause: the last downgrade patch was too broad. Once `TryFindQuarterInteriorCorrectionZeroTarget(...)` missed, the rule-matrix dropped all affected vertical LSDs back to ordinary `TWENTY/SEC`, which is why they started terminating on `L-USEC-C`. At the same time, the sec 6 local quarter fallback was still treating raw `L-USEC-C` corner hits with south offsets around 3-8m as if they were valid inset boundaries, so the quarter line could still cross the road allowance. Separately, the outer-axis normalization companion pass could create an extra `L-USEC-C-0` even when a usable inner companion already existed.
+- Fix: local quarter correction corner fallback now rejects implausibly small inset offsets and infers the inset corner from the outer correction row using a perpendicular shift before scoring. LSD endpoint enforcement now tries a correction-specific inferred `C-0` target from horizontal `L-USEC-C` geometry before downgrading to ordinary fallback kinds. Outer-axis correction-zero normalization now reuses an existing inner companion before creating a new one, which prevents duplicate `L-USEC-C-0` artifacts.
+- Verification: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` compiled ATS and decision tests successfully but still failed the final DLL copy because AutoCAD is locking `build\net8.0-windows\AtsBackgroundBuilder.dll`; `dotnet msbuild .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln /t:Compile /p:Configuration=Release /p:NuGetAudit=false /v:minimal` passed; `dotnet .\src\AtsBackgroundBuilder.DecisionTests\bin\Release\net8.0\AtsBackgroundBuilder.DecisionTests.dll` passed.
+- Runtime check pending: reload the fresh DLL from `src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll` and rerun `63-12-6` to confirm the affected LSD endpoints return to `L-USEC-C-0`, the extra `L-USEC-C-0` survivor is gone, and the sec 6 quarter line stays north of the road allowance.
+## ATS Deterministic Correction Companion Recovery, 2026-03-15
+- [x] Inspect the newest runtime trace after the last build showed LSD endpoints landing short off linework.
+- [x] Confirm the off-line stops were coming from synthetic `corrzero-inferred` endpoint targets, while sec 6 still lacked a deterministic full correction-zero south owner.
+- [x] Remove the synthetic inferred correction-zero endpoint path so LSDs no longer snap to points that are not on real geometry.
+- [x] Tighten correction companion matching so partial `L-USEC-C-0` overlap cannot suppress creation of the real full companion row.
+- [x] Rebuild ATS and rerun decision tests.
+
+### Review
+- Root cause: the previous patch tried to recover missing `L-USEC-C-0` geometry inside endpoint enforcement by inventing `corrzero-inferred` target points from `L-USEC-C`. That made some LSD endpoints stop short in empty space because those inferred points were not guaranteed to lie on actual CAD entities. Upstream, the correction companion matcher was still treating a partial inner `L-USEC-C-0` overlap as a valid companion, which prevented creation of the real full-span companion row and kept sec 6 on `southSource=fallback-20.12`.
+- Fix: removed the synthetic `corrzero-inferred` endpoint path from `EndpointEnforcement`, returning endpoint snapping to actual geometry only. Tightened `TryFindCorrectionInnerCompanion(...)` so a companion now needs substantial coverage of the source correction row before it can block companion creation; partial overlap no longer counts as “good enough.” This moves the fix back upstream into deterministic correction-row generation instead of section-local endpoint recovery.
+- Verification: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` passed with 16 existing nullable warnings and 0 errors; both deployed and source DLLs updated at `2026-03-15 2:08:53 PM`; `dotnet .\src\AtsBackgroundBuilder.DecisionTests\bin\Release\net8.0\AtsBackgroundBuilder.DecisionTests.dll` passed.
+- Runtime check pending: rerun `63-12-6` and confirm there are no `corrzero-inferred` traces, LSD endpoints stop on real `L-USEC-C-0` geometry, and sec 6 stops falling back to synthetic south ownership.
+## ATS Sec 6 Deterministic Correction Owner Recovery, 2026-03-15
+- [ ] Inspect the newest sec 6 runtime log and current correction-row generation/selection code to confirm which real correction rows exist, which one sec 6 is selecting, and whether the extra south offset line is the same survivor row.
+- [ ] Patch upstream correction-row generation/selection so sec 6 gets one consistent real `L-USEC-C-0` companion and the extra south-side correction row is removed instead of reused.
+- [ ] Rebuild ATS, rerun decision tests, and document the deterministic fix plus verification.
+## ATS Sec 6 Same-Side Correction Companion Matching, 2026-03-15
+- [x] Re-inspect the sec 6 correction behavior and identify whether the wrong `L-USEC-C-0` ownership comes from deterministic row generation or later quarter/LSD fallback code.
+- [x] Patch correction companion matching so an outer correction row can only pair with an inset companion on the same side of the fitted seam, preventing cross-road `C-0` ownership.
+- [x] Rebuild ATS, rerun decision tests, and document the verified upstream fix.
+
+### Review
+- Root cause: `TryFindCorrectionInnerCompanion(...)` was matching by absolute distance from the fitted seam center only. In sec 6 that allowed a north-side correction outer row to treat a south-side row across the road allowance as its valid `L-USEC-C-0` companion when the absolute offsets happened to differ by about the 5m inset. That split the correction model before quarter/LSD drawing, which is why the sec 6 LSD endpoints, the quarter line, and the extra south-side offset line all drifted together.
+- Fix: companion matching is now side-aware. A correction companion must stay on the same signed side of the seam center and be inward by the expected inset before it can block creation or relayering of the real companion. This keeps correction row generation deterministic and upstream instead of relying on sec-level fallback behavior.
+- Verification: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` passed with the same 16 existing nullable warnings and 0 errors; `dotnet .\src\AtsBackgroundBuilder.DecisionTests\bin\Release\net8.0\AtsBackgroundBuilder.DecisionTests.dll` passed; both `src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll` and `build\net8.0-windows\AtsBackgroundBuilder.dll` updated at `2026-03-15 2:23:24 PM`.
+- Runtime check pending: rerun `63-12-6` and confirm sec 6 stops cross-pairing north/south correction rows, the extra south-side offset line disappears, and the sec 6 LSD / quarter south boundary stay on the north-side `L-USEC-C-0` row.
+## ATS Sec 6 Unified Correction Row Recovery, 2026-03-15
+- [ ] Inspect the newest sec 6 runtime log and identify which correction rows still survive through correction post-processing, quarter south ownership, and LSD endpoint enforcement.
+- [ ] Patch the upstream correction-row ownership/generation logic so sec 6 produces one consistent correction row set for correction linework, 1/4 lines, and LSD endpoints without section-local fallback behavior.
+- [ ] Rebuild ATS, rerun decision tests, and document the verified outcome plus the remaining runtime check.
+- [x] Inspect the newest sec 6 runtime log and identify which correction rows still survive through correction post-processing, quarter south ownership, and LSD endpoint enforcement.
+- [x] Patch the upstream correction-row ownership/generation logic so sec 6 produces one consistent correction row set for correction linework, 1/4 lines, and LSD endpoints without section-local fallback behavior.
+- [x] Rebuild ATS, rerun decision tests, and document the verified outcome plus the remaining runtime check.
+
+### Review
+- Root cause: sec 6 was still letting different consumers interpret the correction bands differently. `SectionDrawingLsd` could infer an inset owner from any hard-like `L-USEC-C-0` survivor, even though that layer should already mean the real inset row, while endpoint enforcement still ranked `CORRZERO` candidates mostly by smallest move. That let quarter south ownership, LSD endpoint targets, and live correction geometry drift onto different parallel rows. Separately, correction cleanup was still splitting only `L-USEC-C-0`, so a surviving `L-USEC-C` row could visually cross a north/south road allowance even when the inset row broke correctly.
+- Fix: the correction south selectors now preserve layer semantics and only infer inset companions from `L-USEC-C` outer rows, not from hard-like `L-USEC-C-0` survivors. `TryFindQuarterInteriorCorrectionZeroTarget(...)` now prefers the correction-zero row whose offset best matches the real inset distance before using move distance as a tie-breaker, so LSD endpoints stop freezing on the wrong parallel `C-0` just because they already touch it. Correction post-processing now also splits live horizontal `L-USEC-C` rows at vertical road-allowance targets, which keeps the correction linework itself on the same local row model as the quarter and LSD consumers.
+- Verification: `dotnet msbuild .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release /p:Platform=x64 /p:NuGetAudit=false` passed with the same 16 existing nullable warnings; `dotnet build .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false -p:BuildProjectReferences=false -v minimal` passed; `dotnet .\src\AtsBackgroundBuilder.DecisionTests\bin\Release\net8.0\AtsBackgroundBuilder.DecisionTests.dll` passed.
+- Runtime check pending: reload the fresh DLL from `src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll` and rerun `63-12-6` to confirm sec 6 stops falling to `southSource=fallback-20.12`, both south-quarter LSDs terminate on the north-side `L-USEC-C-0`, the 1/4 line stays north of the road allowance, and the crossing horizontal `L-USEC-C` row is broken at the north/south road allowance instead of running through it.
+## ATS Correction Generator Includes Plain USEC Seam Rows, 2026-03-15
+- [x] Inspect the newest runtime trace and compare the bad sec 6 / east-end coordinates to the live rows the plugin is actually selecting.
+- [x] Patch upstream correction-row generation so plain `L-USEC` seam rows can become correction outers and bridge continuations before quarter/LSD selection runs.
+- [x] Rebuild ATS, rerun decision tests, and document the verified result plus runtime check.
+
+### Review
+- Root cause: the remaining sec 6 failures were upstream of quarter/LSD consumption. The bad endpoints the user gave (`317450.525,6033260.968`, `318248.606,6033230.114`) are on plain `L-USEC` rows, which means the real correction outer/inset pair never fully existed there. The late seam-band relayer and bridge pass in `CorrectionLinePostProcessing` were still only treating `L-USEC2012` / `L-USEC3018` and south-side `L-USEC-0` as deterministic correction-outer fallback layers, so ordinary seam rows on `L-USEC` could survive untouched right where sec 6 needed them to become `L-USEC-C` and spawn the true `L-USEC-C-0` inset companion.
+- Fix: introduced `CorrectionOuterFallbackLayerClassifier` and widened both the late correction-outer fallback relayer and the bridge relayer to include plain `L-USEC` seam rows. That keeps seam-band ordinary usec geometry eligible to become correction outer geometry before companion generation, which is the deterministic upstream path needed for sec 6 and the east-end seam instead of section-local fallback ownership.
+- Verification: `dotnet msbuild .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release /p:Platform=x64 /p:NuGetAudit=false` passed with the same 16 existing nullable warnings; `dotnet build .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false -p:BuildProjectReferences=false -v minimal` passed; `dotnet .\src\AtsBackgroundBuilder.DecisionTests\bin\Release\net8.0\AtsBackgroundBuilder.DecisionTests.dll` passed; `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` passed and updated the deployed DLL.
+- Runtime check pending: rerun `63-12-6` and confirm the sec 6 LSDs stop landing on the plain `L-USEC` row, the sec 6 quarter line hits the inset row near `318248.413,6033225.098`, the extra south correction row disappears, the tiny extra `L-USEC-C-0` stub at the east end is gone, and the east-end `L-USEC-0` line returns to `327231.911,6032878.418`.
+## ATS Correction Seam Fit Uses Real Boundary Trend, 2026-03-15
+- [x] Checked the newest uild/net8.0-windows/AtsBackgroundBuilder.log and confirmed sec 6 still had southSource=fallback-20.12 while LSD endpoints were targeting plain L-USEC axes at 317849.566,6033245.541 and 318652.669,6033214.493.
+- [x] Found that ApplyCorrectionLinePostBuildRules could silently no-op when zero candidate segments intersected the resolved seam windows, which explained the total absence of CorrectionLine: runtime lines in the newest rerun.
+- [x] Moved correction seam fitting upstream to sample the real section boundary trend from Top/Bottom/Left/Right anchors across each section x-span instead of using only Bottom.Y / Top.Y plus extents midpoints.
+- [x] Added an explicit CorrectionLine: no candidate segments intersect resolved seam windows ... log so future seam-pass no-ops are visible immediately.
+- [x] Added decision coverage for the new correction boundary trend sampler and rebuilt ATS successfully.
+- Review:
+  - The deployed DLL and source DLL both updated at 2026-03-15 3:43:18 PM.
+  - Decision tests passed.
+  - ATS solution build passed with the same 16 existing nullable warnings and 0 errors.
+## ATS Correction Bridge Propagation Requires Two-Sided Touch, 2026-03-15
+- [x] Checked the newest AtsBackgroundBuilder.log after the seam-fit change and confirmed the regression shape matched correction-row propagation: sec 6 quarter corners improved, but an extra correction outer now extended westward and the east-end 100m context extension was clipped away.
+- [x] Tightened the correction bridge relayer so an ordinary collinear segment is only promoted when both endpoints touch correction-owned outer geometry, instead of allowing one-ended propagation to walk a whole L-USEC chain.
+- [x] Added decision coverage for the new two-sided bridge requirement and rebuilt ATS successfully.
+- Review:
+  - Decision tests passed.
+  - ATS solution build passed with the same 16 existing nullable warnings and 0 errors.
+## ATS Sec 6 Correction Zero Endpoint Reuse, 2026-03-15
+- [ ] Inspect the newest sec 6 log block and endpoint-enforcement correction-zero target code to confirm why LSD endpoints downgrade off the real L-USEC-C-0 owner.
+- [ ] Patch deterministic correction-zero endpoint selection so correction-touching LSDs reuse the live inset owner and do not prefer or leave behind the extra L-USEC-C row.
+- [ ] Rebuild ATS, run decision tests, and document the verified outcome.
+## ATS Sec 6 Correction Zero Endpoint Reuse Review, 2026-03-15
+- [x] Inspected the newest sec 6 log block and confirmed quarter south ownership had moved to L-USEC-C-0 while the live inset row still survived as L-USEC-C, leaving the LSD endpoint pass without a real correction-zero target.
+- [x] Added deterministic inset-axis normalization so live seam-overlapping L-USEC-C rows with a valid same-side outer companion are relayered to L-USEC-C-0.
+- [x] Verified with AtsBackgroundBuilder.DecisionTests and dotnet build that the new normalization compiles and the deployed DLL updated successfully.
+## ATS Correction LSD Endpoint Uses Quarter South Owner, 2026-03-15
+- [x] Confirmed the newest 4:22 PM log still had correct sec 6 quarter south ownership (L-USEC-C-0) while the LSD endpoint pass independently downgraded back to fallback anchors.
+- [x] Changed rule-matrix endpoint enforcement to reuse the resolved quarter south correction boundary model before falling back to raw live corrZeroHorizontal station matching.
+- [x] Rebuilt ATS, ran decision tests, and copied the fresh DLL into uild\net8.0-windows for runtime verification.
+## ATS Sec 6 Extra Correction Row Cleanup, 2026-03-15
+- [ ] Inspect the newest sec 6 runtime log and current correction post-processing passes to identify which step leaves the extra segment 318248.219,6033220.081 -> 319056.344,6033188.840 alive.
+- [ ] Patch deterministic correction cleanup so sec 6 keeps only the intended correction row(s) and the stray parallel segment is removed or relayered consistently.
+- [ ] Rebuild ATS, run decision tests, and document the verified outcome.
+- [x] Tightened final correction outer consistency so ordinary spans with a full correction-zero inset companion only promote to L-USEC-C when anchored into the correction chain at both ends; this targets the remaining sec 6 extra parallel row at 318248.219,6033220.081 -> 319056.344,6033188.840.
+- [x] Verification: decision tests passed and ATS solution build succeeded at 2026-03-15 4:49:09 PM; deployed DLL updated in build\net8.0-windows.
+- [x] Added a final live correction-zero snap after resolved/interior LSD correction targeting so correction-touching LSD endpoints land on the actual drawn L-USEC-C-0 segment and do not stop short with a visible gap.
+- [x] Verification: decision tests passed and ATS solution build succeeded at 2026-03-15 4:54:05 PM; deployed DLL updated in build\net8.0-windows.
+## ATS Sec 6 Final Correction Row + LSD Live Snap, 2026-03-15
+- [ ] Inspect the newest runtime log for sec 6 correction rows and both vertical/horizontal LSD endpoint decisions to identify the still-active live pass.
+- [ ] Patch the real owning pass so sec 6 keeps only the intended correction pair and LSD endpoints snap to live geometry in both orientations.
+- [ ] Rebuild ATS, run decision tests, and confirm the deployed DLL timestamp for the fixed build.
+- [ ] Document the verified outcome and capture any new lesson from this regression.
+- [x] Inspect newest sec 6 / LSD runtime behavior and confirm the live-QSEC midpoint path was not actually compiled into the solution build.
+- [x] Replace rule-matrix LSD inner endpoint targeting with deterministic live L-QSEC intersection targeting for both north-south and east-west LSDs.
+- [x] Fix correction seam pruning scope so the sec 6 redundant correction row pass receives the resolved seam set outside the transaction.
+- [x] Rebuild ATS, run decision tests, and verify the deployed DLL updates.
+Review 2026-03-15 5:18 PM
+- Root cause: the earlier live-QSEC midpoint change referenced helper locals from a different nested scope, so AutoCAD was still running the old anchor-based inner endpoint path even though the source diff looked correct.
+- Final implementation: rule-matrix inner targets now resolve directly from live L-QSEC geometry already collected in the same method, and redundant correction-band pruning now receives the resolved seam list outside the seam-build transaction.
+- Verification: `Decision tests passed.` and `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` succeeded with the existing 16 nullable warnings and 0 errors.
+## ATS Correction Tie-In Cleanup + Final LSD Ordering, 2026-03-15
+- [ ] Inspect the newest correction tie-in overhangs and confirm which non-final LSD passes are still running.
+- [ ] Remove pre-final LSD endpoint enforcement so LSD draw/snap stays in the final stage only.
+- [ ] Add a deterministic ordinary L-USEC-0 / L-USEC-2012 trim-to-vertical-correction-boundary pass for the tie-in overhangs.
+- [ ] Build ATS, run decision tests, and verify the deployed DLL timestamp.
+- [ ] Record the root cause and lesson.
+- [x] Inspect the newest correction tie-in overhangs and confirm which non-final LSD passes are still running.
+- [x] Remove pre-final LSD endpoint enforcement so LSD draw/snap stays in the final stage only.
+- [x] Add a deterministic ordinary L-USEC-0 / L-USEC-2012 trim-to-vertical-correction-boundary pass for the tie-in overhangs.
+- [x] Build ATS, run decision tests, and verify the deployed DLL timestamp.
+- [x] Record the root cause and lesson.
+Review 2026-03-15 5:45 PM
+- Root cause: LSD geometry was still being drawn/snapped in multiple pre-final stages, and ordinary L-USEC-0 / L-USEC-2012 rows had no dedicated final tie-in trim against the matching vertical hard targets created around correction lines.
+- Final implementation: deferred all LSD draw/enforcement to the final stage only, removed the extra correction-post LSD enforcement, and added an ordinary USEC tie-in overhang trim pass inside correction post-processing.
+- Verification: `Decision tests passed.` and `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` succeeded with the existing 16 nullable warnings and 0 errors.
+## ATS Remaining Correction Tie-In Owner Trace, 2026-03-15
+- [ ] Inspect the newest log and confirm whether the latest LSD-ordering and ordinary tie-in trim changes actually ran.
+- [ ] Identify the true owning pass for the remaining overhangs and missing LSDs, then patch that pass deterministically.
+- [ ] Build ATS, run decision tests, and verify the deployed DLL timestamp.
+- [ ] Record the root cause and lesson.
+## ATS Correction Tie-In + Final LSD Anchor Snap Review, 2026-03-15
+- [x] Confirmed latest build was loading from log (`Cleanup: section geometry finalized ... LSD draw/enforcement remains deferred to the final stage.`).
+- [x] Traced remaining no-op to two causes:
+  - ordinary `L-USEC-0` / `L-USEC-2012` tie-in trim only recognized same-band ordinary vertical targets, so tie-ins that should stop on correction/section hard boundaries were skipped.
+  - final LSD rule-matrix inner snap was resolving from the already-drifted drawn endpoint instead of the resolved quarter anchor, so east-west / north-south LSDs could preserve midpoint drift even in the final pass.
+- [x] Patched tie-in trim to admit correction/section vertical hard boundaries as supported anchors/trim targets while still preferring same-band ordinary targets first.
+- [x] Patched final LSD live-QSEC inner target resolution to reference the resolved quarter anchor before falling back.
+
+### Review
+- `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` succeeded with the same 16 existing nullable warnings and 0 errors.
+- `dotnet build .\\src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false -p:BuildProjectReferences=false -v minimal` succeeded.
+- `dotnet .\\src\\AtsBackgroundBuilder.DecisionTests\\bin\\Release\\net8.0\\AtsBackgroundBuilder.DecisionTests.dll` reported `Decision tests passed.`
+## ATS Exact Sec 6 Coordinate Trace, 2026-03-15
+- [ ] Trace these exact failing endpoints in the latest log and code path before changing logic:
+  - `L-USEC-2012` ending at `317440.073,6033251.323` should end at `317440.273,6033256.340`
+  - LSD ending at `317849.383,6033240.948` should end at `317844.343,6033240.719`
+  - `L-USEC-0` ending at `319056.344,6033188.840` should end at `319056.533,6033193.856`
+- [ ] Patch the owning sec 6 geometry pass deterministically.
+- [ ] Build ATS and run decision tests.
+- [ ] Document the verified root cause and prevention note.
+## ATS Sec 6 Exact Coordinate Follow-up, 2026-03-15
+- [x] Traced the latest sec 6 LSD miss to a stationing regression, not the correction row owner.
+- [x] Verified from the log geometry that using the resolved inner LSD station against the logged sec 6 correction south trend projects to `317844.410,6033240.717`, which matches the user-expected target `317844.343,6033240.719` within rounding/log drift.
+- [x] Patched correction-zero outer targeting to preserve the resolved inner station in both the resolved-boundary path and the live correction-zero projection path.
+- [x] Tightened the final ordinary `L-USEC-0` / `L-USEC-2012` tie-in trim so ordinary-only contacts no longer block trimming to harder correction/section vertical stops, and hard vertical targets outrank ordinary same-band targets in that pass.
+
+### Review
+- `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` succeeded with the same 16 existing nullable warnings and 0 errors.
+- `dotnet .\\src\\AtsBackgroundBuilder.DecisionTests\\bin\\Release\\net8.0\\AtsBackgroundBuilder.DecisionTests.dll` reported `Decision tests passed.`
+## ATS Sec 6 Vertical Tie-In Root Cause, 2026-03-15
+- [x] Confirmed the remaining sec 6 section-line endpoints were vertical ordinary `L-USEC-0` / `L-USEC-2012` tie-ins, while the previous final trim only handled horizontal ordinary sources.
+- [x] Extended the final ordinary tie-in trim to process both:
+  - horizontal ordinary sources to vertical hard targets
+  - vertical ordinary sources to horizontal hard targets
+- [x] Tie-in target ranking now prefers correction-zero first, then correction outer, then SEC, then ordinary same-band targets in the final trim.
+
+### Review
+- `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` succeeded with the same 16 existing nullable warnings and 0 errors.
+- `dotnet .\\src\\AtsBackgroundBuilder.DecisionTests\\bin\\Release\\net8.0\\AtsBackgroundBuilder.DecisionTests.dll` reported `Decision tests passed.`
+
+## ATS Python Verification Loop, 2026-03-15
+- [x] Capture the latest sec 6 failing coordinates from the current log for the section-line and LSD cases.
+- [x] Reproduce the current sec 6 ordinary section-line targets in Python from live logged geometry.
+- [ ] Identify the exact pass still leaving the sec 6 ordinary tie-in endpoints short of the resolved correction-zero row.
+- [ ] Identify the exact corrzero LSD stationing step that still leaves a small endpoint gap.
+- [ ] Patch only the verified owners, then rebuild and rerun decision tests.
+- [ ] Re-run Python checks against the live geometry before treating the fix as correct.
+- [x] Identify the exact pass still leaving the sec 6 ordinary tie-in endpoints short of the resolved correction-zero row.
+- [x] Identify the exact corrzero LSD stationing step that still leaves a small endpoint gap.
+- [x] Patch only the verified owners, then rebuild and rerun decision tests.
+- [x] Re-run Python checks against the live geometry before treating the fix as correct.
+Review:
+- Verified in Python that the current sec 6 south correction row resolves the requested ordinary endpoints to within 0.012 m of the expected targets.
+- Verified in Python that using the inner quarter station for the live corrzero snap reduces the sec 6 LSD target delta to about 0.083 m from the expected point.
+- Build succeeded and decision tests passed.
+Regression follow-up:
+- Confirmed from the 2026-03-15 6:23 PM log that the newly added ordinary `L-USEC-0/2012` endpoint-on-hard pass moved 20 endpoints after the final trim and caused the broad north-south overextensions.
+- Removed that pass entirely rather than tuning a rule that was too broad for the final stage.
+- Rebuilt and reran decision tests; runtime verification still needs the next AutoCAD rerun.
+
+## ATS Sec 6 Resolved-Span Ownership, 2026-03-15
+- [x] Verified from the latest sec 6 log in Python that the current resolved south correction row `318248.413,6033225.098 -> 319056.533,6033193.856` only spans the east half of the section, while the SouthWest LSD station sits about `403.422 m` west of that span.
+- [x] Confirmed from the historical log that the generic `midpoint-kind` boundary-station path already produced the exact expected SouthWest LSD target `317844.343,6033240.719` before later correction-zero special-case overrides replaced it.
+- [x] Patched the correction-zero special path so it only runs when the resolved quarter south correction row actually covers the LSD station, otherwise it falls back to the generic station-ranked boundary path.
+- [x] Patched the ordinary `L-USEC-0` / `L-USEC-2012` tie-in trim to treat plain `L-USEC` north/south rows as anchor geometry only, so sec 6 vertical tie-ins can qualify for south trimming without turning `L-USEC` into a trim target.
+
+### Review
+- `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` succeeded with 0 warnings and 0 errors.
+- `dotnet build .\\src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with 0 warnings and 0 errors.
+- `dotnet .\\src\\AtsBackgroundBuilder.DecisionTests\\bin\\Release\\net8.0\\AtsBackgroundBuilder.DecisionTests.dll` reported `Decision tests passed.`
+- Python verification confirmed the sec 6 resolved-row compatibility gate should reject the current `403.422 m` west extrapolation, and that the current special-path targets are still `0.423 m` and `5.045 m` away from the exact expected LSD point.
+
+## ATS Sec 6 LSD Priority And Tie-In Trim Gate, 2026-03-15
+- [x] Re-check latest sec 6 log ownership for quarter south, LSD outer targets, and plain USEC tie-in rows.
+- [x] Patch LSD endpoint selection so the final generic CORRZERO/SEC station path runs before any correction-specific downgrade.
+- [x] Patch ordinary USEC tie-in trimming so it can run off live correction geometry even when seam fitting itself reports zero seams.
+- [x] Rebuild ATS + decision tests and verify the sec 6 target geometry with Python before sending back.
+
+### Review
+- Root cause 1: the LSD rule-matrix was still downgrading sec 6 SouthWest straight to fallback kinds before the generic final CORRZERO/SEC station pass could run, even though that generic pass historically produced the exact midpoint target.
+- Root cause 2: the ordinary L-USEC-0 / L-USEC-2012 tie-in trim was trapped inside `if (seamCount > 0)`, so in the current no-seam sec 6 runs it never executed at all despite live `L-USEC-C-0` geometry being present in the model.
+- Fix: run the generic boundary-station targeting first, only attempt correction-specific resolved/interior targeting after that fails, and only downgrade to fallback kinds if both higher-fidelity paths fail. Separately, run the ordinary tie-in trim regardless of seamCount, but only when live correction targets are actually present in the buffered windows.
+- Verification: `dotnet build` on `src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln` succeeded with 17 existing nullable warnings and 0 errors; `dotnet build` on `src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj` succeeded with 0 warnings and 0 errors; `Decision tests passed.`
+- Python verification from the current sec 6 correction row geometry:
+  - `L-USEC-2012` west tie-in target resolves to `317440.273000,6033256.340773`, within `0.001 m` of the requested `317440.273,6033256.340`.
+  - `L-USEC-0` east tie-in target resolves to `319056.533000,6033193.856000`, exactly matching the requested `319056.533,6033193.856`.
+  - Historical good sec 6 LSD midpoint targets remain `317844.343,6033240.719` (SW) and `318652.475,6033209.477` (SE), and the patch restores priority back toward that generic final LSD path.
+
+## ATS Sec 6 Final Tie-In Trim Placement, 2026-03-15
+- [x] Confirm the newest sec 6 run still leaves the same four three-band section rows unchanged and has no `CorrectionLine:` diagnostics.
+- [x] Verify the ordinary USEC tie-in trim was still hidden behind the correction cadence/seam gate.
+- [x] Move the ordinary tie-in trim into the unconditional final cleanup stage so it runs whenever live correction targets exist.
+- [x] Rebuild, rerun decision tests, and verify the sec 6 target stations with Python.
+
+### Review
+- Root cause: the sec 6 overhang trim was still implemented inside `ApplyCorrectionLinePostBuildRules`, but that whole function returns early whenever there are no cadence-aligned seam sections in scope. In the current sec 6 runs there are live correction rows, but no cadence-aligned seam build for that pass, so the trim never executed.
+- Fix: remove the ordinary `L-USEC-0` / `L-USEC-2012` tie-in trim call from `Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` and call it directly from `FinalizeRoadAllowanceCleanup` after correction post-processing. That makes the trim depend on live final geometry instead of correction seam discovery.
+- Verification: `dotnet build` on `src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln` succeeded with 17 existing nullable warnings and 0 errors; `dotnet build` on `src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj` succeeded with 0 warnings and 0 errors; `Decision tests passed.`
+- Python verification from the resolved sec 6 correction south row:
+  - west tie-in station target resolves to `317440.273000,6033256.340773`, within `0.001 m` of the requested `317440.273,6033256.340`.
+  - east tie-in station target resolves to `319056.533000,6033193.856000`, exactly matching the requested `319056.533,6033193.856`.
+
+
+## ATS Sec 6 Duplicate 5.02m Correction-Band Survivor, 2026-03-15
+- [x] Confirm the latest sec 6 remaining overhang is a plain USEC chain exactly one correction inset below the live `L-USEC-C-0` row.
+- [x] Extend the final correction consistency pass to erase duplicate plain USEC rows that seed from strong overlap with `L-USEC-C-0` and propagate through collinear endpoint-touching neighbors.
+- [x] Rebuild, run decision tests, and verify the survivor geometry numerically with Python.
+
+### Review
+- Root cause: the remaining sec 6 overhang was no longer a tie-in-trim problem. It was a plain USEC duplicate chain (`12643A1 -> 12643A0`) sitting exactly one inset (`5.02 m`) south of the live correction-zero row. The existing final consistency pass only promoted seam-overlap USEC rows to `L-USEC-C`; it never pruned the inverse duplicate case.
+- Fix: `EnforceFinalCorrectionOuterLayerConsistency` now seeds duplicate suppression from plain USEC rows that strongly overlap a live `L-USEC-C-0` row at `5.02 m`, then propagates across collinear endpoint-touching neighbors on the same inset side and erases that duplicate chain before ordinary promotion runs.
+- Verification: decision tests passed. Source build compiled successfully, but the deployed copy step failed because AutoCAD locked `build/net8.0-windows/AtsBackgroundBuilder.dll`.
+- Python verification from the latest sec 6 log geometry:
+  - seed duplicate row midpoint offset from live `L-USEC-C-0`: `5.020327 m`
+  - west extension row midpoint offset from live `L-USEC-C-0`: `5.019766 m`
+  - seed row projected overlap with live `L-USEC-C-0`: `808.724 m`
+  - extension row touches the seed chain at endpoint distance `0.0 m`
+## 2026-03-15 - Sec 6 ordinary 0/20.12 extension chain cleanup
+- [x] Re-trace sec 6 against the live log and verify the remaining ordinary rows are still being bucketed as L-USEC2012 / L-USEC3018 around the correction line.
+- [x] Replace single-row ghost detection with deterministic seed-plus-continuation detection for ordinary rows offset one correction inset (5.02 m) from live L-USEC-C-0.
+- [x] Apply that same ghost-chain suppression in both three-band normalization and ordinary USEC tie-in overhang trimming so section lines and later endpoint cleanup see the same geometry.
+- [x] Rebuild, run decision tests, and verify the exact sec 6 chain numerically with Python before handoff.
+### Review
+- Root cause: the remaining sec 6 failure still matched the user's clue about L-USEC-0 / L-USEC-2012 extension. The code only recognized the direct ghost row that strongly overlapped L-USEC-C-0; it missed the attached ordinary continuation, so the bad chain survived and kept influencing later section-line and LSD cleanup.
+- Fix: CorrectionInsetGhostRowClassifier now finds a ghost chain deterministically: direct seed rows must strongly overlap live L-USEC-C-0 at the correction inset, and endpoint-connected continuations are removed only when they stay on that same inset side/band. Three-band normalization and ordinary USEC tie-in trim now both use that same chain detection.
+- Verification: Python on the current sec 6 coordinates selected only 12643A1 as the seed and only 12643A0 as its continuation; neighboring ordinary rows 12646F5, 12646F6, and 12646B0 stayed out. Decision tests passed. dotnet build for the ATS solution succeeded with 17 existing nullable warnings and 0 errors, and both DLL copies updated.
+
+## 2026-03-15 - Correction-adjoining ordinary 0/20 endpoint projection
+- [x] Trace the wrong L-USEC-2012 sec 6 endpoint at 317440.073,6033251.323 against the live correction-zero trend and confirm it sits one correction inset (5.02 m) below the intended target.
+- [x] Add a deterministic correction-zero companion projection for the generic  /20 dangling-endpoint connector so correction-adjoining ordinary endpoints prefer the nearby L-USEC-C-0 trend instead of the ordinary parallel row.
+- [x] Cover the projection rule in decision tests and verify the exact sec 6 point numerically with Python before rebuilding ATS.
+
+### Review
+- Root cause: the remaining sec 6 L-USEC-2012 / L-USEC-0 misses were still being committed in the generic ConnectDanglingUsecZeroTwentyEndpoints pass. That pass only knew about ordinary  /20 targets, so it would happily stop on a same-band ordinary row even when that row sat exactly one correction inset south of the real L-USEC-C-0 trend.
+- Fix: the generic  /20 pass now collects live L-USEC-C-0 segments and, after it picks an ordinary target, projects that target onto a nearby correction-zero companion trend when the chosen ordinary point is about 5.02 m off the correction line. That preference is deterministic and local; it only nudges already-selected ordinary targets onto the correction-zero companion and then skips the ordinary terminator cap for that endpoint.
+- Verification: Python projection on the exact sec 6 case moved 317440.073,6033251.323 to 317440.275167,6033256.340689, within  .003 m of the expected 317440.273,6033256.340. Decision tests passed. ATS solution build succeeded with 17 existing nullable warnings and 0 errors, and both DLL copies updated.
+
+## 2026-03-15 - Section-6 correction companion snap for ordinary 0/20 endpoints
+- [x] Re-check the latest log and confirm sec 6 quarter south ownership already resolves to L-USEC-C-0, so the remaining ordinary endpoint miss is a later section-line pass.
+- [x] Add a narrow final cleanup pass that snaps L-USEC-0 / L-USEC-2012 endpoints directly onto live L-USEC-C-0 when they sit one correction inset off that row.
+- [x] Run Python, decision tests, and a full ATS build before handoff.
+
+### Review
+- Root cause: the sec 6 misses were no longer an LSD or quarter-owner problem. The live quarter geometry already resolved to the correct L-USEC-C-0 row, but the remaining ordinary L-USEC-0 / L-USEC-2012 endpoints never had a final correction-specific snap, so they could survive one inset (~5.02 m) south on the ordinary parallel row.
+- Fix: EnforceZeroTwentyEndpointsOnCorrectionZeroBoundaries now runs in final cleanup after the generic 0/20 passes and before duplicate pruning. It only targets ordinary  /20 endpoints inside the buffered window that are not already on L-USEC-C-0 and whose live endpoint projects one correction inset onto a correction-zero trend.
+- Verification: Python still projects the reported west sec 6 miss from 317440.073,6033251.323 to 317440.272705,6033256.340785 (5.021757 m move). Decision tests passed, including the new current-endpoint companion-projection coverage. dotnet build for the ATS solution succeeded with 17 existing nullable warnings and 0 errors, and the deployed DLL updated.
+## 2026-03-15 - Move correction companion snap to final geometry stage
+- [x] Re-check the latest sec 6 log and confirm the early endpoint cleanup was not the final owner because correction-line post-processing still rebuilt the ordinary  /20 geometry afterward.
+- [x] Move the deterministic L-USEC-0 / L-USEC-2012 correction-zero companion snap into FinalizeRoadAllowanceCleanup so it runs on the real final section geometry before quarter/LSD drawing.
+- [x] Rebuild and confirm the deployed DLL updated for the next sec 6 rerun.
+
+### Review
+- Root cause: the earlier correction-zero companion snap lived in RunRoadAllowanceEndpointCleanup, but sec 6's correction-adjoining ordinary rows are rebuilt later by ApplyCorrectionLinePostBuildRules inside final cleanup. That meant the snap could run on pre-final geometry and then be silently undone before the user ever saw the result.
+- Fix: the same deterministic snap now runs after correction-line post-processing and final correction consistency, immediately before quarter/LSD generation. I also made its log emit every run so the next rerun will show whether it actually scanned and moved sec 6 endpoints.
+- Verification: decision-test build succeeded with 0 warnings / 0 errors, ATS solution build succeeded with the same 17 existing nullable warnings / 0 errors, and the deployed DLL updated to 2026-03-15 11:18:59 PM.
+## 2026-03-16 - Instrument sec 6 owner trace instead of inferring from final symptoms
+- [x] Add targeted endpoint-trace tags for the two remaining sec 6 ordinary  /20 misses.
+- [x] Snapshot those targets after each endpoint-cleanup and final correction cleanup stage.
+- [x] Rebuild so the next rerun exposes the first owning pass directly in the log.
+
+### Review
+- Root cause: I still did not have the actual move owner for the sec 6 L-USEC-0 / L-USEC-2012 misses. The existing log only proved late quarter geometry, not which cleanup stage first moved or rebuilt those ordinary endpoints.
+- Fix: the trace helper now recognizes the two sec 6 wrong/expected endpoint targets, and TraceTargetLayerSegmentState runs after each endpoint-cleanup stage plus the final correction post-processing stages. The next log should show exactly when those endpoints first appear on the wrong row.
+- Verification: decision-test build succeeded with 0 warnings / 0 errors, ATS solution build succeeded with the same 17 existing nullable warnings / 0 errors.
+## 2026-03-16 - Added correction post-build subpass tracing for sec 6 vertical ordinary endpoints
+- [x] Confirm wrong sec 6 ordinary endpoints first appear after correction post-build.
+- [x] Add stage snapshots around inner endpoint snap, redundant-band prune, quarter hard, and blind hard inside correction post-build.
+- [x] Add direct TRACE-SEC6 logging when correction post-build moves an ordinary vertical target endpoint.
+- [ ] Rerun 63-12-6 and capture the first subpass that creates sec6-0-wrong / sec6-2012-wrong.
+
+
+## 2026-03-16 - Fixed sec 6 double-adjust in correction post C-0 target snap
+- [x] Trace confirmed ordinary sec 6 verticals were moved twice in corr-post-c0-target-adjust.
+- [x] First move landed on the expected point; second move was ~5.02m farther and created the wrong sec 6 endpoint.
+- [x] Keep only the closest seam-facing snap per vertical target endpoint within the correction post-build pass.
+- [x] Verified with Python against the live sec 6 trace and added decision coverage.
+

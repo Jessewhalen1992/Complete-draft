@@ -21,5 +21,20 @@
     <Compile Include="..\AtsBackgroundBuilder\Core\DispositionLabelColorPolicy.cs" Link="DispositionLabelColorPolicy.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\SectionRequestParser.cs" Link="SectionRequestParser.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\PlsrSummaryComposer.cs" Link="PlsrSummaryComposer.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\PerpendicularGapMeasurement.cs" Link="PerpendicularGapMeasurement.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\PerpendicularLineDistanceMeasurement.cs" Link="PerpendicularLineDistanceMeasurement.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\CorrectionBandAxisClassifier.cs" Link="CorrectionBandAxisClassifier.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\CorrectionOuterBridgePropagationPolicy.cs" Link="CorrectionOuterBridgePropagationPolicy.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\CorrectionOuterConsistencyPromotionPolicy.cs" Link="CorrectionOuterConsistencyPromotionPolicy.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\CorrectionOuterFallbackLayerClassifier.cs" Link="CorrectionOuterFallbackLayerClassifier.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\CorrectionBoundaryTrendSampling.cs" Link="CorrectionBoundaryTrendSampling.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\CorrectionInsetGhostRowClassifier.cs" Link="CorrectionInsetGhostRowClassifier.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\CorrectionSouthBoundaryPreference.cs" Link="CorrectionSouthBoundaryPreference.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\QuarterSouthBoundaryLayerFilter.cs" Link="QuarterSouthBoundaryLayerFilter.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\CorrectionZeroTargetPreference.cs" Link="CorrectionZeroTargetPreference.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\CorrectionZeroCompanionProjection.cs" Link="CorrectionZeroCompanionProjection.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\BoundaryStationSpanPolicy.cs" Link="BoundaryStationSpanPolicy.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\OrdinaryUsecTieInAnchorLayerClassifier.cs" Link="OrdinaryUsecTieInAnchorLayerClassifier.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\SegmentStationProjection.cs" Link="SegmentStationProjection.cs" />
   </ItemGroup>
 </Project>

@@ -377,12 +377,14 @@ namespace AtsBackgroundBuilder
 
                 if (!TryGetQuarterCorner(clone, eastUnit, northUnit, QuarterCorner.SouthWest, out var sw) ||
                     !TryGetQuarterCorner(clone, eastUnit, northUnit, QuarterCorner.SouthEast, out var se) ||
-                    !TryGetQuarterCorner(clone, eastUnit, northUnit, QuarterCorner.NorthWest, out var nw))
+                    !TryGetQuarterCorner(clone, eastUnit, northUnit, QuarterCorner.NorthWest, out var nw) ||
+                    !TryGetQuarterCorner(clone, eastUnit, northUnit, QuarterCorner.NorthEast, out var ne))
                 {
                     var ext = clone.GeometricExtents;
                     sw = new Point2d(ext.MinPoint.X, ext.MinPoint.Y);
                     se = new Point2d(ext.MaxPoint.X, ext.MinPoint.Y);
                     nw = new Point2d(ext.MinPoint.X, ext.MaxPoint.Y);
+                    ne = new Point2d(ext.MaxPoint.X, ext.MaxPoint.Y);
                 }
 
                 var width = Math.Abs((se - sw).DotProduct(eastUnit));
@@ -393,7 +395,7 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
-                info = new SectionSpatialInfo(clone, sectionNumber, sw, eastUnit, northUnit, width, height);
+                info = new SectionSpatialInfo(clone, sectionNumber, sw, se, nw, ne, eastUnit, northUnit, width, height);
                 return true;
             }
             catch

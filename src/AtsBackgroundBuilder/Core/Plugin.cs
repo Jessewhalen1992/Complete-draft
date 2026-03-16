@@ -2038,14 +2038,27 @@ namespace AtsBackgroundBuilder
 
 
         // Targeted debug trace for known layer drift.
-        private static readonly Point2d LayerTraceSegmentStart = new Point2d(521145.737, 5989162.665);
-        private static readonly Point2d LayerTraceSegmentEnd = new Point2d(521068.455, 5989162.218);
+        private static readonly Point2d LayerTraceSegmentStart = new Point2d(325614.237, 6032915.344);
+        private static readonly Point2d LayerTraceSegmentEnd = new Point2d(324823.466, 6032945.842);
         private const double LayerTraceEndpointTol = 2.5;
         private const double LayerTraceMidpointTol = 2.5;
         private const double LayerTraceLengthTol = 30.0;
+        private static readonly (string Label, Point2d Point)[] LayerTraceEndpointTargets =
+        {
+            ("sec6-2012-wrong", new Point2d(317440.073, 6033251.323)),
+            ("sec6-2012-expected", new Point2d(317440.273, 6033256.340)),
+            ("sec6-0-wrong", new Point2d(319056.344, 6033188.840)),
+            ("sec6-0-expected", new Point2d(319056.533, 6033193.856))
+        };
 
         private static bool IsTargetLayerTraceSegment(Point2d a, Point2d b)
         {
+            return TryGetTargetLayerTraceTag(a, b, out _);
+        }
+
+        private static bool TryGetTargetLayerTraceTag(Point2d a, Point2d b, out string tag)
+        {
+            tag = string.Empty;
             var directEndpointMatch =
                 (a.GetDistanceTo(LayerTraceSegmentStart) <= LayerTraceEndpointTol &&
                  b.GetDistanceTo(LayerTraceSegmentEnd) <= LayerTraceEndpointTol) ||
@@ -2053,20 +2066,76 @@ namespace AtsBackgroundBuilder
                  b.GetDistanceTo(LayerTraceSegmentStart) <= LayerTraceEndpointTol);
             if (directEndpointMatch)
             {
+                tag = "legacy-target";
                 return true;
             }
 
             var targetMid = Midpoint(LayerTraceSegmentStart, LayerTraceSegmentEnd);
             var segMid = Midpoint(a, b);
-            if (DistancePointToSegment(targetMid, a, b) > LayerTraceMidpointTol ||
-                DistancePointToSegment(segMid, LayerTraceSegmentStart, LayerTraceSegmentEnd) > LayerTraceMidpointTol)
+            var legacyMidMatch =
+                DistancePointToSegment(targetMid, a, b) <= LayerTraceMidpointTol &&
+                DistancePointToSegment(segMid, LayerTraceSegmentStart, LayerTraceSegmentEnd) <= LayerTraceMidpointTol;
+            if (legacyMidMatch)
+            {
+                var targetLen = LayerTraceSegmentStart.GetDistanceTo(LayerTraceSegmentEnd);
+                var segLen = a.GetDistanceTo(b);
+                if (Math.Abs(segLen - targetLen) <= LayerTraceLengthTol)
+                {
+                    tag = "legacy-target";
+                    return true;
+                }
+            }
+
+            var endpointLabels = new List<string>();
+            for (var i = 0; i < LayerTraceEndpointTargets.Length; i++)
+            {
+                var target = LayerTraceEndpointTargets[i];
+                if (a.GetDistanceTo(target.Point) <= LayerTraceEndpointTol ||
+                    b.GetDistanceTo(target.Point) <= LayerTraceEndpointTol)
+                {
+                    endpointLabels.Add(target.Label);
+                }
+            }
+
+            if (endpointLabels.Count == 0)
             {
                 return false;
             }
 
-            var targetLen = LayerTraceSegmentStart.GetDistanceTo(LayerTraceSegmentEnd);
-            var segLen = a.GetDistanceTo(b);
-            return Math.Abs(segLen - targetLen) <= LayerTraceLengthTol;
+            tag = string.Join(",", endpointLabels.Distinct(StringComparer.OrdinalIgnoreCase));
+            return true;
+        }
+
+        private static void WriteTargetLayerTraceMove(
+            Logger? logger,
+            string passTag,
+            ObjectId id,
+            string layer,
+            Point2d oldA,
+            Point2d oldB,
+            Point2d newA,
+            Point2d newB,
+            string? note = null)
+        {
+            if (logger == null)
+            {
+                return;
+            }
+
+            var beforeMatch = TryGetTargetLayerTraceTag(oldA, oldB, out var beforeTag);
+            var afterMatch = TryGetTargetLayerTraceTag(newA, newB, out var afterTag);
+            if (!beforeMatch && !afterMatch)
+            {
+                return;
+            }
+
+            logger.WriteLine(
+                $"TRACE-SEC6 pass={passTag} id={id.Handle} layer={layer} " +
+                $"before=({oldA.X:0.###},{oldA.Y:0.###})->({oldB.X:0.###},{oldB.Y:0.###}) " +
+                $"after=({newA.X:0.###},{newA.Y:0.###})->({newB.X:0.###},{newB.Y:0.###}) " +
+                $"beforeTag={(string.IsNullOrWhiteSpace(beforeTag) ? "none" : beforeTag)} " +
+                $"afterTag={(string.IsNullOrWhiteSpace(afterTag) ? "none" : afterTag)} " +
+                $"note={(string.IsNullOrWhiteSpace(note) ? "none" : note)}.");
         }
 
 
@@ -5194,6 +5263,7 @@ namespace AtsBackgroundBuilder
             {
                 var allRoadSegments = new List<(ObjectId Id, Point2d A, Point2d B, string Layer)>();
                 var trackedSegments = new List<(ObjectId Id, Point2d A, Point2d B, bool Horizontal, bool Vertical, bool MovableSource, bool IsBaseUsecTarget, string Layer)>();
+                var correctionZeroSegments = new List<(Point2d A, Point2d B, bool Horizontal, bool Vertical)>();
 
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
@@ -5215,6 +5285,11 @@ namespace AtsBackgroundBuilder
                     }
 
                     var layer = ent.Layer ?? string.Empty;
+                    if (string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+                    {
+                        correctionZeroSegments.Add((a, b, IsHorizontalLike(a, b), IsVerticalLike(a, b)));
+                    }
+
                     if (IsRoadLayer(layer))
                     {
                         allRoadSegments.Add((id, a, b, layer));
@@ -5271,6 +5346,7 @@ namespace AtsBackgroundBuilder
                 var nonSectionTargetRejected = 0;
                 var crossLayerFallbackUsed = 0;
                 var cappedByTerminatingEndpoint = 0;
+                var correctionZeroCompanionPreferred = 0;
 
                 bool IsUsecThirtyLayerName(string layer)
                 {
@@ -5931,8 +6007,32 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
+                        var preferredCorrectionZeroCompanion = false;
+                        if (correctionZeroSegments.Count > 0 &&
+                            CorrectionZeroCompanionProjection.TryProjectCompanionTarget(
+                                new LineDistancePoint(endpoint.X, endpoint.Y),
+                                new LineDistancePoint(other.X, other.Y),
+                                new LineDistancePoint(bestTarget.X, bestTarget.Y),
+                                correctionZeroSegments
+                                    .Where(seg => (source.Vertical && seg.Horizontal) || (source.Horizontal && seg.Vertical))
+                                    .Select(seg => (
+                                        new LineDistancePoint(seg.A.X, seg.A.Y),
+                                        new LineDistancePoint(seg.B.X, seg.B.Y)))
+                                    .ToList(),
+                                CorrectionLinePostInsetMeters,
+                                insetToleranceMeters: 1.0,
+                                minExtendMeters: minExtend,
+                                maxExtendMeters: maxExtend,
+                                out var projectedCorrectionTarget))
+                        {
+                            bestTarget = new Point2d(projectedCorrectionTarget.X, projectedCorrectionTarget.Y);
+                            preferredCorrectionZeroCompanion = true;
+                            correctionZeroCompanionPreferred++;
+                        }
+
                         var bestAlong = (bestTarget - endpoint).DotProduct(outwardUnit);
-                        if (bestAlong > minExtend &&
+                        if (!preferredCorrectionZeroCompanion &&
+                            bestAlong > minExtend &&
                             TryGetTerminatingEndpointCap(
                                 source,
                                 endpoint,
@@ -5993,7 +6093,7 @@ namespace AtsBackgroundBuilder
                 if (moved > 0 || noTarget > 0)
                 {
                     logger?.WriteLine(
-                        $"Cleanup: 0/20 dangling endpoint connect scanned={scannedEndpoints}, outerSkipped={skippedOnOuterBoundary}, alreadyConnected={alreadyConnected}, no3018Context={noThirtyContext}, sideRejected={sideRejected}, sideFallbackUsed={sideRuleFallbackUsed}, crossLayerFallbackUsed={crossLayerFallbackUsed}, apparentFallbackUsed={apparentFallbackUsed}, baseFallbackUsed={baseTargetFallbackUsed}, sectionSourceSkipped={nonSectionSourceSkipped}, nonSectionTargetRejected={nonSectionTargetRejected}, capLimited={cappedByTerminatingEndpoint}, moved={moved}, noTarget={noTarget}.");
+                        $"Cleanup: 0/20 dangling endpoint connect scanned={scannedEndpoints}, outerSkipped={skippedOnOuterBoundary}, alreadyConnected={alreadyConnected}, no3018Context={noThirtyContext}, sideRejected={sideRejected}, sideFallbackUsed={sideRuleFallbackUsed}, crossLayerFallbackUsed={crossLayerFallbackUsed}, apparentFallbackUsed={apparentFallbackUsed}, baseFallbackUsed={baseTargetFallbackUsed}, sectionSourceSkipped={nonSectionSourceSkipped}, nonSectionTargetRejected={nonSectionTargetRejected}, capLimited={cappedByTerminatingEndpoint}, correctionZeroCompanionPreferred={correctionZeroCompanionPreferred}, moved={moved}, noTarget={noTarget}.");
                 }
             }
         }
@@ -7714,6 +7814,9 @@ namespace AtsBackgroundBuilder
             Polyline sectionPolyline,
             int section,
             Point2d southWest,
+            Point2d southEast,
+            Point2d northWest,
+            Point2d northEast,
             Vector2d eastUnit,
             Vector2d northUnit,
             double width,
@@ -7722,6 +7825,9 @@ namespace AtsBackgroundBuilder
             SectionPolyline = sectionPolyline;
             Section = section;
             SouthWest = southWest;
+            SouthEast = southEast;
+            NorthWest = northWest;
+            NorthEast = northEast;
             EastUnit = eastUnit;
             NorthUnit = northUnit;
             Width = width;
@@ -7731,6 +7837,9 @@ namespace AtsBackgroundBuilder
         public Polyline SectionPolyline { get; }
         public int Section { get; }
         public Point2d SouthWest { get; }
+        public Point2d SouthEast { get; }
+        public Point2d NorthWest { get; }
+        public Point2d NorthEast { get; }
         public Vector2d EastUnit { get; }
         public Vector2d NorthUnit { get; }
         public double Width { get; }

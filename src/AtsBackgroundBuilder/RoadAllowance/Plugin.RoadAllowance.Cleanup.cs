@@ -4635,6 +4635,8 @@ namespace AtsBackgroundBuilder
                     }
                 }
 
+                var correctionZeroHorizontalSegments = new List<(LineDistancePoint A, LineDistancePoint B)>();
+                var correctionZeroVerticalSegments = new List<(LineDistancePoint A, LineDistancePoint B)>();
                 var roadSegments = new List<(ObjectId Id, bool IsUsecLayer, bool IsGenerated, bool IsHorizontal, bool IsBlindSouthBoundary, Point2d A, Point2d B, double Axis, double SpanMin, double SpanMax)>(
                     capacity: 256);
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
@@ -4646,20 +4648,37 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    var isUsecLayer = IsUsecLayer(ent.Layer);
-                    if (!isUsecLayer)
-                    {
-                        continue;
-                    }
-
                     if (!TryReadOpenSegmentForCleanup(ent, out var a, out var b) ||
                         !DoesSegmentIntersectAnyWindow(a, b))
                     {
                         continue;
                     }
 
+                    var layer = ent.Layer ?? string.Empty;
                     var horizontal = IsHorizontalLikeForCleanup(a, b);
                     var vertical = IsVerticalLikeForCleanup(a, b);
+                    if (string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (horizontal)
+                        {
+                            correctionZeroHorizontalSegments.Add((
+                                new LineDistancePoint(a.X, a.Y),
+                                new LineDistancePoint(b.X, b.Y)));
+                        }
+                        else if (vertical)
+                        {
+                            correctionZeroVerticalSegments.Add((
+                                new LineDistancePoint(a.X, a.Y),
+                                new LineDistancePoint(b.X, b.Y)));
+                        }
+                    }
+
+                    var isUsecLayer = IsUsecLayer(layer);
+                    if (!isUsecLayer)
+                    {
+                        continue;
+                    }
+
                     if (!horizontal && !vertical)
                     {
                         continue;
@@ -4755,6 +4774,7 @@ namespace AtsBackgroundBuilder
                 var unchanged = 0;
                 var rangeEdgeTwoLineZeroThirtyOverrides = 0;
                 var localTriadZeroOverrides = 0;
+                var ghostInsetRowsErased = 0;
 
                 var toVisit = new List<int>(Math.Max(4, generatedUsecIndices.Count));
                 var processed = new bool[roadSegments.Count];
@@ -5135,6 +5155,55 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
+                    var componentGhostMembers = new HashSet<int>();
+                    if (bucketCount > 0)
+                    {
+                        var componentCorrectionZeroCandidates = roadSegments[component[0]].IsHorizontal
+                            ? correctionZeroHorizontalSegments
+                            : correctionZeroVerticalSegments;
+                        if (componentCorrectionZeroCandidates.Count > 0)
+                        {
+                            var candidateMembers = new List<int>();
+                            var candidateSegments = new List<(LineDistancePoint A, LineDistancePoint B)>();
+                            for (var b = 0; b < bucketCount; b++)
+                            {
+                                var targetLayer = bucketLayers[b];
+                                var targetIsOrdinaryOuterBand =
+                                    string.Equals(targetLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                                    string.Equals(targetLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase);
+                                if (!targetIsOrdinaryOuterBand)
+                                {
+                                    continue;
+                                }
+
+                                var members = buckets[b].Members;
+                                for (var mi = 0; mi < members.Count; mi++)
+                                {
+                                    var member = members[mi];
+                                    var seg = roadSegments[member];
+                                    if (seg.IsGenerated)
+                                    {
+                                        continue;
+                                    }
+
+                                    candidateMembers.Add(member);
+                                    candidateSegments.Add((
+                                        new LineDistancePoint(seg.A.X, seg.A.Y),
+                                        new LineDistancePoint(seg.B.X, seg.B.Y)));
+                                }
+                            }
+
+                            var ghostCandidateIndices = CorrectionInsetGhostRowClassifier.FindGhostChainIndices(
+                                candidateSegments,
+                                componentCorrectionZeroCandidates,
+                                CorrectionLinePostInsetMeters);
+                            foreach (var ghostCandidateIndex in ghostCandidateIndices)
+                            {
+                                componentGhostMembers.Add(candidateMembers[ghostCandidateIndex]);
+                            }
+                        }
+                    }
+
                     for (var b = 0; b < bucketCount; b++)
                     {
                         var targetLayer = bucketLayers[b];
@@ -5146,6 +5215,13 @@ namespace AtsBackgroundBuilder
                                 !(tr.GetObject(seg.Id, OpenMode.ForWrite, false) is Entity writable) ||
                                 writable.IsErased)
                             {
+                                continue;
+                            }
+
+                            if (componentGhostMembers.Contains(member))
+                            {
+                                writable.Erase();
+                                ghostInsetRowsErased++;
                                 continue;
                             }
 
@@ -5183,7 +5259,11 @@ namespace AtsBackgroundBuilder
                 {
                     logger?.WriteLine(
                         $"Cleanup: normalized {total} usec segment(s) into three bands " +
-                        $"[0:{normalizedToZero}, 20.11:{normalizedToTwenty}, 30.16:{normalizedToThirty}], unchanged={unchanged}, rangeEdge2Line0_30Overrides={rangeEdgeTwoLineZeroThirtyOverrides}, localTriad0Overrides={localTriadZeroOverrides}.");
+                        $"[0:{normalizedToZero}, 20.11:{normalizedToTwenty}, 30.16:{normalizedToThirty}], unchanged={unchanged}, rangeEdge2Line0_30Overrides={rangeEdgeTwoLineZeroThirtyOverrides}, localTriad0Overrides={localTriadZeroOverrides}, ghostInsetRowsErased={ghostInsetRowsErased}.");
+                }
+                else if (ghostInsetRowsErased > 0)
+                {
+                    logger?.WriteLine($"Cleanup: erased {ghostInsetRowsErased} correction-inset ghost usec row(s) during three-band normalization.");
                 }
             }
         }

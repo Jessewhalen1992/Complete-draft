@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using AtsBackgroundBuilder.Core;
 
 namespace AtsBackgroundBuilder
 {
@@ -781,7 +782,15 @@ namespace AtsBackgroundBuilder
                     if (Math.Abs(northDelta) > Math.Max(source.Height, candidate.Height) * 0.60)
                         continue;
 
-                    var projectedGap = Math.Abs(eastDelta) - (source.Width * 0.5) - (candidate.Width * 0.5);
+                    var projectedGap = TryMeasurePerpendicularFacingGap(
+                        source,
+                        candidate,
+                        eastDelta >= 0.0
+                            ? SectionFacingDirection.East
+                            : SectionFacingDirection.West,
+                        out var perpendicularGap)
+                        ? perpendicularGap
+                        : (Math.Abs(eastDelta) - (source.Width * 0.5) - (candidate.Width * 0.5));
                     if (projectedGap < -RoadAllowanceWidthToleranceMeters)
                         continue;
                     // Ignore near-zero/overlap artifacts from correction-line geometry.
@@ -799,7 +808,15 @@ namespace AtsBackgroundBuilder
                     if (Math.Abs(eastDelta) > Math.Max(source.Width, candidate.Width) * 0.60)
                         continue;
 
-                    var projectedGap = Math.Abs(northDelta) - (source.Height * 0.5) - (candidate.Height * 0.5);
+                    var projectedGap = TryMeasurePerpendicularFacingGap(
+                        source,
+                        candidate,
+                        northDelta >= 0.0
+                            ? SectionFacingDirection.North
+                            : SectionFacingDirection.South,
+                        out var perpendicularGap)
+                        ? perpendicularGap
+                        : (Math.Abs(northDelta) - (source.Height * 0.5) - (candidate.Height * 0.5));
                     if (projectedGap < -RoadAllowanceWidthToleranceMeters)
                         continue;
                     // Ignore near-zero/overlap artifacts from correction-line geometry.
@@ -825,9 +842,81 @@ namespace AtsBackgroundBuilder
 
         private static Point2d GetSectionCenter(SectionSpatialInfo section)
         {
-            return section.SouthWest +
-                   (section.EastUnit * (section.Width * 0.5)) +
-                   (section.NorthUnit * (section.Height * 0.5));
+            return new Point2d(
+                0.25 * (section.SouthWest.X + section.SouthEast.X + section.NorthWest.X + section.NorthEast.X),
+                0.25 * (section.SouthWest.Y + section.SouthEast.Y + section.NorthWest.Y + section.NorthEast.Y));
+        }
+
+        private static bool TryMeasurePerpendicularFacingGap(
+            SectionSpatialInfo source,
+            SectionSpatialInfo candidate,
+            SectionFacingDirection facingDirection,
+            out double gapMeters)
+        {
+            gapMeters = 0.0;
+            if (source == null || candidate == null)
+            {
+                return false;
+            }
+
+            GetFacingEdges(source, candidate, facingDirection, out var baseStart, out var baseEnd, out var otherStart, out var otherEnd);
+            return PerpendicularGapMeasurement.TryMeasureBetweenFacingEdges(
+                ToGapPoint(baseStart),
+                ToGapPoint(baseEnd),
+                ToGapPoint(otherStart),
+                ToGapPoint(otherEnd),
+                out gapMeters);
+        }
+
+        private static void GetFacingEdges(
+            SectionSpatialInfo source,
+            SectionSpatialInfo candidate,
+            SectionFacingDirection facingDirection,
+            out Point2d baseStart,
+            out Point2d baseEnd,
+            out Point2d otherStart,
+            out Point2d otherEnd)
+        {
+            switch (facingDirection)
+            {
+                case SectionFacingDirection.East:
+                    baseStart = source.SouthEast;
+                    baseEnd = source.NorthEast;
+                    otherStart = candidate.SouthWest;
+                    otherEnd = candidate.NorthWest;
+                    return;
+                case SectionFacingDirection.West:
+                    baseStart = source.SouthWest;
+                    baseEnd = source.NorthWest;
+                    otherStart = candidate.SouthEast;
+                    otherEnd = candidate.NorthEast;
+                    return;
+                case SectionFacingDirection.North:
+                    baseStart = source.NorthWest;
+                    baseEnd = source.NorthEast;
+                    otherStart = candidate.SouthWest;
+                    otherEnd = candidate.SouthEast;
+                    return;
+                default:
+                    baseStart = source.SouthWest;
+                    baseEnd = source.SouthEast;
+                    otherStart = candidate.NorthWest;
+                    otherEnd = candidate.NorthEast;
+                    return;
+            }
+        }
+
+        private static GapPoint ToGapPoint(Point2d point)
+        {
+            return new GapPoint(point.X, point.Y);
+        }
+
+        private enum SectionFacingDirection
+        {
+            East,
+            West,
+            North,
+            South
         }
     }
 }

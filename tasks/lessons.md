@@ -242,3 +242,139 @@
 - If a correction seam is on the right layer but not physically offset, do not add more relayer or survivor heuristics. Remove band-selection fallbacks and generate the correction outer/inner geometry directly from the fitted seam targets, then erase ordinary seam-band leftovers.
 - 2026-03-14: When a correction seam is on the right cadence but the selected `L-USEC-C-0` still sits on the seam boundary, stop adding broader survivor/fallback relayers; choose one measured seam-axis bucket per side and normalize any `C-0` that still lands on the resolved outer axis back to `C` before quarter/LSD selection sees it.
 - 2026-03-14: When a correction-line bug has already been narrowed to seam classification, do not keep iterating on the previously fixed 100m spike symptom or reinterpret `L-USEC-C-0` semantics from screenshots alone; reset to the simpler baseline and inspect whether the final correction-chain promotion simply excludes plain `L-USEC` / `L-SEC*` seam segments.
+- 2026-03-14: If a user says a correction-line fix "didn't fix any of it" and the deployed `build` DLL hash matches the fresh compile, stop patching upstream inference guesses; instrument and prove which runtime classifier actually owns the bad segment before changing geometry again.
+- 2026-03-14: If a correction-line fix changes the geometric seam-band math but the user still says the exact line is unchanged, do not assume the line participated in that band selector at all; inspect the targeted runtime trace for that exact segment before refining the math again.
+- 2026-03-14: If the exact correction segment still stays ordinary after a perpendicular seam-band fix, inspect upstream seam candidate gates too; midpoint-only or world-axis seam-window filters can exclude long angled lines before the corrected relayer math ever runs.
+- 2026-03-14: When a correction-line seam fix resolves the outer layer assignment but LSDs or the east-end 100m buffer still drift, inspect the downstream handoff passes next: `CORRZERO` endpoint overrides must choose a quarter-interior correction-zero target, and any late correction-outer promotion after the final trim needs its own retrim before LSD cleanup runs.
+- 2026-03-14: If a correction-line LSD endpoint is still wrong after the seam layer fix, inspect whether the final hard-boundary pass is snapping to a boundary segment midpoint instead of the point on that segment at the LSD station; long angled or overtrimmed correction-zero horizontals can move the midpoint far enough to misplace the endpoint even when the right owner line exists.
+- 2026-03-14: When late correction-line post-processing creates or promotes `L-USEC-C` / `L-USEC-C-0` geometry, include those ids in the final 100m trim too; trimming only the original context/generated sets can leave east-end correction/buffer overruns alive.
+- 2026-03-14: If a correction-line LSD endpoint changes from `midpoint-kind` to `station-kind` but still lands wrong, stop tuning endpoint math and inspect whether quarter/LSD south-boundary selection is reading an outer-band survivor that was left on `L-USEC-C-0`; normalize outer-axis `C-0` segments back to `L-USEC-C` before quarter/LSD selection runs.
+- 2026-03-14: If a correction-zero normalization pass runs after relayer / companion creation, do not inspect the original segment snapshot captured earlier in the method; rescan live model-space `L-USEC-C-0` entities right before normalization or the pass can silently miss the real survivors that quarter/LSD selection still sees.
+- 2026-03-14: If a correction-line LSD still crosses to the south side after endpoint-target fixes, stop adjusting endpoint math and inspect the quarter south-boundary owner first; `SectionDrawingLsd` can already be preferring the far `L-USEC-C-0` correction band before any LSD endpoint enforcement runs.
+- 2026-03-14: If a correction-line quarter south boundary looks right in one section but the neighboring correction sections still cross the road allowance, compare `VERIFY-QTR-SOUTH-SELECT` divider coverage next; the correction-only selector must penalize large divider gaps and prefer divider-linked candidates just like the normal south selector, or a far correction band can still win for downstream LSD endpoints.
+- 2026-03-14: After selecting a correction south boundary for quarter/LSD geometry, do not let later corner overrides independently re-pick a different correction segment; reuse the chosen south segment or the corners and LSD endpoints can diverge from the verified owner.
+- 2026-03-14: If correction-seam quarter logs show the south owner already on the near correction band but the LSD endpoints still hop to the far south side, inspect the later `CORRZERO/SEC` endpoint override next; it can re-rank surviving parallel correction-zero bands independently of quarter ownership, so its candidate scorer must prefer the nearest valid band rather than the smallest anchor-gap alone.
+- 2026-03-14: If correction-line LSD logs still show `outer source=station-kind` with `kinds=CORRZERO/SEC`, stop patching the special `corrzero-interior` selector first; the generic `TryFindBoundaryStationTarget` preserve path may be re-running and walking an already-snapped endpoint onto a farther parallel correction-zero band on the next rule-matrix pass.
+- 2026-03-14: If one correction quarter still crosses after the row-wide LSD endpoint fixes, inspect `VERIFY-QTR-SOUTH-SELECT` for that exact quarter before touching endpoint enforcement again; a lone bad quarter often means `TryResolveQuarterViewSouthCorrectionBoundaryV` accepted a non-divider-linked correction segment through its `foundAny` fallback, so reject orphaned correction candidates with large divider gaps and let that quarter fall back to the normal south owner.
+- 2026-03-14: If rejecting a bad correction south owner makes one quarter go missing instead of wrong, check whether `southResolutionSegments` can still see a real ordinary fallback layer; limiting recovery to only `L-USEC-0` / `L-SEC*` can leave a quarter stuck on synthetic `fallback-20.12` even when the real surviving south edge is ordinary `L-USEC` or `L-USEC2012`.
+- 2026-03-15: If a correction quarter stops crossing only after rejecting the bad full south correction owner, check whether the quarter builder still needs a local southeast correction tie before touching endpoint enforcement again; a section can legitimately lose the global south owner while the east-side quarter/LSD geometry still has to terminate on a live correction segment.
+- 2026-03-15: If a correction section no longer has a valid full south owner, do not patch only one corner; rebuild the local west/east correction corners and the divider south-mid point from the same correction trend or the quarter can still cross between a corrected corner and a synthetic midpoint.
+- 2026-03-15: If only the seam-transition section still fails after quarter-side fallback work, check whether correction cleanup normalized an outer-axis L-USEC-C-0 without recreating its inner companion; section-local quarter fixes cannot stay stable if the real inner correction row never exists for selection or endpoint enforcement.
+- 2026-03-15: When a correction south boundary candidate behaves like the far hard boundary, do not let a partial-span segment own the whole quarter south edge. Require broad section coverage first, otherwise fall back to local correction corner construction.
+- 2026-03-15: After rejecting a bad correction south owner, check every later reuse path. Quarter local-corner fallbacks and LSD endpoint overrides can quietly reintroduce the same wrong correction row even when the primary owner selection is already fixed.
+- 2026-03-15: If a correction-seam LSD fix suddenly makes whole rows fall back from `L-USEC-C-0` to `L-USEC-C` / `TWENTY`, do not keep tuning ordinary fallback kinds. First check whether the correction-specific override is downgrading too early after a missed direct `CORRZERO` lookup; use an inferred inset target from live `L-USEC-C` geometry before abandoning correction ownership.
+- 2026-03-15: In sec-level correction fallbacks, do not accept a raw `L-USEC-C` corner hit as an inset owner just because it is numerically closer to the inset than the hard boundary. If its south offset is implausibly small, infer the inset companion first or the quarter line can still cross the road allowance.
+- 2026-03-15: When normalizing outer-axis `L-USEC-C-0` back to `L-USEC-C`, always look for an existing inner companion before creating a new one. Otherwise the normalization pass can manufacture duplicate `L-USEC-C-0` linework and send later quarter/LSD selection down the wrong branch.
+- 2026-03-15: When a user says they need consistency across thousands of sections, stop adding section-local fallback/rescue branches. Move the fix upstream into deterministic owner/classification generation so quarter/LSD output comes from one consistent correction model instead of special-case recovery paths.
+- 2026-03-15: If an endpoint fix starts producing targets that do not sit on real CAD entities, back it out immediately. Endpoint enforcement must only snap to actual geometry; missing correction rows have to be fixed upstream in correction-row generation, not synthesized at the endpoint stage.
+- 2026-03-15: In correction companion matching, do not let a partial overlap count as an existing inner companion for a long correction row. Otherwise the generator will skip creating the real full companion and later quarter/LSD logic will fall back inconsistently.
+- 2026-03-15: In correction companion matching, do not compare only absolute seam-center distance. Require the outer row and candidate companion to stay on the same signed side of the fitted seam; otherwise a north-side correction row can incorrectly pair with a south-side row across the road allowance and destabilize quarter/LSD ownership.
+- 2026-03-15: If a correction section still shows `southSource=fallback-20.12` while LSD endpoints are choosing `CORRZERO`, stop tuning quarter and endpoint consumers separately. Preserve correction layer semantics end-to-end: only infer inset ownership from `L-USEC-C`, rank `CORRZERO` targets by inset-offset error before move distance, and split live horizontal `L-USEC-C` rows at vertical road-allowance boundaries so every downstream pass sees the same deterministic correction row set.
+- 2026-03-15: If correction endpoints or quarter corners are landing on plain `L-USEC` geometry near a correction seam, do not keep tuning quarter/LSD selectors first. Check whether `CorrectionLinePostProcessing` is even allowed to relayer plain `L-USEC` seam-band rows into `L-USEC-C`; if the generator ignores that base layer, the true correction outer/inset pair never exists and every downstream consumer will drift or fall back differently.
+- 2026-03-15: If a correction-line rerun shows no CorrectionLine: entries at all even though the cleanup pipeline says correction post-processing ran, do not assume the pass worked; check for silent zero-candidate exits and log them explicitly.
+- 2026-03-15: In correction seam fitting, do not approximate a section boundary with extents midX + Top/Bottom.Y; sample the actual boundary trend from the section's left/right anchor direction and the real top/bottom boundary anchor so angled seam-transition sections stay on the same deterministic correction model as the rest of the township.
+- 2026-03-15: In correction bridge cleanup, do not let a segment relayer just because one endpoint touches correction outer geometry. One-sided touch can propagate correction classification along an entire ordinary L-USEC row, creating extra west/east correction offsets and causing the final late-correction trim to erase context extensions that should stay ordinary.
+## 2026-03-15 - Correction Geometry Must Normalize The Live Inset Band
+- If quarter/1-4 ownership starts looking correct but LSD endpoints still downgrade off correction geometry, check whether the live inset seam row is still layered L-USEC-C even though quarter logic is treating it as L-USEC-C-0.
+- Normalize live seam-overlapping inset-axis correction rows back onto L-USEC-C-0 using the fitted seam and a same-side outer companion check before trying to fix endpoint enforcement again.
+## 2026-03-15 - Reuse The Quarter South Owner In LSD Endpoint Enforcement
+- If quarter/1-4 geometry resolves a correction south boundary correctly but LSD endpoints still downgrade, treat that as a split source-of-truth problem instead of another seam-band heuristic issue.
+- The endpoint rule matrix should reuse the same resolved quarter south correction boundary trend that quarter geometry used, especially when the live correction segment does not span the full station range but the quarter logic extends it across the section.
+- When sec-6 correction cleanup is down to one extra parallel L-USEC-C row, check the final outer-consistency promotion pass before changing quarter/LSD logic; a plain span with a full L-USEC-C-0 inset companion must only be promoted when it is anchored into the correction chain at both ends.
+- When LSD endpoints hit the correct correction row family but still leave a small visible gap, treat it as a model-vs-live-geometry snap issue: keep the chosen correction owner and add a final snap onto the actual live L-USEC-C-0 segment instead of changing ownership rules again.
+## 2026-03-15 - Endpoint fixes must compile into the same method scope they target
+- If a bug fix depends on local helpers, verify those helpers are in the same method/block scope as the call site before trusting a diff or log hypothesis.
+- For ATS LSD endpoint work, prefer deterministic resolution from live collected geometry already present in the same pass instead of reaching across to helpers from a different nested pipeline.
+- When correction seam data is built inside a transaction but reused later, carry the resolved seam list out explicitly instead of referencing transaction-local variables after the scope ends.
+## 2026-03-15 - LSDs must stay fully deferred to the final cleanup stage
+- If LSD linework has its own endpoint rules, do not draw or enforce LSD endpoints during intermediate correction/cleanup passes.
+- Keep LSD generation plus endpoint snapping in one final stage after correction relayering, trimming, and outer-consistency cleanup are complete.
+- When correction tie-ins introduce new vertical hard targets, add a dedicated ordinary USEC trim pass for L-USEC-0 / L-USEC-2012 instead of letting LSD cleanup compensate for ordinary road-allowance overhangs.
+## 2026-03-15 - Correction tie-ins can terminate on hard correction/section verticals
+- If an ordinary `L-USEC-0` / `L-USEC-2012` tie-in should stop at a correction seam or section hard boundary, do not require the trim logic to find a same-band ordinary vertical target first.
+- Treat correction/section vertical hard boundaries as valid trim anchors, but still prefer same-band ordinary targets when both exist.
+
+## 2026-03-15 - Final LSD midpoint snaps must use resolved quarter anchors
+- In the final LSD rule-matrix pass, do not resolve live QSEC inner targets from the already-drifted line endpoint.
+- Use the resolved quarter anchor as the reference station first, otherwise the final pass can preserve midpoint gaps instead of removing them.
+## 2026-03-15 - Correction-zero outer snaps must preserve the resolved LSD station
+- For correction-touching vertical LSDs, do not project the outer correction-zero target from the stale outer endpoint station.
+- Use the resolved inner LSD station instead; otherwise the final endpoint can drift several meters along the same correction row even when the row owner is correct.
+
+## 2026-03-15 - Ordinary tie-in trims should not freeze on ordinary-only contacts near correction seams
+- In the final `L-USEC-0` / `L-USEC-2012` tie-in trim, an endpoint touching only ordinary same-band geometry is not strong enough to count as final ownership near a correction seam.
+- Hard correction/section vertical targets should outrank ordinary targets when both are viable final stops.
+## 2026-03-15 - Final tie-in trims must handle both source orientations
+- Do not assume ordinary `L-USEC-0` / `L-USEC-2012` overhangs are only horizontal.
+- Correction-line townships can leave the bad overhang on a vertical tie-in, so the final trim must support vertical sources to horizontal hard targets as well.
+
+## 2026-03-15 - Verify geometric fixes with Python before declaring success
+- When a user provides exact failing coordinates, reproduce the endpoint math from the current log in Python before accepting a fix.
+- Do not treat a build/test pass as proof for geometry changes until the Python check matches the expected point or explains the remaining delta.
+
+## 2026-03-15 - Ordinary USEC tie-ins need a final deterministic hard-boundary pass
+- Correction-post trimming is not enough for ordinary `L-USEC-0` / `L-USEC-2012` tie-ins; the final endpoint cleanup must explicitly own them after the geometry is finalized.
+- For correction-touching LSDs, any final live snap must preserve the inner quarter station, not restation from the already-shifted outer target.
+
+## 2026-03-15 - Do not add broad ordinary USEC endpoint passes after final trim
+- If a new endpoint rule can touch ordinary `L-USEC-0` / `L-USEC-2012` globally, verify in the current log exactly how many endpoints it moves before relying on it.
+- Any broad endpoint pass added after the final trim must be treated as high risk for context overextensions and missing buffer linework.
+
+## 2026-03-15 - Do not extrapolate sec-6 LSD correction targets past the resolved south-row span
+- If the resolved quarter south correction row only covers one half of a section, do not project that row across the other half for LSD correction-zero targeting.
+- When the LSD station lies outside the resolved row span, skip the correction-zero special path and let the generic station-ranked boundary pass own the endpoint.
+
+## 2026-03-15 - Ordinary sec tie-ins can anchor on plain L-USEC without trimming to it
+- In the final ordinary `L-USEC-0` / `L-USEC-2012` overhang trim, plain `L-USEC` rows should count as connection anchors for the opposite endpoint.
+- Keep `L-USEC` out of the trim target list; it should prove connectivity, not become the final snap target.
+
+## 2026-03-15 - Do not let sec 6 correction overrides pre-empt the generic final LSD station pass
+- If the final LSD rule-matrix already has a valid `CORRZERO/SEC` station path, run that before quarter-specific correction-zero downgrade logic.
+- The correction-specific target helpers are fallback/specialization paths, not the primary owner of LSD endpoints.
+- When sec 6 historically had exact midpoint targets in the generic path, treat any new early downgrade as a regression until proven otherwise.
+
+## 2026-03-15 - Do not gate live correction tie-in cleanup on seamCount alone
+- Post-build cleanup may still need to trim ordinary `L-USEC-0` / `L-USEC-2012` tie-ins from live correction rows even when seam fitting itself reports zero seams.
+- If a cleanup pass operates only on existing live correction layers, gate it on the presence of those live correction targets, not on whether seam discovery produced seam records.
+
+## 2026-03-15 - Do not place live final-geometry trims behind correction seam discovery gates
+- If a cleanup rule operates on already-built live correction geometry, it belongs in the unconditional final cleanup stage, not inside the correction seam builder.
+- `seamCount == 0` does not mean there is no correction-owned geometry left to trim.
+- When the log shows no `CorrectionLine:` lines at all, first check whether the entire owner function returned early before assuming the trim logic itself failed.
+
+## 2026-03-15 - Prune inverse correction-band duplicates, not just promote seam-overlap USEC rows
+- A remaining sec-6 overhang can be a plain USEC duplicate chain exactly one inset (`5.02 m`) away from live `L-USEC-C-0`, even when no tie-in trim is involved.
+- Final correction consistency needs two directions: promote true correction chain members, and erase plain USEC duplicate survivors that shadow the live inset row.
+- When one segment overlaps the inset row strongly and the next segment continues it by exact endpoint touch on the same offset side, treat that as one duplicate chain.
+
+## 2026-03-15 - Extension bugs near correction lines can be connected ordinary chains
+- If a remaining L-USEC-0 / L-USEC-2012 overhang sits about one correction inset (5.02 m) off live L-USEC-C-0, do not stop at single-row duplicate detection.
+- Verify whether the bad row has an endpoint-connected continuation on the same inset side before concluding the ordinary cleanup is fixed.
+- Use Python on the exact logged coordinates to prove the seed/continuation set before accepting the change.
+## 2026-03-15 - Generic 0/20 endpoint cleanup can steal correction-adjoining section lines onto the wrong parallel band
+- If a section-line endpoint miss differs from the expected point by about one correction inset (5.02 m), check the generic ConnectDanglingUsecZeroTwentyEndpoints pass before patching later correction cleanup.
+- For correction-adjoining L-USEC-0 / L-USEC-2012 endpoints, prefer the nearby L-USEC-C-0 companion trend over the ordinary same-band target when the ordinary target sits one inset away.
+- Verify this class of fix in Python using the exact wrong/expected endpoint pair and the live correction-zero row before handing it back.
+
+## 2026-03-15 - Section-6 correction-line misses need a final ordinary 0/20 to correction-zero snap
+- If sec 6 quarter logs already show southSource=L-USEC-C-0, stop patching quarter ownership and trace the later ordinary L-USEC-0 / L-USEC-2012 endpoint pass instead.
+- A remaining sec 6 section-line miss that differs from the expected point by about one correction inset (~5.02 m) is a strong sign the ordinary endpoint is still sitting on the parallel non-correction row.
+- Verify this class of fix with Python by projecting the current wrong endpoint along its own source line onto the live L-USEC-C-0 trend before accepting the change.
+## 2026-03-15 - Verify whether a fix runs on pre-final or final correction geometry
+- If a section-6 correction-line fix appears correct in code but the rerun is unchanged, check whether ApplyCorrectionLinePostBuildRules or later final-cleanup passes rebuild that geometry afterward.
+- For correction-adjoining ordinary  /20 section lines, a deterministic snap belongs on the final geometry stage, not just the earlier endpoint cleanup stage.
+- Add a per-run cleanup log for these late passes so a no-op cannot hide behind later correction regeneration.
+## 2026-03-16 - When the owner is unclear, trace the exact surviving endpoints through the pipeline
+- If repeated fixes still leave the same ordinary sec-line endpoints wrong, stop patching consumers and instrument the exact endpoints across each cleanup stage.
+- Quarter-view diagnostics can confirm the south owner and still miss the real ordinary-section-line mover.
+- For correction-line bugs localized to one section number, add pass-by-pass endpoint snapshots before making another behavior change.
+## 2026-03-16 - When a bad endpoint only appears after a wrapper stage, trace inside the wrapper before changing logic again
+- A stage snapshot like after-correction-postbuild-final can still hide which internal subpass owned the move.
+- Add per-subpass snapshots and direct move logs on the exact endpoint-adjust path before attempting another geometry fix.
+
+
+## 2026-03-16 - When a target endpoint can be hit by multiple correction rows in one pass, rank candidates against the original endpoint, not the current moved state
+- Sec 6 failed because the same vertical ordinary line was adjusted twice inside one correction pass.
+- The first snap was correct and the second farther snap overwrote it by another correction inset.
+- Preserve the closest valid snap from the original seam-facing endpoint so later parallel rows cannot drag the line farther away.
+

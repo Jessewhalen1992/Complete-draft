@@ -1629,7 +1629,7 @@ namespace AtsBackgroundBuilder
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                var matches = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double MidDist)>();
+                var matches = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double MidDist, string TraceTag)>();
                 var targetMid = Midpoint(LayerTraceSegmentStart, LayerTraceSegmentEnd);
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
@@ -1659,13 +1659,13 @@ namespace AtsBackgroundBuilder
 
                     if (!TryReadOpenSegment(ent, out var a, out var b) ||
                         !DoesSegmentIntersectAnyWindow(a, b) ||
-                        !IsTargetLayerTraceSegment(a, b))
+                        !TryGetTargetLayerTraceTag(a, b, out var traceTag))
                     {
                         continue;
                     }
 
                     var mid = Midpoint(a, b);
-                    matches.Add((id, layer, a, b, mid.GetDistanceTo(targetMid)));
+                    matches.Add((id, layer, a, b, mid.GetDistanceTo(targetMid), traceTag));
                 }
 
                 matches = matches
@@ -1686,7 +1686,7 @@ namespace AtsBackgroundBuilder
                     var m = matches[i];
                     logger.WriteLine(
                         $"LAYER-TARGET pass={passTag} idx={i + 1} id={m.Id.Handle} layer={m.Layer} " +
-                        $"a=({m.A.X:0.###},{m.A.Y:0.###}) b=({m.B.X:0.###},{m.B.Y:0.###}) len={m.A.GetDistanceTo(m.B):0.###}");
+                        $"a=({m.A.X:0.###},{m.A.Y:0.###}) b=({m.B.X:0.###},{m.B.Y:0.###}) len={m.A.GetDistanceTo(m.B):0.###} trace={m.TraceTag}");
                 }
 
                 tr.Commit();
