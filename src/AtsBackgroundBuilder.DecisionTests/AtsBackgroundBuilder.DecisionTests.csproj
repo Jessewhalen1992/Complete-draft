@@ -35,6 +35,7 @@
     <Compile Include="..\AtsBackgroundBuilder\Core\CorrectionZeroCompanionProjection.cs" Link="CorrectionZeroCompanionProjection.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\BoundaryStationSpanPolicy.cs" Link="BoundaryStationSpanPolicy.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\OrdinaryUsecTieInAnchorLayerClassifier.cs" Link="OrdinaryUsecTieInAnchorLayerClassifier.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\SurveySecRoadAllowanceSecTargetPolicy.cs" Link="SurveySecRoadAllowanceSecTargetPolicy.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\SegmentStationProjection.cs" Link="SegmentStationProjection.cs" />
   </ItemGroup>
 </Project>

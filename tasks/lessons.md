@@ -378,3 +378,15 @@
 - The first snap was correct and the second farther snap overwrote it by another correction inset.
 - Preserve the closest valid snap from the original seam-facing endpoint so later parallel rows cannot drag the line farther away.
 
+- 2026-03-16: For survey LSD regressions, do not retune the L-USEC outer-kind ladder first. Verify the rule-matrix collector actually sees L-SEC polyline segments, then prefer a surveyed SEC target only when it is materially closer than the competing TWENTY/ZERO move so no-offset survey cases do not inherit correction-style L-USEC behavior.- 2026-03-16: For pure surveyed L-SEC LSD cases, do not preserve endpoints on raw SEC rows and do not treat the opposite SEC row as the target. The correct owner is the midpoint between the paired L-SEC boundaries about one RoadAllowanceSecWidthMeters apart; otherwise LSDs will cross the road allowance by a full 20.11 m instead of stopping at the center.## 2026-03-16 - For survey L-SEC LSD cases, midpoint eligibility must be decided from projected local candidates, not section-wide layer counts
+- A survey road-allowance midpoint can be valid even when unrelated ZERO/TWENTY/BLIND rows exist elsewhere in the buffered section window.
+- Do not gate survey midpoint logic on whole-window kind counts; gate it on whether a projected non-SEC candidate actually exists at the endpoint's station.
+- Keep the survey midpoint rule restricted to `ZERO/SEC` and `TWENTY/SEC` cases so blind boundaries and L-USEC correction logic do not get retuned.
+## 2026-03-16 - When a user says "midpoint of the L-SEC line," do not reinterpret it as midpoint across paired survey boundaries
+- In surveyed section road-allowance cases, the correct owner can be the quarter's single-line L-SEC anchor midpoint rather than any midpoint between two parallel SEC rows.
+- If the user says the line should never cross an L-SEC line, first check whether the existing quarter outer-anchor target already encodes the intended midpoint.
+- Restrict survey anchor forcing to `ZERO/SEC` and `TWENTY/SEC` crossings with no projected local ZERO/TWENTY/CORRZERO owner so blind and L-USEC cases stay intact.
+## 2026-03-16 - In surveyed L-SEC cases, if the endpoint already lies on the correct SEC line at the current station, do not reinterpret it as an anchor move
+- A survey road-allowance LSD can already be correct before endpoint enforcement runs.
+- If the latest trace shows the pre-move endpoint matches the user's expected point, the fix is to preserve or SEC-snap that station, not to add another survey-specific owner.
+- For `ZERO/SEC` and `TWENTY/SEC` survey cases, prefer the live `SEC` station target over any synthetic survey anchor when no projected local ZERO/TWENTY/CORRZERO candidate exists.

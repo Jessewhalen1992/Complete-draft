@@ -6298,3 +6298,62 @@ Regression follow-up:
 - [x] Keep only the closest seam-facing snap per vertical target endpoint within the correction post-build pass.
 - [x] Verified with Python against the live sec 6 trace and added decision coverage.
 
+## 2026-03-16 - Survey L-SEC LSD midpoint regression in 59-10-5
+- [x] Trace the fresh 59-10-5 run in 	race-build and confirm the survey miss is coming from the LSD rule-matrix outer target, not the later hard-boundary pass.
+- [x] Patch rule-matrix boundary collection so L-SEC polyline segments populate the SEC pool the same way later endpoint passes already do.
+- [x] Add a narrow surveyed-SEC preference so no-offset survey cases choose the closer SEC target before TWENTY/ZERO, without changing correction L-USEC overrides.
+- [x] Rebuild ATS + decision tests and verify the survey-kind selection with Python before handoff.
+
+### Review
+- Root cause: the LSD rule-matrix collector was still reading only one open segment per entity, so survey L-SEC polyline road-allowance segments never populated the SEC pool. That left sec 29 falling straight to TWENTY/SEC, and Python confirmed those survey misses were all the same full 10.06 m outer jump.
+- Fix: mirror the later endpoint pass and collect per-segment Line/Polyline geometry inside the rule-matrix collector, then apply a narrow survey tie-break that only prefers a local SEC target when it is materially closer than the chosen TWENTY/ZERO target. Correction overrides still keep the L-USEC path first.
+- Verification: dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release -p:NuGetAudit=false -v minimal succeeded with 0 warnings / 0 errors. dotnet build src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false -v minimal succeeded with 0 warnings / 0 errors. Decision tests passed.
+- Python verification from the fresh 	race-build log showed the live sec 29 TWENTY/SEC survey misses were a consistent 10.06 m full-offset move (1264BC6, 1264BC9, 1264BCA, 1264BCB, 1266515, 1266516, 1266517), matching the no-offset survey symptom this fix now targets.## 2026-03-16 - Survey L-SEC road-allowance midpoint pairing correction
+- [x] Re-trace the latest survey-only sec 29 run after the first SEC-pool fix and confirm the remaining miss is full boundary-to-boundary 20.11 m movement or raw SEC preservation, not an L-USEC correction override.
+- [x] Replace raw survey-sec preservation with a survey-only midpoint target that pairs adjacent L-SEC boundaries about one RoadAllowanceSecWidthMeters apart and uses their midpoint.
+- [x] Rebuild ATS, rerun decision tests, and verify the exact sec 29 half-width midpoint numbers in Python before handoff.
+
+### Review
+- Root cause: the first survey patch fixed SEC collection but still treated survey rows like ownership rows. In a pure surveyed run the rule-matrix either preserved the endpoint on a raw L-SEC boundary or moved it the full 20.11 m to the opposite SEC boundary. The user-visible requirement was the midpoint between those paired L-SEC rows.
+- Fix: add a survey-only midpoint target inside the rule-matrix. When the active boundary pool contains only SEC, it now projects the local station onto adjacent SEC rows, finds the paired boundaries about one RoadAllowanceSecWidthMeters apart, and targets the midpoint between them before any generic TWENTY/ZERO station fallback.
+- Verification: dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release -p:NuGetAudit=false -v minimal succeeded with 0 warnings / 0 errors. dotnet build src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false -v minimal succeeded with 0 warnings / 0 errors. Decision tests passed.
+- Python verification from the latest sec 29 survey log:
+  - 126A395 wrong full move 20.110 m -> midpoint target 599542.157,5999519.151 (10.055 m half move)
+  - 126A398 wrong full move 20.109 m -> midpoint target 599982.211,5998310.723 (10.055 m half move)
+  - 126A399 wrong full move 20.109 m -> midpoint target 599558.936,5998713.703 (10.054 m half move)
+  - 126A39A wrong full move 20.109 m -> midpoint target 600791.055,5998329.798 (10.055 m half move)## 2026-03-16 - Survey L-SEC midpoint gate must be station-local
+- [x] Re-trace the latest sec 29 survey run and confirm the live failures still fall through as `station-kind` rather than `survey-sec-midpoint`.
+- [x] Replace the section-wide "pure SEC pool" gate with a station-local projected-candidate gate so survey midpoint logic can still run when unrelated non-SEC rows exist elsewhere in the buffered window.
+- [x] Rebuild ATS, rerun decision tests, and verify the latest sec 29 wrong targets still represent full-width 20.11 m moves that should collapse to 10.05 m midpoints.
+
+### Review
+- Root cause: the first survey midpoint gate was checking the whole section window for any ZERO/TWENTY/BLIND/CORRZERO pools. That was too broad. Sec 29 still had unrelated non-SEC rows elsewhere in scope, so the survey midpoint branch never ran even though the actual road-allowance station had only paired L-SEC boundaries.
+- Fix: add `SurveySecRoadAllowanceMidpointPolicy` and make the gate station-local. The rule-matrix now only suppresses the survey midpoint when a projected ZERO/TWENTY/CORRZERO candidate exists at that same endpoint station; otherwise a `ZERO/SEC` or `TWENTY/SEC` survey case is allowed to midpoint between the paired L-SEC rows.
+- Verification: `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with 0 warnings / 0 errors. `dotnet build src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release -p:NuGetAudit=false -v minimal` succeeded with 0 warnings / 0 errors. `Decision tests passed.` Full solution build succeeded with 0 warnings / 0 errors.
+- Python verification from the latest sec 29 log confirmed the still-wrong survey cases are all full-width moves that should midpoint instead:
+  - `126AE5A`: full move `20.109 m` -> expected midpoint `602260.000,5950991.927`
+  - `126AE5C`: full move `20.109 m` -> expected midpoint `603883.022,5951031.794`
+  - `126AE5D`: full move `20.109 m` -> expected midpoint `602697.701,5949785.111`
+  - `126AE5E`: full move `20.110 m` -> expected midpoint `602277.738,5950187.476`
+  - `126AE5F`: full move `20.109 m` -> expected midpoint `603499.289,5949804.487`
+  - `126AE60`: full move `20.109 m` -> expected midpoint `603900.933,5950226.898`
+## 2026-03-16 - Survey L-SEC owner correction: use the single-line anchor midpoint, not a paired-line midpoint
+- [x] Re-check the survey sec 29 rule after the user clarified the target is the midpoint anchor on the actual L-SEC segment, not the midpoint between two L-SEC road-allowance sides.
+- [x] Remove the paired-line midpoint branch and route pure survey `ZERO/SEC` and `TWENTY/SEC` cases onto the existing quarter outer-anchor path instead.
+- [x] Rebuild ATS, rerun decision tests, and verify from Python that the affected sec 29 cases are exactly the `ZERO/SEC` and `TWENTY/SEC` station-kind crossings while `BLIND/SEC` cases stay on the anchor path.
+
+### Review
+- Root cause: I mis-modeled the surveyed road-allowance owner. The correct survey target is the midpoint anchor on the single L-SEC boundary segment selected by the quarter, not the midpoint across two parallel L-SEC rows.
+- Fix: replace the survey paired-line midpoint gate with `SurveySecRoadAllowanceAnchorPolicy`. For survey `ZERO/SEC` and `TWENTY/SEC` cases with no projected local ZERO/TWENTY/CORRZERO owner at the endpoint station, the rule-matrix now skips station-kind targeting and falls through to the existing quarter outer-anchor target. That preserves `BLIND/SEC` behavior and leaves L-USEC correction logic alone.
+- Verification: `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` succeeded with 0 warnings / 0 errors. `Decision tests passed.` Both `src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll` and `build\net8.0-windows\AtsBackgroundBuilder.dll` updated at the same timestamp.
+- Python verification from the latest sec 29 log confirmed the classification split this fix is targeting: `12649A5`, `12649A7`, `12649A8`, `12649A9`, `12649AA`, and `12649AB` are still `ZERO/SEC` or `TWENTY/SEC` station-kind crossings that should flip to the survey anchor path, while `12649A4` and `12649A6` are `BLIND/SEC` and already stay on the anchor path.
+## 2026-03-16 - Survey L-SEC sec 29 fix: preserve or snap to SEC at station, do not promote to survey anchor
+- [x] Trace the exact sec 29 example `600360.453,5999537.442 -> 601188.609,5999555.943` and confirm the rule-matrix was moving it off the already-correct `L-SEC` point.
+- [x] Replace the survey-anchor override with a survey `SEC`-target path that preserves or projects onto the live `SEC` segment at the current station.
+- [x] Rebuild ATS, rerun decision tests, and verify the reported sec 29 overmove is the full `20.11064 m` drift from the correct point.
+
+### Review
+- Root cause: the survey-anchor interpretation was still wrong. In the latest sec 29 log, line `126A5B8` already started with outer endpoint `601168.503,5999555.511`, which matches the user's expected point exactly, and the rule-matrix then moved it to `601188.609,5999555.943` under `survey-sec-anchor`.
+- Fix: replace that override with `SurveySecRoadAllowanceSecTargetPolicy`. For survey `ZERO/SEC` and `TWENTY/SEC` cases with no projected local ZERO/TWENTY/CORRZERO owner, the rule-matrix now uses `SEC` as the station target instead of forcing a survey anchor. That preserves endpoints already on the correct `L-SEC` line and still allows a snap onto the live `SEC` segment when needed.
+- Verification: `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal` succeeded with 0 warnings / 0 errors. `Decision tests passed.` Both deployed and source DLLs updated at the same timestamp.
+- Python verification: the reported wrong target `601188.609,5999555.943` sits `20.11064 m` away from the expected `601168.503,5999555.511`. The logged pre-move outer endpoint for `126A5B8` already matched the expected point exactly before the bad override ran.

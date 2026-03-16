@@ -1561,26 +1561,103 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegmentForEndpointEnforcement(ent, out var a, out var b))
+                    var hasPrimarySegment = TryReadOpenSegmentForEndpointEnforcement(ent, out var primaryA, out var primaryB);
+                    var entitySegments = new List<(Point2d A, Point2d B)>();
+                    if (ent is Line line)
                     {
-                        continue;
+                        var la = new Point2d(line.StartPoint.X, line.StartPoint.Y);
+                        var lb = new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                        if (la.GetDistanceTo(lb) > 1e-4)
+                        {
+                            entitySegments.Add((la, lb));
+                        }
+                    }
+                    else if (ent is Polyline polyline && polyline.NumberOfVertices >= 2)
+                    {
+                        for (var vi = 0; vi < polyline.NumberOfVertices - 1; vi++)
+                        {
+                            var sa = polyline.GetPoint2dAt(vi);
+                            var sb = polyline.GetPoint2dAt(vi + 1);
+                            if (sa.GetDistanceTo(sb) <= 1e-4)
+                            {
+                                continue;
+                            }
+
+                            entitySegments.Add((sa, sb));
+                        }
+
+                        if (polyline.Closed)
+                        {
+                            var sa = polyline.GetPoint2dAt(polyline.NumberOfVertices - 1);
+                            var sb = polyline.GetPoint2dAt(0);
+                            if (sa.GetDistanceTo(sb) > 1e-4)
+                            {
+                                entitySegments.Add((sa, sb));
+                            }
+                        }
                     }
 
-                    if (!DoesSegmentIntersectAnyWindow(a, b))
+                    if (entitySegments.Count == 0 && hasPrimarySegment)
+                    {
+                        entitySegments.Add((primaryA, primaryB));
+                    }
+
+                    if (entitySegments.Count == 0)
                     {
                         continue;
                     }
 
                     var layer = ent.Layer ?? string.Empty;
+                    var isCorrectionLayer =
+                        IsCorrectionZeroLayer(layer) ||
+                        string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase);
+                    var scopedSegments = new List<(Point2d A, Point2d B)>(entitySegments.Count);
+                    for (var si = 0; si < entitySegments.Count; si++)
+                    {
+                        var seg = entitySegments[si];
+                        if (isCorrectionLayer || DoesSegmentIntersectAnyWindow(seg.A, seg.B))
+                        {
+                            scopedSegments.Add(seg);
+                        }
+                    }
+
+                    if (scopedSegments.Count == 0 && !isCorrectionLayer)
+                    {
+                        continue;
+                    }
+
+                    if (scopedSegments.Count == 0)
+                    {
+                        scopedSegments.AddRange(entitySegments);
+                    }
+
                     if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
                     {
-                        qsecSegments.Add((a, b));
+                        for (var si = 0; si < scopedSegments.Count; si++)
+                        {
+                            var seg = scopedSegments[si];
+                            qsecSegments.Add((seg.A, seg.B));
+                        }
+
                         continue;
                     }
 
                     if (string.Equals(layer, "L-SECTION-LSD", StringComparison.OrdinalIgnoreCase))
                     {
-                        if (IsAdjustableLsdLineSegment(a, b))
+                        var hasAdjustableSegment = false;
+                        for (var si = 0; si < scopedSegments.Count; si++)
+                        {
+                            var seg = scopedSegments[si];
+                            if (!IsAdjustableLsdLineSegment(seg.A, seg.B))
+                            {
+                                continue;
+                            }
+
+                            hasAdjustableSegment = true;
+                            break;
+                        }
+
+                        if (hasAdjustableSegment)
                         {
                             lsdLineIds.Add(id);
                         }
@@ -1588,40 +1665,45 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (IsSecLayer(layer))
+                    for (var si = 0; si < scopedSegments.Count; si++)
                     {
-                        AddBoundarySegmentByKind("SEC", a, b);
-                    }
-
-                    if (IsUsecZeroLayer(layer))
-                    {
-                        AddBoundarySegmentByKind("ZERO", a, b);
-                    }
-
-                    if (IsUsecTwentyLayer(layer))
-                    {
-                        AddBoundarySegmentByKind("TWENTY", a, b);
-                    }
-
-                    if (IsBlindUsecLayer(layer))
-                    {
-                        AddBoundarySegmentByKind("BLIND", a, b);
-                    }
-
-                    if (IsCorrectionZeroLayer(layer))
-                    {
-                        AddBoundarySegmentByKind("CORRZERO", a, b);
-                        AddBoundarySegmentByKind("ZERO", a, b);
-                        correctionBoundarySegmentsWithLayers.Add((a, b, layer));
-                        if (Math.Abs(b.X - a.X) >= Math.Abs(b.Y - a.Y))
+                        var a = scopedSegments[si].A;
+                        var b = scopedSegments[si].B;
+                        if (IsSecLayer(layer))
                         {
-                            correctionZeroHorizontal.Add((a, b, Midpoint(a, b)));
+                            AddBoundarySegmentByKind("SEC", a, b);
                         }
-                    }
 
-                    if (string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase))
-                    {
-                        correctionBoundarySegmentsWithLayers.Add((a, b, layer));
+                        if (IsUsecZeroLayer(layer))
+                        {
+                            AddBoundarySegmentByKind("ZERO", a, b);
+                        }
+
+                        if (IsUsecTwentyLayer(layer))
+                        {
+                            AddBoundarySegmentByKind("TWENTY", a, b);
+                        }
+
+                        if (IsBlindUsecLayer(layer))
+                        {
+                            AddBoundarySegmentByKind("BLIND", a, b);
+                        }
+
+                        if (IsCorrectionZeroLayer(layer))
+                        {
+                            AddBoundarySegmentByKind("CORRZERO", a, b);
+                            AddBoundarySegmentByKind("ZERO", a, b);
+                            correctionBoundarySegmentsWithLayers.Add((a, b, layer));
+                            if (Math.Abs(b.X - a.X) >= Math.Abs(b.Y - a.Y))
+                            {
+                                correctionZeroHorizontal.Add((a, b, Midpoint(a, b)));
+                            }
+                        }
+
+                        if (string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase))
+                        {
+                            correctionBoundarySegmentsWithLayers.Add((a, b, layer));
+                        }
                     }
 
                 }
@@ -2923,6 +3005,68 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
+                bool HasProjectedRoadAllowanceCandidateAtEndpointStation(
+                    Point2d endpoint,
+                    Point2d innerEndpoint,
+                    bool lineIsHorizontal,
+                    Vector2d eastUnit,
+                    Vector2d northUnit,
+                    double sectionMinU,
+                    double sectionMaxU,
+                    double sectionMinV,
+                    double sectionMaxV,
+                    string kind)
+                {
+                    var source = lineIsHorizontal ? verticalByKind : horizontalByKind;
+                    if (!source.TryGetValue(kind, out var segments) || segments.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    var outward = endpoint - innerEndpoint;
+                    var outwardLen = outward.Length;
+                    if (outwardLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var outwardDir = outward / outwardLen;
+                    var stationAxis = lineIsHorizontal ? northUnit : eastUnit;
+                    const double stationTol = 8.0;
+                    const double sectionScopePad = 40.0;
+                    const double minOutwardAdvance = 2.0;
+                    for (var i = 0; i < segments.Count; i++)
+                    {
+                        var seg = segments[i];
+                        if (!TryResolveSegmentPointAtProjectedStationForEndpointEnforcement(
+                                endpoint,
+                                seg.A,
+                                seg.B,
+                                stationAxis,
+                                stationTol,
+                                out var projectedPoint))
+                        {
+                            continue;
+                        }
+
+                        var targetU = ProjectOnAxis(projectedPoint, eastUnit);
+                        var targetV = ProjectOnAxis(projectedPoint, northUnit);
+                        if (targetU < (sectionMinU - sectionScopePad) || targetU > (sectionMaxU + sectionScopePad) ||
+                            targetV < (sectionMinV - sectionScopePad) || targetV > (sectionMaxV + sectionScopePad))
+                        {
+                            continue;
+                        }
+
+                        var outwardAdvance = (projectedPoint - innerEndpoint).DotProduct(outwardDir);
+                        if (outwardAdvance >= minOutwardAdvance)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
                 const double endpointMoveTol = 0.005;
                 var traceRuleFlow = logger != null;
 
@@ -3494,23 +3638,106 @@ namespace AtsBackgroundBuilder
                     var movedByStationTarget = false;
                     var movedByFallbackAnchor = false;
                     var usedStationTarget = false;
+                    var usedSurveySecTarget = false;
                     var usedResolvedCorrectionZeroTarget = false;
                     var usedInteriorCorrectionZeroTarget = false;
                     var outerTarget = outerPoint;
                     var foundOuterTarget = false;
-                    foundOuterTarget = TryFindBoundaryStationTarget(
-                        outerPoint,
-                        innerPoint,
-                        lineIsHorizontal,
-                        context.EastUnit,
-                        context.NorthUnit,
-                        context.SectionMinU,
-                        context.SectionMaxU,
-                        context.SectionMinV,
-                        context.SectionMaxV,
-                        preferredKinds,
-                        out outerTarget);
-                    usedStationTarget = foundOuterTarget;
+                    if (!correctionOverride)
+                    {
+                        usedSurveySecTarget = SurveySecRoadAllowanceSecTargetPolicy.ShouldUseSecTarget(
+                            preferredKinds,
+                            HasProjectedRoadAllowanceCandidateAtEndpointStation(
+                                outerPoint,
+                                innerPoint,
+                                lineIsHorizontal,
+                                context.EastUnit,
+                                context.NorthUnit,
+                                context.SectionMinU,
+                                context.SectionMaxU,
+                                context.SectionMinV,
+                                context.SectionMaxV,
+                                "ZERO"),
+                            HasProjectedRoadAllowanceCandidateAtEndpointStation(
+                                outerPoint,
+                                innerPoint,
+                                lineIsHorizontal,
+                                context.EastUnit,
+                                context.NorthUnit,
+                                context.SectionMinU,
+                                context.SectionMaxU,
+                                context.SectionMinV,
+                                context.SectionMaxV,
+                                "TWENTY"),
+                            HasProjectedRoadAllowanceCandidateAtEndpointStation(
+                                outerPoint,
+                                innerPoint,
+                                lineIsHorizontal,
+                                context.EastUnit,
+                                context.NorthUnit,
+                                context.SectionMinU,
+                                context.SectionMaxU,
+                                context.SectionMinV,
+                                context.SectionMaxV,
+                                "CORRZERO"));
+                    }
+
+                    if (!foundOuterTarget &&
+                        usedSurveySecTarget &&
+                        TryFindBoundaryStationTarget(
+                            outerPoint,
+                            innerPoint,
+                            lineIsHorizontal,
+                            context.EastUnit,
+                            context.NorthUnit,
+                            context.SectionMinU,
+                            context.SectionMaxU,
+                            context.SectionMinV,
+                            context.SectionMaxV,
+                            new[] { "SEC" },
+                            out outerTarget))
+                    {
+                        foundOuterTarget = true;
+                        usedStationTarget = true;
+                    }
+
+                    if (!foundOuterTarget && !usedSurveySecTarget)
+                    {
+                        foundOuterTarget = TryFindBoundaryStationTarget(
+                            outerPoint,
+                            innerPoint,
+                            lineIsHorizontal,
+                            context.EastUnit,
+                            context.NorthUnit,
+                            context.SectionMinU,
+                            context.SectionMaxU,
+                            context.SectionMinV,
+                            context.SectionMaxV,
+                            preferredKinds,
+                            out outerTarget);
+                        usedStationTarget = foundOuterTarget;
+                    }
+
+                    if (!foundOuterTarget &&
+                        !usedSurveySecTarget &&
+                        !correctionOverride &&
+                        TryFindBoundaryStationTarget(
+                            outerPoint,
+                            innerPoint,
+                            lineIsHorizontal,
+                            context.EastUnit,
+                            context.NorthUnit,
+                            context.SectionMinU,
+                            context.SectionMaxU,
+                            context.SectionMinV,
+                            context.SectionMaxV,
+                            new[] { "SEC" },
+                            out var surveySecFallbackTarget))
+                    {
+                        outerTarget = surveySecFallbackTarget;
+                        foundOuterTarget = true;
+                        usedStationTarget = true;
+                    }
 
                     var useQuarterCorrectionZeroTarget =
                         !foundOuterTarget &&
@@ -3609,7 +3836,7 @@ namespace AtsBackgroundBuilder
                         if (traceRuleFlow)
                         {
                             logger?.WriteLine(
-                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix outer source=fallback-anchor moved={movedByFallbackAnchor} target={FormatLsdEndpointTracePoint(outerTarget)} kinds={string.Join("/", preferredKinds)}.");
+                                $"LSD-ENDPT line={lineIdText} pass=rule-matrix outer source={(usedSurveySecTarget ? "survey-sec-target" : "fallback-anchor")} moved={movedByFallbackAnchor} target={FormatLsdEndpointTracePoint(outerTarget)} kinds={string.Join("/", preferredKinds)}.");
                         }
 
                         if (traceRuleFlow && TryReadOpenSegmentForEndpointEnforcement(writable, out var fallbackP0, out var fallbackP1))
@@ -3638,6 +3865,7 @@ namespace AtsBackgroundBuilder
                     if (traceRuleFlow)
                     {
                         var outerSource =
+                            usedSurveySecTarget ? "survey-sec-target" :
                             usedResolvedCorrectionZeroTarget ? "corrzero-resolved" :
                             usedInteriorCorrectionZeroTarget ? "corrzero-interior" :
                             usedStationTarget ? "station-kind" :

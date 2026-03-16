@@ -50,6 +50,9 @@ internal static class Program
         TestQuarterBoundaryOwnershipPolicySurveyedSecFallback();
         TestQuarterBoundaryOwnershipPolicySurveyedUsecOwnership();
         TestQuarterBoundaryOwnershipPolicyBlindSouthForcesZeroSouthOffset();
+        TestSurveySecRoadAllowanceSecTargetPolicyAllowsPureSurveyZeroSecPair();
+        TestSurveySecRoadAllowanceSecTargetPolicyRejectsProjectedUsecTarget();
+        TestSurveySecRoadAllowanceSecTargetPolicyRejectsBlindSecFallback();
         TestCleanupPlanMatrix();
         TestBuildExecutionPlanDefaults();
         TestBuildExecutionPlanQuarterVisibility();
@@ -540,6 +543,39 @@ internal static class Program
         AssertEqual(false, policy.AllowWestInsetDowngrade, nameof(TestQuarterBoundaryOwnershipPolicyBlindSouthForcesZeroSouthOffset));
         AssertEqual("fallback-30.16", policy.WestFallbackSource, nameof(TestQuarterBoundaryOwnershipPolicyBlindSouthForcesZeroSouthOffset));
         AssertEqual("fallback-blind", policy.SouthFallbackSource, nameof(TestQuarterBoundaryOwnershipPolicyBlindSouthForcesZeroSouthOffset));
+    }
+
+    private static void TestSurveySecRoadAllowanceSecTargetPolicyAllowsPureSurveyZeroSecPair()
+    {
+        var result = SurveySecRoadAllowanceSecTargetPolicy.ShouldUseSecTarget(
+            new[] { "ZERO", "SEC" },
+            hasProjectedZeroCandidate: false,
+            hasProjectedTwentyCandidate: false,
+            hasProjectedCorrectionZeroCandidate: false);
+
+        AssertEqual(true, result, nameof(TestSurveySecRoadAllowanceSecTargetPolicyAllowsPureSurveyZeroSecPair));
+    }
+
+    private static void TestSurveySecRoadAllowanceSecTargetPolicyRejectsProjectedUsecTarget()
+    {
+        var result = SurveySecRoadAllowanceSecTargetPolicy.ShouldUseSecTarget(
+            new[] { "TWENTY", "SEC" },
+            hasProjectedZeroCandidate: false,
+            hasProjectedTwentyCandidate: true,
+            hasProjectedCorrectionZeroCandidate: false);
+
+        AssertEqual(false, result, nameof(TestSurveySecRoadAllowanceSecTargetPolicyRejectsProjectedUsecTarget));
+    }
+
+    private static void TestSurveySecRoadAllowanceSecTargetPolicyRejectsBlindSecFallback()
+    {
+        var result = SurveySecRoadAllowanceSecTargetPolicy.ShouldUseSecTarget(
+            new[] { "BLIND", "SEC" },
+            hasProjectedZeroCandidate: false,
+            hasProjectedTwentyCandidate: false,
+            hasProjectedCorrectionZeroCandidate: false);
+
+        AssertEqual(false, result, nameof(TestSurveySecRoadAllowanceSecTargetPolicyRejectsBlindSecFallback));
     }
 
     private static void TestCleanupPlanMatrix()
