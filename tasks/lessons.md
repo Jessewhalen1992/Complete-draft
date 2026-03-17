@@ -390,3 +390,31 @@
 - A survey road-allowance LSD can already be correct before endpoint enforcement runs.
 - If the latest trace shows the pre-move endpoint matches the user's expected point, the fix is to preserve or SEC-snap that station, not to add another survey-specific owner.
 - For `ZERO/SEC` and `TWENTY/SEC` survey cases, prefer the live `SEC` station target over any synthetic survey anchor when no projected local ZERO/TWENTY/CORRZERO candidate exists.
+## 2026-03-16 - For unsurveyed BLIND/SEC LSD cases, do not treat frequent anchor fallback as the intended owner
+- If the user reports the correct landing is halfway between the `20.12` and `30.18` rows, the owner is a station-local midpoint between projected `BLIND` and `SEC` candidates, not the quarter anchor.
+- Repeated `fallback-anchor moved=False` logs can still hide wrong geometry if earlier stages already pinned the endpoint to the anchor.
+- In the rule-matrix, prefer a projected `BLIND/SEC` midpoint target before any anchor fallback, and keep the anchor only as the last-resort rescue path.
+## 2026-03-16 - When a blind midpoint fix records `blindSecMidpointTargets=0`, stop tuning projected boundary scans and compare against the actual blind anchor
+- The latest patched log showed `blindSecMidpointTargets=0` while the wrong point still matched the blind outer anchor exactly.
+- For unsurveyed `BLIND/SEC` cases, if the wrong endpoint equals the blind anchor, the intended half-width owner can be the midpoint between that blind anchor and the corresponding section-side anchor on the same quarter face.
+- Use the patched build log under `build/net8.0-windows` for this check; `trace-build` may still hold an older pre-fix run.
+## 2026-03-16 - In unsurveyed `BLIND/SEC` LSD cases, `BLIND` is the live 30.16 band and the midpoint companion is the projected 20.11 row
+- When the user reports a correct point about `5.03 m` inward from the blind endpoint, treat that as the midpoint between `L-USEC` (`30.16`) and `L-USEC2012` (`20.11`) at the same station.
+- Do not midpoint `BLIND/SEC` against section anchors or generic `L-SEC` fallbacks; that creates a midpoint-of-a-midpoint overshoot.
+- Guard the midpoint on a plausible `~10.05/10.06 m` blind-to-twenty companion gap before applying it.
+## 2026-03-16 - For unsurveyed `BLIND/SEC` corrections, verify whether the reported offset runs along the blind boundary or across bands before changing owner logic
+- The sec 30/31 miss looked like a `~5.03 m` half-band gap, but Python showed the vector ran almost entirely along the blind boundary tangent, not across the blind-to-twenty normal.
+- In that shape, a same-station `BLIND -> TWENTY` search can only rediscover the current endpoint or fail; the correct owner is the midpoint of the live short blind segment the endpoint already touches.
+- Before adding midpoint logic, compare the user’s expected vector against the local tangent/normal and prefer live segment-midpoint resolution over quarter-anchor fallback when the offset is tangent-aligned.
+## 2026-03-16 - For vertical `BLIND/SEC` LSD outers, a tangent-aligned `~5.03 m` miss means midpoint between boundary intersections on the blind row, not midpoint of the whole blind segment
+- The sec 30/31 runtime log kept showing `fallback-anchor` with `blindSecMidpointTargets=0` because the rule was searching the wrong geometry primitive.
+- In these cases, the correct owner is the midpoint between the current blind-row endpoint and the first inward vertical hard-boundary intersection on that blind row.
+- Do not derive this midpoint from a same-station horizontal search or from the full blind-row segment midpoint; both can preserve the wrong outer corner or overshoot badly.
+## 2026-03-16 - If the LSD rule-matrix matches every line, the generic midpoint pass never runs
+- `EnforceLsdLineEndpointsOnHardSectionBoundaries(...)` returns immediately after a successful rule-matrix pass, so any “simple midpoint of the final line” logic below it is skipped entirely.
+- If the user’s expected result is a plain final-geometry midpoint, do not keep patching the rule-matrix ladder first; add a deterministic post-rule-matrix pass for that narrow case.
+- For blind vertical LSD outers, the consistent owner is now: rule-matrix for general placement, then one final blind-boundary midpoint correction from the actual post-draw boundary segment.
+## 2026-03-16 - For AutoCAD Core Console automation, trust explicit NETLOAD and plugin completion markers over raw console exit codes
+- accoreconsole.exe /loadmodule did not register the managed ATS command in this environment, but scripted NETLOAD with SECURELOAD=0 did.
+- Core Console can still return a non-zero process code after a successful ATS batch run because AutoCAD/Map modules surface handled exceptions during shutdown.
+- For harness success, require the plugin's own ATSBUILD_XLS_BATCH exit stage: completed (ok) marker plus the exported DXF artifact; treat the raw console exit code as a warning unless those two signals are missing.

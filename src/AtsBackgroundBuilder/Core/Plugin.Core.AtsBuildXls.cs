@@ -146,7 +146,8 @@ namespace AtsBackgroundBuilder
             bool drawQuarterView,
             Action<string> setExitStage,
             Func<string> getExitStage,
-            Action<string> emitExit)
+            Action<string> emitExit,
+            Action<AtsBuildSessionContext>? onBuildCompleted = null)
         {
             if (input == null)
             {
@@ -181,6 +182,7 @@ namespace AtsBackgroundBuilder
                     return;
                 }
 
+                onBuildCompleted?.Invoke(context);
                 context.SetExitStage("completed");
                 context.EmitExit("ok");
             }

@@ -6372,3 +6372,66 @@ Regression follow-up:
 - Verification: dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore -p:OutDir=C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\artifacts\verify\WildlifeSweeps\ succeeded with 0 warnings / 0 errors. A normal Release build was blocked only because the live in\Release\net8.0-windows\WildlifeSweeps.dll is currently locked by another process.
 - Verification: targeted checks confirmed Bunny Tracks now normalizes to abbit tracks, and the lookup workbook already contains the abbit tracks -> Rabbit Tracks rule that canonicalizes to Snowshoe Hare Tracks.
 
+
+## 2026-03-16 - Make blind BLIND/SEC LSD ownership explicit
+- [x] Trace the latest BLIND/SEC fallback-anchor path and confirm it is acting as an implicit quarter-anchor owner rather than a true rescue move.
+- [x] Add a deterministic blind-owner policy so the LSD rule-matrix can choose the intended blind anchor path before the generic fallback branch.
+- [x] Keep existing station-kind behavior for non-blind and survey/correction cases while removing the normal-operation dependence on generic fallback for blind sections.
+- [x] Add decision coverage for the new blind-owner policy and its gating.
+- [x] Run decision tests and record the review notes with any residual risks.
+
+### Review
+- Root cause: the frequent BLIND/SEC fallback hits were not behaving like true rescue moves. In the latest log they were overwhelmingly source=fallback-anchor moved=False, which means the generic rule-matrix was failing to resolve a station target and then dropping into the anchor fallback just to preserve the intended blind quarter endpoint.
+- Fix: added BlindSecRoadAllowanceAnchorPolicy and routed the LSD rule-matrix through an explicit blind-owner path before the generic fallback branch. The rule-matrix now records that path separately as lind-sec-anchor, so blind sections no longer depend on the generic fallback branch during normal operation.
+- Verification: dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -p:NuGetAudit=false passed. dotnet msbuild src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:Compile -p:Configuration=Release -p:Platform=x64 -p:NuGetAudit=false -verbosity:minimal passed. A full dotnet build of the ATS solution is currently blocked only because AutoCAD is locking uild\net8.0-windows\AtsBackgroundBuilder.dll during the post-build copy step.
+- Residual risk: this change intentionally preserves blind-anchor behavior rather than replacing it with a new blind station solver. It removes dependence on the generic fallback branch and makes the owner path explicit, but if you want blind sections to resolve from live blind geometry instead of anchors, that would be the next upstream refactor.## 2026-03-16 - Restore unsurveyed BLIND/SEC LSD midpoint targeting
+- [x] Re-trace the user-reported unsurveyed blind miss and confirm the wrong landing coordinate is the old allback-anchor target, not a corrected station midpoint.
+- [x] Replace the blind anchor shortcut with a station-local BLIND/SEC midpoint target that resolves halfway between the projected 30.18 blind row and 20.12 sec row.
+- [x] Keep generic anchor fallback available only when the paired blind/sec midpoint cannot be resolved.
+- [ ] Rebuild ATS, rerun decision tests, and record the verification plus any remaining runtime checks for the user.
+
+### Review
+- Root cause: I treated the frequent BLIND/SEC anchor fallback as the intended blind owner. The user's exact coordinates showed that anchor target was still wrong for unsurveyed blind sections; those LSDs should land on the half-width midpoint between the projected blind (30.18) and sec (20.12) rows at the active station.
+- Fix: replace BlindSecRoadAllowanceAnchorPolicy with BlindSecRoadAllowanceMidpointPolicy, add a paired blind/sec midpoint resolver inside the rule-matrix, and log the successful path as lind-sec-midpoint. The generic quarter-anchor path remains only as the final fallback.
+- Verification: pending.### Verification Update
+- dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal succeeded with 0 warnings / 0 errors.
+- dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build -p:NuGetAudit=false passed.
+- Next runtime check: rerun the affected unsurveyed blind section build and confirm source=blind-sec-midpoint appears in 	race-build\net8.0-windows\AtsBackgroundBuilder.log where the old run showed source=fallback-anchor on the wrong coordinate.### Follow-up Review Update
+- New evidence from uild\net8.0-windows\AtsBackgroundBuilder.log at 2026-03-16 7:54:24 PM: the patched run did execute, but lindSecMidpointTargets=0 and the exact sec 30 miss still matched the blind anchor (318172.054,6041341.703).
+- Follow-up fix: replace the failed projected-line midpoint attempt with a deterministic midpoint between the blind outer anchor and the matching section-side anchor on the same quarter face.
+- Verification: dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal succeeded with 0 warnings / 0 errors. dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build -p:NuGetAudit=false passed.
+- Next runtime check: rerun the sec 30 blind case and confirm the newer uild\net8.0-windows\AtsBackgroundBuilder.log shows lindSecMidpointTargets > 0 and your example no longer stays on 318172.054,6041341.703.### Follow-up Review Update
+- Replaced the bad BLIND/SEC anchor-to-section midpoint with a guarded station-local midpoint between the current blind endpoint and a projected TWENTY companion target when the gap matches the expected 30.16 - 20.11 spacing.
+- Verified dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal and dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build -p:NuGetAudit=false both pass after the change.
+- Source and deployed AtsBackgroundBuilder.dll hashes match, so the next AutoCAD rerun will exercise this fix.
+- [x] Investigated sec 30/31 BLIND/SEC miss and confirmed final rule-matrix was falling back to quarter anchors because same-station BLIND targeting cannot produce the required along-boundary midpoint.
+- [x] Replaced the bogus BLIND->TWENTY midpoint attempt with a live short-blind-segment midpoint resolver in the rule-matrix so BLIND/SEC vertical LSD outers read post-cleanup blind geometry.
+- [x] Verified with `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal`, `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build -p:NuGetAudit=false`, and matching DLL hashes for src/build outputs.
+- [x] Review: The root bug was not just pass order; the final rule-matrix was using stale quarter-anchor fallback after a same-station search that can only rediscover the current blind endpoint. The fix now midpoint-snaps from the live short blind segment when BLIND/SEC applies.- [x] Re-traced the fresh 8:36 PM build log after the failed short-blind midpoint attempt and confirmed `blindSecMidpointTargets=0`; sec 30/31 were still preserving the outer blind anchor.
+- [x] Replaced the BLIND/SEC midpoint rule with an inward-boundary intersection midpoint: for vertical BLIND/SEC LSD outers, midpoint between the current blind-row anchor and the first inward vertical hard-boundary intersection on that blind row.
+- [x] Re-verified with `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal`, `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build -p:NuGetAudit=false`, and matching DLL hashes for src/build outputs.- [x] Simplified BLIND/SEC handling by removing the dead blind midpoint rule-matrix experiments and adding a deterministic post-rule-matrix blind-boundary midpoint pass for vertical LSD outers.
+- [x] Verified with `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal`, `dotnet run --project src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build -p:NuGetAudit=false`, and matching DLL hashes for src/build outputs.
+## 2026-03-16 - Add AutoCAD ATS harness
+- [x] Confirm the ATS Excel command can run non-interactively from AutoCAD Core Console with an env-provided workbook path.
+- [x] Add a batch ATS command that exports DXF after a successful build so console automation can produce reviewable geometry artifacts.
+- [x] Add helper scripts to generate ATS workbooks from JSON specs, review DXF geometry, and orchestrate an end-to-end console run.
+- [ ] Verify with solution build/tests and one dry-run harness execution against a local DWG/workbook.
+
+### Review
+- Goal: make ATS runs reproducible outside the interactive UI so we can generate a workbook, run AutoCAD on a known DWG, export DXF, and assert geometry from a script.
+- Implementation: added ATSBUILD_XLS_BATCH in the plugin, kept workbook generation/review in Python stdlib scripts, and added scripts\atsbuild_harness.ps1 to drive accoreconsole.exe, capture logs, export DXF, and optionally run DXF checks.
+- Verification: pending runtime pass.### Verification Update
+- dotnet build src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:NuGetAudit=false -v minimal compiled fresh source outputs but still failed its final copy into uild\net8.0-windows because AtsBackgroundBuilder.dll is locked by AutoCAD process 29564.
+- dotnet run --project src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build -p:NuGetAudit=false passed.
+- Smoke harness run succeeded with scripts\atsbuild_harness.ps1 -DwgPath C:\Users\jesse\OneDrive\Desktop\00666-16-PAD-R10.dwg -WorkbookPath src\AtsBackgroundBuilder\REFERENCE ONLY\ATSBUILD_Simple_Input.xlsx -OutputDir data\atsbuild-harness-smoke2; it produced rtifacts\output.dxf, captured plugin/console logs, and confirmed ATSBUILD_XLS_BATCH exit stage: completed (ok) even though AutoCAD returned a non-zero console exit code.
+- Review harness run also executed end to end with -DefaultBlindMidpoints and correctly failed the case with a JSON report at data\atsbuild-harness-smoke3\artifacts\review-report.json, proving the DXF assertion step can gate the run.
+- [x] Verify with solution build/tests and one dry-run harness execution against a local DWG/workbook.### Batch Verification Update
+- Used the reference drawing at src\AtsBackgroundBuilder\REFERENCE ONLY\test drawing.dwg and confirmed the correct ATS zone is 11; a probe zone 12 run failed because the section index files Master_Sections.index_Z12.jsonl/csv do not contain these sections.
+- Generated one workbook per range via scripts\atsbuild_generate_workbook.py from JSON specs for Twp 63 / Rge 1..12 / W6M, with a single row quarter=ALL, section blank so ATS expanded each workbook into 36 section requests.
+- Ran scripts\atsbuild_harness.ps1 sequentially for ranges 1 through 12 with -DefaultBlindMidpoints against the reference drawing and captured artifacts under data\atsbuild-twp63-r1-12-testdrawing.
+- Result: all 12 runs completed, exported DXF, and passed the blind-midpoint review (checkedBlindLines=72, lindFailures=0, lindAmbiguous=0 in every run). Summary saved to data\atsbuild-twp63-r1-12-testdrawing\summary.json.
+- Shared warning profile: each successful run still logged Import failures: 2 plus three Map 3D Importer not available warnings, but these did not block ATS completion or the geometry review.### W5 Batch Verification Update
+- Reused src\AtsBackgroundBuilder\REFERENCE ONLY\test drawing.dwg for Twp 63 / Rge 1..12 / W5M and confirmed the correct ATS zone is again 11; the zone 12 probe did not complete on this drawing.
+- Generated one workbook per range from JSON specs and ran scripts\atsbuild_harness.ps1 sequentially with -DefaultBlindMidpoints, writing artifacts under data\atsbuild-twp63-r1-12-w5-testdrawing.
+- Result: all 12 W5 runs completed, exported DXF, and passed the blind-midpoint review. Review coverage varied by range (checkedBlindLines =  , 54, 60, or 72 depending on the geometry present), but lindFailures=0 and lindAmbiguous=0 in every run. Summary saved to data\atsbuild-twp63-r1-12-w5-testdrawing\summary.json.
+- Shared warning profile: each W5 run also logged Import failures: 2 plus three Map 3D Importer not available warnings, matching the W6 run behavior and not blocking ATS completion or review success.
