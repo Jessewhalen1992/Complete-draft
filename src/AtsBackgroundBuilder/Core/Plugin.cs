@@ -1545,6 +1545,9 @@ namespace AtsBackgroundBuilder
                 RunSurfaceImpact(database, editor, logger, input);
             }
 
+            setExitStage("aligned_dimension_text_finalize");
+            LabelPlacer.AlignRenderedAlignedDimensionTextsToLeaders(database, logger);
+
             setExitStage("summary");
             EmitBuildSummary(editor, logger, result);
         }

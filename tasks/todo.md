@@ -6434,4 +6434,12 @@ Regression follow-up:
 - Reused src\AtsBackgroundBuilder\REFERENCE ONLY\test drawing.dwg for Twp 63 / Rge 1..12 / W5M and confirmed the correct ATS zone is again 11; the zone 12 probe did not complete on this drawing.
 - Generated one workbook per range from JSON specs and ran scripts\atsbuild_harness.ps1 sequentially with -DefaultBlindMidpoints, writing artifacts under data\atsbuild-twp63-r1-12-w5-testdrawing.
 - Result: all 12 W5 runs completed, exported DXF, and passed the blind-midpoint review. Review coverage varied by range (checkedBlindLines =  , 54, 60, or 72 depending on the geometry present), but lindFailures=0 and lindAmbiguous=0 in every run. Summary saved to data\atsbuild-twp63-r1-12-w5-testdrawing\summary.json.
-- Shared warning profile: each W5 run also logged Import failures: 2 plus three Map 3D Importer not available warnings, matching the W6 run behavior and not blocking ATS completion or review success.
+- Shared warning profile: each W5 run also logged Import failures: 2 plus three Map 3D Importer not available warnings, matching the W6 run behavior and not blocking ATS completion or review success.- 2026-03-17: Full AutoCAD aligned-dimension pass for N.W. 8-57-18-5
+  - Added leader-based rendered aligned-dimension text alignment in LabelPlacer and a final ligned_dimension_text_finalize pass in ATSBUILD.
+  - Verified with full AutoCAD/Map 3D batch on C:\AtsHarness\manual1: imported 17 dispositions, placed 13 labels, exported DXF successfully.
+  - Runtime log confirmed ATSBUILD_XLS_BATCH stage: aligned_dimension_text_finalize and Aligned dimension rendered-text pass: inspected=9, adjusted=0 on the fresh rebuilt DLL (2026-03-17 7:26:48 PM).
+  - Residual note: raw DXF anonymous-block parsing does not mirror AutoCAD's runtime rotation state one-to-one for aligned dimensions, so runtime verification is the trusted source for this case.
+- 2026-03-17: Added FullAutoCAD mode to scripts/atsbuild_harness.ps1.
+  - Uses a no-space launcher workspace under C:\AtsHarness, copies the DWG/workbook there, and launches cad.exe /b against the ATS batch command.
+  - Auto-detects ATSBUILD_XLS_BATCH completion from the appended plugin log, copies the DXF back to the artifact folder, and force-closes the GUI worker only after a successful batch or timeout.
+  - Verified with N.W. 8-57-18-5 at data\atsbuild-harness-fullacad-smoke-nw8-57-18-5-rerun: batch completed, DXF exported, launcher workspace cleaned up, ligned_dimension_text_finalize ran, Labels placed: 13, Imported dispositions: 17.

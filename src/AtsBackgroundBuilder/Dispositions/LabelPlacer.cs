@@ -998,6 +998,9 @@ namespace AtsBackgroundBuilder.Dispositions
                 // leave style/default placement if the API does not expose text override
             }
 
+            TryRecomputeAlignedDimensionBlock(dimension);
+            TryAlignDimensionTextToRenderedLeader(tr, dimension);
+
             collisions?.Add(textBox);
             return dimension;
         }
@@ -1652,6 +1655,240 @@ namespace AtsBackgroundBuilder.Dispositions
             {
                 // best effort only
             }
+        }
+
+        internal static int AlignRenderedAlignedDimensionTextsToLeaders(Database database, Logger logger)
+        {
+            if (database == null)
+            {
+                return 0;
+            }
+
+            try
+            {
+                using (var tr = database.TransactionManager.StartTransaction())
+                {
+                    var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                    var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                    var inspected = 0;
+                    var adjusted = 0;
+
+                    foreach (ObjectId entityId in modelSpace)
+                    {
+                        if (!(tr.GetObject(entityId, OpenMode.ForRead, false) is AlignedDimension dimension) || dimension.IsErased)
+                        {
+                            continue;
+                        }
+
+                        inspected++;
+                        TryRecomputeAlignedDimensionBlock(dimension);
+                        if (!TryResolveAlignedDimensionTextRotationFromRenderedLeader(tr, dimension, out var rotation))
+                        {
+                            continue;
+                        }
+
+                        if (TryApplyAlignedDimensionTextRotationToRenderedBlock(tr, dimension, rotation))
+                        {
+                            adjusted++;
+                        }
+                    }
+
+                    tr.Commit();
+                    logger?.WriteLine($"Aligned dimension rendered-text pass: inspected={inspected}, adjusted={adjusted}.");
+                    return adjusted;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("Aligned dimension rendered-text pass failed: " + ex.Message);
+                return 0;
+            }
+        }
+
+        private static void TryAlignDimensionTextToRenderedLeader(Transaction tr, AlignedDimension dimension)
+        {
+            if (tr == null || dimension == null)
+            {
+                return;
+            }
+
+            try
+            {
+                if (!TryResolveAlignedDimensionTextRotationFromRenderedLeader(tr, dimension, out var rotation))
+                {
+                    return;
+                }
+
+                try
+                {
+                    dimension.TextRotation = rotation;
+                }
+                catch
+                {
+                    // Some AutoCAD builds ignore the entity-level override; the rendered block edit below is the source of truth.
+                }
+
+                TryApplyAlignedDimensionTextRotationToRenderedBlock(tr, dimension, rotation);
+                dimension.RecordGraphicsModified(true);
+            }
+            catch
+            {
+                // best effort only
+            }
+        }
+
+        private static bool TryResolveAlignedDimensionTextRotationFromRenderedLeader(
+            Transaction tr,
+            AlignedDimension dimension,
+            out double rotation)
+        {
+            rotation = 0.0;
+            if (tr == null || dimension == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                if (!TryGetDimensionTextPoint(dimension, out var textPoint))
+                {
+                    return false;
+                }
+
+                var dimBlockId = dimension.DimBlockId;
+                if (dimBlockId.IsNull || !dimBlockId.IsValid)
+                {
+                    return false;
+                }
+
+                if (!(tr.GetObject(dimBlockId, OpenMode.ForRead, false) is BlockTableRecord dimBlock))
+                {
+                    return false;
+                }
+
+                var bestDistance = double.MaxValue;
+                var bestAngle = 0.0;
+
+                foreach (ObjectId entityId in dimBlock)
+                {
+                    if (!(tr.GetObject(entityId, OpenMode.ForRead, false) is Line line))
+                    {
+                        continue;
+                    }
+
+                    var start = line.StartPoint;
+                    var end = line.EndPoint;
+                    var lineVector = end - start;
+                    if (lineVector.Length <= 1e-6)
+                    {
+                        continue;
+                    }
+
+                    var startDistance = textPoint.GetDistanceTo(new Point2d(start.X, start.Y));
+                    var endDistance = textPoint.GetDistanceTo(new Point2d(end.X, end.Y));
+                    Point3d nearPoint;
+                    Point3d farPoint;
+                    double nearDistance;
+                    if (startDistance <= endDistance)
+                    {
+                        nearPoint = start;
+                        farPoint = end;
+                        nearDistance = startDistance;
+                    }
+                    else
+                    {
+                        nearPoint = end;
+                        farPoint = start;
+                        nearDistance = endDistance;
+                    }
+
+                    if (nearDistance >= bestDistance)
+                    {
+                        continue;
+                    }
+
+                    bestDistance = nearDistance;
+                    bestAngle = Math.Atan2(farPoint.Y - nearPoint.Y, farPoint.X - nearPoint.X);
+                }
+
+                if (bestDistance == double.MaxValue)
+                {
+                    return false;
+                }
+
+                rotation = NormalizeAlignedDimensionTextRotation(bestAngle);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static double NormalizeAlignedDimensionTextRotation(double angle)
+        {
+            while (angle <= -Math.PI * 0.5)
+            {
+                angle += Math.PI;
+            }
+
+            while (angle > Math.PI * 0.5)
+            {
+                angle -= Math.PI;
+            }
+
+            return angle;
+        }
+
+        private static bool TryApplyAlignedDimensionTextRotationToRenderedBlock(
+            Transaction tr,
+            AlignedDimension dimension,
+            double rotation)
+        {
+            var adjusted = false;
+            if (tr == null || dimension == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var dimBlockId = dimension.DimBlockId;
+                if (dimBlockId.IsNull || !dimBlockId.IsValid)
+                {
+                    return false;
+                }
+
+                if (!(tr.GetObject(dimBlockId, OpenMode.ForRead, false) is BlockTableRecord dimBlock))
+                {
+                    return false;
+                }
+
+                foreach (ObjectId entityId in dimBlock)
+                {
+                    if (!(tr.GetObject(entityId, OpenMode.ForWrite, false) is MText mtext))
+                    {
+                        continue;
+                    }
+
+                    var currentRotation = NormalizeAlignedDimensionTextRotation(mtext.Rotation);
+                    var delta = NormalizeAlignedDimensionTextRotation(currentRotation - rotation);
+                    if (Math.Abs(delta) <= 1e-4)
+                    {
+                        continue;
+                    }
+
+                    mtext.Rotation = rotation;
+                    mtext.RecordGraphicsModified(true);
+                    adjusted = true;
+                }
+            }
+            catch
+            {
+                // best effort only
+            }
+
+            return adjusted;
         }
 
         private static bool LooksLikeDispositionLabel(string labelText)
