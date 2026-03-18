@@ -405,7 +405,7 @@ namespace AtsBackgroundBuilder.Dispositions
                                     }
 
                                     if (!GeometryUtils.IsPointInsidePolyline(quarter.Polyline, measurementTarget) ||
-                                        !GeometryUtils.IsPointInsidePolyline(polyForWidth, measurementTarget))
+                                             !GeometryUtils.IsPointInsidePolyline(polyForWidth, measurementTarget))
                                     {
                                         if (!TryResolveLocalWidthMeasurementTarget(
                                                 quarter.Polyline,
@@ -928,7 +928,7 @@ namespace AtsBackgroundBuilder.Dispositions
             }
 
             var measuredLineGap = Math.Max(textHeight * 0.9, 2.0);
-            if (!HasDimensionTextClearanceFromMeasuredLine(widthSource, textPoint, dimText, textHeight, measuredLineGap))
+            if (!HasDimensionTextClearanceFromMeasuredLine(widthSource, textPoint, dimText, textHeight, measuredLineGap, spanUnit))
             {
                 return null;
             }
@@ -961,10 +961,14 @@ namespace AtsBackgroundBuilder.Dispositions
                     ? maxS + edgeGap
                     : minS - edgeGap;
             }
+            var projectedDimAlong = ClampDimensionLineAlongOffset(
+                (textPoint - mid).DotProduct(spanUnit),
+                span.Length,
+                Math.Max(textHeight * 0.25, 1.0));
 
             var dimLinePoint = new Point3d(
-                mid.X + normal.X * dimLineOffset,
-                mid.Y + normal.Y * dimLineOffset,
+                mid.X + spanUnit.X * projectedDimAlong + normal.X * dimLineOffset,
+                mid.Y + spanUnit.Y * projectedDimAlong + normal.Y * dimLineOffset,
                 0.0);
             var dimension = new AlignedDimension(p1, p2, dimLinePoint, dimText, ObjectId.Null)
             {
@@ -992,14 +996,16 @@ namespace AtsBackgroundBuilder.Dispositions
             {
                 dimension.TextPosition = new Point3d(textPoint.X, textPoint.Y, 0.0);
                 TrySetUsingDefaultTextPosition(dimension, false);
+                TryProjectAlignedDimensionLinePointUnderText(dimension);
             }
             catch
             {
-                // leave style/default placement if the API does not expose text override
+                // Leave native placement if explicit text override is unavailable on this build.
             }
 
+            TrySetDimensionTextMovementMode(dimension, 0);
             TryRecomputeAlignedDimensionBlock(dimension);
-            TryAlignDimensionTextToRenderedLeader(tr, dimension);
+            TryNormalizeAlignedDimensionTextOrientation(dimension);
 
             collisions?.Add(textBox);
             return dimension;
@@ -1535,6 +1541,55 @@ namespace AtsBackgroundBuilder.Dispositions
             }
         }
 
+        private static void TryProjectAlignedDimensionLinePointUnderText(AlignedDimension dimension)
+        {
+            if (dimension == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var a = dimension.XLine1Point;
+                var b = dimension.XLine2Point;
+                var span = new Vector2d(b.X - a.X, b.Y - a.Y);
+                var spanLength = span.Length;
+                if (spanLength <= 1e-6 || !TryGetAlignedDimensionLinePoint(dimension, out var currentDimLinePoint))
+                {
+                    return;
+                }
+
+                if (!TryGetDimensionTextPoint(dimension, out var textPoint))
+                {
+                    return;
+                }
+
+                var spanUnit = span / spanLength;
+                var normal = new Vector2d(-spanUnit.Y, spanUnit.X);
+                var mid = new Point2d((a.X + b.X) * 0.5, (a.Y + b.Y) * 0.5);
+                var requested = textPoint - mid;
+                var textAlong = requested.DotProduct(spanUnit);
+                var currentRequest = new Point2d(currentDimLinePoint.X, currentDimLinePoint.Y) - mid;
+                var dimOffset = currentRequest.DotProduct(normal);
+                var projectedAlong = ClampDimensionLineAlongOffset(
+                    textAlong,
+                    spanLength,
+                    Math.Max(ResolveDimensionTextHeight(dimension) * 0.25, 1.0));
+
+                var projectedDimLinePoint = new Point3d(
+                    mid.X + spanUnit.X * projectedAlong + normal.X * dimOffset,
+                    mid.Y + spanUnit.Y * projectedAlong + normal.Y * dimOffset,
+                    0.0);
+                TrySetAlignedDimensionLinePoint(dimension, projectedDimLinePoint);
+                TryRecomputeAlignedDimensionBlock(dimension);
+                dimension.RecordGraphicsModified(true);
+            }
+            catch
+            {
+                // best effort only
+            }
+        }
+
         private static double ResolveDimensionTextHeight(Dimension dimension)
         {
             if (dimension == null)
@@ -1640,6 +1695,17 @@ namespace AtsBackgroundBuilder.Dispositions
 
             try
             {
+                var generateLayout = dimension.GetType().GetMethod(
+                    "GenerateLayout",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    null,
+                    Type.EmptyTypes,
+                    null);
+                if (generateLayout != null)
+                {
+                    generateLayout.Invoke(dimension, null);
+                }
+
                 var method = dimension.GetType().GetMethod(
                     "RecomputeDimensionBlock",
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
@@ -1669,80 +1735,54 @@ namespace AtsBackgroundBuilder.Dispositions
                 using (var tr = database.TransactionManager.StartTransaction())
                 {
                     var blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
-                    var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                    var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                     var inspected = 0;
-                    var adjusted = 0;
+                    var movementAdjusted = 0;
+                    var jogTightened = 0;
+                    var rotationAdjusted = 0;
 
                     foreach (ObjectId entityId in modelSpace)
                     {
-                        if (!(tr.GetObject(entityId, OpenMode.ForRead, false) is AlignedDimension dimension) || dimension.IsErased)
+                        if (!(tr.GetObject(entityId, OpenMode.ForWrite, false) is AlignedDimension dimension) || dimension.IsErased)
                         {
                             continue;
                         }
 
                         inspected++;
-                        TryRecomputeAlignedDimensionBlock(dimension);
-                        if (!TryResolveAlignedDimensionTextRotationFromRenderedLeader(tr, dimension, out var rotation))
+                        if (TrySetDimensionTextMovementMode(dimension, 0))
                         {
-                            continue;
+                            movementAdjusted++;
                         }
 
-                        if (TryApplyAlignedDimensionTextRotationToRenderedBlock(tr, dimension, rotation))
+                        if (TryTightenOverlongAlignedDimensionJog(tr, dimension))
                         {
-                            adjusted++;
+                            jogTightened++;
+                        }
+
+                        TryProjectAlignedDimensionLinePointUnderText(dimension);
+                        if (TryNormalizeAlignedDimensionTextOrientation(dimension))
+                        {
+                            rotationAdjusted++;
                         }
                     }
 
                     tr.Commit();
-                    logger?.WriteLine($"Aligned dimension rendered-text pass: inspected={inspected}, adjusted={adjusted}.");
-                    return adjusted;
+                    logger?.WriteLine(
+                        $"Aligned dimension finalize pass: inspected={inspected}, movementAdjusted={movementAdjusted}, helperLinesAdded=0, jogTightened={jogTightened}, rotationAdjusted={rotationAdjusted}.");
+                    return movementAdjusted + jogTightened + rotationAdjusted;
                 }
             }
             catch (System.Exception ex)
             {
-                logger?.WriteLine("Aligned dimension rendered-text pass failed: " + ex.Message);
+                logger?.WriteLine("Aligned dimension finalize pass failed: " + ex.Message);
                 return 0;
             }
         }
 
-        private static void TryAlignDimensionTextToRenderedLeader(Transaction tr, AlignedDimension dimension)
-        {
-            if (tr == null || dimension == null)
-            {
-                return;
-            }
-
-            try
-            {
-                if (!TryResolveAlignedDimensionTextRotationFromRenderedLeader(tr, dimension, out var rotation))
-                {
-                    return;
-                }
-
-                try
-                {
-                    dimension.TextRotation = rotation;
-                }
-                catch
-                {
-                    // Some AutoCAD builds ignore the entity-level override; the rendered block edit below is the source of truth.
-                }
-
-                TryApplyAlignedDimensionTextRotationToRenderedBlock(tr, dimension, rotation);
-                dimension.RecordGraphicsModified(true);
-            }
-            catch
-            {
-                // best effort only
-            }
-        }
-
-        private static bool TryResolveAlignedDimensionTextRotationFromRenderedLeader(
+        private static bool TryTightenOverlongAlignedDimensionJog(
             Transaction tr,
-            AlignedDimension dimension,
-            out double rotation)
+            AlignedDimension dimension)
         {
-            rotation = 0.0;
             if (tr == null || dimension == null)
             {
                 return false;
@@ -1750,11 +1790,92 @@ namespace AtsBackgroundBuilder.Dispositions
 
             try
             {
-                if (!TryGetDimensionTextPoint(dimension, out var textPoint))
+                var a = dimension.XLine1Point;
+                var b = dimension.XLine2Point;
+                var span = new Vector2d(b.X - a.X, b.Y - a.Y);
+                var spanLength = span.Length;
+                if (spanLength <= 1e-6 ||
+                    !TryGetDimensionTextPoint(dimension, out var textPoint))
                 {
                     return false;
                 }
 
+                var spanUnit = span / spanLength;
+                var normal = new Vector2d(-spanUnit.Y, spanUnit.X);
+                var mid = new Point2d((a.X + b.X) * 0.5, (a.Y + b.Y) * 0.5);
+
+                var textHeight = ResolveDimensionTextHeight(dimension);
+                var maxRenderedLineLength = Math.Max(textHeight * 3.0, spanLength * 2.0);
+                var maxAllowedAlong = Math.Max(textHeight * 5.0, spanLength * 4.0);
+                var adjusted = false;
+
+                for (var attempt = 0; attempt < 6; attempt++)
+                {
+                    TryRecomputeAlignedDimensionBlock(dimension);
+                    if (!TryGetRenderedAlignedDimensionMaxLineLength(tr, dimension, out var currentMaxLineLength))
+                    {
+                        break;
+                    }
+
+                    if (!TryGetDimensionTextPoint(dimension, out textPoint))
+                    {
+                        break;
+                    }
+
+                    var requested = textPoint - mid;
+                    var textAlong = requested.DotProduct(spanUnit);
+                    var textNormal = requested.DotProduct(normal);
+                    if (currentMaxLineLength <= maxRenderedLineLength && Math.Abs(textAlong) <= maxAllowedAlong)
+                    {
+                        break;
+                    }
+
+                    if (Math.Abs(textAlong) <= spanLength * 1.5)
+                    {
+                        break;
+                    }
+
+                    var tightenedAlong = textAlong * 0.6;
+                    if (Math.Abs(tightenedAlong - textAlong) < 0.25)
+                    {
+                        break;
+                    }
+
+                    dimension.TextPosition = new Point3d(
+                        mid.X + spanUnit.X * tightenedAlong + normal.X * textNormal,
+                        mid.Y + spanUnit.Y * tightenedAlong + normal.Y * textNormal,
+                        0.0);
+                    TrySetUsingDefaultTextPosition(dimension, false);
+                    dimension.RecordGraphicsModified(true);
+                    adjusted = true;
+                }
+
+                if (adjusted)
+                {
+                    TryRecomputeAlignedDimensionBlock(dimension);
+                }
+
+                return adjusted;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryGetRenderedAlignedDimensionMaxLineLength(
+            Transaction tr,
+            AlignedDimension dimension,
+            out double maxLineLength)
+        {
+            maxLineLength = 0.0;
+            if (tr == null || dimension == null)
+            {
+                return false;
+            }
+
+            try
+            {
                 var dimBlockId = dimension.DimBlockId;
                 if (dimBlockId.IsNull || !dimBlockId.IsValid)
                 {
@@ -1766,9 +1887,7 @@ namespace AtsBackgroundBuilder.Dispositions
                     return false;
                 }
 
-                var bestDistance = double.MaxValue;
-                var bestAngle = 0.0;
-
+                var foundLine = false;
                 foreach (ObjectId entityId in dimBlock)
                 {
                     if (!(tr.GetObject(entityId, OpenMode.ForRead, false) is Line line))
@@ -1776,47 +1895,82 @@ namespace AtsBackgroundBuilder.Dispositions
                         continue;
                     }
 
-                    var start = line.StartPoint;
-                    var end = line.EndPoint;
-                    var lineVector = end - start;
-                    if (lineVector.Length <= 1e-6)
+                    foundLine = true;
+                    var length = line.StartPoint.DistanceTo(line.EndPoint);
+                    if (length > maxLineLength)
                     {
-                        continue;
+                        maxLineLength = length;
                     }
-
-                    var startDistance = textPoint.GetDistanceTo(new Point2d(start.X, start.Y));
-                    var endDistance = textPoint.GetDistanceTo(new Point2d(end.X, end.Y));
-                    Point3d nearPoint;
-                    Point3d farPoint;
-                    double nearDistance;
-                    if (startDistance <= endDistance)
-                    {
-                        nearPoint = start;
-                        farPoint = end;
-                        nearDistance = startDistance;
-                    }
-                    else
-                    {
-                        nearPoint = end;
-                        farPoint = start;
-                        nearDistance = endDistance;
-                    }
-
-                    if (nearDistance >= bestDistance)
-                    {
-                        continue;
-                    }
-
-                    bestDistance = nearDistance;
-                    bestAngle = Math.Atan2(farPoint.Y - nearPoint.Y, farPoint.X - nearPoint.X);
                 }
 
-                if (bestDistance == double.MaxValue)
+                return foundLine;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TrySetDimensionTextMovementMode(AlignedDimension dimension, int expectedMode)
+        {
+            if (dimension == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var dimensionType = dimension.GetType();
+                var property =
+                    dimensionType.GetProperty("TextMovement", BindingFlags.Instance | BindingFlags.Public) ??
+                    dimensionType.GetProperty("Dimtmove", BindingFlags.Instance | BindingFlags.Public);
+                if (property == null || !property.CanWrite)
                 {
                     return false;
                 }
 
-                rotation = NormalizeAlignedDimensionTextRotation(bestAngle);
+                var currentValue = property.CanRead
+                    ? property.GetValue(dimension, null)
+                    : null;
+                var currentNumeric = currentValue == null
+                    ? int.MinValue
+                    : Convert.ToInt32(currentValue);
+                if (currentNumeric == expectedMode)
+                {
+                    return false;
+                }
+
+                var propertyValue = property.PropertyType.IsEnum
+                    ? Enum.ToObject(property.PropertyType, expectedMode)
+                    : Convert.ChangeType(expectedMode, property.PropertyType);
+                property.SetValue(dimension, propertyValue, null);
+                TryRecomputeAlignedDimensionBlock(dimension);
+                dimension.RecordGraphicsModified(true);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryNormalizeAlignedDimensionTextOrientation(AlignedDimension dimension)
+        {
+            if (dimension == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var currentRotation = NormalizeAlignedDimensionTextRotation(dimension.TextRotation);
+                if (Math.Abs(currentRotation) <= 1e-4)
+                {
+                    return false;
+                }
+
+                dimension.TextRotation = 0.0;
+                dimension.RecordGraphicsModified(true);
                 return true;
             }
             catch
@@ -1838,57 +1992,6 @@ namespace AtsBackgroundBuilder.Dispositions
             }
 
             return angle;
-        }
-
-        private static bool TryApplyAlignedDimensionTextRotationToRenderedBlock(
-            Transaction tr,
-            AlignedDimension dimension,
-            double rotation)
-        {
-            var adjusted = false;
-            if (tr == null || dimension == null)
-            {
-                return false;
-            }
-
-            try
-            {
-                var dimBlockId = dimension.DimBlockId;
-                if (dimBlockId.IsNull || !dimBlockId.IsValid)
-                {
-                    return false;
-                }
-
-                if (!(tr.GetObject(dimBlockId, OpenMode.ForRead, false) is BlockTableRecord dimBlock))
-                {
-                    return false;
-                }
-
-                foreach (ObjectId entityId in dimBlock)
-                {
-                    if (!(tr.GetObject(entityId, OpenMode.ForWrite, false) is MText mtext))
-                    {
-                        continue;
-                    }
-
-                    var currentRotation = NormalizeAlignedDimensionTextRotation(mtext.Rotation);
-                    var delta = NormalizeAlignedDimensionTextRotation(currentRotation - rotation);
-                    if (Math.Abs(delta) <= 1e-4)
-                    {
-                        continue;
-                    }
-
-                    mtext.Rotation = rotation;
-                    mtext.RecordGraphicsModified(true);
-                    adjusted = true;
-                }
-            }
-            catch
-            {
-                // best effort only
-            }
-
-            return adjusted;
         }
 
         private static bool LooksLikeDispositionLabel(string labelText)
@@ -1987,27 +2090,7 @@ namespace AtsBackgroundBuilder.Dispositions
             Vector2d spanUnit,
             double pad)
         {
-            if (textHeight <= 0.0)
-            {
-                textHeight = 10.0;
-            }
-
-            var lines = SplitLabelLines(text);
-            var lineCount = Math.Max(1, lines.Count);
-            var maxChars = Math.Max(1, lines.Max(s => Math.Max(1, s.Length)));
-            var width = Math.Max(textHeight * 2.0, maxChars * textHeight * 0.62);
-            var height = lineCount * textHeight * 1.35;
-
-            var c = Math.Abs(spanUnit.X);
-            var s = Math.Abs(spanUnit.Y);
-            var halfX = (width * 0.5 * c) + (height * 0.5 * s) + pad;
-            var halfY = (width * 0.5 * s) + (height * 0.5 * c) + pad;
-
-            return new Aabb2d(
-                center.X - halfX,
-                center.Y - halfY,
-                center.X + halfX,
-                center.Y + halfY);
+            return EstimateCenteredTextBox(center, text, textHeight, pad);
         }
 
         private static double EstimateDimensionTextNormalHalfExtent(
@@ -2015,15 +2098,17 @@ namespace AtsBackgroundBuilder.Dispositions
             double textHeight,
             double pad)
         {
-            if (textHeight <= 0.0)
-            {
-                textHeight = 10.0;
-            }
+            return EstimateDimensionTextNormalHalfExtent(text, textHeight, pad, Vector2d.XAxis);
+        }
 
-            var lines = SplitLabelLines(text);
-            var lineCount = Math.Max(1, lines.Count);
-            var height = lineCount * textHeight * 1.35;
-            return (height * 0.5) + pad;
+        private static double EstimateDimensionTextNormalHalfExtent(
+            string text,
+            double textHeight,
+            double pad,
+            Vector2d spanUnit)
+        {
+            EstimateDimensionTextProjectedHalfExtents(text, textHeight, pad, spanUnit, out _, out var halfNormal);
+            return halfNormal;
         }
 
         private static double EstimateDimensionTextAlongHalfExtent(
@@ -2031,15 +2116,51 @@ namespace AtsBackgroundBuilder.Dispositions
             double textHeight,
             double pad)
         {
+            return EstimateDimensionTextAlongHalfExtent(text, textHeight, pad, Vector2d.XAxis);
+        }
+
+        private static double EstimateDimensionTextAlongHalfExtent(
+            string text,
+            double textHeight,
+            double pad,
+            Vector2d spanUnit)
+        {
+            EstimateDimensionTextProjectedHalfExtents(text, textHeight, pad, spanUnit, out var halfAlong, out _);
+            return halfAlong;
+        }
+
+        private static void EstimateDimensionTextProjectedHalfExtents(
+            string text,
+            double textHeight,
+            double pad,
+            Vector2d spanUnit,
+            out double halfAlong,
+            out double halfNormal)
+        {
             if (textHeight <= 0.0)
             {
                 textHeight = 10.0;
             }
 
             var lines = SplitLabelLines(text);
+            var lineCount = Math.Max(1, lines.Count);
             var maxChars = Math.Max(1, lines.Max(s => Math.Max(1, s.Length)));
-            var width = Math.Max(textHeight * 2.0, maxChars * textHeight * 0.62);
-            return (width * 0.5) + pad;
+            var width = Math.Max(textHeight * 2.0, maxChars * textHeight * 0.62) + (pad * 2.0);
+            var height = (lineCount * textHeight * 1.35) + (pad * 2.0);
+
+            if (spanUnit.Length <= 1e-6)
+            {
+                spanUnit = Vector2d.XAxis;
+            }
+            else
+            {
+                spanUnit = spanUnit.GetNormal();
+            }
+
+            var c = Math.Abs(spanUnit.X);
+            var s = Math.Abs(spanUnit.Y);
+            halfAlong = (width * 0.5 * c) + (height * 0.5 * s);
+            halfNormal = (width * 0.5 * s) + (height * 0.5 * c);
         }
 
         private static double ClampDimensionTextAlongOffset(
@@ -2075,12 +2196,42 @@ namespace AtsBackgroundBuilder.Dispositions
             return requestedAlong;
         }
 
+        private static double ClampDimensionLineAlongOffset(
+            double requestedAlong,
+            double spanLength,
+            double margin)
+        {
+            if (spanLength <= 1e-6)
+            {
+                return 0.0;
+            }
+
+            var maxAlong = Math.Max(0.0, (spanLength * 0.5) - Math.Max(margin, 0.0));
+            if (maxAlong <= 1e-6)
+            {
+                return 0.0;
+            }
+
+            if (requestedAlong > maxAlong)
+            {
+                return maxAlong;
+            }
+
+            if (requestedAlong < -maxAlong)
+            {
+                return -maxAlong;
+            }
+
+            return requestedAlong;
+        }
+
         private static bool HasDimensionTextClearanceFromMeasuredLine(
             Polyline widthSource,
             Point2d textPoint,
             string dimText,
             double textHeight,
-            double extraGap)
+            double extraGap,
+            Vector2d spanUnit)
         {
             if (widthSource == null)
             {
@@ -2088,7 +2239,7 @@ namespace AtsBackgroundBuilder.Dispositions
             }
 
             var requiredCenterClearance =
-                EstimateDimensionTextNormalHalfExtent(dimText, textHeight, textHeight * 0.35) + extraGap;
+                EstimateDimensionTextNormalHalfExtent(dimText, textHeight, textHeight * 0.35, spanUnit) + extraGap;
             var actualClearance = DistanceToPolyline(widthSource, new Point3d(textPoint.X, textPoint.Y, 0.0));
             return actualClearance >= requiredCenterClearance;
         }
@@ -2364,12 +2515,18 @@ namespace AtsBackgroundBuilder.Dispositions
             var dimText = ConvertLabelTextForDimension(labelText);
             var measuredLineGap = Math.Max(textHeight * 0.9, 2.0);
             var outsideCenterClearance =
-                EstimateDimensionTextNormalHalfExtent(dimText, textHeight, textHeight * 0.35) + measuredLineGap;
+                EstimateDimensionTextNormalHalfExtent(dimText, textHeight, textHeight * 0.35, spanUnit) + measuredLineGap;
             var insideCenterClearance =
-                EstimateDimensionTextNormalHalfExtent(dimText, textHeight, textHeight * 0.35) + Math.Max(textHeight * 0.35, 1.0);
+                EstimateDimensionTextNormalHalfExtent(dimText, textHeight, textHeight * 0.35, spanUnit) + Math.Max(textHeight * 0.35, 1.0);
             var laneStep = Math.Max(textHeight * 1.5, 4.0);
             var spanLength = a2d.GetDistanceTo(b2d);
             var alongStep = Math.Max(spanLength * 0.15, textHeight * 2.0);
+            var preferredAlong = ClampDimensionTextAlongOffset(
+                (seedPoint - mid).DotProduct(spanUnit),
+                spanLength,
+                dimText,
+                textHeight,
+                textHeight * 0.35);
             var alongOffsets = new[]
             {
                 0.0,
@@ -2378,7 +2535,15 @@ namespace AtsBackgroundBuilder.Dispositions
                 alongStep * 2.0,
                 -alongStep * 2.0,
                 alongStep * 3.0,
-                -alongStep * 3.0
+                -alongStep * 3.0,
+                alongStep * 4.0,
+                -alongStep * 4.0,
+                alongStep * 5.0,
+                -alongStep * 5.0,
+                alongStep * 6.0,
+                -alongStep * 6.0,
+                alongStep * 7.0,
+                -alongStep * 7.0
             };
 
             IEnumerable<double> BuildOffsets(double edge, double sign)
@@ -2387,14 +2552,18 @@ namespace AtsBackgroundBuilder.Dispositions
                 yield return edge + sign * (outsideCenterClearance + laneStep);
                 yield return edge + sign * (outsideCenterClearance + laneStep * 2.0);
                 yield return edge + sign * (outsideCenterClearance + laneStep * 3.0);
+                yield return edge + sign * (outsideCenterClearance + laneStep * 4.0);
+                yield return edge + sign * (outsideCenterClearance + laneStep * 5.0);
                 yield return edge - sign * insideCenterClearance;
                 yield return edge - sign * (insideCenterClearance + laneStep);
+                yield return edge - sign * (insideCenterClearance + laneStep * 2.0);
                 yield return 0.0;
             }
 
-            var normalOffsets = preferredSign >= 0.0
+            var normalOffsets = (preferredSign >= 0.0
                 ? BuildOffsets(maxS, +1.0).Concat(BuildOffsets(minS, -1.0))
-                : BuildOffsets(minS, -1.0).Concat(BuildOffsets(maxS, +1.0));
+                : BuildOffsets(minS, -1.0).Concat(BuildOffsets(maxS, +1.0)))
+                .ToList();
 
             var ranked = new List<DimensionTextCandidate>();
 
@@ -2422,7 +2591,7 @@ namespace AtsBackgroundBuilder.Dispositions
                         continue;
                     }
 
-                    if (!HasDimensionTextClearanceFromMeasuredLine(widthSource, textPoint, dimText, textHeight, measuredLineGap))
+                    if (!HasDimensionTextClearanceFromMeasuredLine(widthSource, textPoint, dimText, textHeight, measuredLineGap, spanUnit))
                     {
                         continue;
                     }
@@ -2441,13 +2610,20 @@ namespace AtsBackgroundBuilder.Dispositions
                         allDispositions,
                         currentDisposition);
                     var insideDisposition = GeometryUtils.IsPointInsidePolyline(widthSource, textPoint);
-
+                    var alongDrift = Math.Abs(along - preferredAlong);
+                    var midpointDrift = Math.Abs(along);
+                    var textDistance = textPoint.GetDistanceTo(mid);
+                    var longLeaderThreshold = Math.Max(textHeight * 5.0, spanLength * 3.0);
+                    var longLeaderPenalty = Math.Max(0.0, textDistance - longLeaderThreshold);
                     var score =
                         overlapArea * 1000000.0 +
                         lineworkOverlap * 10000.0 +
                         crowdedness * 500.0 +
                         (insideDisposition ? textHeight * 8.0 : 0.0) +
-                        textPoint.GetDistanceTo(mid);
+                        (alongDrift * 4.0) +
+                        (midpointDrift * 0.5) +
+                        (textDistance * 1.5) +
+                        (longLeaderPenalty * 10.0);
 
                     ranked.Add(new DimensionTextCandidate(textPoint, normalOffset, score));
                 }
@@ -2458,6 +2634,7 @@ namespace AtsBackgroundBuilder.Dispositions
                 yield return item;
             }
         }
+
         private static IEnumerable<Point2d> GetCandidateLabelPoints(
             Polyline quarter,
             Polyline disposition,
