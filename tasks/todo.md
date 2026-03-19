@@ -6443,3 +6443,37 @@ Regression follow-up:
   - Uses a no-space launcher workspace under C:\AtsHarness, copies the DWG/workbook there, and launches cad.exe /b against the ATS batch command.
   - Auto-detects ATSBUILD_XLS_BATCH completion from the appended plugin log, copies the DXF back to the artifact folder, and force-closes the GUI worker only after a successful batch or timeout.
   - Verified with N.W. 8-57-18-5 at data\atsbuild-harness-fullacad-smoke-nw8-57-18-5-rerun: batch completed, DXF exported, launcher workspace cleaned up, ligned_dimension_text_finalize ran, Labels placed: 13, Imported dispositions: 17.
+
+## 2026-03-18 - Fix WLS LSD table location east/west flip
+- [x] Trace the WLS table ATS-location path and confirm whether the reported `4-6-63-17-5 -> 1-6-63-17-5` miss comes from LSD numbering or a misbuilt local section/quarter frame.
+- [x] Replace any unstable polygon-orientation heuristic in the WLS ATS location resolver/table path with a deterministic east/west-first frame builder.
+- [x] Rebuild WLS and verify the corrected frame logic against the reported east/west flip scenario.
+
+### Review
+- Root cause: WLS was deriving local ATS frames from whichever polygon edge happened to win the `longest edge` tie. On square/near-square section or quarter polylines that start on a vertical edge, that rotates the local frame, which can flip the resolved quarter/LSD used in the summary table.
+- Fix: added `wls_program/src/WildlifeSweeps/AtsPolygonFrameBuilder.cs` and routed both `AtsQuarterLocationResolver` and `CompleteFromPhotosService` through the shared builder so east/west is chosen from the most east-west edge instead of an arbitrary longest-edge tie.
+- Verification: `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore -p:OutDir="C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\artifacts\verify\WildlifeSweeps\"` passed with 0 warnings / 0 errors. A normal Release build is currently blocked only because `wls_program\src\WildlifeSweeps\bin\Release\net8.0-windows\WildlifeSweeps.dll` is locked by AutoCAD process 18912.
+- Verification: a focused synthetic check reproduced the old flaw on a square whose first edge is vertical (`OLD quarter=NW lsd=13`) and confirmed the new frame builder preserves the correct ATS orientation (`NEW quarter=SW lsd=4`).
+- Next runtime check: rerun the affected WLS table export and confirm finding `#16` now resolves to `4-6-63-17-5` instead of `1-6-63-17-5`.
+
+## 2026-03-18 - Fix WLS lookup mappings for Squirrel Tracks and Beaver Den
+- [x] Trace the active WLS findings lookup path and confirm whether the phrases are missing from the workbook or being overridden by code-side canonicalization.
+- [x] Update the authoritative lookup workbook copies so `Squirrel Tracks` resolves specifically and `Beaver Den` is accepted as-is.
+- [x] Verify the first-match priority behavior after the workbook update and record the result.
+
+### Review
+- Root cause: the workbook had no squirrel-track-specific regex, so `Squirrel Tracks` was falling through to the generic track fallback regex. `Beaver Den` was also missing a specific beaver-den rule, so the generic `den` regex was converting it into the inactive/possible den bucket.
+- Fix: added higher-priority `RecognitionRegex` rows for squirrel tracks and beaver den, and added the missing `Squirrel / Tracks` row to `SpeciesFindingTypes`.
+- Updated workbook copies: `wls_program\wildlife_parsing_codex_lookup.xlsx`, `wls_program\wildlife_parsing_codex_lookup_backup.xlsx`, `wls_program\src\WildlifeSweeps\wildlife_parsing_codex_lookup.xlsx`, and the live `bin\Release\net8.0-windows` primary/backup workbook copies.
+- Verification: programmatic workbook check now resolves `squirrel tracks => [(12, Squirrel Tracks, Squirrel, Tracks)]` and `beaver den => [(12, Beaver Den, Beaver, Lodge / Structure)]` at the first matching regex priority tier, and confirms the `Squirrel / Tracks` pair exists in `SpeciesFindingTypes`.
+
+## 2026-03-18 - Add WLS lookup mappings for Hare Burrow and Rabbit Feeding
+- [x] Inspect the active WLS lookup workbook and confirm Snowshoe Hare burrow/feeding mappings and valid pairs are missing.
+- [x] Update the authoritative, backup, source-mirror, and live release workbook copies with the requested Snowshoe Hare burrow/feeding mappings.
+- [x] Verify first-match rule behavior for hare/rabbit burrow and feeding phrases against the same priority logic the standardizer uses.
+
+### Review
+- Root cause: the workbook had no Snowshoe Hare `Burrow` or `Feeding` valid pairs and no hare/rabbit burrow or feeding recognition rules, so those phrases could not standardize directly.
+- Fix: added priority-10 hare/rabbit burrow and feeding regex rules, exact keyword rows for the requested phrases, and new `Snowshoe Hare / Burrow` and `Snowshoe Hare / Feeding` rows in `SpeciesFindingTypes` across all workbook copies that WLS uses.
+- Verification: programmatic workbook checks now resolve `hare burrow -> Snowshoe Hare burrow`, `rabbit feeding -> Snowshoe Hare Feeding`, `rabbit burrows -> Snowshoe Hare burrow`, and `hare feeding sign -> Snowshoe Hare Feeding` in both the authoritative workbook and the live `bin\\Release` workbook copy.
+- Parked note: the user found a separate ATS builder regression where quarter definitions on correction lines are broken after recent correction-line fixes; that investigation is deferred until tomorrow.

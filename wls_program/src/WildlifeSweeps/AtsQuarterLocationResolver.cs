@@ -302,84 +302,13 @@ namespace WildlifeSweeps
             out double width,
             out double height)
         {
-            southWest = Point2d.Origin;
-            eastUnit = new Vector2d(1, 0);
-            northUnit = new Vector2d(0, 1);
-            width = 0;
-            height = 0;
-
-            var maxLen = 0.0;
-            Vector2d? longest = null;
-            for (var i = 0; i < vertices.Count; i++)
-            {
-                var a = vertices[i];
-                var b = vertices[(i + 1) % vertices.Count];
-                var edge = b - a;
-                var length = edge.Length;
-                if (length > maxLen)
-                {
-                    maxLen = length;
-                    longest = edge / length;
-                }
-            }
-
-            if (longest == null || maxLen <= 1e-9)
-            {
-                return false;
-            }
-
-            eastUnit = longest.Value;
-            northUnit = new Vector2d(-eastUnit.Y, eastUnit.X);
-            if (northUnit.Y < 0)
-            {
-                eastUnit = -eastUnit;
-                northUnit = -northUnit;
-            }
-
-            if (!TryGetCorner(vertices, eastUnit, northUnit, Corner.SouthWest, out southWest) ||
-                !TryGetCorner(vertices, eastUnit, northUnit, Corner.SouthEast, out var southEast) ||
-                !TryGetCorner(vertices, eastUnit, northUnit, Corner.NorthWest, out var northWest))
-            {
-                return false;
-            }
-
-            width = Math.Abs((southEast - southWest).DotProduct(eastUnit));
-            height = Math.Abs((northWest - southWest).DotProduct(northUnit));
-            return width > 1e-6 && height > 1e-6;
-        }
-
-        private static bool TryGetCorner(
-            IReadOnlyList<Point2d> vertices,
-            Vector2d eastUnit,
-            Vector2d northUnit,
-            Corner corner,
-            out Point2d point)
-        {
-            point = default;
-            var found = false;
-            var bestScore = double.MinValue;
-            foreach (var vertex in vertices)
-            {
-                var e = (vertex.X * eastUnit.X) + (vertex.Y * eastUnit.Y);
-                var n = (vertex.X * northUnit.X) + (vertex.Y * northUnit.Y);
-                var score = corner switch
-                {
-                    Corner.NorthWest => n - e,
-                    Corner.NorthEast => n + e,
-                    Corner.SouthWest => -n - e,
-                    Corner.SouthEast => -n + e,
-                    _ => double.MinValue
-                };
-
-                if (!found || score > bestScore)
-                {
-                    bestScore = score;
-                    point = vertex;
-                    found = true;
-                }
-            }
-
-            return found;
+            return AtsPolygonFrameBuilder.TryBuildFrame(
+                vertices,
+                out southWest,
+                out eastUnit,
+                out northUnit,
+                out width,
+                out height);
         }
 
         private static bool TryGetExtents(IReadOnlyList<Point2d> vertices, out SectionExtents extents)
@@ -563,14 +492,6 @@ namespace WildlifeSweeps
             public double UMax { get; }
             public double TMin { get; }
             public double TMax { get; }
-        }
-
-        private enum Corner
-        {
-            NorthWest,
-            NorthEast,
-            SouthWest,
-            SouthEast
         }
 
         private readonly struct SectionExtents

@@ -2056,90 +2056,13 @@ namespace WildlifeSweeps
             out double width,
             out double height)
         {
-            southWest = Point2d.Origin;
-            eastUnit = new Vector2d(1.0, 0.0);
-            northUnit = new Vector2d(0.0, 1.0);
-            width = 0.0;
-            height = 0.0;
-
-            if (vertices == null || vertices.Count < 3)
-            {
-                return false;
-            }
-
-            var maxLen = 0.0;
-            Vector2d? longest = null;
-            for (var i = 0; i < vertices.Count; i++)
-            {
-                var a = vertices[i];
-                var b = vertices[(i + 1) % vertices.Count];
-                var edge = b - a;
-                var length = edge.Length;
-                if (length > maxLen)
-                {
-                    maxLen = length;
-                    longest = edge / length;
-                }
-            }
-
-            if (longest == null || maxLen <= 1e-9)
-            {
-                return false;
-            }
-
-            eastUnit = longest.Value;
-            northUnit = new Vector2d(-eastUnit.Y, eastUnit.X);
-            if (northUnit.Y < 0)
-            {
-                eastUnit = -eastUnit;
-                northUnit = -northUnit;
-            }
-
-            if (!TryGetPolygonCorner(vertices, eastUnit, northUnit, CornerKey.SouthWest, out southWest) ||
-                !TryGetPolygonCorner(vertices, eastUnit, northUnit, CornerKey.SouthEast, out var southEast) ||
-                !TryGetPolygonCorner(vertices, eastUnit, northUnit, CornerKey.NorthWest, out var northWest))
-            {
-                return false;
-            }
-
-            width = Math.Abs((southEast - southWest).DotProduct(eastUnit));
-            height = Math.Abs((northWest - southWest).DotProduct(northUnit));
-            return width > 1e-6 && height > 1e-6;
-        }
-
-        private static bool TryGetPolygonCorner(
-            IReadOnlyList<Point2d> vertices,
-            Vector2d eastUnit,
-            Vector2d northUnit,
-            CornerKey corner,
-            out Point2d point)
-        {
-            point = default;
-            var found = false;
-            var bestScore = double.MinValue;
-            for (var i = 0; i < vertices.Count; i++)
-            {
-                var vertex = vertices[i];
-                var e = (vertex.X * eastUnit.X) + (vertex.Y * eastUnit.Y);
-                var n = (vertex.X * northUnit.X) + (vertex.Y * northUnit.Y);
-                var score = corner switch
-                {
-                    CornerKey.NorthWest => n - e,
-                    CornerKey.NorthEast => n + e,
-                    CornerKey.SouthWest => -n - e,
-                    CornerKey.SouthEast => -n + e,
-                    _ => double.MinValue
-                };
-
-                if (!found || score > bestScore)
-                {
-                    bestScore = score;
-                    point = vertex;
-                    found = true;
-                }
-            }
-
-            return found;
+            return AtsPolygonFrameBuilder.TryBuildFrame(
+                vertices,
+                out southWest,
+                out eastUnit,
+                out northUnit,
+                out width,
+                out height);
         }
 
         private static bool TryGetQuarterOffsets(string quarterToken, out int rowOffset, out int colOffset)
@@ -3477,14 +3400,6 @@ namespace WildlifeSweeps
                 string.Empty,
                 string.Empty,
                 Array.Empty<Point2d>());
-        }
-
-        private enum CornerKey
-        {
-            NorthWest,
-            NorthEast,
-            SouthWest,
-            SouthEast
         }
 
         private sealed record PhotoPointRecord(
