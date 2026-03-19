@@ -1,0 +1,169 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="Default:EL_V_DSP_LIGHT">
+    <ns0:FeatureSource xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" rdf:resource="fsd://EL_CE_DWG.dwg" />
+  </rdf:Description>
+  <rdf:Description rdf:about="Default:EL_V_DSP_LIGHT">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/LayerDefinitionResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="Default:EL_V_DSP_LIGHT">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">EL_V_DSP_LIGHT</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="Default:EL_V_DSP_LIGHT">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="Default:EL_V_DSP_LIGHT">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="Default:EL_V_DSP_LIGHT">
+    <ns0:LayerDefinitionResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <LayerDefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="LayerDefinition-2.4.0.xsd" version="2.4.0">
+        <VectorLayerDefinition>
+          <ResourceId>fsd://EL_CE_DWG.dwg</ResourceId>
+          <FeatureName>Default:EL_V_DSP_LIGHT</FeatureName>
+          <FeatureNameType>FeatureClass</FeatureNameType>
+          <Geometry>GEOM</Geometry>
+          <VectorScaleRange>
+            <MaxScale>5000</MaxScale>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel></LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>BEW837</Name>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M 0.27,0.00002 A 0.27,0.27 0.0 1 0 -0.27,0.00002 A 0.27,0.27 0.0 1 0 0.27,0.00002</Geometry>
+                          <LineColor>%COLORBYLAYERPFEW%</LineColor>
+                          <LineWeight>%LWBYLAYERPFEW%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                        <Path>
+                          <Geometry>M -0.27,0.00002 A 0.27,0.27 0.0 1 0 0.27,0.00002 A 0.27,0.27 0.0 1 0 -0.27,0.00002</Geometry>
+                          <FillColor>%COLORBYLAYERPFEW%</FillColor>
+                        </Path>
+                        <Path>
+                          <Geometry>M 0.0,0.27002 A 0.27,0.27 0.0 0 0 -0.27,0.00002 A 0.27,0.27 0.0 0 0 0.0,-0.26998 A 0.27,0.27 0.0 0 0 0.27,0.00002 A 0.27,0.27 0.0 0 0 0.0,0.27002 M 0.0,0.50002 L 0.00003,0.27002 M 0.37,0.37002 L 0.19092,0.19094 M 0.5,0.00002 L 0.27,0.00004 M 0.37,-0.36998 L 0.19092,-0.1909 M 0.0,-0.49998 L 0.0,-0.26998 M -0.37,-0.36998 L -0.19091,-0.1909 M -0.5,0.00002 L -0.27,0.00002 M -0.37,0.37002 L -0.2,0.20002</Geometry>
+                          <LineColor>%COLORBYBLOCKBEW837%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>COLORBYLAYERPFEW</Identifier>
+                          <DefaultValue>ffffffff</DefaultValue>
+                          <DisplayName>Color Defined ByLayer PFEW</DisplayName>
+                          <Description>Color Defined ByLayer PFEW</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LWBYLAYERPFEW</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Lineweight Defined ByLayer PFEW</DisplayName>
+                          <Description>Lineweight Defined ByLayer PFEW</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>COLORBYBLOCKBEW837</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Color Defined ByBlock BEW837</DisplayName>
+                          <Description>Color Defined ByBlock BEW837</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LWBYLAYER0</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Lineweight Defined ByLayer 0</DisplayName>
+                          <Description>Lineweight Defined ByLayer 0</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>BEW837</SymbolName>
+                        <ParameterIdentifier>COLORBYLAYERPFEW</ParameterIdentifier>
+                        <ParameterValue>FF40F609</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BEW837</SymbolName>
+                        <ParameterIdentifier>LWBYLAYERPFEW</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BEW837</SymbolName>
+                        <ParameterIdentifier>COLORBYBLOCKBEW837</ParameterIdentifier>
+                        <ParameterValue>FF000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BEW837</SymbolName>
+                        <ParameterIdentifier>LWBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BEW837</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>ORIENTATION + 90</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>400</ScaleX>
+                    <ScaleY>400</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <UsageContext>Point</UsageContext>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+          </VectorScaleRange>
+        </VectorLayerDefinition>
+      </LayerDefinition>
+    </ns0:LayerDefinitionResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://EL_CE_DWG.dwg">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/FeatureSourceResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://EL_CE_DWG.dwg">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">EL_CE_DWG.dwg</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://EL_CE_DWG.dwg">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://EL_CE_DWG.dwg">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">Default description</ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://EL_CE_DWG.dwg">
+    <ns0:FeatureSourceResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <FeatureSource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" version="1.0.0">
+  <Provider>OSGeo.SQLite.3.5</Provider>
+  <Parameter>
+    <Name>File</Name>
+    <Value></Value>
+  </Parameter>
+  <Parameter>
+    <Name>UseFdoMetadata</Name>
+    <Value>true</Value>
+  </Parameter>
+  <ConfigurationDocument />
+  <LongTransaction />
+</FeatureSource>
+    </ns0:FeatureSourceResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="LayerSchema">
+    <ns0:version xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">1</ns0:version>
+  </rdf:Description>
+</rdf:RDF>

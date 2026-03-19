@@ -1,0 +1,169 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=":EL_V_DSP_GROUND_out">
+    <ns0:FeatureSource xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" rdf:resource="fsd://IndustryModel_1" />
+  </rdf:Description>
+  <rdf:Description rdf:about=":EL_V_DSP_GROUND_out">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/LayerDefinitionResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about=":EL_V_DSP_GROUND_out">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">EL_V_DSP_GROUND</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about=":EL_V_DSP_GROUND_out">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about=":EL_V_DSP_GROUND_out">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about=":EL_V_DSP_GROUND_out">
+    <ns0:LayerDefinitionResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <LayerDefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="LayerDefinition-2.4.0.xsd" version="2.4.0">
+        <VectorLayerDefinition>
+          <ResourceId>fsd://IndustryModel_1</ResourceId>
+          <FeatureName>EL_V_DSP_GROUND_CalcProp1</FeatureName>
+          <FeatureNameType>NamedExtension</FeatureNameType>
+          <Geometry>GEOM</Geometry>
+          <VectorScaleRange>
+            <MaxScale>5000</MaxScale>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel></LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>Erdung</Name>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M -0.46626,-0.05536 L -0.46626,0.05233 M -0.31053,-0.14527 L -0.31053,0.14224 M -0.15573,-0.23465 L -0.15573,0.23162 M 0.46626,-0.00152 L -0.15573,-0.00152</Geometry>
+                          <LineColor>%COLORBYBLOCKErdung%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                        <Path>
+                          <Geometry>M 0.51114,0.0 A 0.51114,0.51114 0.0 1 0 -0.51114,0.0 A 0.51114,0.51114 0.0 1 0 0.51114,0.0</Geometry>
+                          <LineColor>%COLORBYLAYER0%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>COLORBYBLOCKErdung</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Color Defined ByBlock Erdung</DisplayName>
+                          <Description>Color Defined ByBlock Erdung</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LWBYLAYER0</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Lineweight Defined ByLayer 0</DisplayName>
+                          <Description>Lineweight Defined ByLayer 0</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>COLORBYLAYER0</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Color Defined ByLayer 0</DisplayName>
+                          <Description>Color Defined ByLayer 0</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>Erdung</SymbolName>
+                        <ParameterIdentifier>COLORBYBLOCKErdung</ParameterIdentifier>
+                        <ParameterValue>FF000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Erdung</SymbolName>
+                        <ParameterIdentifier>LWBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Erdung</SymbolName>
+                        <ParameterIdentifier>COLORBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>FF000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Erdung</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>CalcOrientation</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>489.102800464486</ScaleX>
+                    <ScaleY>489.102800464486</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <UsageContext>Point</UsageContext>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+          </VectorScaleRange>
+        </VectorLayerDefinition>
+      </LayerDefinition>
+    </ns0:LayerDefinitionResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/FeatureSourceResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">IndustryModel_1</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:FeatureSourceResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <FeatureSource xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="1.0.0">
+  <Provider>Autodesk.Topobase.3.2</Provider>
+  <Parameter>
+    <Name>Password</Name>
+    <Value />
+  </Parameter>
+  <Parameter>
+    <Name>Service</Name>
+    <Value></Value>
+  </Parameter>
+  <Parameter>
+    <Name>Username</Name>
+    <Value></Value>
+  </Parameter>
+  <Parameter>
+    <Name>DataStore</Name>
+    <Value></Value>
+  </Parameter>
+  <ConfigurationDocument />
+  <LongTransaction>1</LongTransaction>
+  <Extension>
+    <CalculatedProperty>
+      <Name>CalcOrientation</Name>
+      <Expression>ToDouble ( TB_SQL ( 'TO_CHAR( OrientationDegreeCCW ( g.ORIENTATION ) )' ) )</Expression>
+    </CalculatedProperty>
+    <Name>EL_V_DSP_GROUND_CalcProp1</Name>
+    <FeatureClass>:EL_V_DSP_GROUND</FeatureClass>
+  </Extension>
+</FeatureSource>
+    </ns0:FeatureSourceResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="LayerSchema">
+    <ns0:version xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">1</ns0:version>
+  </rdf:Description>
+</rdf:RDF>

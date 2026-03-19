@@ -1,0 +1,85 @@
+PIAFILEVERSION_3.0,json
+{
+ "data" : 
+ {
+  "meta" : 
+  {
+   "canonical_family_name" : "System",
+   "canonical_model_name" : "System",
+   "default_system_cfg" : false,
+   "dm_driver_version" : 1539,
+   "driver_pathname" : "C:\\Program Files\\Autodesk\\AutoCAD 2025\\drv\\gdiplot17.hdi",
+   "driver_tag_line" : "Windows System Driver - by Autodesk",
+   "driver_type" : 1,
+   "driver_version" : "1.1-17.0.154.0",
+   "file_only" : false,
+   "friendly_net_name" : "Documents\\*.pdf",
+   "locale" : "4B00409",
+   "localized_family_name" : "System",
+   "localized_model_name" : "System",
+   "model_abilities" : "555555555055",
+   "platform" : "2,10,0",
+   "short_net_name" : "Adobe PDF",
+   "show_custom_first" : true,
+   "toolkit_version" : 1,
+   "truetype_as_text" : false,
+   "udm_description" : "",
+   "user_defined_model_basename" : "",
+   "user_defined_model_pathname" : "C:\\Users\\Work Test 2\\appdata\\roaming\\autodesk\\autodesk autocad map 3d 2025\\r25.0\\enu\\plotters\\pmp files\\Adobe PDF.pmp",
+   "win_device_name" : "Adobe PDF",
+   "win_driver_name" : "Adobe PDF Converter"
+  },
+  "mod" : 
+  {
+   "media" : 
+   {
+    "abilities" : "100004455400144444050005005055000400000000000005000",
+    "caps_state" : "00000",
+    "size_max_x" : 6350.0,
+    "size_max_y" : 7620.0,
+    "ui_owner" : "22212222121111212112221"
+   }
+  },
+  "udm" : 
+  {
+   "calibration" : 
+   {
+    "_x" : 1.0,
+    "_y" : 1.0
+   },
+   "media" : 
+   {
+    "description" : 
+    {
+     "0" : 
+     {
+      "caps_type" : 2,
+      "dimensional" : true,
+      "media_bounds_urx" : 812.79998779296875,
+      "media_bounds_ury" : 1828.800048828125,
+      "name" : "User-1",
+      "printable_area" : 1469714.75,
+      "printable_bounds_llx" : 3.1749999523162842,
+      "printable_bounds_lly" : 3.1749999523162842,
+      "printable_bounds_urx" : 809.625,
+      "printable_bounds_ury" : 1825.625
+     }
+    },
+    "size" : 
+    {
+     "0" : 
+     {
+      "caps_type" : 2,
+      "landscape_mode" : true,
+      "localized_name" : "Previous paper size  (812.80 x 1828.80 mm)",
+      "media_description_name" : "User-1",
+      "media_group" : 15,
+      "name" : "User-1"
+     }
+    }
+   }
+  }
+ },
+ "subver" : "json",
+ "version" : 0.01
+}

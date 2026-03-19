@@ -1,0 +1,294 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="Default:GA_V_ODOUR_EQUIPMENT_out">
+    <ns0:FeatureSource xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" rdf:resource="fsd://IndustryModel_1" />
+  </rdf:Description>
+  <rdf:Description rdf:about="Default:GA_V_ODOUR_EQUIPMENT_out">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/LayerDefinitionResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="Default:GA_V_ODOUR_EQUIPMENT_out">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">GA_V_ODOUR_EQUIPMENT</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="Default:GA_V_ODOUR_EQUIPMENT_out">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="Default:GA_V_ODOUR_EQUIPMENT_out">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="Default:GA_V_ODOUR_EQUIPMENT_out">
+    <ns0:LayerDefinitionResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <LayerDefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="LayerDefinition-2.4.0.xsd" version="2.4.0">
+        <VectorLayerDefinition>
+          <ResourceId>fsd://IndustryModel_1</ResourceId>
+          <FeatureName>Default:GA_V_ODOUR_EQUIPMENT</FeatureName>
+          <FeatureNameType>FeatureClass</FeatureNameType>
+          <Geometry>GEOM</Geometry>
+          <VectorScaleRange>
+            <MaxScale>1500</MaxScale>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel>Odour equipment</LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>BGA_ODOR</Name>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M 1208.18695,642.60112 h -2066.3657 v -1271.52539 h 2066.3657 v 1271.52539</Geometry>
+                          <FillColor>ffffffff</FillColor>
+                        </Path>
+                        <Path>
+                          <Geometry>M 1208.18695,642.60112 L -858.17875,642.60112 L -858.17875,-628.92427 L 1208.18695,-628.92427 L 1208.18695,642.60112 M -1130.60415,642.60112 L -1129.62289,-628.92427</Geometry>
+                          <LineColor>%COLORBYBLOCKBGA_ODOR%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>COLORBYBLOCKBGA_ODOR</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Color Defined ByBlock BGA_ODOR</DisplayName>
+                          <Description>Color Defined ByBlock BGA_ODOR</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LWBYLAYER0</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Lineweight Defined ByLayer 0</DisplayName>
+                          <Description>Lineweight Defined ByLayer 0</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>FILLCOLOR</Identifier>
+                          <DefaultValue>ffffffff</DefaultValue>
+                          <DisplayName>&amp;Fill Color</DisplayName>
+                          <Description>Fill Color</Description>
+                          <DataType>FillColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINECOLOR</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Line &amp;Color</DisplayName>
+                          <Description>Line Color</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINEWEIGHT</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Line &amp;Thickness</DisplayName>
+                          <Description>Line Thickness</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                      <ExtendedData1>
+                        <FileName>C:\Autodesk\IM_GA_DM_EP\Prototype_GA_CK_GER.dwg</FileName>
+                      </ExtendedData1>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>BGA_ODOR</SymbolName>
+                        <ParameterIdentifier>COLORBYBLOCKBGA_ODOR</ParameterIdentifier>
+                        <ParameterValue>0xFF005A28</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BGA_ODOR</SymbolName>
+                        <ParameterIdentifier>LWBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BGA_ODOR</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>CalcOrientation</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BGA_ODOR</SymbolName>
+                        <ParameterIdentifier>FILLCOLOR</ParameterIdentifier>
+                        <ParameterValue>FF726358</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BGA_ODOR</SymbolName>
+                        <ParameterIdentifier>LINECOLOR</ParameterIdentifier>
+                        <ParameterValue>0xFF005A28</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BGA_ODOR</SymbolName>
+                        <ParameterIdentifier>LINEWEIGHT</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>1.57296541964212</ScaleX>
+                    <ScaleY>1.57291393057981</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <UsageContext>Point</UsageContext>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+          </VectorScaleRange>
+          <VectorScaleRange>
+            <MinScale>1500</MinScale>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel>Odour equipment</LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>BGA_ODOR</Name>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M 1208.18695,642.60112 h -2066.3657 v -1271.52539 h 2066.3657 v 1271.52539</Geometry>
+                          <FillColor>ffffffff</FillColor>
+                        </Path>
+                        <Path>
+                          <Geometry>M 1208.18695,642.60112 L -858.17875,642.60112 L -858.17875,-628.92427 L 1208.18695,-628.92427 L 1208.18695,642.60112 M -1130.60415,642.60112 L -1129.62289,-628.92427</Geometry>
+                          <LineColor>%COLORBYBLOCKBGA_ODOR%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>COLORBYBLOCKBGA_ODOR</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Color Defined ByBlock BGA_ODOR</DisplayName>
+                          <Description>Color Defined ByBlock BGA_ODOR</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LWBYLAYER0</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Lineweight Defined ByLayer 0</DisplayName>
+                          <Description>Lineweight Defined ByLayer 0</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>FILLCOLOR</Identifier>
+                          <DefaultValue>ffffffff</DefaultValue>
+                          <DisplayName>&amp;Fill Color</DisplayName>
+                          <Description>Fill Color</Description>
+                          <DataType>FillColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINECOLOR</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Line &amp;Color</DisplayName>
+                          <Description>Line Color</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINEWEIGHT</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Line &amp;Thickness</DisplayName>
+                          <Description>Line Thickness</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                      <ExtendedData1>
+                        <FileName>C:\Autodesk\IM_GA_DM_EP\Prototype_GA_CK_GER.dwg</FileName>
+                      </ExtendedData1>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>BGA_ODOR</SymbolName>
+                        <ParameterIdentifier>COLORBYBLOCKBGA_ODOR</ParameterIdentifier>
+                        <ParameterValue>0xFF005A28</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BGA_ODOR</SymbolName>
+                        <ParameterIdentifier>LWBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BGA_ODOR</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>CalcOrientation</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BGA_ODOR</SymbolName>
+                        <ParameterIdentifier>FILLCOLOR</ParameterIdentifier>
+                        <ParameterValue>FF726358</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BGA_ODOR</SymbolName>
+                        <ParameterIdentifier>LINECOLOR</ParameterIdentifier>
+                        <ParameterValue>0xFF005A28</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BGA_ODOR</SymbolName>
+                        <ParameterIdentifier>LINEWEIGHT</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>2.56542795116532</ScaleX>
+                    <ScaleY>2.56534222295041</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <UsageContext>Point</UsageContext>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+          </VectorScaleRange>
+        </VectorLayerDefinition>
+      </LayerDefinition>
+    </ns0:LayerDefinitionResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/FeatureSourceResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">IndustryModel_1</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:FeatureSourceResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <FeatureSource xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="1.0.0">
+  <Provider>OSGeo.SQLite.3.5</Provider>
+  <Parameter>
+    <Name>UseFdoMetadata</Name>
+    <Value>true</Value>
+  </Parameter>
+  <Parameter>
+    <Name>File</Name>
+    <Value></Value>
+  </Parameter>
+  <ConfigurationDocument />
+  <LongTransaction />
+</FeatureSource>
+    </ns0:FeatureSourceResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="LayerSchema">
+    <ns0:version xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">1</ns0:version>
+  </rdf:Description>
+</rdf:RDF>

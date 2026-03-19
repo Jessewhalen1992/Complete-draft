@@ -1,0 +1,338 @@
+<!--
+To setup additional properties to a command when ADDSELECTED command is executed, you can
+add node like this: 
+
+    <Entry name="myEntryName">
+      <AcRxClassInfo className="MyObjectType" />
+      <Command name="_.mycommand" cmdversion="-1" >
+        <Property name="kTextStyle", id="9" />"
+        <Property name="kTextSize", id="10" />"
+      </Command>
+    </Entry>
+    
+Available/setable property id values are:
+
+        kUndefined          = -1,
+
+        kColor              = 0,      // always available
+        kLayer              = 1,      // always available
+        kLineType           = 2,      // always available
+        kLineTypeScale      = 3,      // always available
+        kLineWeight         = 4,      // always available
+        kPlotStyle          = 5,      // always available
+        kMaterial           = 6,      // always available
+        kVisualStyle        = 7,      // not used        
+        kThickness          = 8,      // always available        
+        kTextStyle          = 9,
+        kTextSize           = 10,
+        kDimStyle           = 11,
+        kDimScale           = 12,
+        kMLeaderStyle       = 13,
+        kMLeaderScale       = 14,
+        kTableStyle         = 15,
+        kHatchPatternName   = 16,
+        kHatchPatternScale  = 17,
+        kHatchPatternAngle  = 18,
+        kGradientName       = 19,
+        kGradientAngle      = 20,
+        kBlockName          = 21,
+        kDefinition         = 22,
+        kDefinitionName     = 23,
+        kDefinitionItem     = 24,
+        kMlineStyle         = 25,
+        kSysvarTEXTEVAL     = 26,      // always available
+        kSysvarFILEDIA      = 27,
+        kTransparency       = 28,      // always available
+        kCLIParameter       = 29,
+        kGradientCentered   = 30,
+        kSysvarHPCOLOR           = 31,
+        kSysvarHPLAYER           = 32,
+        kSysvarHPTRANSPARENCY    = 33,
+        kSysvarHPBACKGROUNDCOLOR = 34,
+        kGradientOneColorMode    = 35,
+        kGradientColor1          = 36,
+        kGradientColor2          = 37,
+        kInitDialog              = 38,
+        kSysvarHATCHCREATION     = 39,
+
+        // always last
+        kLast
+        
+-->
+<ObjectToCommandMap FileRevision="18.0.0" Revision="18.0.0">
+  <ItemID idValue="{9E9CE7B4-34F9-45d1-934E-DA0DDB1FA333}" />
+  <Properties>
+    <ItemName>Object-Command Map used for ADDSELECTED command</ItemName>
+  </Properties>
+  <Entries>
+    <Entry name="Arc">
+      <AcRxClassInfo className="AcDbArc" />
+      <Command name="_.arc" cmdversion="-1" />
+    </Entry>      
+    <Entry name="AttributeDefinition">
+      <AcRxClassInfo className="AcDbAttributeDefinition" />
+      <Command name="_.attdef" >
+        <Property name="kTextStyle" id="9" />
+        <Property name="kTextSize" id="10" />
+        <property name="kInitDialog" id ="38" />
+      </Command>
+    </Entry>
+    <Entry name="Circle">
+      <AcRxClassInfo className="AcDbCircle" />
+      <Command name="_.circle" />
+    </Entry>
+    <Entry name="AlignedDimension">
+      <AcRxClassInfo className="AcDbAlignedDimension" />
+      <Command name="_.dimaligned">
+        <Property name="kDimStyle" id="11" />
+        <Property name="kDimScale" id="12" />
+      </Command>
+    </Entry>
+    <Entry name="RotatedDimension">
+      <AcRxClassInfo className="AcDbRotatedDimension" />
+      <Command name="_.dimlinear">
+        <Property name="kDimStyle" id="11" />
+        <Property name="kDimScale" id="12" />
+      </Command>
+    </Entry>
+    <Entry name="ArcDimension">
+      <AcRxClassInfo className="AcDbArcDimension" />
+      <Command name="_.dimarc">
+        <Property name="kDimStyle" id="11" />
+        <Property name="kDimScale" id="12" />
+      </Command>
+    </Entry>
+    <Entry name="RadialDimensionLarge">
+      <AcRxClassInfo className="AcDbRadialDimensionLarge" />
+      <Command name="_.dimjogged">
+        <Property name="kDimStyle" id="11" />
+        <Property name="kDimScale" id="12" />
+      </Command>
+    </Entry>
+    <Entry name="RadialDimension">
+      <AcRxClassInfo className="AcDbRadialDimension" />
+      <Command name="_.dimradius">
+        <Property name="kDimStyle" id="11" />
+        <Property name="kDimScale" id="12" />
+      </Command>
+    </Entry>
+    <Entry name="DiametricDimension">
+      <AcRxClassInfo className="AcDbDiametricDimension" />
+      <Command name="_.dimdiameter">
+        <Property name="kDimStyle" id="11" />
+        <Property name="kDimScale" id="12" />
+      </Command>
+    </Entry>
+    <Entry name="2LineAngularDimension">
+      <AcRxClassInfo className="AcDb2LineAngularDimension" />
+      <Command name="_.dimangular">
+        <Property name="kDimStyle" id="11" />
+        <Property name="kDimScale" id="12" />
+      </Command>
+    </Entry>
+    <Entry name="3PointAngularDimension">
+      <AcRxClassInfo className="AcDb3PointAngularDimension" />
+      <Command name="_.dimangular">
+        <Property name="kDimStyle" id="11" />
+        <Property name="kDimScale" id="12" />
+      </Command>
+    </Entry>
+    <Entry name="OrdinateDimension">
+      <AcRxClassInfo className="AcDbOrdinateDimension" />
+      <Command name="_.dimordinate">
+        <Property name="kDimStyle" id="11" />
+        <Property name="kDimScale" id="12" />
+      </Command>
+    </Entry>
+    <Entry name="Ellipse">
+      <AcRxClassInfo className="AcDbEllipse" />
+      <Command name="_.ellipse" />
+    </Entry>
+    <Entry name="Leader">
+      <AcRxClassInfo className="AcDbLeader" />
+      <Command name="_.leader">
+      <Property name="kDimStyle" id="11" />
+      <Property name="kDimScale" id="12" />
+      </Command>
+    </Entry>
+    <Entry name="MLeader">
+      <AcRxClassInfo className="AcDbMLeader" />
+      <Command name="_.mleader">
+        <Property name="kMLeaderStyle" id="13" />
+        <Property name="kMLeaderScale" id="14" />
+      </Command>    
+    </Entry>
+    <Entry name="Line">
+      <AcRxClassInfo className="AcDbLine" />
+      <Command name="_.line" />
+    </Entry>
+    <Entry name="Polyline">
+      <AcRxClassInfo className="AcDbPolyline" />
+      <Command name="_.pline" />
+    </Entry>
+    <Entry name="MInsertBlock">
+      <AcRxClassInfo className="AcDbMInsertBlock" />
+      <Command name="_.minsert" />
+    </Entry>
+    <Entry name="Mline">
+      <AcRxClassInfo className="AcDbMline" />
+      <Command name="_.mline" />
+    </Entry>
+    <Entry name="MText">
+      <AcRxClassInfo className="AcDbMText" />
+      <Command name="_.mtext" >
+        <Property name="kTextStyle" id="9" />
+        <Property name="kTextSize" id="10" />
+        <property name="kInitDialog" id ="38" />
+      </Command>
+    </Entry>
+    <Entry name="Point">
+      <AcRxClassInfo className="AcDbPoint" />
+      <Command name="_.point" />
+    </Entry>
+    <Entry name="2dPolyline">
+      <AcRxClassInfo className="AcDb2dPolyline" />
+      <Command name="_.pline" />
+    </Entry>
+    <Entry name="PolygonMesh">
+      <AcRxClassInfo className="AcDbPolygonMesh" />
+      <Command name="_.3dmesh" />
+    </Entry>
+    <Entry name="Ray">
+      <AcRxClassInfo className="AcDbRay" />
+      <Command name="_.ray" />
+    </Entry>
+    <Entry name="Solid">
+      <AcRxClassInfo className="AcDbSolid" />
+      <Command name="_.solid" />
+    </Entry>
+    <Entry name="Spline">
+      <AcRxClassInfo className="AcDbSpline" />
+      <Command name="_.spline" />
+    </Entry>
+    <Entry name="Text">
+      <AcRxClassInfo className="AcDbText" />
+      <Command name="_.text" >
+        <Property name="kTextStyle" id="9" />
+        <Property name="kTextSize" id="10" />
+        <property name="kInitDialog" id ="38" />
+      </Command>
+    </Entry>
+    <Entry name="Tolerance">
+      <AcRxClassInfo className="AcDbFcf" />
+      <Command name="_.tolerance">
+        <Property name="kDimStyle" id="11" />
+      </Command>
+    </Entry>
+    <Entry name="Trace">
+      <AcRxClassInfo className="AcDbTrace" />
+      <Command name="_.trace" />
+    </Entry>
+    <Entry name="Viewport">
+      <AcRxClassInfo className="AcDbViewport" />
+      <Command name="_.mview" />
+    </Entry>
+    <Entry name="Xline">
+      <AcRxClassInfo className="AcDbXline" />
+      <Command name="_.xline" />
+    </Entry>
+    <Entry name="Face">
+      <AcRxClassInfo className="AcDbFace" />
+      <Command name="_.3dface" />
+    </Entry>
+    <Entry name="3dPolyline">
+      <AcRxClassInfo className="AcDb3dPolyline" />
+      <Command name="_.3dpoly" />
+    </Entry>
+    <Entry name="Wipeout">
+      <AcRxClassInfo className="AcDbWipeout" />
+      <Command name="_.wipeout" />
+    </Entry>
+    <Entry name="Table">
+      <AcRxClassInfo className="AcDbTable" />
+      <Command name="_.table">
+        <Property name="kTableStyle" id="15" />
+      </Command>
+    </Entry>
+    <Entry name="Hatch">
+      <AcRxClassInfo className="AcDbHatch" />
+      <Command name="_.-hatch">
+        <Property name="kHatchPatternName" id="16" />
+        <Property name="kHatchPatternScale" id="17" />
+        <Property name="kHatchPatternAngle" id="18" />
+        <property name="kSysvarHPCOLOR" id="31" />
+        <property name="kSysvarHPLAYER" id="32" />
+        <property name="kSysvarHPTRANSPARENCY" id="33" />
+        <property name="kSysvarHPBACKGROUNDCOLOR" id="34" />
+        <property name="kSysvarHATCHCREATION" id="39" />
+      </Command>
+      <!-- Internal use only!! "filter" has to be mapped to a symbol in acselection.arx -->      
+      <SubEntry name="gradient" filter="isGradient" subcommand="_.-hatch"> 
+        <Property name="kCLIParameter" id="29" indexInCLI="1" cliString="_p" />
+        <Property name="kCLIParameter" id="29" indexInCLI="2" cliString="_g" />
+        <Property name="kGradientName" id="19" indexInCLI="3" />
+        <Property name="kGradientAngle" id="20" indexInCLI="4" />
+        <Property name="kGradientCentered" id="30" indexInCLI="5"  />
+        <property name="kSysvarHPCOLOR" id="31" />
+        <property name="kSysvarHPLAYER" id="32" />
+        <property name="kSysvarHPTRANSPARENCY" id="33" />
+        <property name="kSysvarHPBACKGROUNDCOLOR" id="34" />
+        <property name="kSysvarHATCHCREATION" id="39" />
+        <property name="kGradientOneColorMode" id="35" />
+        <property name="kGradientColor1" id="36" />
+        <property name="kGradientColor2" id="37" />
+      </SubEntry>
+    </Entry>
+    <Entry name="BlockReference">
+      <AcRxClassInfo className="AcDbBlockReference" />
+      <Command name="_.-insert">
+        <Property name="kBlockName" id="21" indexInCLI="1" />
+      </Command>
+      <!-- Internal use only!! "filter" has to be mapped to a symbol in acselection.arx -->
+      <SubEntry name="xref" filter="isXref" subcommand="_.xattach">
+        <Property name="kBlockName" id="21" indexInCLI="1" />
+      </SubEntry>
+      
+      <SubEntry name="CenterMark" filter="isCenterMark" subcommand="_.CenterMark">
+      </SubEntry>
+      
+      <SubEntry name="CenterLine" filter="isCenterLine" subcommand="_.CenterLine">
+      </SubEntry>
+
+    </Entry>
+    <Entry name="Helix">
+      <AcRxClassInfo className="AcDbHelix" />
+      <Command name="_.helix" />
+    </Entry>
+    <Entry name="Image">
+      <AcRxClassInfo className="AcDbRasterImage" />
+      <Command name="_.imageattach">
+        <property name="kSysvarFILEDIA" id="27" />
+        <Property name="kDefinitionName" id="23" indexInCLI="1" />
+      </Command>
+    </Entry>
+    <Entry name="Dwf">
+      <AcRxClassInfo className="AcDbDwfReference" />
+      <Command name="_.-dwfattach">
+        <property name="kSysvarFILEDIA" id="27" />
+        <Property name="kDefinitionName" id="23" indexInCLI="1" />
+        <Property name="kDefinitionItem" id="24" indexInCLI="2" />
+      </Command>
+    </Entry>
+    <Entry name="Dgn">
+      <AcRxClassInfo className="AcDbDgnReference" />
+      <Command name="_.-dgnattach">
+        <property name="kSysvarFILEDIA" id="27" />
+        <Property name="kDefinitionName" id="23" indexInCLI="1" />
+      </Command>
+    </Entry>
+    <Entry name="Pdf">
+      <AcRxClassInfo className="AcDbPdfReference" />
+      <Command name="_.-pdfattach">
+        <property name="kSysvarFILEDIA" id="27" />
+        <Property name="kDefinitionName" id="23" indexInCLI="1" />
+        <Property name="kDefinitionItem" id="24" indexInCLI="2" />
+      </Command>
+    </Entry>
+  </Entries>
+</ObjectToCommandMap>

@@ -1,0 +1,384 @@
+;
+;  AutoCAD unit definition file -- ACAD.UNT
+;
+
+; Basic SI units
+*meter(s),metre(s),m
+-1,0,1,0,-1,4.1214856408e11,0
+*kilogram(s),kg
+0,0,0,0,1,1.0977481015e30,0
+*second(s),sec
+-2,0,1,0,-1,1.235590484e20,0
+*ampere(s),amp(s)
+2,1,-1,0,1,0.050513907838,0
+*kelvin,k
+2,0,0,-1,1,1.6863043358e-10,0
+*candela,cd
+4,0,-1,0,2,9.885226216e-8,0
+
+; Derived SI units
+*celsius,centigrade,c
+2,0,0,-1,1,1.6863043358e-10,4.6061402932e-8
+*rankine
+2,0,0,-1,1,9.3683574212e-11,0
+*fahrenheit
+2,0,0,-1,1,9.3683574212e-11,4.30635285578e-8
+*gram(s),gm,g
+=kg 0.001
+*newton(s),n
+=meter kilogram / second^2
+*pascal,pa
+=newton/meter^2
+*joule(s)
+=newton meter
+
+; Exponent synonyms
+*square,sq
+^2
+*cubic,cu
+^3
+
+; Units of time
+*centur(y.ies)
+=100 year
+*day(s)
+=86400 second
+*decade(s)
+=10 year
+*fortnight(s)
+=14 day
+*hour(s),hr
+=3600 second
+*milleni(um.a)
+=1000 year
+*minute(s),min
+=60 second
+*sidereal_year(s)
+=365.25636 day
+*tropical_year(s)
+=365.24220 day
+*week(s),wk
+=604800 second
+*year(s),yr
+=365 day
+
+; Units of length
+*Angstrom(s)
+=meter 1E-10
+*astronomical_unit(s),au       
+=meter 149597870000       
+*bolt(s)
+=meter 36.576
+*cable(s)                     ; U.S. cable length
+=meter 219.456
+*caliber
+=meter 0.000254
+*centimeter(s),centimetre(s),cm(s)
+=meter 0.01
+*chain(s)                     ; Gunther's chain length
+=meter 20.1168
+*cubit(s)
+=meter 0.4572
+*decimeter(s),decimetre(s),dm
+=meter 0.1
+*dekameter(s),dekametre(s),dam
+=meter 10
+*fathom(s),fath
+=meter 1.8288
+*f(oot.eet),ft,'
+=meter 0.3048
+*furlong(s),fur
+=meter 201.168
+*gigameter(s),gigametre(s)
+=meter 1E9
+*hand(s)
+=meter 0.1016
+*hectometer(s),hectometre(s),hm
+=meter 100
+*inch(es),in(s),"
+=meter 2.54E-2
+*kilometer(s),kilometre(s),km
+=meter 1000
+*league_nautical
+=meter 5556
+*league_statute
+=meter 4828.032
+*light_year(s)
+=meter 9.46053E15
+*link(s)                      ; Gunther's link length
+=meter 0.201168
+*microinch(es)
+=meter 2.54E-8
+*micron(s)
+=meter 1E-6
+*mil(s)
+=meter 2.54E-5
+*mile_nautical,inm            ; International Nautical Mile
+=meter 1852
+*mile_statute,mile(s),mi
+=meter 1609.344
+*millimeter(s),millimetre(s),mm(s)
+=meter 0.001
+*millimicron(s),nanometer(s),nanometre(s),nm(s)
+=meter 1E-9
+*pace(s)
+=meter 0.762
+*palm(s)
+=meter 0.0762
+*parsec(s)
+=meter 3.085677E16
+*perch(es)
+=meter 5.0292
+*pica(s)
+=meter 0.0042175176
+*point(s)
+=meter 0.0003514598
+*rod(s),pole(s)
+=meter 5.0292
+*rope(s)
+=meter 6.096
+*skein(s)
+=meter 109.728
+*span(s)
+=meter 0.2286
+*survey_f(oot.eet)
+=0.3048006096 meter
+*yard(s),yd
+=meter 0.9144
+
+; Units of area
+*acre(s)
+=4046.85642 meter^2
+*are(s)
+=100 meter^2
+*barn(s)
+=1.0E-28 meter^2
+*centare(s)
+=1 meter^2
+*hectare(s)
+=10000 meter^2
+*rood(s)
+=1011.7141 meter^2
+*section(s)
+=2589988.096 meter^2
+*sq(uare)_centimeter(s),sq(uare)_centimetre(s),sq(uare)_cm(s)
+=meter^2 1E-4
+*sq(uare)_f(oot.eet),sq(uare)_ft
+=0.09290304 meter^2
+*sq(uare)_inch(es),sq(uare)_in(s)
+=0.00064516 meter^2
+*sq(uare)_kilometer(s),sq(uare)_kilometre(s),sq(uare)_km
+=meter^2 1E+6
+*sq(uare)_meter(s),sq(uare)_metre(s),sq(uare)_m
+=meter^2 1
+*sq(uare)_millimeter(s),sq(uare)_millimetre(s),sq(uare)_mm(s)
+=meter^2 1E-6
+*sq(uare)_yard(s),sq(uare)_yd(s)
+=0.83612736 meter^2
+*township(s)
+=93239571.456 meter^2
+
+; Units of volume
+*barrel(s),bbl                ; International Petroleum barrel
+=0.1589873 meter^3
+*board_f(oot.eet),fbm
+=144 inch^3
+*bushel(s),bu                 ; U.S. dry bushel
+=0.03523907 meter^3
+*centiliter(s),cl
+=0.01 liter
+*cord(s)
+=3.6245734 meter^3
+*cc
+=1e-6 meter^3
+*cu(bic)_centimeter(s),cu(bic)_centimetre(s),cu(bic)_cm(s)
+=meter^3 1E-6
+*cu(bic)_f(oot.eet),cu(bic)_ft
+=0.028316846592 meter^3
+*cu(bic)_inch(es),cu(bic)_in(s)
+=0.000016387064 meter^3
+*cu(bic)_kilometer(s),cu(bic)_kilometre(s),cu(bic)_km
+=meter^3 1E+9
+*cu(bic)_meter(s),cu(bic)_metre(s),cu(bic)_m
+=meter^3 1
+*cu(bic)_millimeter(s),cu(bic)_millimetre(s),cu(bic)_mm(s)
+=meter^3 1E-9
+*cu(bic)_yard(s),cu(bic)_yd(s)
+=0.764554857984 meter^3
+*decistere(s)
+=0.1 meter^3
+*dekaliter(s),dal
+=10 liter
+*dekastere(s)
+=10 meter^3
+*dram(s)                      ; U.S. fluid dram
+=3.6967162 cc
+*dry_pint(s)
+=0.551 liter
+*dry_quart(s)
+=1.101 liter
+*firkin(s)
+=34.06775 liter
+*gallon(s),gal                ; U.S. fluid gallon
+=0.0037854118 meter^3
+*gill(s)
+=118.29412 cc
+*hectoliter(s)
+=100 liter
+*hogshead(s),hhd
+=0.23848094 meter^3
+*kilderkin(s)
+=0.08182957 meter^3
+*kiloliter(s)
+=1.000028 meter^3
+*liter(s)
+=0.001 meter^3                ; Redefined from 0.001000028m^3 in 1964
+*milliliter(s),ml
+=0.001 liter
+*minim(s)
+=6.160979e-5 liter
+*fluid_ounce(s)
+=2.9573730e-5 meter^3
+*peck(s)
+=8.809521 liter
+*pint(s),fluid_pint(s)
+=0.4731632 liter
+*pottle(s)
+=2.272980 liter
+*puncheon(s)
+=0.31797510 meter^3
+*quart(s),qt,fluid_quart(s)
+=0.9463264 liter
+*register_ton(s)
+=2.8316847 meter^3
+*seam(s)
+=290.9414 liter
+*stere(s)
+=1 meter^3
+*tun(s)
+=252 gallon
+
+; Units of mass
+*dalton(s)
+=1.66053e-27 kg
+*dyne(s)
+=kg/980665
+*grain(s)
+=kg/15432.358
+*hundredweight(s),cwt
+=45.359337 kg
+*long_ton(s)
+=1016.0469088 kg
+*ounce_weight,ounce(s),oz
+=kg/35.273962
+*ounce_troy
+=kg/32.150737
+*pennyweight(s),dwt,pwt
+=kg/643.01493
+*poundal(s)
+=kg/70.931635
+*pound(s),lb
+=0.45359237 kg
+*scruple(s)
+=kg/771.61792
+*slug(s)
+=14.5939 kg
+*stone
+=14 pound
+*ton(s)
+=907.18474 kg
+*tonn(e.es)
+=1000 kg
+
+; Units of frequency
+*hertz,hz
+=1/second
+
+; Electromagnetic units
+*coulomb(s)
+=ampere second
+*farad(s)
+=coulomb/volt
+*henr(y.ies)
+=ohm second
+*ohm(s)
+=volt/ampere
+*siemens
+=1/ohm
+*tesla(s)
+=weber/meter^2
+*volt(s),v
+=watt/ampere
+*watt(s),w
+=joule/second
+*weber(s)
+=volt second
+
+; Angular measure
+*circle(s)
+0,0,0,0,0,1,0
+*radian(s)
+=circle/6.28318530717958648
+*degree(s)
+=circle/360
+*grad(s)
+=circle/400
+*quadrant(s)
+=circle/4
+
+; Solid measure
+*sphere(s)
+0,0,0,0,0,1,0
+*hemisphere(s)
+=sphere/2
+*steradian(s)
+=sphere/12.566371
+
+; Dimensionless prefixes
+; Multiples
+*deca
+0,0,0,0,0,10,0
+*hecto
+0,0,0,0,0,100,0
+*kilo
+0,0,0,0,0,1000,0
+*mega
+0,0,0,0,0,1e6,0
+*giga
+0,0,0,0,0,1e9,0
+*tera
+0,0,0,0,0,1e12,0
+*peta
+0,0,0,0,0,1e15,0
+*exa
+0,0,0,0,0,1e18,0
+
+; Fractions
+*deci
+0,0,0,0,0,0.1,0
+*centi
+0,0,0,0,0,0,0.01,0
+*milli
+0,0,0,0,0,0.001,0
+*micro
+0,0,0,0,0,1e-6,0
+*nano
+0,0,0,0,0,1e-9,0
+*pico
+0,0,0,0,0,1e-12,0
+*femto
+0,0,0,0,0,1e-15,0
+*atto
+0,0,0,0,0,1e-18,0
+
+; Reference:  CRC Handbook, 68th edition ('87-'88).
+; Dimensions of common units in terms of fundamental constants
+;       Measurement             C   E   H   K   M          Notes
+;       Length                 -1       1      -1 
+;       Mass                                    1
+;       Time                   -2       1      -1          time / C
+;       Current                 2   1  -1       1          E / time
+;       Temperature             2           -1  1          H / (K time)
+;       Luminous intensity      4      -1       2          Units of power over
+;                                                          solid angle, a
+;                                                          dimensionless value.

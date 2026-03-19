@@ -1,0 +1,175 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="TB_LM:PLT_PLOT_NA_out">
+    <ns0:FeatureSource xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" rdf:resource="fsd://Topobase_1" />
+  </rdf:Description>
+  <rdf:Description rdf:about="TB_LM:PLT_PLOT_NA_out">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/LayerDefinitionResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="TB_LM:PLT_PLOT_NA_out">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">PLT_PLOT_NA</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="TB_LM:PLT_PLOT_NA_out">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="TB_LM:PLT_PLOT_NA_out">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="TB_LM:PLT_PLOT_NA_out">
+    <ns0:LayerDefinitionResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <LayerDefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="LayerDefinition-2.4.0.xsd" version="2.4.0">
+        <VectorLayerDefinition>
+          <ResourceId>fsd://Topobase_1</ResourceId>
+          <FeatureName>PLT_PLOT_NA_CalcProp1</FeatureName>
+          <FeatureNameType>NamedExtension</FeatureNameType>
+          <Geometry>GEOM</Geometry>
+          <VectorScaleRange>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel></LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>BRP6</Name>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M 0.0,500.0 L -79.05741,-136.49641 M -79.05741,-136.49641 L 78.44257,-136.57248 M 78.44257,-136.57248 L 0.0,500.0</Geometry>
+                          <LineColor>%COLORBYLAYER0%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                        <Path>
+                          <Geometry>M -72.23185,-499.92393 L -72.11,-247.92396</Geometry>
+                          <LineColor>%COLORBYLAYER0%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                        <Path>
+                          <Geometry>M -70.21,-255.54 L 69.21861,-492.13551</Geometry>
+                          <LineColor>%COLORBYLAYER0%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                        <Path>
+                          <Geometry>M 71.26813,-500.0 L 71.38984,-248.0</Geometry>
+                          <LineColor>%COLORBYLAYER0%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                        <Path>
+                          <Geometry>M 0.0,500.0 L -79.05741,-136.49641 L 78.44257,-136.57248 L 0.0,500.0</Geometry>
+                          <FillColor>%COLORBYLAYER0%</FillColor>
+                        </Path>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>COLORBYLAYER0</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Color Defined Bylayer 0</DisplayName>
+                          <Description>Color Defined Bylayer 0</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LWBYLAYER0</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Lineweight Defined Bylayer 0</DisplayName>
+                          <Description>Lineweight Defined Bylayer 0</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>BRP6</SymbolName>
+                        <ParameterIdentifier>COLORBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>ff000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BRP6</SymbolName>
+                        <ParameterIdentifier>LWBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>BRP6</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>Angle -90</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>0.02 * DecorationScale</ScaleX>
+                    <ScaleY>0.02 * DecorationScale</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+          </VectorScaleRange>
+        </VectorLayerDefinition>
+      </LayerDefinition>
+    </ns0:LayerDefinitionResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/FeatureSourceResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">Topobase_1</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:FeatureSourceResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <FeatureSource xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="1.0.0">
+  <Provider>Autodesk.Topobase.3.2</Provider>
+  <Parameter>
+    <Name>Password</Name>
+    <Value />
+  </Parameter>
+  <Parameter>
+    <Name>Service</Name>
+    <Value>orcl</Value>
+  </Parameter>
+  <Parameter>
+    <Name>Username</Name>
+    <Value>TBSYS</Value>
+  </Parameter>
+  <Parameter>
+    <Name>DataStore</Name>
+    <Value>TB_LM</Value>
+  </Parameter>
+  <ConfigurationDocument />
+  <LongTransaction>1</LongTransaction>
+  <Extension>
+    <CalculatedProperty>
+      <Name>Angle</Name>
+      <Expression>ToDouble ( TB_SQL ( 'TO_CHAR( OrientationDegreeCCW ( g.ORIENTATION ) )' ) ) </Expression>
+    </CalculatedProperty>
+    <CalculatedProperty>
+      <Name>DecorationScale</Name>
+      <Expression>ToDouble ( TB_SQL ( 'SELECT TO_CHAR ( SCALE_DENOMINATOR ) FROM PLT_PLOT p where p.FID = g.FID_PARENT_PLOT' ) )</Expression>
+    </CalculatedProperty>
+    <Name>PLT_PLOT_NA_CalcProp1</Name>
+    <FeatureClass>TB_LM:PLT_PLOT_NA</FeatureClass>
+  </Extension>
+</FeatureSource>
+    </ns0:FeatureSourceResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="LayerSchema">
+    <ns0:version xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">1</ns0:version>
+  </rdf:Description>
+</rdf:RDF>

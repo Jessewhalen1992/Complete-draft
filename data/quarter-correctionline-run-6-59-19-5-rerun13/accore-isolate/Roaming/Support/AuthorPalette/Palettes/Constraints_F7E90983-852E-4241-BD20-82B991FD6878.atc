@@ -1,0 +1,94 @@
+<Palette FileRevision="18.0.0" Revision="18.0.0" option="0"><ItemID idValue="{F7E90983-852E-4241-BD20-82B991FD6878}"/><Properties><ItemName resource="6000" src="AcTpCatalogRes.dll"/><Images option="0"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><Tools><Tool Revision="18.0.0" option="0"><ItemID idValue="{0C9F96D4-7F50-4CD3-9EC7-ABD311ACA162}"/><Properties><ItemName resource="6001" src="AcTpCatalogRes.dll"/><Images option="0"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><Source/><ToolType>3</ToolType><StockToolRef/><Data/>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{5D79A0D2-080C-4226-975B-0E73B63C952D}"/><Properties><ItemName resource="6007" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_COINCIDENT_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_COINCIDENT_32" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_COINCIDENT_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_COINCIDENT_32" src="%ProgramBtnRes%"/></Images><Description resource="6008" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_GeomConstraint _Coincident]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{2AC651F8-1D5F-4B18-94A9-D449864A3544}"/><Properties><ItemName resource="6015" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_PERPENDICULAR_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_PERPENDICULAR_32" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_PERPENDICULAR_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_PERPENDICULAR_32" src="%ProgramBtnRes%"/></Images><Description resource="6016" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_GeomConstraint _Perpendicular]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{16F8F2AC-F0A8-4F9E-9DFB-22E8E11ABB84}"/><Properties><ItemName resource="6003" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_PARALLEL_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_PARALLEL_32" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_PARALLEL_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_PARALLEL_32" src="%ProgramBtnRes%"/></Images><Description resource="6004" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_GeomConstraint _Parallel]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{22159589-363F-4812-9C1F-8305A4317715}"/><Properties><ItemName resource="6005" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_TANGENT_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_TANGENT_32" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_TANGENT_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_TANGENT_32" src="%ProgramBtnRes%"/></Images><Description resource="6006" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_GeomConstraint _Tangent]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{9CD84AB4-19FE-47A5-A20F-3427463CCEDD}"/><Properties><ItemName resource="6021" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_HORIZONTAL_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_HORIZONTAL_32" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_HORIZONTAL_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_HORIZONTAL_32" src="%ProgramBtnRes%"/></Images><Description resource="6022" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_GeomConstraint _Horizontal]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{A7CFA609-7D37-4B86-88B0-E12D1C700815}"/><Properties><ItemName resource="6019" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_VERTICAL_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_VERTICAL_32" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_VERTICAL_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_VERTICAL_32" src="%ProgramBtnRes%"/></Images><Description resource="6020" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_GeomConstraint _Vertical]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{9EB39983-20BF-4267-8B4C-5C0609D5C44C}"/><Properties><ItemName resource="6023" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_COLINEAR_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_COLINEAR_32" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_COLINEAR_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_COLINEAR_32" src="%ProgramBtnRes%"/></Images><Description resource="6024" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_GeomConstraint _Collinear]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{2C715255-7538-4556-B47C-3126F0B829E1}"/><Properties><ItemName resource="6009" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_COCENTERIC_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_COCENTERIC_32" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_COCENTERIC_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_COCENTERIC_32" src="%ProgramBtnRes%"/></Images><Description resource="6010" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_GeomConstraint _Concentric]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{041B003A-3B54-41A8-A5D0-D084793DCA35}"/><Properties><ItemName resource="6017" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_SMOOTH_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_SMOOTH_32" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_SMOOTH_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_SMOOTH_32" src="%ProgramBtnRes%"/></Images><Description resource="6018" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_GeomConstraint _Smooth]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{2B582510-E25D-4F7E-8A22-E30F1B5CAF53}"/><Properties><ItemName resource="6025" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_SYMMETRIC_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_SYMMETRIC_32" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_SYMMETRIC_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_SYMMETRIC_32" src="%ProgramBtnRes%"/></Images><Description resource="6026" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_GeomConstraint _Symmetric]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{05A4E87F-2831-46F3-908C-D0028F8A87C2}"/><Properties><ItemName resource="6011" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_EQUAL_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_EQUAL_32" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_EQUAL_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_EQUAL_32" src="%ProgramBtnRes%"/></Images><Description resource="6012" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_GeomConstraint _Equal]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{D9AE2B56-A21A-45E4-A204-5B935A8A38F9}"/><Properties><ItemName resource="6013" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_FIX_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_FIX_32" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_FIX_16" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_FIX_32" src="%ProgramBtnRes%"/></Images><Description resource="6014" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_GeomConstraint _Fix]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="18.0.0" option="0"><ItemID idValue="{B6FA76B6-728D-4CBF-B7D4-5E753BF9938C}"/><Properties><Images option="0"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><Source/><ToolType>4</ToolType><StockToolRef/><Data/>
+		</Tool><Tool Revision="18.0.0" option="0"><ItemID idValue="{43D88A73-1465-4424-B0A2-006B45D4E5E0}"/><Properties><ItemName resource="6039" src="AcTpCatalogRes.dll"/><Images option="0"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><Source/><ToolType>3</ToolType><StockToolRef/><Data/>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{4F08F93F-70DC-4372-91DE-732A1B23B432}"/><Properties><ItemName resource="6031" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_BCPARAMETER_ALIGNED" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_BCPARAMETER_ALIGNED" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_BCPARAMETER_ALIGNED" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_BCPARAMETER_ALIGNED" src="%ProgramBtnRes%"/></Images><Description resource="6032" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_BCParameter _Aligned]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{40AFBF9A-664F-4389-8301-EC73ED309238}"/><Properties><ItemName resource="6027" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_BCPARAMETER_HORIZONTAL" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_BCPARAMETER_HORIZONTAL" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_BCPARAMETER_HORIZONTAL" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_BCPARAMETER_HORIZONTAL" src="%ProgramBtnRes%"/></Images><Description resource="6028" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_BCParameter _Horizontal]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{272DC13A-D39A-41EE-9964-EE85D425FD54}"/><Properties><ItemName resource="6029" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_BCPARAMETER_VERTICAL" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_BCPARAMETER_VERTICAL" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_BCPARAMETER_VERTICAL" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_BCPARAMETER_VERTICAL" src="%ProgramBtnRes%"/></Images><Description resource="6030" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_BCParameter _Vertical]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{4F1DB798-A659-48C1-99D6-45C2C633A916}"/><Properties><ItemName resource="6033" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_BCPARAMETER_ANGULAR" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_BCPARAMETER_ANGULAR" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_BCPARAMETER_ANGULAR" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_BCPARAMETER_ANGULAR" src="%ProgramBtnRes%"/></Images><Description resource="6034" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_BCParameter _Angular]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{3ED4DC65-1E8E-402F-8D81-3170D8EE1A9F}"/><Properties><ItemName resource="6035" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_BCPARAMETER_RADIUS" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_BCPARAMETER_RADIUS" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_BCPARAMETER_RADIUS" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_BCPARAMETER_RADIUS" src="%ProgramBtnRes%"/></Images><Description resource="6036" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_BCParameter _Radius]]></Macro>
+				</Command>
+			</Data>
+		</Tool><Tool Revision="20.0.0" option="0"><ItemID idValue="{0DD55DEC-E884-420E-A209-FE8DBA3A480B}"/><Properties><ItemName resource="6037" src="AcTpCatalogRes.dll"/><Images option="0"><Image cx="16" cy="16" IsDark="false" resource="RCDATA_16_BCPARAMETER_DIAMETER" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="false" resource="RCDATA_32_BCPARAMETER_DIAMETER" src="%ProgramBtnRes%"/><Image cx="16" cy="16" IsDark="true" resource="RCDATA_16_BCPARAMETER_DIAMETER" src="%ProgramBtnRes%"/><Image cx="32" cy="32" IsDark="true" resource="RCDATA_32_BCPARAMETER_DIAMETER" src="%ProgramBtnRes%"/></Images><Description resource="6038" src="AcTpCatalogRes.dll"/><Time createdUniversalDateTime="2025-03-06T13:50:47" modifiedUniversalDateTime="2025-03-06T13:50:47"/></Properties><ToolType>1</ToolType><StockToolRef idValue="{2AE7120B-CEE4-47A5-9B50-EF9F3ADE24AC}"/><Data>
+				<Command>
+					<Macro><![CDATA[^C^C_BCParameter _Diameter]]></Macro>
+				</Command>
+			</Data>
+		</Tool></Tools></Palette>

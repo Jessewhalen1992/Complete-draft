@@ -1,0 +1,338 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="ELECTRIC_NA:EL_V_DSP_SWITCH">
+    <ns0:FeatureSource xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" rdf:resource="fsd://TopobaseDefault" />
+  </rdf:Description>
+  <rdf:Description rdf:about="ELECTRIC_NA:EL_V_DSP_SWITCH">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/LayerDefinitionResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="ELECTRIC_NA:EL_V_DSP_SWITCH">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">EL_V_DSP_SWITCH</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="ELECTRIC_NA:EL_V_DSP_SWITCH">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="ELECTRIC_NA:EL_V_DSP_SWITCH">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="ELECTRIC_NA:EL_V_DSP_SWITCH">
+    <ns0:LayerDefinitionResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <LayerDefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="LayerDefinition-2.4.0.xsd" version="2.4.0">
+        <VectorLayerDefinition>
+          <ResourceId>fsd://IndustryModel_1</ResourceId>
+          <FeatureName>ELECTRIC_NA:EL_V_DSP_SWITCH</FeatureName>
+          <FeatureNameType>FeatureClass</FeatureNameType>
+          <Geometry>GEOM</Geometry>
+          <VectorScaleRange>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel></LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>OSWT</Name>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M 2500.0,0.0 L 5000.0,0.0</Geometry>
+                          <LineColor>%COLORBYBLOCKOSWT%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                        <Path>
+                          <Geometry>M 5000.0,0.0 L 6767.76695,1767.76695</Geometry>
+                          <LineColor>%COLORBYBLOCKOSWT%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                        <Path>
+                          <Geometry>M 7500.0,0.0 L 10000.0,0.0</Geometry>
+                          <LineColor>%COLORBYBLOCKOSWT%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                        <Text>
+                          <Content>%SWITCH_POSITION%</Content>
+                          <FontName>'Arial'</FontName>
+                          <Height>%FontHeight_3%</Height>
+                          <PositionX>%TextPositionX_3%</PositionX>
+                          <PositionY>%TextPositionY_3%</PositionY>
+                          <TextColor>%COLORBYBLOCKOSWT%</TextColor>
+                        </Text>
+                        <Text>
+                          <Content>%SWITCH_TYPE%</Content>
+                          <FontName>'Arial'</FontName>
+                          <Height>%FontHeight_4%</Height>
+                          <PositionX>%TextPositionX_4%</PositionX>
+                          <PositionY>%TextPositionY_4%</PositionY>
+                          <TextColor>%COLORBYBLOCKOSWT%</TextColor>
+                        </Text>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>COLORBYBLOCKOSWT</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Color Defined ByBlock OSWT</DisplayName>
+                          <Description>Color Defined ByBlock OSWT</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LWBYLAYER0</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Lineweight Defined ByLayer 0</DisplayName>
+                          <Description>Lineweight Defined ByLayer 0</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>SWITCH_POSITION</Identifier>
+                          <DefaultValue>''</DefaultValue>
+                          <DisplayName>Enter Switch Position:</DisplayName>
+                          <Description>Enter Switch Position:</Description>
+                          <DataType>Content</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>SWITCH_TYPE</Identifier>
+                          <DefaultValue>''</DefaultValue>
+                          <DisplayName>Enter Switch Type:</DisplayName>
+                          <Description>Enter Switch Type:</Description>
+                          <DataType>Content</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ScaleX_0</Identifier>
+                          <DefaultValue>1.0</DefaultValue>
+                          <DisplayName>Path ScaleX</DisplayName>
+                          <Description>Path ScaleX</Description>
+                          <DataType>Real</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ScaleY_0</Identifier>
+                          <DefaultValue>1.0</DefaultValue>
+                          <DisplayName>Path ScaleY</DisplayName>
+                          <Description>Path ScaleY</Description>
+                          <DataType>Real</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ScaleX_1</Identifier>
+                          <DefaultValue>1.0</DefaultValue>
+                          <DisplayName>Path ScaleX</DisplayName>
+                          <Description>Path ScaleX</Description>
+                          <DataType>Real</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ScaleY_1</Identifier>
+                          <DefaultValue>1.0</DefaultValue>
+                          <DisplayName>Path ScaleY</DisplayName>
+                          <Description>Path ScaleY</Description>
+                          <DataType>Real</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ScaleX_2</Identifier>
+                          <DefaultValue>1.0</DefaultValue>
+                          <DisplayName>Path ScaleX</DisplayName>
+                          <Description>Path ScaleX</Description>
+                          <DataType>Real</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ScaleY_2</Identifier>
+                          <DefaultValue>1.0</DefaultValue>
+                          <DisplayName>Path ScaleY</DisplayName>
+                          <Description>Path ScaleY</Description>
+                          <DataType>Real</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>FontHeight_3</Identifier>
+                          <DefaultValue>1875.0</DefaultValue>
+                          <DisplayName>Font height</DisplayName>
+                          <Description>Font height</Description>
+                          <DataType>FontHeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>TextPositionX_3</Identifier>
+                          <DefaultValue>6250.0</DefaultValue>
+                          <DisplayName>PositionX</DisplayName>
+                          <Description>PositionX</Description>
+                          <DataType>Real</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>TextPositionY_3</Identifier>
+                          <DefaultValue>4737.69518</DefaultValue>
+                          <DisplayName>PositionY</DisplayName>
+                          <Description>PositionY</Description>
+                          <DataType>Real</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>FontHeight_4</Identifier>
+                          <DefaultValue>1875.0</DefaultValue>
+                          <DisplayName>Font height</DisplayName>
+                          <Description>Font height</Description>
+                          <DataType>FontHeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>TextPositionX_4</Identifier>
+                          <DefaultValue>6250.0</DefaultValue>
+                          <DisplayName>PositionX</DisplayName>
+                          <Description>PositionX</Description>
+                          <DataType>Real</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>TextPositionY_4</Identifier>
+                          <DefaultValue>-3101.59127</DefaultValue>
+                          <DisplayName>PositionY</DisplayName>
+                          <Description>PositionY</Description>
+                          <DataType>Real</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>COLORBYBLOCKOSWT</ParameterIdentifier>
+                        <ParameterValue>ff000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>LWBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>SWITCH_POSITION</ParameterIdentifier>
+                        <ParameterValue>''</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>SWITCH_TYPE</ParameterIdentifier>
+                        <ParameterValue>''</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>ScaleX_0</ParameterIdentifier>
+                        <ParameterValue>0.000199999593600013</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>ScaleY_0</ParameterIdentifier>
+                        <ParameterValue>0.000199999593600014</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>ScaleX_1</ParameterIdentifier>
+                        <ParameterValue>0.000199999593600013</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>ScaleY_1</ParameterIdentifier>
+                        <ParameterValue>0.000199999593600014</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>ScaleX_2</ParameterIdentifier>
+                        <ParameterValue>0.000199999593600013</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>ScaleY_2</ParameterIdentifier>
+                        <ParameterValue>0.000199999593600014</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>FontHeight_3</ParameterIdentifier>
+                        <ParameterValue>0.374999238000026</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>TextPositionX_3</ParameterIdentifier>
+                        <ParameterValue>1.24999746000009</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>TextPositionY_3</ParameterIdentifier>
+                        <ParameterValue>0.947537110600745</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>FontHeight_4</ParameterIdentifier>
+                        <ParameterValue>0.374999238000026</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>TextPositionX_4</ParameterIdentifier>
+                        <ParameterValue>1.24999746000009</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>OSWT</SymbolName>
+                        <ParameterIdentifier>TextPositionY_4</ParameterIdentifier>
+                        <ParameterValue>-0.620316993513351</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>0.03125</ScaleX>
+                    <ScaleY>0.03125</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <UsageContext>Point</UsageContext>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+          </VectorScaleRange>
+        </VectorLayerDefinition>
+      </LayerDefinition>
+    </ns0:LayerDefinitionResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://TopobaseDefault">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/FeatureSourceResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://TopobaseDefault">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">TopobaseDefault</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://TopobaseDefault">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://TopobaseDefault">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">Default description</ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://TopobaseDefault">
+    <ns0:FeatureSourceResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <FeatureSource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" version="1.0.0">
+  <Provider>Autodesk.Topobase.3.2</Provider>
+  <Parameter>
+    <Name>DataStore</Name>
+    <Value>ELECTRIC_NA</Value>
+  </Parameter>
+  <Parameter>
+    <Name>Password</Name>
+    <Value />
+  </Parameter>
+  <Parameter>
+    <Name>Service</Name>
+    <Value></Value>
+  </Parameter>
+  <Parameter>
+    <Name>Username</Name>
+    <Value></Value>
+  </Parameter>
+  <ConfigurationDocument />
+  <LongTransaction>1</LongTransaction>
+</FeatureSource>
+    </ns0:FeatureSourceResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="LayerSchema">
+    <ns0:version xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">1</ns0:version>
+  </rdf:Description>
+</rdf:RDF>

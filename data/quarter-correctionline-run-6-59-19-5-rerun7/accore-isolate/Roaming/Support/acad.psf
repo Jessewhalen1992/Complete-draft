@@ -1,0 +1,1425 @@
+;
+;   PostScript font substitution map
+;
+;   This file currently defines all the fonts included with
+;   Adobe Type Manager for Windows, the Adobe Plus Pack,
+;   Adobe Font Pack 1, as well as the Linguist fonts distributed
+;   with AutoCAD.
+;
+*fonts
+;
+; The first column is the base name of the shape, compiled shape,
+; or Adobe Type 1 font definition. The second column is the official
+; PostScript name of the font.  Trailing underscores should be
+; ignored. For example, the file containing the font "AvantGarde-Demi"
+; might be called AGD_____.PFB; the entry in the first column would
+; be "agd". Following the long name, there may be other flags; currently
+; the only flag interpreted by AutoCAD is ISO, which means the font is
+; already ISO-encoded and does not need further remapping.
+;
+;
+agd         AvantGarde-Demi
+agdo        AvantGarde-DemiOblique
+agw         AvantGarde-Book
+agwo        AvantGarde-BookOblique
+bdps        Bodoni-Poster
+bkd         Bookman-Demi
+bkdi        Bookman-DemiItalic
+bkl         Bookman-Light
+bkli        Bookman-LightItalic
+c           Cottonwood
+cibt        CityBlueprint
+cob         Courier-Bold
+cobo        Courier-BoldOblique
+cobt        CountryBlueprint
+com         Courier
+coo         Courier-Oblique
+eur         EuroRoman 
+euro        EuroRoman-Oblique 
+fs          FreestyleScript
+ho          Hobo
+hv          Helvetica
+hvb         Helvetica-Bold
+hvbo        Helvetica-BoldOblique
+hvn         Helvetica-Narrow
+hvnb        Helvetica-Narrow-Bold
+hvnbo       Helvetica-Narrow-BoldOblique
+hvno        Helvetica-Narrow-Oblique
+hvo         Helvetica-Oblique
+lx          Linotext
+ncb         NewCenturySchlbk-Bold
+ncbi        NewCenturySchlbk-BoldItalic
+nci         NewCenturySchlbk-Italic
+ncr         NewCenturySchlbk-Roman
+par         PanRoman
+pob         Palatino-Bold
+pobi        Palatino-BoldItalic
+poi         Palatino-Italic
+por         Palatino-Roman
+rom         Romantic
+romb        Romantic-Bold
+romi        Romantic-Italic
+sas         SansSerif
+sasb        SansSerif-Bold
+sasbo       SansSerif-BoldOblique
+saso        SansSerif-Oblique
+suf         SuperFrench
+sy          Symbol
+te          Technic
+teb         Technic-Bold
+tel         Technic-Light
+tib         Times-Bold
+tibi        Times-BoldItalic
+tii         Times-Italic
+tir         Times-Roman
+tjrg        Trajan-Regular
+vrb         VAGRounded-Bold
+zcmi        ZapfChancery-MediumItalic
+zd          ZapfDingbats
+;
+; The following entries were added to support the new internal 
+; font naming conventions introduced in R14.
+;
+cityb                     CityBlueprint
+CityBlueprint00002002     CityBlueprint
+counb                     CountryBlueprint
+CountryBlueprint00002002  CountryBlueprint
+eurr                      EuroRoman
+EuroRoman00002002         EuroRoman
+eurro                     EuroRoman-Oblique
+EuroRoman01002002         EuroRoman-Oblique
+panroman                  PanRoman
+PanRoman00002002          PanRoman
+romabi                    Romantic-BoldItalic
+Romantic11002002          Romantic-BoldItalic
+romab                     Romantic-Bold
+Romantic10002002          Romantic-Bold
+romai                     Romantic-Italic
+Romantic01002002          Romantic-Italic
+romantic                  Romantic
+Romantic00002002          Romantic
+sanssbo                   SanSerif-BoldOblique
+SansSerif11002002         SanSerif-BoldOblique
+sanssb                    SanSerif-Bold
+SansSerif10002002         SanSerif-Bold
+sansso                    SanSerif-Oblique
+SansSerif01002002         SanSerif-Oblique
+sanss                     SanSerif
+SansSerif00002002         SanSerif
+supef                     SuperFrench
+SuperFrench00002002       SuperFrench
+techb                     Technic-Bold
+TechnicBold00002002       Technic-Bold
+techl                     Technic-Light
+TechnicLite00002002       Technic-Light
+technic                   Technic
+Technic00002002           Technic
+;
+; Some additional font mappings. To use any of these fonts,
+; just remove the semicolon from the beginning of the line.
+; These have not been tested by Autodesk, and are included as
+; a convenience only.
+;
+;akj    AksarJhar ISO
+;ar     Armenian ISO
+;arlvi  AradLevelVI ISO
+;ay     Ayudhya ISO
+;ayb    AyudhyaBold ISO
+;ba     Bangkok ISO
+;chm    ChangMai ISO
+;chmb   ChiangMaiBold ISO
+;gr     Graeca ISO
+;gro    GraecaOblique ISO
+;gu     Gujarati ISO
+;he     Hebraica ISO
+;higj   HiGwangJu ISO
+;hii    HiInchon ISO
+;his    HindiSanskrit ISO
+;ho     Hobo ISO
+;ipa    IPAsans ISO
+;ipak   IPAKiel ISO
+;ipakb  IPAKiel-Bold ISO
+;khk    KhunKrit ISO
+;khkb   KhunKrit-Bold ISO
+;khkbi  KhunKrit-BoldItalic ISO
+;khki   KhunKrit-Italic ISO
+;la     Laotian ISO
+;nah    NaayHaang ISO
+;nahb   NaayHaang-Bold ISO
+;nahbi  NaayHaang-BoldItalic ISO
+;nahi   NaayHaang-Italic ISO
+;nehp   NewHiPusan ISO
+;nej    NewJeju ISO
+;nes    NewSeoul ISO
+;ph     Phatphong ISO
+;phb    Phatphong-Bold ISO
+;phbi   Phatphong-BoldItalic ISO
+;phi    Phatphong-Italic ISO
+;ro     Romance ISO
+;rob    RomanceBold ISO
+;roi    RomanceItalic ISO
+;se     Semitica ISO
+;seb    SemiticaBold ISO
+;sei    SemiticaItalic ISO
+;su     Sukanya ISO
+;sub    Sukanya-Bold ISO
+;tbc    TbilisiCaps ISO
+;tbt    TbilisiText ISO
+;th     Thonburi ISO
+;ti     Tibetan ISO
+;trc    TransCyrillic ISO
+;trcb   TransCyrillic-Bold ISO
+;trcbi  TransCyrillic-BoldItalic ISO
+;trci   TransCyrillic-Italic ISO
+;trcs   TransCyrillicSans ISO
+;trcsb  TransCyrillicSans-Bold ISO
+;trcsbo TransCyrillicSans-BoldOblique ISO
+;trcso  TransCyrillicSans-Oblique ISO
+;vib    VinaBook ISO
+;vic    VinaChan ISO
+;vip    VinaPala ISO
+;vir    VinaRoman ISO
+;vis    VinaSans ISO
+;
+; Font mappings to avoid downloading.
+; These mappings are not supported, and, in some cases, may not
+; produce proper results; use at your own risk.  These mappings are
+; included as a convenience only. To activate these, comment out the
+; corresponding mapping above by inserting a semicolon (;) at the
+; beginning of the line.
+;
+; Note also that if you completely comment out all entries for a font,
+; then PSOUT will not attempt to convert the text to PostScript text
+; entities, and will instead output them as (unfilled) outlines. This 
+; will result in larger .eps files, but for certain fonts, in particular
+; stroke fonts such as City Blueprint, will look the same.
+;
+saso    Helvetica-Oblique
+sas     Helvetica
+sasb    Helvetica-Bold
+sasbo   Helvetica-BoldOblique
+rom     Times-Roman
+romb    Times-Bold
+romi    Times-Italic
+;
+;   PostScript figure inclusion procedures
+;
+; Taken from PostScript manual verbatim
+*figureprologue
+/IncludeFig { 
+        /b4_Inc_state save def
+        /dict_count countdictstack def
+        /op_count count 1 sub def
+        userdict begin
+        /showpage {} def
+        0 setgray 0 setlinecap
+        1 setlinewidth 0 setlinejoin
+        10 setmiterlimit [] 0 setdash newpath
+        /languagelevel where
+        {pop languagelevel
+                1 ne
+                {false setstrokeadjust false setoverprint
+                }if
+        }if
+}bind def
+        
+;
+; % Args are llx lly urx ury (in figure coordinates)
+;
+;/clipFig {
+;       currentpoint 6 2 roll
+;       newpath 4 copy
+;       4 2 roll moveto
+;       6 -1 roll exch lineto
+;       exch lineto
+;       exch lineto
+;       closepath clip
+;       moveto
+; } def
+;
+; % doclip, if called, will always be just after a `startfig'
+;
+; /doclip { llx lly urx ury clipFig } def
+
+/EndIncludeFig {
+           count op_count sub {pop} repeat
+           countdictstack dict_count sub {end} repeat
+           b4_Inc_state restore
+} bind def
+;
+*sampleprolog
+; Sample PSPROLOG. Many other methods of implementation are possible. 
+;
+; This entire section (without full-line comments)
+; gets inserted into the PSOUT file after the
+; AutoCAD generated transformations. Thus, this section can contain code
+; to globally rotate, translate, and otherwise transform the image.
+;
+; To rotate an image, an example (for 8.5" high paper), include the
+; instructions
+;
+;    0 8.5 72 mul translate   % 8.5 inches times 72 pts per inch
+;    -90 rotate               % Positive means counterclockwise
+;
+; Three functions are prime candidates for redefinition:
+;
+;       ACADColor
+;               i r g b ACADColor -
+;       gets called every time the color changes. r, g, b are values from 0 to 1,
+;       while i is number from 1 to 254, corresponding to the ACAD color number.
+;       The default implementation is:
+;/ACADColor { setrgbcolor pop } def
+;
+;
+;       ACADLayer
+;               name ACADLayer -
+; gets called when the layer changes. The layer name is presented as a string.
+; The default is to do nothing with this information; the default
+; implementation is
+;
+;/ACADLayer { pop } def
+;
+;       ACADLtype
+;               name pattern alignment ACADLtype -
+; gets called when the line type changes. "name" is the name of the linetype,
+; and could be used as a key into a dictionary. "pattern" is an array consisting
+; of what AutoCAD refers to as the "dash-n" fields. "alignment" is the AutoCAD
+; alignment specification, which at present is always the string (A).
+; The default implementation is quite complicated.
+;
+; An example set of redefinitions follow.
+;
+; First, define a local dictionary; userdict certainly won't have enough
+; space for big tables of colors.
+;
+/SamplePrologDict 300 dict def
+;
+;       n tocname --
+;       create a name "colorN" for later lookup. This approach doesn't
+;       make particularly readable names, but it is compact.
+SamplePrologDict begin
+/tocname {
+        6 string dup 0 (color) putinterval dup 5 4 -1 roll put cvn
+        } bind def
+
+;       n routine color --
+;       defines a color entry, putting it in mydict.
+/color { exch tocname exch bind def } bind def
+end
+;
+;       Now, the lookup.
+; Note that is is VITAL to clear the stack in called routines; ACADColor will
+; only take the garbage off if there is not a special entry for this color 
+; Note that ACADColor must _not_ be in SamplePrologDict.
+
+;
+; Note that the linewidth is scaled along with everything else. This
+; might not be what you want! But the color and linetype and such are
+; declared before the geometry is declared -- so we have to do a little
+; magick to get it _really_ the way we want it.
+;
+;
+SamplePrologDict begin
+/_ACADLayer { ACADLayer } bind def
+/_ACADLtype { ACADLtype } bind def
+/_ACADColor {
+        SamplePrologDict begin
+        3 index tocname dup
+        SamplePrologDict exch known
+        { cvx exec }
+        { pop defaultcolor }
+        ifelse
+        end
+} bind def
+/acad-layer-known false def
+/acad-color-known false def
+/acad-linetype-known false def
+end
+
+/ACADLayer {
+        SamplePrologDict begin
+        /acad-layer exch def
+        /acad-layer-known true def
+        end
+} bind def
+/ACADColor {
+        SamplePrologDict begin
+        4 array astore /acad-color exch def
+        /acad-color-known true def
+        end
+} bind def
+/ACADLtype {
+    SamplePrologDict begin
+    3 array astore /acad-ltype exch def
+    /acad-linetype-known true def
+    end
+} bind def
+
+; Now some example color defs.
+; Make sure to put them in SamplePrologDict
+SamplePrologDict begin
+/scaledown { matrix currentmatrix 0 get div } bind def
+; Color 1 just wants nice thin green lines.
+1 { pop pop pop pop 0 scaledown setlinewidth 0 1 0 setrgbcolor } color
+; Color 2 wants 36 point red lines
+2 { pop pop pop pop 36 scaledown setlinewidth 1 0 0 setrgbcolor } color
+; Everything else gets thin self-colored lines.
+/defaultcolor { 0 setlinewidth setrgbcolor pop } bind def
+end
+; The next line is to make sure line widths are controlled only from the
+; color-setting code.
+/setlinewidth { pop } def
+
+
+; Now we redefine "stroke" so that it calls our procedures first.
+; Notice that /stroke includes "stroke" in the definition; this is so
+; that the old definition of stroke is used in the new definition -- and
+; the "bind" makes it so. We do the same to "fill".
+
+/prestroke {
+        SamplePrologDict begin
+            acad-color-known {
+                /acad-color-known false def
+                acad-color aload pop _ACADColor
+            } if
+            acad-layer-known {
+                /acad-layer-known false def
+                acad-layer _ACADLayer
+            } if
+            acad-linetype-known {
+                /acad-linetype-known false def
+                acad-ltype aload pop _ACADLtype
+            } if
+        end
+    } bind def
+/stroke { prestroke stroke } bind def
+/fill   { prestroke fill } bind def
+;
+;
+;   End of sample prolog.
+;
+;
+;   PostScript ISO font re-mapping procedure
+;
+*isofontprologue
+/reencodedict 12 dict def
+
+/ReEncode {
+    reencodedict begin
+        /newcodesandnames exch def
+        /newfontname exch def
+        /basefontname exch def
+        /basefontdict basefontname findfont def
+        /newfont basefontdict maxlength dict def
+        basefontdict {
+            exch dup /FID ne
+                {dup /Encoding eq
+                    { exch dup length array copy newfont 3 1 roll put }
+                    { exch newfont 3 1 roll put }
+                 ifelse
+                }
+                { pop pop }
+            ifelse
+        } forall
+        newfont /FontName newfontname put
+        newcodesandnames aload pop
+        newcodesandnames length 2 idiv
+            { newfont /Encoding get 3 1 roll put }
+        repeat
+        newfontname newfont definefont pop
+    end
+} def
+
+/ISO [
+        127 /degree
+        128 /plusminus
+        129 /emptyset
+
+%   ISO characters moved here to avoid SEAC conflicts
+        130 /Aacute
+        131 /Acircumflex
+        132 /Atilde
+        133 /Adieresis
+        134 /Aring
+        135 /AE
+        136 /Ccedilla
+        137 /Egrave
+        138 /Eacute
+        139 /Ecircumflex
+        140 /Edieresis
+        141 /Igrave
+        142 /Iacute
+        143 /Icircumflex
+        144 /Idieresis
+%   End ISO characters moved
+
+        145 /quoteleft
+        146 /quoteright
+
+%   ISO character moved here to avoid SEAC conflicts
+        147 /otilde
+%   End ISO character moved
+
+        160 /space
+        161 /exclamdown
+        162 /cent
+        163 /sterling
+        164 /currency
+        165 /yen
+        166 /bar
+        167 /section
+        168 /dieresis
+        169 /copyright
+        170 /ordfeminine
+        171 /guillemotleft
+        172 /logicalnot
+        173 /minus
+        174 /registered
+        175 /hyphen
+        176 /ring
+        177 /plusminus
+        178 /twosuperior
+        179 /threesuperior
+        180 /acute
+        181 /mu
+        182 /paragraph
+        183 /periodcentered
+        184 /cedilla
+        185 /onesuperior
+        186 /ordmasculine
+        187 /guillemotright
+        188 /onequarter
+        189 /onehalf
+        190 /threequarters
+        191 /questiondown
+        192 /Agrave
+;   Following ISO characters moved to avoid SEAC conflicts
+;       193 /Aacute
+;       194 /Acircumflex
+;       195 /Atilde
+;       196 /Adieresis
+;       197 /Aring
+;       198 /AE
+;       199 /Ccedilla
+;       200 /Egrave
+;       201 /Eacute
+;       202 /Ecircumflex
+;       203 /Edieresis
+;       204 /Igrave
+;       205 /Iacute
+;       206 /Icircumflex
+;       207 /Idieresis
+;   Preceding ISO characters moved to avoid SEAC conflicts
+        208 /Eth
+        209 /Ntilde
+        210 /Ograve
+        211 /Oacute
+        212 /Ocircumflex
+        213 /Otilde
+        214 /Odieresis
+        215 /multiply
+        216 /Oslash
+        217 /Ugrave
+        218 /Uacute
+        219 /Ucircumflex
+        220 /Udieresis
+        221 /Yacute
+        222 /Thorn
+        223 /germandbls
+        224 /agrave
+        225 /aacute
+        226 /acircumflex
+        227 /atilde
+        228 /adieresis
+        229 /aring
+        230 /ae
+        231 /ccedilla
+        232 /egrave
+        233 /eacute
+        234 /ecircumflex
+        235 /edieresis
+        236 /igrave
+        237 /iacute
+        238 /icircumflex
+        239 /idieresis
+        240 /eth
+        241 /ntilde
+        242 /ograve
+        243 /oacute
+        244 /ocircumflex
+;   Following ISO character moved to avoid SEAC conflicts
+;       245 /otilde
+;   Preceding ISO character moved to avoid SEAC conflicts
+        246 /odieresis
+        247 /divide
+        248 /oslash
+        249 /ugrave
+        250 /uacute
+        251 /ucircumflex
+        252 /udieresis
+        253 /yacute
+        254 /thorn
+        255 /ydieresis
+] def
+;
+;   PostScript fill pattern prologue code
+;
+*fillprologue
+/Rangefilter { % <value> <min> <max> Rangefilter <filtered value>
+   3 -1 roll
+   2 copy lt
+      {pop exch pop}
+      {exch pop 2 copy gt {pop} {exch pop} ifelse}
+   ifelse
+} bind def
+/PreFill {
+    /CMatrix matrix currentmatrix def
+} bind def
+;/showBBox {                           % Show bounding box (for debugging only)
+;    gsave
+;    newpath
+;    0 setgray 1 setlinewidth
+;    Bbllx Bblly moveto
+;    Bbllx Bbury lineto
+;    Bburx Bbury lineto
+;    Bburx Bblly lineto
+;    closepath stroke
+;    grestore
+;} bind def
+/DoFill {
+    /Bxscale exch def
+    /Byscale exch def
+    pathbbox
+    /Bbury exch def
+    /Bburx exch def
+    /Bblly exch def
+    /Bbllx exch def
+;   showBBox                          % Show bounding box for debugging
+; ;;CMatrix setmatrix 72 1000 div dup matrix scale
+    CMatrix setmatrix 72 1000 div dup Byscale div exch Bxscale div exch matrix scale
+    dup concat dup Bburx exch Bbury exch itransform
+    ceiling cvi /Bbury exch def ceiling cvi /Bburx exch def Bbllx exch
+    Bblly exch itransform floor cvi /Bblly exch def floor cvi /Bbllx
+    exch def
+} bind def
+/DoOutline {
+    gsave stroke grestore
+} bind def
+/EndFill {
+;   showBBox                          % Show bounding box for debugging
+} bind def
+;
+;   PostScript fill pattern definitions
+;
+*fill
+%@Fill
+/Grayscale %Grayscale,1, Grayscale=50
+   {
+        0 100 Rangefilter 100 div 1 exch sub setgray fill
+   } bind def
+
+%@Fill
+/RGBcolor %RGBcolor,3, Red=50, Green=50, Blue=50,
+   {
+   /Blue exch 0 100 Rangefilter def
+   /Green exch 0 100 Rangefilter def
+   /Red exch 0 100 Rangefilter def
+
+     Red 100 div 
+     Green 100 div 
+     Blue 100 div 
+     setrgbcolor fill
+   } bind def
+
+%@Fill
+/AIlogo %AIlogo,5, Frequency=1.0, Separation=25, LineWidth=0, ForegroundGray=100, BackgroundGray=0
+   {
+   /BackgroundGray exch -1 100 Rangefilter def
+   /ForegroundGray exch 0 100 Rangefilter def
+   /Linewidth      exch 0 100 Rangefilter def
+   /Separation     exch 0 100 Rangefilter def
+   /Frequency      exch 1 100 Rangefilter def
+
+   /newfont 10 dict def
+   newfont begin
+
+   /FontMatrix [1  0  0
+                1  0  0] def
+   /FontType 3 def
+   /FontBBox [0 0 1 1] def
+   /Encoding 256 array def
+   0 1 255 {Encoding exch /.notdef put} for
+
+   /BuildChar
+     { 1  0
+       0 0 1 1
+       setcachedevice
+       pop begin
+
+       100 Separation sub 100.0 div dup dup scale
+       Linewidth 500.0 div exch div setlinewidth 1 setlinejoin
+
+       0.5 0.42201835 translate
+       0 0 moveto
+       0.25 -0.422 lineto
+       -0.25 -0.422 lineto
+       closepath
+       -0.5 -0.42201835 translate
+
+       0.5 0.65137615 translate
+       0 0 moveto
+       0.3728 -0.6514 lineto
+       0.25 -0.6514 lineto
+       0.0734 -0.2018 lineto
+       -0.0734 -0.2018 lineto
+       -0.25 -0.6514 lineto
+       -0.3728 -0.6514 lineto
+       closepath
+       -0.5 -0.65137615 translate
+
+       0.5 0.87155963 translate
+       0 0 moveto
+       0.5 -0.8716 lineto
+       0.3728 -0.8716 lineto
+       0.0734 -0.1468 lineto
+       -0.0734 -0.1468 lineto
+       -0.3728 -0.8716 lineto
+       -0.5 -0.8716 lineto
+       closepath
+       -0.5 -0.87155963 translate
+
+       0.57177274 1 translate
+       0 0 moveto
+       0.4282 0 lineto
+       0.4282 -1 lineto
+       closepath
+       -0.57177274 -1 translate
+
+       0 1 translate
+       0 0 moveto
+       0.4282 0 lineto
+       0 -1 lineto
+       closepath
+       0 -1 translate
+
+       Linewidth 0 ne
+          { stroke }
+          { fill }
+       ifelse
+
+      end
+     } def
+   end
+
+   /pntsize 1000 Frequency div def
+   /FillFont newfont definefont pop
+   /FillFont findfont pntsize scalefont setfont
+
+   eoclip
+   BackgroundGray 0 ge
+      { BackgroundGray 100 div 1 exch sub setgray fill }
+      { newpath } ifelse
+
+   ForegroundGray 100 div 1 exch sub setgray
+
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (a) show
+       } for
+     pop
+     } for
+   } bind def
+
+
+%@Fill
+/Lineargray %Lineargray,5, Levels=256, Cycles=1, Angle=0.0, ForegroundGray=100, BackgroundGray=0
+   {
+   /BackgroundGray exch 0 100 Rangefilter def
+   /ForegroundGray exch 0 100 Rangefilter def
+   /Angle exch def
+   /Cycles exch 1 8 Rangefilter def
+   /Levels exch 2 256 Rangefilter def
+   /SetXbb {
+      /Y exch def
+      /X exch def
+      X Xbbllx lt {/Xbbllx X def} if
+      Y Xbblly lt {/Xbblly Y def} if
+      X Xbburx gt {/Xbburx X def} if
+      Y Xbbury gt {/Xbbury Y def} if
+   } bind def
+
+   /GrayConv { 100 div 1 exch sub } bind def
+   /GrayIncr ForegroundGray GrayConv BackgroundGray GrayConv 
+       sub Levels 1 sub div def
+
+   Angle rotate
+   flattenpath
+
+   currentpoint
+   dup /Xbbury exch def /Xbblly exch def
+   dup /Xbburx exch def /Xbbllx exch def
+   {SetXbb} {SetXbb} {1 1 3 {pop SetXbb} for} {} pathforall
+
+   Xbbllx Xbblly translate
+   /Width Xbbury Xbblly sub def
+   /Incr Xbburx Xbbllx sub dup /Length exch def Levels div Cycles div def
+
+   clip
+   ForegroundGray GrayConv setgray
+   1 1 Cycles {
+      1 ne {Length Cycles div 0 translate} if
+      0 Incr Length {
+         newpath 0 moveto
+         Incr 0 rlineto 0 Width rlineto Incr neg 0 rlineto fill
+         currentgray GrayIncr sub setgray
+      } for
+   /GrayIncr GrayIncr neg def
+   } for
+} bind def
+
+%@Fill
+/Radialgray %Radialgray,3, Levels=256, ForegroundGray=0, BackgroundGray=100
+{
+   /BackgroundGray exch 0 100 Rangefilter def
+   /ForegroundGray exch 0 100 Rangefilter def
+   /Levels exch 2 256 Rangefilter def
+   /sq {dup mul} bind def
+   /Ctr2pt {Ctry sub abs sq exch Ctrx sub abs sq add sqrt} bind def
+   /SetMaxrad {Ctr2pt dup Maxrad gt {/Maxrad exch def} {pop} ifelse} bind def
+
+   /GrayConv { 100 div 1 exch sub } bind def
+   /Ctrx Bburx Bbllx add 2 div def
+   /Ctry Bbury Bblly add 2 div def
+   /Maxrad 0 def
+   flattenpath
+   {SetMaxrad} {SetMaxrad} {1 1 3 {pop SetMaxrad} for} {} pathforall
+   /Incr Maxrad Levels 1 add div def
+   /GrayIncr ForegroundGray GrayConv BackgroundGray GrayConv 
+       sub Levels 1 sub div def
+   /IRad 0 def
+
+   clip
+   ForegroundGray GrayConv setgray
+    0 Incr Maxrad {
+      /ORad exch def
+      ORad 0 ne {
+      Maxrad ORad sub Incr lt {/ORad Maxrad def} if
+         IRad 0 ne {
+            Ctrx IRad add Ctry moveto
+            Ctrx Ctry IRad 0 360 arc
+            Ctrx ORad add Ctry moveto
+            Ctrx Ctry ORad 0 360 arc eofill
+         }{
+            Ctrx ORad add Ctry moveto
+            Ctrx Ctry ORad 0 360 arc fill
+         } ifelse
+         currentgray GrayIncr sub setgray
+         /IRad ORad def
+      } if
+   } for
+} bind def
+
+%@Fill
+/Square %Square,5, Scale=1.0, Separation=25, LineWidth=1, ForegroundGray=100, BackgroundGray=0
+  {
+   /BackgroundGray exch -1 100 Rangefilter def
+   /ForegroundGray exch 0 100 Rangefilter def
+   /LineWidth exch 0 100 Rangefilter def
+   /Separation exch 0 100 Rangefilter def
+   /Scale exch 1 100 Rangefilter def
+   /ll Separation 100.0 div def
+   /ur 100 Separation sub 100.0 div def
+   /newfont 10 dict def
+   newfont begin
+      /FontMatrix [1  0  0  1  0  0] def
+      /FontType 3 def
+      /FontBBox [0 0 1 1] def
+      /Encoding 256 array def
+      0 1 255 {Encoding exch /.notdef put} for
+      Encoding 97 /Filled put
+      Encoding 98 /Lines put
+      /CharProcs 4 dict def
+      CharProcs begin
+         /.notdef {} def
+         /Filled {
+            newpath
+            ll ll moveto
+            ur ll lineto
+            ur ur lineto
+            ll ur lineto
+            closepath
+            fill
+         } def
+        /Lines {
+            newpath
+            ll ll moveto
+            ur ll lineto
+            ur ur lineto
+            ll ur lineto
+            closepath
+            LineWidth 100 div setlinewidth
+            stroke
+        } def
+      end
+
+     /BuildChar { 1 0 0 0 1 1 setcachedevice exch
+       begin
+         Encoding exch get
+         CharProcs exch get
+       end
+       exec
+     } def
+   end
+   /pntsize 1000 Scale mul def
+   /FillFont newfont definefont pop
+   /FillFont findfont pntsize scalefont setfont
+   eoclip
+   BackgroundGray 100 div 1 exch sub setgray fill
+   ForegroundGray 100 div 1 exch sub setgray fill
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (a) show
+       } for
+     pop
+     } for
+   0 setgray
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (b) show
+       } for
+     pop
+     } for
+   } bind def
+
+%@Fill
+/Waffle %Waffle,6, Scale=1.0, Proportion=30, LineWidth=1, UpLeftGray=100, BotRightGray=50, TopGray=0
+   {
+   /TGray exch 0 100 Rangefilter def
+   /BRGray exch 0 100 Rangefilter def
+   /ULGray exch 0 100 Rangefilter def
+   /LineWidth exch 0 100 Rangefilter def
+   /Proportion exch 0 50 Rangefilter def
+   /Scale exch 1 10000 Rangefilter def
+   /ll Proportion 100.0 div def
+   /ur 100 Proportion sub 100.0 div def
+   /newfont 10 dict def
+   newfont begin
+   /FontMatrix [1  0  0  1  0  0] def
+   /FontType 3 def
+   /FontBBox [0 0 1 1] def
+   /Encoding 256 array def
+   0 1 255 {Encoding exch /.notdef put} for
+   Encoding 97 /Fill1 put
+   Encoding 98 /Fill2 put
+   Encoding 99 /Lines put
+   /CharProcs 4 dict def
+   CharProcs begin
+   /.notdef {} def
+   /Fill1
+      {
+      newpath
+      0 0 moveto
+      0 1 lineto
+      1 1 lineto
+      ur ur lineto
+      ll ur lineto
+      ll ll lineto
+      closepath
+      fill
+      } def
+   /Fill2
+      {
+      newpath
+      0 0 moveto
+      1 0 lineto
+      1 1 lineto
+      ur ur lineto
+      ur ll lineto
+      ll ll lineto
+      closepath
+      fill
+      } def
+   /Lines
+      {
+      newpath
+      0 0 moveto
+      0 1 lineto
+      1 1 lineto
+      1 0 lineto
+      0 0 lineto
+      ll ll lineto
+      ll ur lineto
+      ur ur lineto
+      ur ll lineto
+      ll ll lineto
+      0 1 moveto
+      ll ur lineto
+      1 1 moveto
+      ur ur lineto
+      1 0 moveto
+      ur ll lineto
+      LineWidth 100 div setlinewidth
+      stroke
+      } def
+   end
+
+   /BuildChar
+     { 1  0
+       0 0 1 1
+       setcachedevice
+       exch begin
+       Encoding exch get
+       CharProcs exch get
+       end
+       exec
+     } def
+   end
+   /pntsize 1000 Scale mul def
+   /FillFont newfont definefont pop
+   /FillFont findfont pntsize scalefont setfont
+   eoclip
+   TGray 0 ge
+      { TGray 100 div 1 exch sub setgray fill }
+      { 0 setgray fill newpath } ifelse
+
+   ULGray 100 div 1 exch sub setgray
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (a) show
+       } for
+     pop
+     } for
+   BRGray 100 div 1 exch sub setgray
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (b) show
+       } for
+     pop
+     } for
+   0 setgray
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (c) show
+       } for
+     pop
+     } for
+   } bind def
+%@Fill
+/Zigzag %Zigzag,4, Scale=1.0, LineWidth=1, ForeGroundGray=50, BackGroundGray=0
+   {
+   /BackGroundGray exch 0 100 Rangefilter def
+   /ForeGroundGray exch 0 100 Rangefilter def
+   /LineWidth exch 0 100 Rangefilter def
+   /Scale exch 1 10000 Rangefilter def
+   /newfont 10 dict def
+   newfont begin
+   /FontMatrix [1  0  0  1  0  0] def
+   /FontType 3 def
+   /FontBBox [0 0 1 1] def
+   /Encoding 256 array def
+   0 1 255 {Encoding exch /.notdef put} for
+   Encoding 97 /Fill1 put
+   Encoding 98 /Lines put
+   /CharProcs 3 dict def
+   CharProcs begin
+   /.notdef {} def
+   /Fill1
+      {
+      newpath
+      .000 1.000 moveto
+      1.000 1.000 lineto
+      1.000 .625 lineto
+      .875 .500 lineto
+      .750 .625 lineto
+      .750 .875 lineto
+      .625 1.000 lineto
+      .500 .875 lineto
+      .500 .625 lineto
+      .375 .500 lineto
+      .250 .625 lineto
+      .250 .875 lineto
+      .125 1.000 lineto
+      .000 .875 lineto
+
+      .000 .000 moveto
+      1.000 .000 lineto
+      1.000 .125 lineto
+      .875 .000 lineto
+      .750 .125 lineto
+      .750 .375 lineto
+      .625 .500 lineto
+      .500 .375 lineto
+      .500 .125 lineto
+      .375 .000 lineto
+      .250 .125 lineto
+      .250 .375 lineto
+      .125 .500 lineto
+      .000 .375 lineto
+      closepath
+      fill
+      } def
+   /Lines
+      {
+      newpath
+      1.000 .125 moveto
+      .875 .000 lineto
+      .750 .125 lineto
+      .750 .375 lineto
+      .625 .500 lineto
+      .500 .375 lineto
+      .500 .125 lineto
+      .375 .000 lineto
+      .250 .125 lineto
+      .250 .375 lineto
+      .125 .500 lineto
+      .000 .375 lineto
+      .000 .125 lineto
+
+      1.000 .875 moveto
+      1.000 .625 lineto
+      .875 .500 lineto
+      .750 .625 lineto
+      .750 .875 lineto
+      .625 1.000 lineto
+      .500 .875 lineto
+      .500 .625 lineto
+      .375 .500 lineto
+      .250 .625 lineto
+      .250 .875 lineto
+      .125 1.000 lineto
+      .000 .875 lineto
+      LineWidth 100 div setlinewidth
+      stroke
+      } def
+   end
+
+   /BuildChar
+     { 1  0
+       0 0 1 1
+       setcachedevice
+       exch begin
+       Encoding exch get
+       CharProcs exch get
+       end
+       exec
+     } def
+   end
+   /pntsize 1000 Scale mul def
+   /FillFont newfont definefont pop
+   /FillFont findfont pntsize scalefont setfont
+   eoclip
+   BackGroundGray 100 div 1 exch sub setgray fill
+   ForeGroundGray 100 div 1 exch sub setgray
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (a) show
+       } for
+     pop
+     } for
+   0 setgray
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (b) show
+       } for
+     pop
+     } for
+   } bind def
+
+%@Fill
+/Stars %Stars,4, Scale=1.0, LineWidth=1, ForegroundGray=100, BackgroundGray=0
+   {
+   /Bgray exch 0 100 Rangefilter def
+   /Fgray exch 0 100 Rangefilter def
+   /LineWidth exch 0 100 Rangefilter def
+   /Scale exch 1 10000 Rangefilter def
+   /newfont 10 dict def
+   newfont begin
+   /FontMatrix [1  0  0  1  0  0] def
+   /FontType 3 def
+   /FontBBox [0 0 1 1] def
+   /Encoding 256 array def
+   0 1 255 {Encoding exch /.notdef put} for
+   Encoding 97 /Filled put
+   Encoding 98 /Lines put
+   /CharProcs 3 dict def
+   CharProcs begin
+   /.notdef {} def
+   /Filled
+      {
+      newpath
+      .500 .350 moveto
+      .025 .075 lineto
+      .381 .495 lineto
+      .275 .625 lineto
+      .492 .625 lineto
+      .725 .900 lineto
+      .725 .625 lineto
+      .975 .625 lineto
+      .725 .480 lineto
+      .725 .075 lineto
+      closepath
+      fill
+      } def
+   /Lines
+      {
+      newpath
+      .500 .350 moveto
+      .025 .075 lineto
+      .381 .495 lineto
+      .275 .625 lineto
+      .492 .625 lineto
+      .725 .900 lineto
+      .725 .625 lineto
+      .975 .625 lineto
+      .725 .480 lineto
+      .725 .075 lineto
+      closepath
+      LineWidth 100 div setlinewidth
+      stroke
+      } def
+   end
+
+   /BuildChar
+     { 1  0
+       0 0 1 1
+       setcachedevice
+       exch begin
+       Encoding exch get
+       CharProcs exch get
+       end
+       exec
+     } def
+   end
+   /pntsize 1000 Scale mul def
+   /FillFont newfont definefont pop
+   /FillFont findfont pntsize scalefont setfont
+   eoclip
+   Bgray 100 div 1 exch sub setgray fill
+   Fgray 100 div 1 exch sub setgray
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (a) show
+       } for
+     pop
+     } for
+   0 setgray
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (b) show
+       } for
+     pop
+     } for
+   } bind def
+
+%@Fill
+/Brick %Brick,5, Scale=1.0, LineWidth=1, BrickGray1=100, BrickGray2=50, BackGroundGray=0
+   {
+   /Bgray exch 0 100 Rangefilter def
+   /Fgray2 exch 0 100 Rangefilter def
+   /Fgray1 exch 0 100 Rangefilter def
+   /LineWidth exch 0 100 Rangefilter def
+   /Scale exch 1 10000 Rangefilter def
+   /newfont 10 dict def
+   newfont begin
+   /FontMatrix [1  0  0  1  0  0] def
+   /FontType 3 def
+   /FontBBox [0 0 1 1] def
+   /Encoding 256 array def
+   0 1 255 {Encoding exch /.notdef put} for
+   Encoding 97 /Fill1 put
+   Encoding 98 /Fill2 put
+   Encoding 99 /Lines put
+   /CharProcs 4 dict def
+   CharProcs begin
+   /.notdef {} def
+   /Fill1
+      {
+      .025 .975 moveto
+      .025 .525 lineto
+      .975 .525 lineto
+      .975 .975 lineto
+      .025 .975 lineto
+      closepath
+      fill
+      } def
+   /Fill2
+      {
+      .000 .475 moveto
+      .000 .025 lineto
+      .475 .025 lineto
+      .475 .475 lineto
+      .000 .475 lineto
+      1.000 .475 moveto
+      1.000 .025 lineto
+      .525 .025 lineto
+      .525 .475 lineto
+      1.000 .475 lineto
+      closepath
+      fill
+      } def
+   /Lines
+      {
+      newpath
+      1.000 .025 moveto
+      .525 .025 lineto
+      .525 .475 lineto
+      1.000 .475 lineto
+      .000 .025 moveto
+      .475 .025 lineto
+      .475 .475 lineto
+      .000 .475 lineto
+      .025 .975 moveto
+      .025 .525 lineto
+      .975 .525 lineto
+      .975 .975 lineto
+      .025 .975 lineto
+      LineWidth 100 div setlinewidth
+      stroke
+      } def
+   end
+
+   /BuildChar
+     { 1  0
+       0 0 1 1
+       setcachedevice
+       exch begin
+       Encoding exch get
+       CharProcs exch get
+       end
+       exec
+     } def
+   end
+   /pntsize 1000 Scale mul def
+   /FillFont newfont definefont pop
+   /FillFont findfont pntsize scalefont setfont
+   eoclip
+   Bgray 100 div 1 exch sub setgray fill
+   Fgray1 100 div 1 exch sub setgray
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (a) show
+       } for
+     pop
+     } for
+   Fgray2 100 div 1 exch sub setgray
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (b) show
+       } for
+     pop
+     } for
+   0 setgray
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (c) show
+       } for
+     pop
+     } for
+   } bind def
+
+%@Fill
+/Specks %Specks,3, Scale=1.0, ForeGroundGray=100, BackGroundGray=0
+   {
+   /Bgray exch 0 100 Rangefilter def
+   /Fgray exch 0 100 Rangefilter def
+   /Scale exch 1 10000 Rangefilter def
+   /newfont 10 dict def
+   newfont begin
+   /FontMatrix [1  0  0  1  0  0] def
+   /FontType 3 def
+   /FontBBox [0 0 1 1] def
+   /Encoding 256 array def
+   0 1 255 {Encoding exch /.notdef put} for
+   Encoding 97 /Filled put
+   /CharProcs 2 dict def
+   CharProcs begin
+   /.notdef {} def
+   /Filled
+      {
+      newpath
+      .125 1.000 moveto
+      .125 .875 lineto
+      .000 .875 lineto
+      .000 1.000 lineto
+
+      .500 1.000 moveto
+      .500 .750 lineto
+      .250 .750 lineto
+      .250 1.000 lineto
+
+      1.000 .875 moveto
+      .875 .875 lineto
+      .875 1.000 lineto
+      1.000 1.000 lineto
+
+      .000 .500 moveto
+      .250 .500 lineto
+      .250 .250 lineto
+      .000 .250 lineto
+
+      .625 .625 moveto
+      .625 .375 lineto
+      .375 .375 lineto
+      .375 .625 lineto
+
+      1.000 .500 moveto
+      .750 .500 lineto
+      .750 .750 lineto
+      1.000 .750 lineto
+
+      .000 .125 moveto
+      .125 .125 lineto
+      .125 .000 lineto
+      .000 .000 lineto
+
+      .500 .000 moveto
+      .500 .250 lineto
+      .750 .250 lineto
+      .750 .000 lineto
+
+      .875 .000 moveto
+      .875 .125 lineto
+      1.000 .125 lineto
+      1.000 .000 lineto
+      closepath
+      fill
+      } def
+   end
+   /BuildChar
+     { 1  0
+       0 0 1 1
+       setcachedevice
+       exch begin
+       Encoding exch get
+       CharProcs exch get
+       end
+       exec
+     } def
+   end
+   /pntsize 1000 Scale mul def
+   /FillFont newfont definefont pop
+   /FillFont findfont pntsize scalefont setfont
+   eoclip
+   Bgray 100 div 1 exch sub setgray fill
+   Fgray 100 div 1 exch sub setgray fill
+   Bblly pntsize Bbury
+     { Bbllx pntsize Bburx
+       { 1 index moveto
+       (a) show
+       } for
+     pop
+     } for
+   } bind def

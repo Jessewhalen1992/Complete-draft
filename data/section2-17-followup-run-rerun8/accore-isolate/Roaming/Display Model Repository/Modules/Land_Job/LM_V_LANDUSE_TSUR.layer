@@ -1,0 +1,402 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="Library://LM_V_LANDUSE_TSUR.LayerDefinition">
+    <ns0:FeatureSource xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" rdf:resource="fsd://Topobase_1"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://LM_V_LANDUSE_TSUR.LayerDefinition">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/LayerDefinitionResource"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://LM_V_LANDUSE_TSUR.LayerDefinition">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">LM_V_LANDUSE_TSUR</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://LM_V_LANDUSE_TSUR.LayerDefinition">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://LM_V_LANDUSE_TSUR.LayerDefinition">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://LM_V_LANDUSE_TSUR.LayerDefinition">
+    <ns0:LayerDefinitionResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"><LayerDefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="LayerDefinition-1.0.0.xsd" version="1.0.0">
+<VectorLayerDefinition>
+<ResourceId>fsd://Topobase_1</ResourceId>
+<FeatureName>TB2010_LM_JOB_102:LM_V_LANDUSE_TSUR</FeatureName>
+<FeatureNameType>FeatureClass</FeatureNameType>
+<Filter>GEOM INTERSECTS GeomFromText(&apos;POLYGON XYZ ((686021.998425836 333417.552677802 0, 690474.628717429 333417.552677802 0, 690474.628717429 337328.08764579 0, 686021.998425836 337328.08764579 0, 686021.998425836 333417.552677802 0))&apos;)</Filter>
+<Geometry>GEOM</Geometry>
+<VectorScaleRange>
+<AreaTypeStyle>
+<AreaRule>
+<LegendLabel>unknown</LegendLabel>
+<Filter>ID_TYPE = 1</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>BFFFFF00</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>road</LegendLabel>
+<Filter>ID_TYPE = 2</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FFD6D6D6</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>sidewalk</LegendLabel>
+<Filter>ID_TYPE = 3</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF5B5B5B</ForegroundColor>
+<BackgroundColor>ff000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>traffic_island</LegendLabel>
+<Filter>ID_TYPE = 4</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FFFF9F7F</ForegroundColor>
+<BackgroundColor>ff000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>railway</LegendLabel>
+<Filter>ID_TYPE = 5</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF99724C</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>airfield</LegendLabel>
+<Filter>ID_TYPE = 6</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF333333</ForegroundColor>
+<BackgroundColor>ff000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>tank_baths</LegendLabel>
+<Filter>ID_TYPE = 7</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF6699CC</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>other_fortified</LegendLabel>
+<Filter>ID_TYPE = 8</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FFADADAD</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>field_grassland_feedlot</LegendLabel>
+<Filter>ID_TYPE = 9</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF9FFF7F</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>vines_plantation</LegendLabel>
+<Filter>ID_TYPE = 10</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FFCC7F66</ForegroundColor>
+<BackgroundColor>ff000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>other_plantation</LegendLabel>
+<Filter>ID_TYPE = 11</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF99CC00</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>garden</LegendLabel>
+<Filter>ID_TYPE = 12</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FFDFFF7F</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>swamp_upland_moor</LegendLabel>
+<Filter>ID_TYPE = 13</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF7FFFBF</ForegroundColor>
+<BackgroundColor>ff000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>other_humus</LegendLabel>
+<Filter>ID_TYPE = 14</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FFDFFF7F</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>standing water</LegendLabel>
+<Filter>ID_TYPE = 15</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF7FBFFF</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>flowing water</LegendLabel>
+<Filter>ID_TYPE = 16</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF7FFFFF</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>reed</LegendLabel>
+<Filter>ID_TYPE = 17</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF66CCB2</ForegroundColor>
+<BackgroundColor>ff000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>forest</LegendLabel>
+<Filter>ID_TYPE = 18</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF4C995F</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>feedlot_densely_wooded</LegendLabel>
+<Filter>ID_TYPE = 19</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF7FCC66</ForegroundColor>
+<BackgroundColor>ff000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>feedlot_not_densely_wooded</LegendLabel>
+<Filter>ID_TYPE = 20</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF7FCC66</ForegroundColor>
+<BackgroundColor>ff000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>hedges</LegendLabel>
+<Filter>ID_TYPE = 21</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF7FCC66</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>rock</LegendLabel>
+<Filter>ID_TYPE = 22</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF000000</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>glacier_firn</LegendLabel>
+<Filter>ID_TYPE = 23</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FFFFFFFF</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>scree_sand</LegendLabel>
+<Filter>ID_TYPE = 24</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF848484</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>mining_dumping ground</LegendLabel>
+<Filter>ID_TYPE = 25</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FFCC9966</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>other_no_vegetations</LegendLabel>
+<Filter>ID_TYPE = 26</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FFFFFFFF</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>building area</LegendLabel>
+<Filter>ID_TYPE = 27</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Diagonal45</FillPattern>
+<ForegroundColor>FFFF3F00</ForegroundColor>
+<BackgroundColor>00FFFFFF</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>other</LegendLabel>
+<Filter>ID_TYPE = 10000</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FFFFFF00</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel>to be determined</LegendLabel>
+<Filter>ID_TYPE = 10001</Filter>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>BFFFFF00</ForegroundColor>
+<BackgroundColor>FF000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+<AreaRule>
+<LegendLabel></LegendLabel>
+<AreaSymbolization2D>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FF8881BE</ForegroundColor>
+<BackgroundColor>ff000000</BackgroundColor>
+</Fill>
+</AreaSymbolization2D>
+</AreaRule>
+</AreaTypeStyle>
+</VectorScaleRange>
+</VectorLayerDefinition>
+</LayerDefinition>
+</ns0:LayerDefinitionResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/FeatureSourceResource"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">Topobase_1</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">Default description</ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:FeatureSourceResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"><FeatureSource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="FeatureSource-1.0.0.xsd" version="1.0.0">
+<Provider>Autodesk.Topobase.3.2</Provider>
+<Parameter>
+<Name>Password</Name>
+<Value></Value>
+</Parameter>
+<Parameter>
+<Name>Service</Name>
+<Value>orcl</Value>
+</Parameter>
+<Parameter>
+<Name>Username</Name>
+<Value>tbsys</Value>
+</Parameter>
+<Parameter>
+<Name>DataStore</Name>
+<Value>TB2010_LM_JOB_102</Value>
+</Parameter>
+<ConfigurationDocument></ConfigurationDocument>
+<LongTransaction>1</LongTransaction>
+</FeatureSource>
+</ns0:FeatureSourceResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="LayerSchema">
+    <ns0:version xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">1</ns0:version>
+  </rdf:Description>
+</rdf:RDF>

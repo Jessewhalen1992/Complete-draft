@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO.Compression;
@@ -20,14 +21,37 @@ namespace WildlifeSweeps
     public class CompleteFromPhotosService
     {
         private const short OutsideBufferTableColor = 254;
-        private const double BoundaryEdgeTolerance = 0.01;
+        private const double BoundaryEdgeTolerance = 0.05;
+        private const double BoundaryExactTolerance = 0.01;
+        private const double BoundaryExactRayYOffset = 0.01;
         private const double BoundarySamplingStepMeters = 2.0;
         private const double BoundarySampleMergeTolerance = 0.01;
-        private const string QuarterValidationLayerName = "L-QUARTER";
-        private const string QuarterLegacySourceLayerName = "L-QUATER";
+        private const string QuarterValidationLayerName = "L-QUATER";
+        private const string QuarterLegacySourceLayerName = "L-QUARTER";
         private const string DefaultAtsSectionIndexFolder = @"C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\RES MANAGER";
-        private const string AllowSimpleQuarterFallbackEnvVar = "WLS_ALLOW_SIMPLE_QUARTER_FALLBACK";
         private const short QuarterValidationLayerColor = 30;
+        private static readonly HashSet<string> AtsScratchIsolationLayers = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "L-SEC",
+            "L-SEC-0",
+            "L-SEC-2012",
+            "L-QSEC",
+            "L-QSEC-BOX",
+            "L-USEC",
+            "L-USEC-0",
+            "L-USEC2012",
+            "L-USEC3018",
+            "L-USEC-2012",
+            "L-USEC-3018",
+            "L-USEC-C",
+            "L-USEC-C-0",
+            "L-SECTION-LSD",
+            QuarterValidationLayerName,
+            QuarterLegacySourceLayerName
+        };
+        private const string ProposedFindingBlockName = "WLS_INPROPOSEd";
+        private const string HundredMeterFindingBlockName = "WLS_100m";
+        private const string OutsideFindingBlockName = "wl_100out";
 
         private enum BufferMode
         {
@@ -74,49 +98,9 @@ namespace WildlifeSweeps
                     }
                 }
 
-                string? sampleBlockName = null;
-                string? proposedBlockName = null;
-                string? hundredMeterBlockName = null;
-                string? outsideBufferBlockName = null;
-                if (UsesAreaSpecificBufferPrompts(bufferMode))
+                if (!ValidateRequiredFindingBlocks(doc.Database, editor, GetRequiredFindingBlockNames(bufferMode)))
                 {
-                    proposedBlockName = PromptForSamplePhotoBlock(
-                        editor,
-                        doc.Database,
-                        "\nSelect ONE Photo_Location block for PROPOSED area: ");
-                    if (string.IsNullOrWhiteSpace(proposedBlockName))
-                    {
-                        return;
-                    }
-
-                    hundredMeterBlockName = PromptForSamplePhotoBlock(
-                        editor,
-                        doc.Database,
-                        "\nSelect ONE Photo_Location block for 100m-only area: ");
-                    if (string.IsNullOrWhiteSpace(hundredMeterBlockName))
-                    {
-                        return;
-                    }
-
-                    if (bufferMode == BufferMode.IncludeBufferAndAll)
-                    {
-                        outsideBufferBlockName = PromptForSamplePhotoBlock(
-                            editor,
-                            doc.Database,
-                            "\nSelect ONE Photo_Location block for OUTSIDE area: ");
-                        if (string.IsNullOrWhiteSpace(outsideBufferBlockName))
-                        {
-                            return;
-                        }
-                    }
-                }
-                else
-                {
-                    sampleBlockName = PromptForSamplePhotoBlock(editor, doc.Database, "\nSelect ONE Photo_Location block (sample): ");
-                    if (string.IsNullOrWhiteSpace(sampleBlockName))
-                    {
-                        return;
-                    }
+                    return;
                 }
 
                 var utmZone = WildlifePromptHelper.PromptForUtmZone(editor, settings.UtmZone);
@@ -169,10 +153,14 @@ namespace WildlifeSweeps
                 {
                     AtsQuarterLocationResolver.TryCreate(locationZone, doc.Database.Filename, out locationResolver);
                 }
-                var quarterLayerSources = LoadQuarterLayerSources(doc.Database, locationResolver);
-                if (quarterLayerSources.Count > 0)
+                if (locationResolver == null)
                 {
-                    WriteQuarterLayerSourceSummary(editor, quarterLayerSources);
+                    var message = hasLocationZone
+                        ? "Quarter boundary resolver: the section-index resolver was unavailable. WLS now requires its internal section-based quarter geometry for all 1/4 definitions, so provide the section-index data and run again."
+                        : "Quarter boundary resolver: the UTM zone is invalid. WLS now requires its internal section-based quarter geometry for all 1/4 definitions, so correct the UTM zone and run again.";
+                    Application.ShowAlertDialog(message);
+                    editor.WriteMessage($"\n{message}");
+                    return;
                 }
 
                 var tableStyleId = EnsureTableStyle(doc.Database, "Induction Bend");
@@ -253,64 +241,24 @@ namespace WildlifeSweeps
                     return;
                 }
 
-                var atsQuarterGenerationAttempted = false;
-                var atsQuarterGenerationSucceeded = false;
-                var atsGenerationDetail = string.Empty;
-                if (quarterLayerSources.Count == 0 &&
-                    locationResolver != null &&
-                    hasLocationZone)
-                {
-                    atsQuarterGenerationAttempted = true;
-                    atsQuarterGenerationSucceeded = TryGenerateQuarterSourcesViaAtsBuild(
+                if (!TryBuildQuarterSourcesViaAtsScratch(
                         doc.Database,
                         editor,
                         locationResolver,
                         activeFindings,
                         locationZone,
-                        out atsGenerationDetail);
-                    if (atsQuarterGenerationSucceeded)
-                    {
-                        editor.WriteMessage($"\nQuarter boundary resolver: {atsGenerationDetail}");
-                        quarterLayerSources = LoadQuarterLayerSources(doc.Database, locationResolver);
-                        if (quarterLayerSources.Count > 0)
-                        {
-                            WriteQuarterLayerSourceSummary(editor, quarterLayerSources);
-                        }
-                    }
-                }
-
-                var allowSimpleQuarterFallback = IsAffirmativeToggle(Environment.GetEnvironmentVariable(AllowSimpleQuarterFallbackEnvVar));
-                if (!allowSimpleQuarterFallback && quarterLayerSources.Count == 0)
+                        out var quarterLayerSources,
+                        out var quarterBuildDetail))
                 {
-                    string reason;
-                    if (atsQuarterGenerationAttempted)
-                    {
-                        reason = string.IsNullOrWhiteSpace(atsGenerationDetail)
-                            ? "ATS section build fallback did not produce quarter polygons."
-                            : atsGenerationDetail;
-                    }
-                    else if (!hasLocationZone)
-                    {
-                        reason = "ATS section build fallback skipped (UTM zone is invalid).";
-                    }
-                    else if (locationResolver == null)
-                    {
-                        reason = "ATS section build fallback skipped (section index resolver could not initialize).";
-                    }
-                    else
-                    {
-                        reason = "ATS section build fallback skipped (unknown precondition failure).";
-                    }
-
                     var message =
-                        "Quarter boundary resolver strict mode: missing quarter source polygons and ATS quarter generation was unavailable.\n" +
-                        $"Details: {reason}\n" +
-                        "Load AtsBackgroundBuilder.dll (or place it in a probe path), then run again.\n" +
-                        $"To force legacy simple fallback, set {AllowSimpleQuarterFallbackEnvVar}=1.";
+                        "Quarter boundary resolver: WLS could not build the internal road-allowance-aware 1/4 definitions.\n" +
+                        $"Details: {quarterBuildDetail}";
                     Application.ShowAlertDialog(message);
                     editor.WriteMessage($"\n{message}");
                     return;
                 }
+
+                editor.WriteMessage($"\nQuarter boundary resolver: {quarterBuildDetail}");
 
                 var quarterLayerMatches = new List<QuarterLayerMatch>();
                 var quarterLayerSource = string.Empty;
@@ -329,28 +277,7 @@ namespace WildlifeSweeps
                         $"\nQuarter boundary resolver: using fallback source {quarterLayerMatches.Count} {quarterLayerSource} polygon(s); direct containment matches were not found during source scoring.");
                 }
 
-                var duplicateBlockNames = new List<string>();
-                if (UsesAreaSpecificBufferPrompts(bufferMode))
-                {
-                    if (!string.IsNullOrWhiteSpace(proposedBlockName))
-                    {
-                        duplicateBlockNames.Add(proposedBlockName);
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(hundredMeterBlockName))
-                    {
-                        duplicateBlockNames.Add(hundredMeterBlockName);
-                    }
-                    
-                    if (bufferMode == BufferMode.IncludeBufferAndAll && !string.IsNullOrWhiteSpace(outsideBufferBlockName))
-                    {
-                        duplicateBlockNames.Add(outsideBufferBlockName);
-                    }
-                }
-                else if (!string.IsNullOrWhiteSpace(sampleBlockName))
-                {
-                    duplicateBlockNames.Add(sampleBlockName);
-                }
+                var duplicateBlockNames = GetRequiredFindingBlockNames(bufferMode);
 
                 var duplicateNumbers = FindDuplicatePhotoNumbers(doc.Database, duplicateBlockNames, settings.PhotoStartNumber, activeFindings.Count);
                 if (duplicateNumbers.Count > 0)
@@ -389,9 +316,9 @@ namespace WildlifeSweeps
                             hundredMeterBoundary);
                         blockName = area switch
                         {
-                            BufferArea.Proposed => proposedBlockName,
-                            BufferArea.HundredMeter => hundredMeterBlockName,
-                            BufferArea.Outside when bufferMode == BufferMode.IncludeBufferAndAll => outsideBufferBlockName,
+                            BufferArea.Proposed => ProposedFindingBlockName,
+                            BufferArea.HundredMeter => HundredMeterFindingBlockName,
+                            BufferArea.Outside when bufferMode == BufferMode.IncludeBufferAndAll => OutsideFindingBlockName,
                             _ => null
                         };
                     }
@@ -401,8 +328,8 @@ namespace WildlifeSweeps
                             ? BufferArea.Outside
                             : BufferArea.HundredMeter;
                         blockName = finding.IsOutsideBuffer && bufferMode == BufferMode.IncludeBufferAndAll
-                            ? outsideBufferBlockName
-                            : sampleBlockName;
+                            ? OutsideFindingBlockName
+                            : HundredMeterFindingBlockName;
                     }
 
                     if (string.IsNullOrWhiteSpace(blockName))
@@ -503,6 +430,18 @@ namespace WildlifeSweeps
                     return;
                 }
 
+                var bufferDebugReportPath = WriteBufferDebugReport(
+                    doc,
+                    photoFolder,
+                    records,
+                    bufferMode,
+                    proposedBoundary,
+                    hundredMeterBoundary);
+                if (!string.IsNullOrWhiteSpace(bufferDebugReportPath))
+                {
+                    editor.WriteMessage($"\nBuffer debug report written to: {bufferDebugReportPath}");
+                }
+
                 if (locationResolver != null)
                 {
                     var resolvedCount = records.Count(record => !string.IsNullOrWhiteSpace(record.Location));
@@ -513,21 +452,14 @@ namespace WildlifeSweeps
                 {
                     if (quarterValidationPolygonsByKey == null || quarterValidationPolygonsByKey.Count == 0)
                     {
-                        if (quarterLayerMatches.Count == 0)
-                        {
-                            editor.WriteMessage(
-                                "\nL-QUARTER validation linework requested, but no quarter source polygons were found on L-QUARTER or legacy L-QUATER.");
-                        }
-                        else
-                        {
-                            editor.WriteMessage("\nL-QUARTER validation linework requested, but no nearby quarter polygons could be associated to findings.");
-                        }
+                        editor.WriteMessage(
+                            "\nL-QUATER validation linework requested, but no internal ATS quarter polygons could be associated to findings.");
                     }
                     else
                     {
                         var drawnQuarterCount = DrawQuarterValidationLinework(doc.Database, quarterValidationPolygonsByKey.Values);
                         editor.WriteMessage(
-                            $"\nL-QUARTER validation linework: drew {drawnQuarterCount} quarter polygon(s) " +
+                            $"\nL-QUATER validation linework: drew {drawnQuarterCount} internal ATS quarter polygon(s) " +
                             $"(direct matches={quarterLayerContainmentMatches}, nearest diagnostic adds={quarterLayerNearestDiagnosticAdds}, resolver fallback adds={quarterResolverFallbackAdds}).");
                     }
                 }
@@ -608,6 +540,184 @@ namespace WildlifeSweeps
             }
         }
 
+        public void RemovePoints(Document doc, Editor editor, PluginSettings settings)
+        {
+            using (doc.LockDocument())
+            {
+                var numbersToRemove = PromptForPointNumbersToRemove(editor);
+                if (numbersToRemove == null || numbersToRemove.Count == 0)
+                {
+                    return;
+                }
+
+                TableSnapshot? tableSnapshot = null;
+                if (PromptForYesNo(editor, "\nUpdate a summary table [Yes/No] <Yes>: ", defaultYes: true))
+                {
+                    tableSnapshot = PromptForExistingTable(editor, doc.Database, "\nSelect summary table to rebuild: ");
+                    if (tableSnapshot == null)
+                    {
+                        return;
+                    }
+                }
+
+                var fallbackTableStyleId = tableSnapshot != null && tableSnapshot.TableStyleId.IsNull
+                    ? EnsureTableStyle(doc.Database, "Induction Bend")
+                    : ObjectId.Null;
+
+                using var tr = doc.Database.TransactionManager.StartTransaction();
+                var existingBlocks = GetExistingPointBlocks(doc.Database, tr)
+                    .OrderBy(block => block.Number)
+                    .ToList();
+                if (existingBlocks.Count == 0)
+                {
+                    editor.WriteMessage("\nNo WLS point blocks with numbered # attributes were found in the current space.");
+                    return;
+                }
+
+                var matchedBlocks = existingBlocks
+                    .Where(block => numbersToRemove.Contains(block.Number))
+                    .ToList();
+                if (matchedBlocks.Count == 0)
+                {
+                    editor.WriteMessage("\nNone of the requested point numbers were found.");
+                    return;
+                }
+
+                var remainingBlocks = existingBlocks
+                    .Where(block => !numbersToRemove.Contains(block.Number))
+                    .OrderBy(block => block.Number)
+                    .ToList();
+                var renumberMap = BuildSequentialRenumberMap(remainingBlocks);
+                var areaByRenumberedNumber = remainingBlocks.ToDictionary(
+                    block => renumberMap.TryGetValue(block.Number, out var newNumber) ? newNumber : block.Number,
+                    block => block.Area);
+
+                foreach (var block in matchedBlocks)
+                {
+                    if (tr.GetObject(block.BlockId, OpenMode.ForWrite, false) is Entity entity)
+                    {
+                        entity.Erase();
+                    }
+                }
+
+                var renumberedCount = 0;
+                foreach (var block in remainingBlocks)
+                {
+                    if (!renumberMap.TryGetValue(block.Number, out var newNumber) || newNumber == block.Number)
+                    {
+                        continue;
+                    }
+
+                    if (tr.GetObject(block.BlockId, OpenMode.ForWrite, false) is BlockReference blockRef &&
+                        TrySetBlockAttributeText(blockRef, "#", newNumber.ToString(CultureInfo.InvariantCulture), tr))
+                    {
+                        renumberedCount++;
+                    }
+                }
+
+                var updatedTable = false;
+                if (tableSnapshot != null)
+                {
+                    if (tr.GetObject(tableSnapshot.TableId, OpenMode.ForWrite, false) is Table existingTable)
+                    {
+                        var updatedRows = tableSnapshot.Rows
+                            .Where(row => !numbersToRemove.Contains(row.Number))
+                            .Select(row => row with
+                            {
+                                Number = renumberMap.TryGetValue(row.Number, out var newNumber) ? newNumber : row.Number
+                            })
+                            .ToList();
+
+                        existingTable.Erase();
+                        if (updatedRows.Count > 0)
+                        {
+                            var tableSpace = (BlockTableRecord)tr.GetObject(doc.Database.CurrentSpaceId, OpenMode.ForWrite);
+                            PhotoLayoutHelper.EnsureLayer(doc.Database, "CG-NOTES", tr);
+                            var rebuiltRecords = BuildPhotoPointRecordsFromTableRows(updatedRows, areaByRenumberedNumber);
+                            CreateTable(
+                                tableSpace,
+                                tr,
+                                tableSnapshot.Position,
+                                rebuiltRecords,
+                                tableSnapshot.TableStyleId.IsNull ? fallbackTableStyleId : tableSnapshot.TableStyleId,
+                                outsideLast: rebuiltRecords.Any(record => record.Area == BufferArea.Outside),
+                                insertProposedHundredSpacer: rebuiltRecords
+                                    .Zip(rebuiltRecords.Skip(1), (previous, current) => ShouldInsertProposedHundredSpacer(previous, current))
+                                    .Any(shouldInsert => shouldInsert));
+                        }
+
+                        updatedTable = true;
+                    }
+                }
+
+                tr.Commit();
+
+                var photoLayoutUpdate = PhotoLayoutHelper.RemoveAndReflowExistingPhotoGroups(
+                    doc.Database,
+                    settings,
+                    numbersToRemove,
+                    renumberMap);
+
+                var missingNumbers = numbersToRemove
+                    .Where(number => matchedBlocks.All(block => block.Number != number))
+                    .ToList();
+                editor.WriteMessage(
+                    $"\nRemoved {matchedBlocks.Count} point(s) [{string.Join(", ", matchedBlocks.Select(block => block.Number))}] and renumbered {renumberedCount} remaining block(s)." +
+                    (updatedTable ? " Rebuilt the selected summary table." : string.Empty));
+                if (photoLayoutUpdate.RemovedLabels > 0 || photoLayoutUpdate.RemovedImages > 0 || photoLayoutUpdate.ReflowedRecords > 0)
+                {
+                    editor.WriteMessage(
+                        $"\nUpdated photo layout: removed {photoLayoutUpdate.RemovedImages} image(s), removed {photoLayoutUpdate.RemovedLabels} label(s), and reflowed {photoLayoutUpdate.ReflowedRecords} remaining photo slot(s).");
+                }
+                if (photoLayoutUpdate.UnmatchedImagesLeft > 0)
+                {
+                    editor.WriteMessage($"\nLeft {photoLayoutUpdate.UnmatchedImagesLeft} unpaired photo-layer image(s) untouched because they could not be matched to a `PHOTO #...` label.");
+                }
+                if (photoLayoutUpdate.Report.Count > 0)
+                {
+                    foreach (var entry in photoLayoutUpdate.Report)
+                    {
+                        editor.WriteMessage($"\n{entry}");
+                    }
+                }
+                if (missingNumbers.Count > 0)
+                {
+                    editor.WriteMessage($"\nRequested numbers not found: {string.Join(", ", missingNumbers)}.");
+                }
+            }
+        }
+
+        public void ExportWorkbookFromTable(Document doc, Editor editor)
+        {
+            using (doc.LockDocument())
+            {
+                var tableSnapshot = PromptForExistingTable(editor, doc.Database, "\nSelect summary table to export: ");
+                if (tableSnapshot == null)
+                {
+                    return;
+                }
+
+                if (tableSnapshot.Rows.Count == 0)
+                {
+                    editor.WriteMessage("\nThe selected table does not contain any numbered finding rows.");
+                    return;
+                }
+
+                var workbookPath = PromptForWorkbookPath();
+                if (string.IsNullOrWhiteSpace(workbookPath))
+                {
+                    return;
+                }
+
+                var records = BuildPhotoPointRecordsFromTableRows(tableSnapshot.Rows, null);
+                var rows = records
+                    .Select(record => new PhotoCsvExportRow(record, string.Empty))
+                    .ToList();
+                WritePointsWorkbook(workbookPath, rows);
+                editor.WriteMessage($"\nPoints workbook written from table data to: {workbookPath}");
+            }
+        }
+
         private static void ApplyQuarterLineworkVisibilityPreference(Database db, bool includeQuarterLinework)
         {
             if (db == null)
@@ -622,7 +732,7 @@ namespace WildlifeSweeps
 
                 var updated = false;
                 updated |= TrySetLayerVisibility(layerTable, tr, QuarterValidationLayerName, includeQuarterLinework);
-                updated |= TrySetLayerVisibility(layerTable, tr, QuarterLegacySourceLayerName, includeQuarterLinework);
+                updated |= TrySetLayerVisibility(layerTable, tr, QuarterLegacySourceLayerName, false);
 
                 if (updated)
                 {
@@ -737,6 +847,145 @@ namespace WildlifeSweeps
             return dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK ? dialog.Filename : null;
         }
 
+        private static SortedSet<int>? PromptForPointNumbersToRemove(Editor editor)
+        {
+            var options = new PromptStringOptions("\nEnter point numbers to remove (comma-separated): ")
+            {
+                AllowSpaces = true
+            };
+            var result = editor.GetString(options);
+            if (result.Status != PromptStatus.OK)
+            {
+                return null;
+            }
+
+            var values = new SortedSet<int>();
+            var invalidTokens = new List<string>();
+            foreach (var token in (result.StringResult ?? string.Empty).Split(','))
+            {
+                var trimmed = token.Trim();
+                if (string.IsNullOrWhiteSpace(trimmed))
+                {
+                    continue;
+                }
+
+                if (int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) && number > 0)
+                {
+                    values.Add(number);
+                }
+                else
+                {
+                    invalidTokens.Add(trimmed);
+                }
+            }
+
+            if (invalidTokens.Count > 0)
+            {
+                editor.WriteMessage($"\nInvalid point number value(s): {string.Join(", ", invalidTokens)}.");
+                return null;
+            }
+
+            if (values.Count == 0)
+            {
+                editor.WriteMessage("\nNo point numbers were provided.");
+                return null;
+            }
+
+            return values;
+        }
+
+        private static bool PromptForYesNo(Editor editor, string message, bool defaultYes)
+        {
+            var options = new PromptKeywordOptions(message)
+            {
+                AllowNone = true
+            };
+            options.Keywords.Add("Yes");
+            options.Keywords.Add("No");
+            options.Keywords.Default = defaultYes ? "Yes" : "No";
+
+            var result = editor.GetKeywords(options);
+            if (result.Status == PromptStatus.OK)
+            {
+                return string.Equals(result.StringResult, "Yes", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return defaultYes;
+        }
+
+        private static TableSnapshot? PromptForExistingTable(Editor editor, Database db, string prompt)
+        {
+            var options = new PromptEntityOptions(prompt);
+            options.SetRejectMessage("\nOnly AutoCAD tables are supported.");
+            options.AddAllowedClass(typeof(Table), false);
+
+            var result = editor.GetEntity(options);
+            if (result.Status != PromptStatus.OK)
+            {
+                return null;
+            }
+
+            return ReadTableSnapshot(db, result.ObjectId);
+        }
+
+        private static TableSnapshot? ReadTableSnapshot(Database db, ObjectId tableId)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            if (tr.GetObject(tableId, OpenMode.ForRead, false) is not Table table)
+            {
+                return null;
+            }
+
+            var position = table.Position;
+            var tableStyleId = table.TableStyle;
+            var rows = new List<TablePointRow>();
+            for (var rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
+            {
+                var numberText = GetTableCellText(table, rowIndex, 0);
+                if (!int.TryParse(numberText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number))
+                {
+                    continue;
+                }
+
+                var latitude = ParseTableCoordinate(GetTableCellText(table, rowIndex, 3));
+                var longitude = ParseTableCoordinate(GetTableCellText(table, rowIndex, 4));
+                rows.Add(new TablePointRow(
+                    number,
+                    GetTableCellText(table, rowIndex, 1),
+                    GetTableCellText(table, rowIndex, 2),
+                    latitude,
+                    longitude,
+                    IsOutsideBufferTableRow(table, rowIndex)));
+            }
+
+            tr.Commit();
+            return new TableSnapshot(tableId, position, tableStyleId, rows);
+        }
+
+        private static string GetTableCellText(Table table, int rowIndex, int columnIndex)
+        {
+            return (table.Cells[rowIndex, columnIndex].TextString ?? string.Empty).Trim();
+        }
+
+        private static double ParseTableCoordinate(string text)
+        {
+            return double.TryParse(text, NumberStyles.Float | NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var value)
+                ? value
+                : 0.0;
+        }
+
+        private static bool IsOutsideBufferTableRow(Table table, int rowIndex)
+        {
+            try
+            {
+                return table.Cells[rowIndex, 0].BackgroundColor.ColorIndex == OutsideBufferTableColor;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static BufferMode ResolveBufferMode(PluginSettings settings)
         {
             if (settings.CompleteFromPhotosIncludeBufferIncludeAll)
@@ -747,6 +996,48 @@ namespace WildlifeSweeps
             return settings.CompleteFromPhotosIncludeBufferExcludeOutside
                 ? BufferMode.IncludeBufferExcludeOutside
                 : BufferMode.None;
+        }
+
+        private static IReadOnlyList<string> GetRequiredFindingBlockNames(BufferMode bufferMode)
+        {
+            return bufferMode switch
+            {
+                BufferMode.IncludeBufferAndAll => new[]
+                {
+                    ProposedFindingBlockName,
+                    HundredMeterFindingBlockName,
+                    OutsideFindingBlockName
+                },
+                BufferMode.IncludeBufferExcludeOutside => new[]
+                {
+                    ProposedFindingBlockName,
+                    HundredMeterFindingBlockName
+                },
+                _ => new[]
+                {
+                    HundredMeterFindingBlockName
+                }
+            };
+        }
+
+        private static bool ValidateRequiredFindingBlocks(Database db, Editor editor, IReadOnlyList<string> blockNames)
+        {
+            var missing = blockNames
+                .Where(name => !string.IsNullOrWhiteSpace(name) && !BlockExists(db, name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (missing.Count == 0)
+            {
+                return true;
+            }
+
+            var message =
+                "Missing required WLS finding block definition(s): " +
+                string.Join(", ", missing) +
+                ". Insert or load those block definitions into the drawing, then run the command again.";
+            Application.ShowAlertDialog(message);
+            editor.WriteMessage($"\n{message}");
+            return false;
         }
 
         private static bool UsesAreaSpecificBufferPrompts(BufferMode bufferMode)
@@ -783,45 +1074,60 @@ namespace WildlifeSweeps
 
         private static BufferBoundary? PromptForBuffer(Editor editor, Database db, string promptMessage)
         {
-            var options = new PromptEntityOptions(promptMessage);
-            options.SetRejectMessage("\nOnly closed LWPOLYLINE/POLYLINE boundaries are supported.");
-            options.AddAllowedClass(typeof(Polyline), false);
-            var result = editor.GetEntity(options);
-            if (result.Status != PromptStatus.OK)
+            while (true)
             {
-                return null;
-            }
+                var options = new PromptEntityOptions(promptMessage);
+                options.SetRejectMessage("\nOnly closed LWPOLYLINE/POLYLINE boundaries are supported.");
+                options.AddAllowedClass(typeof(Polyline), false);
+                var result = editor.GetEntity(options);
+                if (result.Status != PromptStatus.OK)
+                {
+                    return null;
+                }
 
-            using var tr = db.TransactionManager.StartTransaction();
-            if (tr.GetObject(result.ObjectId, OpenMode.ForRead) is not Polyline boundary)
-            {
-                editor.WriteMessage("\nSelection is not a polyline.");
-                return null;
-            }
+                using var tr = db.TransactionManager.StartTransaction();
+                if (tr.GetObject(result.ObjectId, OpenMode.ForRead) is not Polyline boundary)
+                {
+                    editor.WriteMessage("\nSelection is not a polyline.");
+                    return null;
+                }
 
-            if (!boundary.Closed)
-            {
-                editor.WriteMessage("\nBoundary polyline must be closed.");
-                return null;
-            }
+                if (!boundary.Closed)
+                {
+                    editor.WriteMessage("\nBoundary polyline must be closed.");
+                    continue;
+                }
 
-            if (boundary.NumberOfVertices < 3)
-            {
-                editor.WriteMessage("\nBoundary polyline must have at least 3 vertices.");
-                return null;
-            }
+                if (boundary.NumberOfVertices < 3)
+                {
+                    editor.WriteMessage("\nBoundary polyline must have at least 3 vertices.");
+                    continue;
+                }
 
-            var vertices = BoundarySamplingHelper.BuildBoundaryVertices(
-                boundary,
-                BoundarySamplingStepMeters,
-                BoundarySampleMergeTolerance);
-            if (vertices.Count < 3)
-            {
-                editor.WriteMessage("\nBoundary polyline could not be sampled.");
-                return null;
-            }
+                var vertices = BoundarySamplingHelper.BuildBoundaryVertices(
+                    boundary,
+                    BoundarySamplingStepMeters,
+                    BoundarySampleMergeTolerance);
+                if (vertices.Count < 3)
+                {
+                    editor.WriteMessage("\nBoundary polyline could not be sampled.");
+                    continue;
+                }
 
-            return new BufferBoundary(vertices);
+                var bufferBoundary = new BufferBoundary(
+                    vertices,
+                    (Polyline)boundary.Clone(),
+                    boundary.Layer,
+                    boundary.Handle.ToString());
+
+                if (RequiresBoundaryInteriorConfirmation(boundary) &&
+                    !ConfirmBoundaryInteriorPoint(editor, bufferBoundary))
+                {
+                    continue;
+                }
+
+                return bufferBoundary;
+            }
         }
 
         private static bool IsOutsideBuffer(Point3d point, BufferBoundary? boundary, BufferMode mode)
@@ -832,6 +1138,35 @@ namespace WildlifeSweeps
             }
 
             return !boundary.IsInside(point);
+        }
+
+        private static bool RequiresBoundaryInteriorConfirmation(Polyline boundary)
+        {
+            return boundary != null &&
+                   string.Equals(boundary.Layer, "Defpoints", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool ConfirmBoundaryInteriorPoint(Editor editor, BufferBoundary boundary)
+        {
+            var options = new PromptPointOptions(
+                $"\nPick a point that should be inside boundary handle {boundary.SourceHandle} on layer {boundary.SourceLayer}: ");
+            var result = editor.GetPoint(options);
+            if (result.Status != PromptStatus.OK)
+            {
+                return false;
+            }
+
+            var evaluation = boundary.Evaluate(result.Value);
+            if (evaluation.IsInside)
+            {
+                return true;
+            }
+
+            editor.WriteMessage(
+                $"\nThe picked interior-check point is outside boundary handle {boundary.SourceHandle} " +
+                $"(decision source={evaluation.DecisionSource}, distance={FormatDiagnosticDouble(evaluation.Exact.BoundaryDistance)}m). " +
+                "This usually means AutoCAD selected a stacked/hidden polyline instead of the visible buffer. Select the boundary again.");
+            return false;
         }
 
         private static BufferArea ClassifyBufferArea(
@@ -929,7 +1264,7 @@ namespace WildlifeSweeps
             var proposedHundredSpacerCount = insertProposedHundredSpacer
                 ? CountProposedHundredTransitions(records)
                 : 0;
-            var totalRows = 1 + records.Count + separatorRowCount + proposedHundredSpacerCount;
+            var totalRows = records.Count + separatorRowCount + proposedHundredSpacerCount;
 
             var table = new Table
             {
@@ -947,12 +1282,6 @@ namespace WildlifeSweeps
             table.Columns[3].Width = 125.0;
             table.Columns[4].Width = 125.0;
 
-            table.Cells[0, 0].TextString = "#";
-            table.Cells[0, 1].TextString = "WILDLIFE FINDINGS";
-            table.Cells[0, 2].TextString = "LOCATION";
-            table.Cells[0, 3].TextString = "LAT";
-            table.Cells[0, 4].TextString = "LONG";
-
             for (var row = 0; row < totalRows; row++)
             {
                 for (var col = 0; col < columnCount; col++)
@@ -962,7 +1291,7 @@ namespace WildlifeSweeps
             }
 
             var recordIndex = 0;
-            var tableRow = 1;
+            var tableRow = 0;
             for (var sectionIndex = 0; sectionIndex < sectionSizes.Count; sectionIndex++)
             {
                 var sectionSize = sectionSizes[sectionIndex];
@@ -1160,6 +1489,224 @@ namespace WildlifeSweeps
             }
         }
 
+        private static List<ExistingPointBlock> GetExistingPointBlocks(Database db, Transaction tr)
+        {
+            var blocks = new List<ExistingPointBlock>();
+            var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
+            foreach (ObjectId id in space)
+            {
+                if (id.ObjectClass != RXObject.GetClass(typeof(BlockReference)))
+                {
+                    continue;
+                }
+
+                var blockRef = (BlockReference)tr.GetObject(id, OpenMode.ForRead);
+                var blockName = BlockSelectionHelper.GetEffectiveName(blockRef, tr);
+                var blockNumber = BlockSelectionHelper.TryGetAttribute(blockRef, "#", tr);
+                if (!blockNumber.HasValue || !IsFindingPointBlock(blockRef, blockName, tr))
+                {
+                    continue;
+                }
+
+                blocks.Add(new ExistingPointBlock(
+                    blockRef.ObjectId,
+                    blockNumber.Value,
+                    blockName,
+                    ResolveBufferAreaFromBlockName(blockName)));
+            }
+
+            return blocks;
+        }
+
+        private static bool IsFindingPointBlock(BlockReference blockRef, string blockName, Transaction tr)
+        {
+            if (string.Equals(blockName, ProposedFindingBlockName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(blockName, HundredMeterFindingBlockName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(blockName, OutsideFindingBlockName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return HasBlockAttributeTag(blockRef, "DIR", tr) || HasBlockAttributeTag(blockRef, "DIRECTION", tr);
+        }
+
+        private static bool HasBlockAttributeTag(BlockReference blockRef, string tag, Transaction tr)
+        {
+            foreach (ObjectId attId in blockRef.AttributeCollection)
+            {
+                if (!attId.IsValid)
+                {
+                    continue;
+                }
+
+                if (tr.GetObject(attId, OpenMode.ForRead, false) is AttributeReference attRef &&
+                    string.Equals(attRef.Tag, tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TrySetBlockAttributeText(BlockReference blockRef, string tag, string value, Transaction tr)
+        {
+            foreach (ObjectId attId in blockRef.AttributeCollection)
+            {
+                if (!attId.IsValid)
+                {
+                    continue;
+                }
+
+                if (tr.GetObject(attId, OpenMode.ForWrite, false) is AttributeReference attRef &&
+                    string.Equals(attRef.Tag, tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    attRef.TextString = value;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static BufferArea ResolveBufferAreaFromBlockName(string blockName)
+        {
+            if (string.Equals(blockName, ProposedFindingBlockName, StringComparison.OrdinalIgnoreCase))
+            {
+                return BufferArea.Proposed;
+            }
+
+            if (string.Equals(blockName, OutsideFindingBlockName, StringComparison.OrdinalIgnoreCase))
+            {
+                return BufferArea.Outside;
+            }
+
+            return BufferArea.HundredMeter;
+        }
+
+        private static Dictionary<int, int> BuildSequentialRenumberMap(IReadOnlyList<ExistingPointBlock> remainingBlocks)
+        {
+            var renumberMap = new Dictionary<int, int>();
+            if (remainingBlocks == null || remainingBlocks.Count == 0)
+            {
+                return renumberMap;
+            }
+
+            var nextNumber = remainingBlocks.Min(block => block.Number);
+            foreach (var block in remainingBlocks.OrderBy(block => block.Number))
+            {
+                renumberMap[block.Number] = nextNumber;
+                nextNumber++;
+            }
+
+            return renumberMap;
+        }
+
+        private static List<PhotoPointRecord> BuildPhotoPointRecordsFromTableRows(
+            IReadOnlyList<TablePointRow> rows,
+            IReadOnlyDictionary<int, BufferArea>? areaByOriginalNumber)
+        {
+            var records = new List<PhotoPointRecord>(rows.Count);
+            foreach (var row in rows)
+            {
+                var area = areaByOriginalNumber != null &&
+                           areaByOriginalNumber.TryGetValue(row.Number, out var mappedArea)
+                    ? mappedArea
+                    : (row.IsOutsideBuffer ? BufferArea.Outside : BufferArea.HundredMeter);
+                var isOutsideBuffer = area == BufferArea.Outside || row.IsOutsideBuffer;
+                TryParseLocationComponents(
+                    row.Location,
+                    out var quarterToken,
+                    out var section,
+                    out var township,
+                    out var range,
+                    out var meridian);
+
+                records.Add(new PhotoPointRecord(
+                    row.Number,
+                    null,
+                    row.WildlifeFinding,
+                    string.Empty,
+                    null,
+                    row.Latitude,
+                    row.Longitude,
+                    0.0,
+                    0.0,
+                    row.Location,
+                    row.WildlifeFinding,
+                    isOutsideBuffer,
+                    area,
+                    quarterToken,
+                    section,
+                    township,
+                    range,
+                    meridian));
+            }
+
+            return records;
+        }
+
+        private static bool TryParseLocationComponents(
+            string location,
+            out string quarterToken,
+            out string section,
+            out string township,
+            out string range,
+            out string meridian)
+        {
+            quarterToken = string.Empty;
+            section = string.Empty;
+            township = string.Empty;
+            range = string.Empty;
+            meridian = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(location))
+            {
+                return false;
+            }
+
+            var parts = location
+                .Split(new[] { '-' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => part.Trim())
+                .ToArray();
+            if (parts.Length < 5 ||
+                !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var lsdNumber) ||
+                lsdNumber < 1 ||
+                lsdNumber > 16)
+            {
+                return false;
+            }
+
+            quarterToken = GetQuarterTokenFromLsdNumber(lsdNumber);
+            section = parts[1];
+            township = parts[2];
+            range = parts[3];
+            meridian = parts[4];
+            if (meridian.StartsWith("W", StringComparison.OrdinalIgnoreCase))
+            {
+                meridian = meridian.Substring(1);
+            }
+
+            return !string.IsNullOrWhiteSpace(quarterToken);
+        }
+
+        private static string GetQuarterTokenFromLsdNumber(int lsdNumber)
+        {
+            var zeroBased = lsdNumber - 1;
+            var rowFromSouth = zeroBased / 4;
+            var rowOffset = zeroBased % 4;
+            var colFromWest = (rowFromSouth % 2) == 0
+                ? 3 - rowOffset
+                : rowOffset;
+
+            if (rowFromSouth >= 2)
+            {
+                return colFromWest < 2 ? "NW" : "NE";
+            }
+
+            return colFromWest < 2 ? "SW" : "SE";
+        }
+
         private static int DrawQuarterValidationLinework(
             Database db,
             IEnumerable<IReadOnlyList<Point2d>> quarterPolygons)
@@ -1222,7 +1769,7 @@ namespace WildlifeSweeps
             if (!hasCanonicalSource && hasLegacySource)
             {
                 editor.WriteMessage(
-                    "\nQuarter boundary resolver: using legacy ATS source layer L-QUATER (no L-QUARTER polygons found).");
+                    "\nQuarter boundary resolver: using fallback alias layer L-QUARTER (preferred ATS source layer L-QUATER was not found).");
             }
         }
 
@@ -1287,7 +1834,6 @@ namespace WildlifeSweeps
             var pluginType = atsAssembly.GetType("AtsBackgroundBuilder.Plugin", throwOnError: false);
             var loggerType = atsAssembly.GetType("AtsBackgroundBuilder.Logger", throwOnError: false);
             var configType = atsAssembly.GetType("AtsBackgroundBuilder.Core.Config", throwOnError: false);
-            var atsBuildInputType = atsAssembly.GetType("AtsBackgroundBuilder.Core.AtsBuildInput", throwOnError: false);
             var sectionRequestType = atsAssembly.GetType("AtsBackgroundBuilder.SectionRequest", throwOnError: false);
             var quarterSelectionType = atsAssembly.GetType("AtsBackgroundBuilder.QuarterSelection", throwOnError: false);
             var sectionKeyType = atsAssembly.GetType("AtsBackgroundBuilder.Sections.SectionKey", throwOnError: false)
@@ -1295,7 +1841,6 @@ namespace WildlifeSweeps
             if (pluginType == null ||
                 loggerType == null ||
                 configType == null ||
-                atsBuildInputType == null ||
                 sectionRequestType == null ||
                 quarterSelectionType == null ||
                 sectionKeyType == null)
@@ -1308,11 +1853,7 @@ namespace WildlifeSweeps
                 .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
                 .FirstOrDefault(method => string.Equals(method.Name, "DrawSectionsFromRequests", StringComparison.Ordinal) &&
                                           method.GetParameters().Length == 8);
-            var cleanupMethod = pluginType
-                .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
-                .FirstOrDefault(method => string.Equals(method.Name, "CleanupAfterBuild", StringComparison.Ordinal) &&
-                                          method.GetParameters().Length == 5);
-            if (drawSectionsMethod == null || cleanupMethod == null)
+            if (drawSectionsMethod == null)
             {
                 detail = "ATS section build fallback skipped (required ATS methods were not found).";
                 return false;
@@ -1323,8 +1864,7 @@ namespace WildlifeSweeps
             {
                 logger = Activator.CreateInstance(loggerType);
                 var config = Activator.CreateInstance(configType);
-                var input = Activator.CreateInstance(atsBuildInputType);
-                if (logger == null || config == null || input == null)
+                if (logger == null || config == null)
                 {
                     detail = "ATS section build fallback skipped (failed to instantiate ATS runtime objects).";
                     return false;
@@ -1375,26 +1915,25 @@ namespace WildlifeSweeps
                     return false;
                 }
 
+                using var scratchDb = db.Wblock();
                 var sectionDrawResult = drawSectionsMethod.Invoke(
                     null,
-                    new object[] { editor, db, requestList, config, logger, false, true, false });
+                    new object[] { editor, scratchDb, requestList, config, logger, false, true, false });
                 if (sectionDrawResult == null)
                 {
                     detail = "ATS section build fallback skipped (ATS section build returned no result).";
                     return false;
                 }
 
-                SetReflectionProperty(input, "IncludeAtsFabric", false);
-                SetReflectionProperty(input, "AllowMultiQuarterDispositions", true);
-                SetReflectionProperty(input, "IncludeDispositionLinework", false);
-                SetReflectionProperty(input, "IncludeDispositionLabels", false);
-                SetReflectionProperty(input, "CurrentClient", "WLS");
-                SetReflectionProperty(input, "Zone", locationZone);
+                if (!TryCloneGeneratedAtsQuarterDefinitions(db, scratchDb, sectionDrawResult, out var clonedQuarterCount))
+                {
+                    detail = "ATS section build fallback skipped (scratch build did not produce cloneable quarter definitions).";
+                    return false;
+                }
 
-                cleanupMethod.Invoke(null, new object[] { db, sectionDrawResult, new List<ObjectId>(), input, logger });
                 detail =
-                    $"ATS section build generated L-QUATER definitions for {addedRequestCount} section(s), then removed temporary build linework ({assemblySource}).";
-                return true;
+                    $"ATS section build generated {clonedQuarterCount} quarter definition polylines for {addedRequestCount} section(s) in a scratch drawing and cloned them into the live drawing ({assemblySource}).";
+                return clonedQuarterCount > 0;
             }
             catch (TargetInvocationException ex)
             {
@@ -1413,6 +1952,523 @@ namespace WildlifeSweeps
                     disposableLogger.Dispose();
                 }
             }
+        }
+
+        private static bool TryBuildQuarterSourcesViaAtsScratch(
+            Database db,
+            Editor editor,
+            AtsQuarterLocationResolver locationResolver,
+            IReadOnlyList<FindingCuratedRecord> activeFindings,
+            int locationZone,
+            out List<QuarterLayerSource> quarterLayerSources,
+            out string detail)
+        {
+            quarterLayerSources = new List<QuarterLayerSource>();
+            detail = string.Empty;
+            if (db == null || editor == null || locationResolver == null || activeFindings == null || activeFindings.Count == 0)
+            {
+                return false;
+            }
+
+            var sectionRequests = new List<(string Section, string Township, string Range, string Meridian)>();
+            var sectionKeyIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < activeFindings.Count; i++)
+            {
+                var finding = activeFindings[i];
+                var point = new Point2d(finding.Easting, finding.Northing);
+                if (!locationResolver.TryResolveQuarterMatch(point, out var match))
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(match.Section) ||
+                    string.IsNullOrWhiteSpace(match.Township) ||
+                    string.IsNullOrWhiteSpace(match.Range) ||
+                    string.IsNullOrWhiteSpace(match.Meridian))
+                {
+                    continue;
+                }
+
+                var sectionKeyId = $"{match.Section}|{match.Township}|{match.Range}|{match.Meridian}";
+                if (!sectionKeyIds.Add(sectionKeyId))
+                {
+                    continue;
+                }
+
+                sectionRequests.Add((match.Section, match.Township, match.Range, match.Meridian));
+            }
+
+            if (sectionRequests.Count == 0)
+            {
+                detail = "No ATS section requests could be derived from the active findings.";
+                return false;
+            }
+
+            if (!TryLoadAtsBackgroundBuilderAssembly(db, out var atsAssembly, out var assemblySource))
+            {
+                detail = "AtsBackgroundBuilder.dll was not found in the current probe paths.";
+                return false;
+            }
+
+            var pluginType = atsAssembly.GetType("AtsBackgroundBuilder.Plugin", throwOnError: false);
+            var loggerType = atsAssembly.GetType("AtsBackgroundBuilder.Logger", throwOnError: false);
+            var configType = atsAssembly.GetType("AtsBackgroundBuilder.Core.Config", throwOnError: false);
+            var sectionRequestType = atsAssembly.GetType("AtsBackgroundBuilder.SectionRequest", throwOnError: false);
+            var quarterSelectionType = atsAssembly.GetType("AtsBackgroundBuilder.QuarterSelection", throwOnError: false);
+            var sectionKeyType = atsAssembly.GetType("AtsBackgroundBuilder.Sections.SectionKey", throwOnError: false)
+                ?? atsAssembly.GetType("AtsBackgroundBuilder.SectionKey", throwOnError: false);
+            if (pluginType == null ||
+                loggerType == null ||
+                configType == null ||
+                sectionRequestType == null ||
+                quarterSelectionType == null ||
+                sectionKeyType == null)
+            {
+                detail = "Required ATS quarter-build types were not found.";
+                return false;
+            }
+
+            var drawSectionsMethod = pluginType
+                .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                .FirstOrDefault(method => string.Equals(method.Name, "DrawSectionsFromRequests", StringComparison.Ordinal) &&
+                                          method.GetParameters().Length == 8);
+            if (drawSectionsMethod == null)
+            {
+                detail = "ATS DrawSectionsFromRequests method was not found.";
+                return false;
+            }
+
+            object? logger = null;
+            try
+            {
+                logger = Activator.CreateInstance(loggerType);
+                var config = Activator.CreateInstance(configType);
+                if (logger == null || config == null)
+                {
+                    detail = "Failed to instantiate ATS runtime objects.";
+                    return false;
+                }
+
+                SetReflectionProperty(config, "UseSectionIndex", true);
+                SetReflectionProperty(config, "SectionIndexFolder", ResolveSectionIndexFolderForAtsBuild(db));
+
+                var quarterAll = Enum.Parse(quarterSelectionType, "All", ignoreCase: true);
+                var requestListType = typeof(List<>).MakeGenericType(sectionRequestType);
+                var requestList = Activator.CreateInstance(requestListType);
+                var addRequest = requestListType.GetMethod("Add");
+                if (requestList == null || addRequest == null)
+                {
+                    detail = "Failed to create the ATS section request list.";
+                    return false;
+                }
+
+                var addedRequestCount = 0;
+                for (var i = 0; i < sectionRequests.Count; i++)
+                {
+                    var section = sectionRequests[i];
+                    var sectionKey = Activator.CreateInstance(
+                        sectionKeyType,
+                        locationZone,
+                        section.Section,
+                        section.Township,
+                        section.Range,
+                        section.Meridian);
+                    if (sectionKey == null)
+                    {
+                        continue;
+                    }
+
+                    var request = Activator.CreateInstance(sectionRequestType, quarterAll, sectionKey, "AUTO");
+                    if (request == null)
+                    {
+                        continue;
+                    }
+
+                    addRequest.Invoke(requestList, new[] { request });
+                    addedRequestCount++;
+                }
+
+                if (addedRequestCount == 0)
+                {
+                    detail = "No ATS section requests were created.";
+                    return false;
+                }
+
+                using var scratchDb = db.Wblock();
+                var removedScratchEntities = RemoveScratchAtsLinework(scratchDb);
+                var preExistingQuarterLayerIds = CollectQuarterLayerEntityIds(scratchDb);
+                var previousWorkingDb = HostApplicationServices.WorkingDatabase;
+                object? sectionDrawResult;
+                try
+                {
+                    HostApplicationServices.WorkingDatabase = scratchDb;
+                    sectionDrawResult = drawSectionsMethod.Invoke(
+                        null,
+                        new object[] { editor, scratchDb, requestList, config, logger, false, true, false });
+                }
+                finally
+                {
+                    HostApplicationServices.WorkingDatabase = previousWorkingDb;
+                }
+
+                if (sectionDrawResult == null)
+                {
+                    detail = "ATS scratch quarter build returned no result.";
+                    return false;
+                }
+
+                quarterLayerSources = LoadQuarterLayerSources(scratchDb, locationResolver, preExistingQuarterLayerIds);
+                var totalMatches = quarterLayerSources.Sum(source => source.Matches.Count);
+                if (quarterLayerSources.Count == 0 || totalMatches == 0)
+                {
+                    detail = $"ATS scratch quarter build did not produce any new {QuarterValidationLayerName} quarter polygons.";
+                    return false;
+                }
+
+                var sourceSummary = string.Join(
+                    ", ",
+                    quarterLayerSources.Select(source => $"{source.LayerName}={source.Matches.Count}"));
+                detail =
+                    $"using {totalMatches} road-allowance-aware quarter polygon(s) generated in an isolated scratch drawing from {addedRequestCount} section request(s) after removing {removedScratchEntities} cloned ATS helper entity(ies) [{sourceSummary}] ({assemblySource}).";
+                return true;
+            }
+            catch (TargetInvocationException ex)
+            {
+                var inner = ex.InnerException;
+                detail = inner == null
+                    ? $"ATS scratch quarter build failed: {ex.Message}"
+                    : $"ATS scratch quarter build failed: {inner.GetType().Name}: {inner.Message}";
+                return false;
+            }
+            catch (System.Exception ex)
+            {
+                detail = $"ATS scratch quarter build failed: {ex.Message}";
+                return false;
+            }
+            finally
+            {
+                if (logger is IDisposable disposableLogger)
+                {
+                    disposableLogger.Dispose();
+                }
+            }
+        }
+
+        private static bool TryBuildQuarterMatchesFromAtsScratchResult(
+            Database scratchDb,
+            object sectionDrawResult,
+            AtsQuarterLocationResolver? locationResolver,
+            out List<QuarterLayerMatch> matches)
+        {
+            matches = new List<QuarterLayerMatch>();
+            if (scratchDb == null || sectionDrawResult == null)
+            {
+                return false;
+            }
+
+            var quarterIds = GetObjectIdsFromReflectionProperty(sectionDrawResult, "LabelQuarterPolylineIds");
+            if (quarterIds.Count == 0)
+            {
+                return false;
+            }
+
+            var metadataById = BuildQuarterMetadataById(sectionDrawResult);
+            using var tr = scratchDb.TransactionManager.StartTransaction();
+            for (var i = 0; i < quarterIds.Count; i++)
+            {
+                var quarterId = quarterIds[i];
+                if (tr.GetObject(quarterId, OpenMode.ForRead, false) is not Polyline polyline ||
+                    !polyline.Closed ||
+                    polyline.NumberOfVertices < 3)
+                {
+                    continue;
+                }
+
+                var vertices = new List<Point2d>(polyline.NumberOfVertices);
+                for (var vertexIndex = 0; vertexIndex < polyline.NumberOfVertices; vertexIndex++)
+                {
+                    vertices.Add(polyline.GetPoint2dAt(vertexIndex));
+                }
+
+                var quarterToken = string.Empty;
+                var section = string.Empty;
+                var township = string.Empty;
+                var range = string.Empty;
+                var meridian = string.Empty;
+                if (metadataById.TryGetValue(quarterId, out var metadata))
+                {
+                    quarterToken = metadata.QuarterToken;
+                    section = metadata.Section;
+                    township = metadata.Township;
+                    range = metadata.Range;
+                    meridian = metadata.Meridian;
+                }
+
+                if ((string.IsNullOrWhiteSpace(quarterToken) ||
+                     string.IsNullOrWhiteSpace(section) ||
+                     string.IsNullOrWhiteSpace(township) ||
+                     string.IsNullOrWhiteSpace(range) ||
+                     string.IsNullOrWhiteSpace(meridian)) &&
+                    locationResolver != null &&
+                    locationResolver.TryResolveQuarterMatch(BuildRepresentativePoint(vertices), out var quarterMatch))
+                {
+                    if (string.IsNullOrWhiteSpace(quarterToken))
+                    {
+                        quarterToken = quarterMatch.QuarterToken;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(section))
+                    {
+                        section = quarterMatch.Section;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(township))
+                    {
+                        township = quarterMatch.Township;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(range))
+                    {
+                        range = quarterMatch.Range;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(meridian))
+                    {
+                        meridian = quarterMatch.Meridian;
+                    }
+                }
+
+                matches.Add(new QuarterLayerMatch(vertices, quarterToken, section, township, range, meridian));
+            }
+
+            tr.Commit();
+            return matches.Count > 0;
+        }
+
+        private static Dictionary<ObjectId, (string QuarterToken, string Section, string Township, string Range, string Meridian)> BuildQuarterMetadataById(object sectionDrawResult)
+        {
+            var metadataById = new Dictionary<ObjectId, (string QuarterToken, string Section, string Township, string Range, string Meridian)>();
+            if (sectionDrawResult == null)
+            {
+                return metadataById;
+            }
+
+            var property = sectionDrawResult.GetType().GetProperty("LabelQuarterInfos", BindingFlags.Public | BindingFlags.Instance);
+            if (property?.GetValue(sectionDrawResult) is not IEnumerable enumerable)
+            {
+                return metadataById;
+            }
+
+            foreach (var item in enumerable)
+            {
+                if (item == null)
+                {
+                    continue;
+                }
+
+                var itemType = item.GetType();
+                if (itemType.GetProperty("QuarterId", BindingFlags.Public | BindingFlags.Instance)?.GetValue(item) is not ObjectId quarterId ||
+                    quarterId.IsNull)
+                {
+                    continue;
+                }
+
+                var sectionKey = itemType.GetProperty("SectionKey", BindingFlags.Public | BindingFlags.Instance)?.GetValue(item);
+                var quarterToken = MapQuarterSelectionToQuarterToken(
+                    itemType.GetProperty("Quarter", BindingFlags.Public | BindingFlags.Instance)?.GetValue(item)?.ToString());
+                metadataById[quarterId] = (
+                    quarterToken,
+                    GetReflectionStringProperty(sectionKey, "Section"),
+                    GetReflectionStringProperty(sectionKey, "Township"),
+                    GetReflectionStringProperty(sectionKey, "Range"),
+                    GetReflectionStringProperty(sectionKey, "Meridian"));
+            }
+
+            return metadataById;
+        }
+
+        private static HashSet<ObjectId> CollectQuarterLayerEntityIds(Database db)
+        {
+            var ids = new HashSet<ObjectId>();
+            if (db == null)
+            {
+                return ids;
+            }
+
+            using var tr = db.TransactionManager.StartTransaction();
+            var blockTable = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            if (!blockTable.Has(BlockTableRecord.ModelSpace))
+            {
+                return ids;
+            }
+
+            var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+            foreach (ObjectId entityId in modelSpace)
+            {
+                if (tr.GetObject(entityId, OpenMode.ForRead, false) is not Entity entity)
+                {
+                    continue;
+                }
+
+                var layer = entity.Layer ?? string.Empty;
+                if (string.Equals(layer, QuarterValidationLayerName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(layer, QuarterLegacySourceLayerName, StringComparison.OrdinalIgnoreCase))
+                {
+                    ids.Add(entityId);
+                }
+            }
+
+            tr.Commit();
+            return ids;
+        }
+
+        private static int RemoveScratchAtsLinework(Database db)
+        {
+            if (db == null)
+            {
+                return 0;
+            }
+
+            var removed = 0;
+            using var tr = db.TransactionManager.StartTransaction();
+            var blockTable = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            if (!blockTable.Has(BlockTableRecord.ModelSpace))
+            {
+                return 0;
+            }
+
+            var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+            foreach (ObjectId entityId in modelSpace)
+            {
+                if (tr.GetObject(entityId, OpenMode.ForWrite, false) is not Entity entity ||
+                    entity.IsErased)
+                {
+                    continue;
+                }
+
+                var layer = entity.Layer ?? string.Empty;
+                if (!AtsScratchIsolationLayers.Contains(layer))
+                {
+                    continue;
+                }
+
+                entity.Erase();
+                removed++;
+            }
+
+            tr.Commit();
+            return removed;
+        }
+
+        private static string GetReflectionStringProperty(object? source, string propertyName)
+        {
+            if (source == null || string.IsNullOrWhiteSpace(propertyName))
+            {
+                return string.Empty;
+            }
+
+            return source.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
+                ?.GetValue(source)
+                ?.ToString()
+                ?.Trim() ?? string.Empty;
+        }
+
+        private static string MapQuarterSelectionToQuarterToken(string? quarterSelection)
+        {
+            return quarterSelection?.Trim() switch
+            {
+                "NorthWest" or "NW" => "NW",
+                "NorthEast" or "NE" => "NE",
+                "SouthWest" or "SW" => "SW",
+                "SouthEast" or "SE" => "SE",
+                _ => string.Empty
+            };
+        }
+
+        private static bool TryCloneGeneratedAtsQuarterDefinitions(
+            Database destinationDb,
+            Database sourceDb,
+            object sectionDrawResult,
+            out int clonedQuarterCount)
+        {
+            clonedQuarterCount = 0;
+            if (destinationDb == null || sourceDb == null || sectionDrawResult == null)
+            {
+                return false;
+            }
+
+            var quarterIds = GetObjectIdsFromReflectionProperty(sectionDrawResult, "LabelQuarterPolylineIds");
+            if (quarterIds.Count == 0)
+            {
+                return false;
+            }
+
+            var destinationModelSpaceId = GetModelSpaceId(destinationDb);
+            if (destinationModelSpaceId.IsNull)
+            {
+                return false;
+            }
+
+            var idsToClone = new ObjectIdCollection();
+            for (var i = 0; i < quarterIds.Count; i++)
+            {
+                idsToClone.Add(quarterIds[i]);
+            }
+
+            var mapping = new IdMapping();
+            sourceDb.WblockCloneObjects(
+                idsToClone,
+                destinationModelSpaceId,
+                mapping,
+                DuplicateRecordCloning.Ignore,
+                deferTranslation: false);
+
+            clonedQuarterCount = quarterIds.Count;
+            return clonedQuarterCount > 0;
+        }
+
+        private static List<ObjectId> GetObjectIdsFromReflectionProperty(object source, string propertyName)
+        {
+            var ids = new List<ObjectId>();
+            if (source == null || string.IsNullOrWhiteSpace(propertyName))
+            {
+                return ids;
+            }
+
+            var property = source.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+            if (property?.GetValue(source) is not IEnumerable enumerable)
+            {
+                return ids;
+            }
+
+            foreach (var item in enumerable)
+            {
+                if (item is ObjectId objectId && !objectId.IsNull)
+                {
+                    ids.Add(objectId);
+                }
+            }
+
+            return ids;
+        }
+
+        private static ObjectId GetModelSpaceId(Database db)
+        {
+            if (db == null)
+            {
+                return ObjectId.Null;
+            }
+
+            using var tr = db.TransactionManager.StartTransaction();
+            var blockTable = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            if (!blockTable.Has(BlockTableRecord.ModelSpace))
+            {
+                return ObjectId.Null;
+            }
+
+            var modelSpaceId = blockTable[BlockTableRecord.ModelSpace];
+            tr.Commit();
+            return modelSpaceId;
         }
 
         private static bool TryLoadAtsBackgroundBuilderAssembly(Database db, out Assembly atsAssembly, out string source)
@@ -1601,7 +2657,8 @@ namespace WildlifeSweeps
 
         private static List<QuarterLayerSource> LoadQuarterLayerSources(
             Database db,
-            AtsQuarterLocationResolver? locationResolver)
+            AtsQuarterLocationResolver? locationResolver,
+            ISet<ObjectId>? excludedEntityIds = null)
         {
             var canonicalMatches = new List<QuarterLayerMatch>();
             var legacyMatches = new List<QuarterLayerMatch>();
@@ -1616,6 +2673,11 @@ namespace WildlifeSweeps
             var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
             foreach (ObjectId entityId in modelSpace)
             {
+                if (excludedEntityIds != null && excludedEntityIds.Contains(entityId))
+                {
+                    continue;
+                }
+
                 if (tr.GetObject(entityId, OpenMode.ForRead, false) is not Entity entity)
                 {
                     continue;
@@ -1684,12 +2746,12 @@ namespace WildlifeSweeps
 
         private static int GetQuarterSourcePriority(string layerName)
         {
-            if (string.Equals(layerName, QuarterLegacySourceLayerName, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(layerName, QuarterValidationLayerName, StringComparison.OrdinalIgnoreCase))
             {
                 return 2;
             }
 
-            if (string.Equals(layerName, QuarterValidationLayerName, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(layerName, QuarterLegacySourceLayerName, StringComparison.OrdinalIgnoreCase))
             {
                 return 1;
             }
@@ -2400,7 +3462,7 @@ namespace WildlifeSweeps
                 return string.Empty;
             }
 
-            return photoCreatedDate.Value.ToString("dd-MM-yyyy", CultureInfo.InvariantCulture);
+            return photoCreatedDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         }
 
 
@@ -2816,6 +3878,147 @@ namespace WildlifeSweeps
             }
         }
 
+        private static string? WriteBufferDebugReport(
+            Document doc,
+            string? fallbackDirectory,
+            IReadOnlyList<PhotoPointRecord> records,
+            BufferMode bufferMode,
+            BufferBoundary? proposedBoundary,
+            BufferBoundary? hundredMeterBoundary)
+        {
+            if (bufferMode == BufferMode.None || records.Count == 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                var drawingPath = doc.Database.Filename;
+                var targetDirectory = string.IsNullOrWhiteSpace(drawingPath)
+                    ? (fallbackDirectory ?? Path.GetTempPath())
+                    : (Path.GetDirectoryName(drawingPath) ?? fallbackDirectory ?? Path.GetTempPath());
+                var baseName = string.IsNullOrWhiteSpace(drawingPath)
+                    ? "unsaved_drawing"
+                    : Path.GetFileNameWithoutExtension(drawingPath);
+                var reportPath = Path.Combine(targetDirectory, $"{baseName}_buffer_debug.txt");
+
+                var lines = new List<string>
+                {
+                    "WLS Buffer Classification Debug Report",
+                    $"Drawing: {doc.Name}",
+                    $"Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}",
+                    $"Buffer mode: {bufferMode}",
+                    $"Proposed boundary: {FormatBoundarySummary(proposedBoundary)}",
+                    $"100m boundary: {FormatBoundarySummary(hundredMeterBoundary)}",
+                    string.Empty,
+                    "Number\tFinalArea\tSource\tOriginalText\tNorthing\tEasting\t" +
+                    "ProposedInside\tProposedDecisionSource\tProposedExactCouldClassify\tProposedExactInside\tProposedExactOnBoundary\tProposedExactDistanceM\tProposedExactSuccessfulRays\tProposedExactOddRays\tProposedExactEvenRays\tProposedExactRawHits\tProposedExactUniqueHits\tProposedExactWinningRayYOffset\tProposedSampledInside\tProposedSampledDistanceM\tProposedSampledNearBoundary\tProposedSampledRayInside\tProposedSampledWindingInside\tProposedExactError\t" +
+                    "HundredInside\tHundredDecisionSource\tHundredExactCouldClassify\tHundredExactInside\tHundredExactOnBoundary\tHundredExactDistanceM\tHundredExactSuccessfulRays\tHundredExactOddRays\tHundredExactEvenRays\tHundredExactRawHits\tHundredExactUniqueHits\tHundredExactWinningRayYOffset\tHundredSampledInside\tHundredSampledDistanceM\tHundredSampledNearBoundary\tHundredSampledRayInside\tHundredSampledWindingInside\tHundredExactError"
+                };
+
+                foreach (var record in records.OrderBy(record => record.Number))
+                {
+                    var point = new Point3d(record.Easting, record.Northing, 0.0);
+                    var proposedEvaluation = proposedBoundary?.Evaluate(point);
+                    var hundredEvaluation = hundredMeterBoundary?.Evaluate(point);
+                    lines.Add(string.Join("\t",
+                        record.Number.ToString(CultureInfo.InvariantCulture),
+                        record.Area.ToString(),
+                        string.IsNullOrWhiteSpace(record.ImagePath) ? "Text" : "Photo",
+                        SanitizeDebugField(record.OriginalText),
+                        record.Northing.ToString("F3", CultureInfo.InvariantCulture),
+                        record.Easting.ToString("F3", CultureInfo.InvariantCulture),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.IsInside),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.DecisionSource),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.Exact.CouldClassify),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.Exact.IsInside),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.Exact.IsOnBoundary),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => FormatDiagnosticDouble(evaluation.Exact.BoundaryDistance)),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.Exact.SuccessfulRayCastCount),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.Exact.OddRayCastCount),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.Exact.EvenRayCastCount),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.Exact.RawIntersectionCount),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.Exact.UniqueIntersectionCount),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => FormatDiagnosticDouble(evaluation.Exact.WinningRayYOffset)),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.Sampled.IsInside),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => FormatDiagnosticDouble(evaluation.Sampled.BoundaryDistance)),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.Sampled.IsNearBoundary),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.Sampled.RayCastingInside),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => evaluation.Sampled.WindingInside),
+                        FormatBoundaryEvaluationValue(proposedEvaluation, evaluation => SanitizeDebugField(evaluation.Exact.Error)),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.IsInside),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.DecisionSource),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.Exact.CouldClassify),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.Exact.IsInside),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.Exact.IsOnBoundary),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => FormatDiagnosticDouble(evaluation.Exact.BoundaryDistance)),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.Exact.SuccessfulRayCastCount),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.Exact.OddRayCastCount),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.Exact.EvenRayCastCount),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.Exact.RawIntersectionCount),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.Exact.UniqueIntersectionCount),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => FormatDiagnosticDouble(evaluation.Exact.WinningRayYOffset)),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.Sampled.IsInside),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => FormatDiagnosticDouble(evaluation.Sampled.BoundaryDistance)),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.Sampled.IsNearBoundary),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.Sampled.RayCastingInside),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => evaluation.Sampled.WindingInside),
+                        FormatBoundaryEvaluationValue(hundredEvaluation, evaluation => SanitizeDebugField(evaluation.Exact.Error))));
+                }
+
+                File.WriteAllLines(reportPath, lines, Encoding.UTF8);
+                return reportPath;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string FormatBoundarySummary(BufferBoundary? boundary)
+        {
+            if (boundary == null)
+            {
+                return "not selected";
+            }
+
+            return $"layer={boundary.SourceLayer}, handle={boundary.SourceHandle}, sampledVertices={boundary.Vertices.Count}";
+        }
+
+        private static string FormatBoundaryEvaluationValue<T>(
+            BufferContainmentEvaluation? evaluation,
+            Func<BufferContainmentEvaluation, T> selector)
+        {
+            if (evaluation == null)
+            {
+                return string.Empty;
+            }
+
+            var value = selector(evaluation);
+            return SanitizeDebugField(value?.ToString());
+        }
+
+        private static string FormatDiagnosticDouble(double value)
+        {
+            return double.IsFinite(value)
+                ? value.ToString("F3", CultureInfo.InvariantCulture)
+                : string.Empty;
+        }
+
+        private static string SanitizeDebugField(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            return value
+                .Replace("\r", " ")
+                .Replace("\n", " ")
+                .Replace("\t", " ")
+                .Trim();
+        }
+
         private static string EscapeCsv(string? value)
         {
             if (string.IsNullOrEmpty(value))
@@ -2835,8 +4038,7 @@ namespace WildlifeSweeps
             }
 
             return photoCreatedDate.Value
-                .ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture)
-                .ToUpperInvariant();
+                .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         }
 
         private static List<PhotoGpsRecord> LoadGpsPhotos(string folder, Editor editor)
@@ -3270,8 +4472,34 @@ namespace WildlifeSweeps
             }
         }
 
-        private sealed record BufferBoundary(IReadOnlyList<Point3d> Vertices)
+        private sealed record BufferContainmentEvaluation(
+            bool IsInside,
+            bool UsedSampledFallback,
+            BoundaryContainmentHelper.ExactContainmentEvaluation Exact,
+            BoundaryContainmentHelper.SampledContainmentEvaluation Sampled)
         {
+            public string DecisionSource => UsedSampledFallback ? "SampledFallback" : "ExactPolyline";
+        }
+
+        private sealed class BufferBoundary
+        {
+            public BufferBoundary(
+                IReadOnlyList<Point3d> vertices,
+                Polyline exactBoundary,
+                string sourceLayer,
+                string sourceHandle)
+            {
+                Vertices = vertices ?? Array.Empty<Point3d>();
+                ExactBoundary = exactBoundary;
+                SourceLayer = sourceLayer ?? string.Empty;
+                SourceHandle = sourceHandle ?? string.Empty;
+            }
+
+            public IReadOnlyList<Point3d> Vertices { get; }
+            private Polyline? ExactBoundary { get; }
+            public string SourceLayer { get; }
+            public string SourceHandle { get; }
+
             public bool IsWithinBuffer(Point3d point, double bufferDistanceMeters)
             {
                 return IsInside(point);
@@ -3279,19 +4507,65 @@ namespace WildlifeSweeps
 
             public bool IsInside(Point3d point)
             {
-                return BoundaryContainmentHelper.IsInside(
+                return Evaluate(point).IsInside;
+            }
+
+            public BufferContainmentEvaluation Evaluate(Point3d point)
+            {
+                var exact = ExactBoundary != null
+                    ? BoundaryContainmentHelper.EvaluateExactPolylineContainment(
+                        ExactBoundary,
+                        point,
+                        BoundaryExactTolerance,
+                        BoundaryExactRayYOffset)
+                    : new BoundaryContainmentHelper.ExactContainmentEvaluation(
+                        BoundaryValid: false,
+                        CouldClassify: false,
+                        IsInside: false,
+                        IsOnBoundary: false,
+                        BoundaryDistance: double.NaN,
+                        SuccessfulRayCastCount: 0,
+                        OddRayCastCount: 0,
+                        EvenRayCastCount: 0,
+                        RawIntersectionCount: 0,
+                        UniqueIntersectionCount: 0,
+                        WinningRayYOffset: double.NaN,
+                        Error: "Exact boundary unavailable.");
+                var sampled = BoundaryContainmentHelper.EvaluateSampledContainment(
                     Vertices,
                     point,
                     BoundaryEdgeTolerance,
                     use3dDistanceForDegenerateSegments: true);
+                var usedSampledFallback = !exact.CouldClassify;
+                var isInside = exact.CouldClassify
+                    ? exact.IsInside
+                    : sampled.IsInside;
+                return new BufferContainmentEvaluation(isInside, usedSampledFallback, exact, sampled);
             }
 
             public double DistanceToBoundary(Point3d point)
             {
+                var exactDistance = DistanceToExactBoundary(point);
+                if (!double.IsNaN(exactDistance))
+                {
+                    return exactDistance;
+                }
+
                 return BoundaryContainmentHelper.DistanceToBoundary(
                     Vertices,
                     point,
                     use3dDistanceForDegenerateSegments: true);
+            }
+
+            private double DistanceToExactBoundary(Point3d point)
+            {
+                if (ExactBoundary == null)
+                {
+                    return double.NaN;
+                }
+
+                var distance = BoundaryContainmentHelper.DistanceToExactPolylineBoundary(ExactBoundary, point);
+                return double.IsFinite(distance) ? distance : double.NaN;
             }
         }
 
@@ -3401,6 +4675,26 @@ namespace WildlifeSweeps
                 string.Empty,
                 Array.Empty<Point2d>());
         }
+
+        private sealed record ExistingPointBlock(
+            ObjectId BlockId,
+            int Number,
+            string BlockName,
+            BufferArea Area);
+
+        private sealed record TableSnapshot(
+            ObjectId TableId,
+            Point3d Position,
+            ObjectId TableStyleId,
+            List<TablePointRow> Rows);
+
+        private sealed record TablePointRow(
+            int Number,
+            string WildlifeFinding,
+            string Location,
+            double Latitude,
+            double Longitude,
+            bool IsOutsideBuffer);
 
         private sealed record PhotoPointRecord(
             int Number,

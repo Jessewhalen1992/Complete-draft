@@ -13,6 +13,7 @@ namespace WildlifeSweeps
     internal sealed class SortBufferPhotosService
     {
         private const double BoundaryEdgeTolerance = 0.01;
+        private const double BoundaryExactRayYOffset = 0.01;
         private const double BoundarySamplingStepMeters = 2.0;
         private const double BoundarySampleMergeTolerance = 0.01;
         private const string OutputFolderName = "within 100m";
@@ -115,45 +116,60 @@ namespace WildlifeSweeps
 
         private static BufferBoundary? PromptForBuffer(Editor editor, Database db)
         {
-            var options = new PromptEntityOptions("\nSelect a closed polyline boundary for the 100m buffer:");
-            options.SetRejectMessage("\nOnly closed LWPOLYLINE/POLYLINE boundaries are supported.");
-            options.AddAllowedClass(typeof(Polyline), false);
-            var result = editor.GetEntity(options);
-            if (result.Status != PromptStatus.OK)
+            while (true)
             {
-                return null;
-            }
+                var options = new PromptEntityOptions("\nSelect a closed polyline boundary for the 100m buffer:");
+                options.SetRejectMessage("\nOnly closed LWPOLYLINE/POLYLINE boundaries are supported.");
+                options.AddAllowedClass(typeof(Polyline), false);
+                var result = editor.GetEntity(options);
+                if (result.Status != PromptStatus.OK)
+                {
+                    return null;
+                }
 
-            using var tr = db.TransactionManager.StartTransaction();
-            if (tr.GetObject(result.ObjectId, OpenMode.ForRead) is not Polyline boundary)
-            {
-                editor.WriteMessage("\nSelection is not a polyline.");
-                return null;
-            }
+                using var tr = db.TransactionManager.StartTransaction();
+                if (tr.GetObject(result.ObjectId, OpenMode.ForRead) is not Polyline boundary)
+                {
+                    editor.WriteMessage("\nSelection is not a polyline.");
+                    return null;
+                }
 
-            if (!boundary.Closed)
-            {
-                editor.WriteMessage("\nBoundary polyline must be closed.");
-                return null;
-            }
+                if (!boundary.Closed)
+                {
+                    editor.WriteMessage("\nBoundary polyline must be closed.");
+                    continue;
+                }
 
-            if (boundary.NumberOfVertices < 3)
-            {
-                editor.WriteMessage("\nBoundary polyline must have at least 3 vertices.");
-                return null;
-            }
+                if (boundary.NumberOfVertices < 3)
+                {
+                    editor.WriteMessage("\nBoundary polyline must have at least 3 vertices.");
+                    continue;
+                }
 
-            var vertices = BoundarySamplingHelper.BuildBoundaryVertices(
-                boundary,
-                BoundarySamplingStepMeters,
-                BoundarySampleMergeTolerance);
-            if (vertices.Count < 3)
-            {
-                editor.WriteMessage("\nBoundary polyline could not be sampled.");
-                return null;
-            }
+                var vertices = BoundarySamplingHelper.BuildBoundaryVertices(
+                    boundary,
+                    BoundarySamplingStepMeters,
+                    BoundarySampleMergeTolerance);
+                if (vertices.Count < 3)
+                {
+                    editor.WriteMessage("\nBoundary polyline could not be sampled.");
+                    continue;
+                }
 
-            return new BufferBoundary(vertices);
+                var bufferBoundary = new BufferBoundary(
+                    vertices,
+                    (Polyline)boundary.Clone(),
+                    boundary.Layer,
+                    boundary.Handle.ToString());
+
+                if (RequiresBoundaryInteriorConfirmation(boundary) &&
+                    !ConfirmBoundaryInteriorPoint(editor, bufferBoundary))
+                {
+                    continue;
+                }
+
+                return bufferBoundary;
+            }
         }
 
         private static List<PhotoGpsRecord> LoadGpsPhotos(string folder, Editor editor)
@@ -173,16 +189,109 @@ namespace WildlifeSweeps
 
         private sealed record PhotoGpsRecord(string ImagePath, double Latitude, double Longitude);
 
-        private sealed record BufferBoundary(IReadOnlyList<Point3d> Vertices)
+        private sealed class BufferBoundary
         {
+            public BufferBoundary(
+                IReadOnlyList<Point3d> vertices,
+                Polyline exactBoundary,
+                string sourceLayer,
+                string sourceHandle)
+            {
+                Vertices = vertices ?? Array.Empty<Point3d>();
+                ExactBoundary = exactBoundary;
+                SourceLayer = sourceLayer ?? string.Empty;
+                SourceHandle = sourceHandle ?? string.Empty;
+            }
+
+            public IReadOnlyList<Point3d> Vertices { get; }
+            private Polyline? ExactBoundary { get; }
+            public string SourceLayer { get; }
+            public string SourceHandle { get; }
+
             public bool IsInside(Point3d point)
             {
-                return BoundaryContainmentHelper.IsInside(
+                var exact = ExactBoundary != null
+                    ? BoundaryContainmentHelper.EvaluateExactPolylineContainment(
+                        ExactBoundary,
+                        point,
+                        BoundaryEdgeTolerance,
+                        BoundaryExactRayYOffset)
+                    : new BoundaryContainmentHelper.ExactContainmentEvaluation(
+                        BoundaryValid: false,
+                        CouldClassify: false,
+                        IsInside: false,
+                        IsOnBoundary: false,
+                        BoundaryDistance: double.NaN,
+                        SuccessfulRayCastCount: 0,
+                        OddRayCastCount: 0,
+                        EvenRayCastCount: 0,
+                        RawIntersectionCount: 0,
+                        UniqueIntersectionCount: 0,
+                        WinningRayYOffset: double.NaN,
+                        Error: "Exact boundary unavailable.");
+                if (exact.CouldClassify)
+                {
+                    return exact.IsInside;
+                }
+
+                return BoundaryContainmentHelper.EvaluateSampledContainment(
                     Vertices,
                     point,
                     BoundaryEdgeTolerance,
+                    use3dDistanceForDegenerateSegments: false).IsInside;
+            }
+
+            public double DistanceToBoundary(Point3d point)
+            {
+                if (ExactBoundary != null)
+                {
+                    var exactDistance = BoundaryContainmentHelper.DistanceToExactPolylineBoundary(ExactBoundary, point);
+                    if (double.IsFinite(exactDistance))
+                    {
+                        return exactDistance;
+                    }
+                }
+
+                return BoundaryContainmentHelper.DistanceToBoundary(
+                    Vertices,
+                    point,
                     use3dDistanceForDegenerateSegments: false);
             }
+        }
+
+        private static bool RequiresBoundaryInteriorConfirmation(Polyline boundary)
+        {
+            return boundary != null &&
+                   string.Equals(boundary.Layer, "Defpoints", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool ConfirmBoundaryInteriorPoint(Editor editor, BufferBoundary boundary)
+        {
+            var options = new PromptPointOptions(
+                $"\nPick a point that should be inside boundary handle {boundary.SourceHandle} on layer {boundary.SourceLayer}: ");
+            var result = editor.GetPoint(options);
+            if (result.Status != PromptStatus.OK)
+            {
+                return false;
+            }
+
+            var isInside = boundary.IsInside(result.Value);
+            if (isInside)
+            {
+                return true;
+            }
+
+            editor.WriteMessage(
+                $"\nThe picked interior-check point is outside boundary handle {boundary.SourceHandle} " +
+                $"(distance={FormatExactDistance(boundary.DistanceToBoundary(result.Value))}m). This usually means AutoCAD selected a stacked/hidden polyline instead of the visible buffer. Select the boundary again.");
+            return false;
+        }
+
+        private static string FormatExactDistance(double value)
+        {
+            return double.IsFinite(value)
+                ? value.ToString("F3")
+                : string.Empty;
         }
     }
 }

@@ -6,6 +6,7 @@ using System.Linq;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using Autodesk.AutoCAD.Runtime;
 using DrawingImage = System.Drawing.Image;
 
 namespace WildlifeSweeps
@@ -68,7 +69,6 @@ namespace WildlifeSweeps
                 new Vector3d(settings.GroupOffsetX, -settings.GroupOffsetY, 0)
             };
 
-            var groupIndex = 1;
             var firstGroup = groups.First();
             var firstPhoto = firstGroup.First().PhotoNumber;
             var lastPhoto = firstGroup.Last().PhotoNumber;
@@ -78,13 +78,174 @@ namespace WildlifeSweeps
                 return false;
             }
 
-            var startPoint = startPointResult.Value;
+            return PlacePhotoGroupsAtPoint(db, settings, ordered, startPointResult.Value, out report);
+        }
 
-            foreach (var group in groups)
+        public static PhotoLayoutUpdateResult RemoveAndReflowExistingPhotoGroups(
+            Database db,
+            PluginSettings settings,
+            IReadOnlyCollection<int> removedPhotoNumbers,
+            IReadOnlyDictionary<int, int> renumberMap)
+        {
+            if (removedPhotoNumbers == null || removedPhotoNumbers.Count == 0)
             {
-                var groupFirst = group.First().PhotoNumber;
-                var groupLast = group.Last().PhotoNumber;
-                editor.WriteMessage($"\nPlacing Group {groupIndex} (Photos {groupFirst}-{groupLast})...");
+                return PhotoLayoutUpdateResult.Empty;
+            }
+
+            var existingLayouts = ReadExistingPhotoLayouts(db, settings, out var unmatchedImageCount);
+            if (existingLayouts.Count == 0)
+            {
+                return unmatchedImageCount > 0
+                    ? new PhotoLayoutUpdateResult(false, 0, 0, 0, unmatchedImageCount, new List<string>())
+                    : PhotoLayoutUpdateResult.Empty;
+            }
+
+            var firstLayout = existingLayouts
+                .OrderBy(layout => layout.PhotoNumber)
+                .FirstOrDefault();
+            if (firstLayout == null)
+            {
+                return PhotoLayoutUpdateResult.Empty;
+            }
+
+            var orderedExistingLayouts = existingLayouts
+                .OrderBy(layout => layout.PhotoNumber)
+                .ToList();
+            var survivingLayouts = orderedExistingLayouts
+                .Select((layout, originalIndex) => new SurvivingPhotoLayout(
+                    layout,
+                    originalIndex,
+                    renumberMap.TryGetValue(layout.PhotoNumber, out var renumbered) ? renumbered : layout.PhotoNumber))
+                .Where(layout => !removedPhotoNumbers.Contains(layout.Layout.PhotoNumber))
+                .OrderBy(layout => layout.NewPhotoNumber)
+                .ToList();
+
+            var removedLabels = 0;
+            var removedImages = 0;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                for (var index = 0; index < orderedExistingLayouts.Count; index++)
+                {
+                    var layout = orderedExistingLayouts[index];
+                    if (removedPhotoNumbers.Contains(layout.PhotoNumber))
+                    {
+                        removedLabels += TryEraseEntity(tr, layout.LabelId) ? 1 : 0;
+                        removedImages += !layout.ImageId.IsNull && TryEraseEntity(tr, layout.ImageId) ? 1 : 0;
+                    }
+                }
+
+                for (var newIndex = 0; newIndex < survivingLayouts.Count; newIndex++)
+                {
+                    var surviving = survivingLayouts[newIndex];
+                    var oldSlotAnchor = BuildPhotoSlotAnchor(firstLayout.AnchorPoint, settings, surviving.OriginalSequenceIndex);
+                    var newSlotAnchor = BuildPhotoSlotAnchor(firstLayout.AnchorPoint, settings, newIndex);
+                    var displacement = newSlotAnchor - oldSlotAnchor;
+
+                    if (!surviving.Layout.ImageId.IsNull)
+                    {
+                        TryMoveEntity(tr, surviving.Layout.ImageId, displacement);
+                    }
+
+                    if (tr.GetObject(surviving.Layout.LabelId, OpenMode.ForWrite, false) is MText label && !label.IsErased)
+                    {
+                        if (!displacement.IsZeroLength())
+                        {
+                            label.TransformBy(Matrix3d.Displacement(displacement));
+                        }
+
+                        label.Contents = BuildPhotoLabelContents(surviving.NewPhotoNumber, surviving.Layout.Caption);
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            if (survivingLayouts.Count == 0)
+            {
+                return new PhotoLayoutUpdateResult(true, removedLabels, removedImages, 0, unmatchedImageCount, new List<string>());
+            }
+
+            return new PhotoLayoutUpdateResult(
+                true,
+                removedLabels,
+                removedImages,
+                survivingLayouts.Count,
+                unmatchedImageCount,
+                new List<string>());
+        }
+
+        private static bool TryEraseEntity(Transaction tr, ObjectId entityId)
+        {
+            if (entityId.IsNull)
+            {
+                return false;
+            }
+
+            if (tr.GetObject(entityId, OpenMode.ForWrite, false) is Entity entity && !entity.IsErased)
+            {
+                entity.Erase();
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryMoveEntity(Transaction tr, ObjectId entityId, Vector3d displacement)
+        {
+            if (entityId.IsNull)
+            {
+                return false;
+            }
+
+            if (tr.GetObject(entityId, OpenMode.ForWrite, false) is Entity entity && !entity.IsErased)
+            {
+                if (!displacement.IsZeroLength())
+                {
+                    entity.TransformBy(Matrix3d.Displacement(displacement));
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool PlacePhotoGroupsAtPoint(
+            Database db,
+            PluginSettings settings,
+            IReadOnlyList<PhotoLayoutRecord> ordered,
+            Point3d startPoint,
+            out List<string> report)
+        {
+            report = new List<string>();
+            if (ordered.Count == 0)
+            {
+                return false;
+            }
+
+            using var trLayer = db.TransactionManager.StartTransaction();
+            EnsureLayer(db, settings.PhotoLayer, trLayer);
+            EnsureLayer(db, "DETAIL-T", Autodesk.AutoCAD.Colors.Color.FromRgb(0, 255, 0), trLayer);
+            trLayer.Commit();
+
+            var groups = ChunkList(ordered, 4).ToList();
+            if (groups.Count == 0)
+            {
+                return false;
+            }
+
+            var hadFailures = false;
+            var offsets = new List<Vector3d>
+            {
+                new Vector3d(0, 0, 0),
+                new Vector3d(settings.GroupOffsetX, 0, 0),
+                new Vector3d(0, -settings.GroupOffsetY, 0),
+                new Vector3d(settings.GroupOffsetX, -settings.GroupOffsetY, 0)
+            };
+
+            for (var groupIndex = 1; groupIndex <= groups.Count; groupIndex++)
+            {
+                var group = groups[groupIndex - 1];
                 var basePoint = startPoint + new Vector3d(settings.GroupSpacingX * (groupIndex - 1), 0, 0);
 
                 using var tr = db.TransactionManager.StartTransaction();
@@ -104,15 +265,15 @@ namespace WildlifeSweeps
                     }
                     else if (!TryAttachImage(db, space, tr, rec.ImagePath, insertPoint, settings, rec.PhotoNumber, rec.Caption, out var message))
                     {
+                        hadFailures = true;
                         report.Add(message ?? $"FAILED attach: Photo {rec.PhotoNumber}");
                     }
                 }
 
                 tr.Commit();
-                groupIndex++;
             }
 
-            return true;
+            return !hadFailures;
         }
 
         private static bool TryAttachImage(
@@ -201,6 +362,193 @@ namespace WildlifeSweeps
             AddPhotoLabel(space, tr, insertPoint, uVector, vVector, settings, photoNumber, caption);
 
             return true;
+        }
+
+        private static List<ExistingPhotoLayoutRecord> ReadExistingPhotoLayouts(
+            Database db,
+            PluginSettings settings,
+            out int unmatchedImageCount)
+        {
+            unmatchedImageCount = 0;
+            using var tr = db.TransactionManager.StartTransaction();
+            var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
+
+            var labels = new List<ExistingPhotoLabel>();
+            var images = new List<ExistingPhotoImage>();
+            foreach (ObjectId id in space)
+            {
+                if (id.ObjectClass == RXObject.GetClass(typeof(MText)) &&
+                    tr.GetObject(id, OpenMode.ForRead, false) is MText label &&
+                    string.Equals(label.Layer, "DETAIL-T", StringComparison.OrdinalIgnoreCase) &&
+                    TryParsePhotoLabel(label, out var photoNumber, out var caption))
+                {
+                    labels.Add(new ExistingPhotoLabel(id, photoNumber, caption, label.Location));
+                    continue;
+                }
+
+                if (id.ObjectClass == RXObject.GetClass(typeof(RasterImage)) &&
+                    tr.GetObject(id, OpenMode.ForRead, false) is RasterImage image &&
+                    string.Equals(image.Layer, settings.PhotoLayer, StringComparison.OrdinalIgnoreCase) &&
+                    TryReadExistingPhotoImage(image, tr, out var existingImage))
+                {
+                    images.Add(existingImage);
+                }
+            }
+
+            var availableImages = new List<ExistingPhotoImage>(images);
+            var records = new List<ExistingPhotoLayoutRecord>();
+            foreach (var label in labels.OrderBy(item => item.PhotoNumber))
+            {
+                var bestIndex = -1;
+                var bestScore = double.MaxValue;
+                for (var i = 0; i < availableImages.Count; i++)
+                {
+                    var candidate = availableImages[i];
+                    var expectedLabelPoint = new Point3d(candidate.CenterPoint.X, candidate.MinPoint.Y - 48.0, label.Location.Z);
+                    var dx = label.Location.X - expectedLabelPoint.X;
+                    var dy = label.Location.Y - expectedLabelPoint.Y;
+                    if (Math.Abs(dx) > 250.0 || Math.Abs(dy) > 250.0)
+                    {
+                        continue;
+                    }
+
+                    var score = (dx * dx) + (dy * dy);
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        bestIndex = i;
+                    }
+                }
+
+                if (bestIndex >= 0)
+                {
+                    var image = availableImages[bestIndex];
+                    availableImages.RemoveAt(bestIndex);
+                    records.Add(new ExistingPhotoLayoutRecord(
+                        label.PhotoNumber,
+                        image.ImagePath,
+                        label.Caption,
+                        image.AnchorPoint,
+                        label.LabelId,
+                        image.ImageId,
+                        new[] { label.LabelId, image.ImageId }));
+                }
+                else
+                {
+                    records.Add(new ExistingPhotoLayoutRecord(
+                        label.PhotoNumber,
+                        null,
+                        label.Caption,
+                        CreatePlaceholderAnchorPoint(label.Location, settings),
+                        label.LabelId,
+                        ObjectId.Null,
+                        new[] { label.LabelId }));
+                }
+            }
+
+            unmatchedImageCount = availableImages.Count;
+            tr.Commit();
+            return records;
+        }
+
+        private static Point3d BuildPhotoSlotAnchor(Point3d startPoint, PluginSettings settings, int sequenceIndex)
+        {
+            var groupIndex = sequenceIndex / 4;
+            var slotIndex = sequenceIndex % 4;
+            var offsets = GetPhotoSlotOffsets(settings);
+            return startPoint + new Vector3d(settings.GroupSpacingX * groupIndex, 0, 0) + offsets[slotIndex];
+        }
+
+        private static IReadOnlyList<Vector3d> GetPhotoSlotOffsets(PluginSettings settings)
+        {
+            return new[]
+            {
+                new Vector3d(0, 0, 0),
+                new Vector3d(settings.GroupOffsetX, 0, 0),
+                new Vector3d(0, -settings.GroupOffsetY, 0),
+                new Vector3d(settings.GroupOffsetX, -settings.GroupOffsetY, 0)
+            };
+        }
+
+        private static bool TryReadExistingPhotoImage(
+            RasterImage image,
+            Transaction tr,
+            out ExistingPhotoImage existingImage)
+        {
+            existingImage = default;
+            try
+            {
+                var extents = image.GeometricExtents;
+                var anchorPoint = image.Orientation.Origin;
+                var centerPoint = new Point3d(
+                    (extents.MinPoint.X + extents.MaxPoint.X) * 0.5,
+                    (extents.MinPoint.Y + extents.MaxPoint.Y) * 0.5,
+                    extents.MinPoint.Z);
+                var imagePath = string.Empty;
+                if (!image.ImageDefId.IsNull &&
+                    tr.GetObject(image.ImageDefId, OpenMode.ForRead, false) is RasterImageDef imageDef)
+                {
+                    imagePath = imageDef.SourceFileName ?? string.Empty;
+                }
+
+                existingImage = new ExistingPhotoImage(image.ObjectId, imagePath, anchorPoint, centerPoint, extents.MinPoint);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryParsePhotoLabel(MText label, out int photoNumber, out string? caption)
+        {
+            photoNumber = 0;
+            caption = null;
+
+            var rawText = label.Text;
+            if (string.IsNullOrWhiteSpace(rawText))
+            {
+                rawText = label.Contents;
+            }
+
+            if (string.IsNullOrWhiteSpace(rawText))
+            {
+                return false;
+            }
+
+            var normalized = rawText
+                .Replace("\\P", "\n")
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n');
+            var lines = normalized
+                .Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToArray();
+            if (lines.Length == 0 || !lines[0].StartsWith("PHOTO #", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var numberText = lines[0].Substring("PHOTO #".Length).Trim();
+            if (!int.TryParse(numberText, NumberStyles.Integer, CultureInfo.InvariantCulture, out photoNumber))
+            {
+                return false;
+            }
+
+            caption = lines.Length > 1
+                ? string.Join(" ", lines.Skip(1)).Trim()
+                : null;
+            return true;
+        }
+
+        private static Point3d CreatePlaceholderAnchorPoint(Point3d labelLocation, PluginSettings settings)
+        {
+            var placeholderDimension = 400.0 * Math.Min(1.0, settings.ImageScale);
+            return new Point3d(
+                labelLocation.X - (placeholderDimension * 0.5),
+                labelLocation.Y + 48.0,
+                labelLocation.Z);
         }
 
         private static string BuildImageDefinitionKey(string imagePath, DBDictionary dict)
@@ -422,4 +770,41 @@ namespace WildlifeSweeps
     }
 
     internal sealed record PhotoLayoutRecord(int PhotoNumber, string? ImagePath, bool ForceLabel = false, string? Caption = null);
+    internal sealed record PhotoLayoutUpdateResult(
+        bool Reflowed,
+        int RemovedLabels,
+        int RemovedImages,
+        int ReflowedRecords,
+        int UnmatchedImagesLeft,
+        IReadOnlyList<string> Report)
+    {
+        public static PhotoLayoutUpdateResult Empty { get; } = new(false, 0, 0, 0, 0, Array.Empty<string>());
+    }
+
+    internal sealed record ExistingPhotoLayoutRecord(
+        int PhotoNumber,
+        string? ImagePath,
+        string? Caption,
+        Point3d AnchorPoint,
+        ObjectId LabelId,
+        ObjectId ImageId,
+        IReadOnlyList<ObjectId> EntityIds);
+
+    internal sealed record ExistingPhotoLabel(
+        ObjectId LabelId,
+        int PhotoNumber,
+        string? Caption,
+        Point3d Location);
+
+    internal sealed record ExistingPhotoImage(
+        ObjectId ImageId,
+        string ImagePath,
+        Point3d AnchorPoint,
+        Point3d CenterPoint,
+        Point3d MinPoint);
+
+    internal sealed record SurvivingPhotoLayout(
+        ExistingPhotoLayoutRecord Layout,
+        int OriginalSequenceIndex,
+        int NewPhotoNumber);
 }

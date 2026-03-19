@@ -70,7 +70,7 @@ namespace WildlifeSweeps
 
             _completeFromPhotosBufferIncludeAll.Text = "BUFFERS: PROPOSED / 100m / OUTSIDE";
             _completeFromPhotosBufferExcludeOutside.Text = "BUFFERS: PROPOSED / 100m";
-            _completeFromPhotosIncludeQuarterLinework.Text = "Include L-QUARTER linework";
+            _completeFromPhotosIncludeQuarterLinework.Text = "Include L-QUATER linework";
             _completeFromPhotosBufferIncludeAll.AutoSize = true;
             _completeFromPhotosBufferExcludeOutside.AutoSize = true;
             _completeFromPhotosIncludeQuarterLinework.AutoSize = true;
@@ -117,6 +117,28 @@ namespace WildlifeSweeps
             };
             photoToTextCheckButton.Click += (_, __) => RunPhotoToTextCheck();
 
+            var removePointButton = new Button
+            {
+                Text = "Remove Point",
+                Dock = DockStyle.Top,
+                Height = 28
+            };
+            removePointButton.Click += (_, __) => RunRemovePoint();
+            _toolTip.SetToolTip(
+                removePointButton,
+                "Remove numbered WLS point blocks, renumber the remaining blocks, and optionally rebuild a selected summary table.");
+
+            var exportTableWorkbookButton = new Button
+            {
+                Text = "Export Table Workbook",
+                Dock = DockStyle.Top,
+                Height = 28
+            };
+            exportTableWorkbookButton.Click += (_, __) => RunExportTableWorkbook();
+            _toolTip.SetToolTip(
+                exportTableWorkbookButton,
+                "Select an existing WLS summary table and export a fresh workbook from the current table values.");
+
             var enviroSweepGroup = new GroupBox
             {
                 Text = "ENVIRO SWEEP",
@@ -146,6 +168,8 @@ namespace WildlifeSweeps
             enviroSweepGroup.Controls.Add(enviroSweepLayout);
 
             Controls.Add(enviroSweepGroup);
+            Controls.Add(exportTableWorkbookButton);
+            Controls.Add(removePointButton);
             Controls.Add(photoToTextCheckButton);
             Controls.Add(completeFromPhotosOptionsGroup);
             Controls.Add(sortBufferPhotosButton);
@@ -232,6 +256,34 @@ namespace WildlifeSweeps
             SetStatus("Photo To Text Check finished.");
         }
 
+        private void RunRemovePoint()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null)
+            {
+                return;
+            }
+
+            SetStatus("Removing WLS point(s)...");
+            var service = new CompleteFromPhotosService();
+            service.RemovePoints(doc, doc.Editor, _settings.Clone());
+            SetStatus("Remove Point finished.");
+        }
+
+        private void RunExportTableWorkbook()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null)
+            {
+                return;
+            }
+
+            SetStatus("Exporting workbook from table...");
+            var service = new CompleteFromPhotosService();
+            service.ExportWorkbookFromTable(doc, doc.Editor);
+            SetStatus("Export Table Workbook finished.");
+        }
+
         private void RunSortBufferPhotos()
         {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
@@ -276,7 +328,7 @@ namespace WildlifeSweeps
                 "Prompts for PROPOSED and 100m boundaries plus one block for each area; PROPOSED takes priority to avoid duplicates.");
             _toolTip.SetToolTip(
                 _completeFromPhotosIncludeQuarterLinework,
-                "Draws matched ATS quarter polygons on layer L-QUARTER so quarter assignment can be visually checked.");
+                "Draws matched ATS quarter polygons on layer L-QUATER so quarter assignment can be visually checked.");
         }
 
         private void ApplyCompleteFromPhotosBufferMode(PluginSettings settings)

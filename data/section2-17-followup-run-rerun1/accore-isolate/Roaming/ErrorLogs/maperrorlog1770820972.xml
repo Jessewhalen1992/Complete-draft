@@ -1,0 +1,2 @@
+<?xml version="1.0"?>
+<Map3dErrorLog xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="AcMap3dErrorLog.xsd"><Session user="Work Test 2" start="2/11/2026 10:42:52 AM" document="M:\Jobs\2023\01767-23\Mapping\01767-23_02-23_R3.dwg"><Error code="1" type="15" dispensation="1" sId="2" occurrence="1">Failed to open FDO connection.<Entry code="1" type="15" sId="3" occurrence="1">The HTTP request is missing user authentication or the user authorization has been refused by the server.  </Entry></Error></Session></Map3dErrorLog>

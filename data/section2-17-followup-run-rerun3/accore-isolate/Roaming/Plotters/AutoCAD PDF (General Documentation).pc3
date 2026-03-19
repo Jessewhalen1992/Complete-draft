@@ -1,0 +1,187 @@
+PIAFILEVERSION_3.0,json
+{
+ "data" : 
+ {
+  "custom" : 
+  {
+   "0" : 
+   {
+    "name" : "Create_Bookmarks",
+    "value" : true
+   },
+   "1" : 
+   {
+    "name" : "Thumbnail_Title",
+    "value" : true
+   },
+   "10" : 
+   {
+    "name" : "Monochrome_Raster_Limit",
+    "value" : 400
+   },
+   "11" : 
+   {
+    "name" : "Raster_Limit",
+    "value" : 400
+   },
+   "12" : 
+   {
+    "name" : "All_As_Geometry",
+    "value" : false
+   },
+   "13" : 
+   {
+    "name" : "Capture",
+    "value" : 2
+   },
+   "14" : 
+   {
+    "name" : "Font_Capture",
+    "value" : true
+   },
+   "15" : 
+   {
+    "name" : "Hardcopy_Resolution",
+    "value" : 1200
+   },
+   "16" : 
+   {
+    "name" : "Include_Layer",
+    "value" : true
+   },
+   "17" : 
+   {
+    "name" : "Resolution",
+    "value" : 14
+   },
+   "2" : 
+   {
+    "name" : "Sheet_Links",
+    "value" : true
+   },
+   "3" : 
+   {
+    "name" : "Rasterize_Geometry",
+    "value" : false
+   },
+   "4" : 
+   {
+    "name" : "View_New_File",
+    "value" : true
+   },
+   "5" : 
+   {
+    "name" : "Custom_Raster_Resolution",
+    "value" : false
+   },
+   "6" : 
+   {
+    "name" : "Custom_DWF_Resolution",
+    "value" : false
+   },
+   "7" : 
+   {
+    "name" : "Custom_Monochrome_Resolution",
+    "value" : false
+   },
+   "8" : 
+   {
+    "name" : "Custom_Gradient_Resolution",
+    "value" : false
+   },
+   "9" : 
+   {
+    "name" : "Gradient_Limit",
+    "value" : 1200
+   }
+  },
+  "io" : 
+  {
+   "allsysvalid" : false,
+   "pathname" : "",
+   "plot_to_file" : true,
+   "type" : 2
+  },
+  "media" : 
+  {
+   "actual_printable_bounds_llx" : 3.1749999523162842,
+   "actual_printable_bounds_lly" : 3.1749999523162842,
+   "actual_printable_bounds_urx" : 212.72499084472656,
+   "actual_printable_bounds_ury" : 352.42501831054688,
+   "dm_orientation" : 1,
+   "number_of_copies" : 1,
+   "selection_method" : 2,
+   "size" : 
+   {
+    "group" : 15,
+    "landscape_mode" : false,
+    "longplot_reduction" : 1.0,
+    "media_description" : 
+    {
+     "dimensional" : true,
+     "media_bounds" : 
+     {
+      "urx" : 215.89999389648438,
+      "ury" : 355.60000610351562
+     },
+     "printable_area" : 73185.3359375,
+     "printable_bounds_llx" : 3.1749999523162842,
+     "printable_bounds_lly" : 3.1749999523162842,
+     "printable_bounds_urx" : 212.72499084472656,
+     "printable_bounds_ury" : 352.42501831054688
+    },
+    "name" : "User-1"
+   },
+   "type_name" : ""
+  },
+  "meta" : 
+  {
+   "canonical_family_name" : "Autodesk ePlot",
+   "canonical_model_name" : "pdf",
+   "config_autospool" : false,
+   "config_description" : "",
+   "default_system_cfg" : false,
+   "dm_driver_version" : 0,
+   "driver_pathname" : "C:\\Program Files\\Autodesk\\AutoCAD 2025\\drv\\pdfplot17.hdi",
+   "driver_tag_line" : "PDF ePlot - by Autodesk",
+   "driver_type" : 3,
+   "driver_version" : "1.1-17.0.154.0 [v018-1]",
+   "file_only" : true,
+   "friendly_net_name" : "",
+   "locale" : "4B00409",
+   "localized_family_name" : "Autodesk ePlot (PDF)",
+   "localized_model_name" : "DWG To PDF",
+   "model_abilities" : "000550055000",
+   "platform" : "2,10,0",
+   "short_net_name" : "",
+   "show_custom_first" : false,
+   "toolkit_version" : 1,
+   "truetype_as_text" : true,
+   "udm_description" : "",
+   "user_defined_model_basename" : "",
+   "user_defined_model_pathname" : "C:\\Users\\Work Test 2\\appdata\\roaming\\autodesk\\autodesk autocad map 3d 2025\\r25.0\\enu\\plotters\\pmp files\\AutoCAD PDF (General Documentation).pmp"
+  },
+  "res_color_mem" : 
+  {
+   "color_depth" : 24,
+   "color_system" : 1,
+   "dm_color" : 1,
+   "lines_overwrite" : true,
+   "name" : "RGB",
+   "num_colors" : 16777216,
+   "num_undithered_colors" : 16777216,
+   "resolution" : 
+   {
+    "addr_resolution_x" : 1.0,
+    "addr_resolution_y" : 1.0,
+    "effective_resolution_x" : 1200.0,
+    "effective_resolution_y" : 1200.0,
+    "name" : "Default",
+    "phys_resolution_x" : 1200.0,
+    "phys_resolution_y" : 1200.0
+   }
+  }
+ },
+ "subver" : "json",
+ "version" : 0.01
+}

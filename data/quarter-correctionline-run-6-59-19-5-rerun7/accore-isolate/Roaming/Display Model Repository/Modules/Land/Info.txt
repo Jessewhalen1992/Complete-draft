@@ -1,0 +1,9 @@
+Layer Settings
+
+USERNAME: tbsys
+SERVICENAME: orcl
+DATASTORENAME: TB2010_LM_102
+
+Prototype: C:/Program Files/Autodesk Topobase Client 2011/Template/Modules/Land/DisplayStyle/Prototype_LM.dwg
+
+MAP Units: meters

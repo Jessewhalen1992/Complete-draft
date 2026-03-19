@@ -77,5 +77,33 @@ namespace WildlifeSweeps
             var service = new ImportKmzKmlService();
             service.Execute(doc, editor);
         }
+
+        [CommandMethod("WLS_REMOVE_POINT")]
+        public void RunRemovePoint()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null)
+            {
+                return;
+            }
+
+            var editor = doc.Editor;
+            var service = new CompleteFromPhotosService();
+            service.RemovePoints(doc, editor, Settings.Clone());
+        }
+
+        [CommandMethod("WLS_EXPORT_TABLE_WORKBOOK")]
+        public void RunExportTableWorkbook()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null)
+            {
+                return;
+            }
+
+            var editor = doc.Editor;
+            var service = new CompleteFromPhotosService();
+            service.ExportWorkbookFromTable(doc, editor);
+        }
     }
 }

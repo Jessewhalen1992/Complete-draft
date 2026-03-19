@@ -1,0 +1,665 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="Library://CONSTRUCT_POINTS_TBL.LayerDefinition">
+    <ns0:FeatureSource xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" rdf:resource="fsd://Topobase_1"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://CONSTRUCT_POINTS_TBL.LayerDefinition">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/LayerDefinitionResource"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://CONSTRUCT_POINTS_TBL.LayerDefinition">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">CONSTRUCT_POINTS_TBL</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://CONSTRUCT_POINTS_TBL.LayerDefinition">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://CONSTRUCT_POINTS_TBL.LayerDefinition">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://CONSTRUCT_POINTS_TBL.LayerDefinition">
+    <ns0:LayerDefinitionResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"><LayerDefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="LayerDefinition-1.0.0.xsd" version="1.0.0">
+<VectorLayerDefinition>
+<ResourceId>fsd://Topobase_1</ResourceId>
+<FeatureName>LAND:CONSTRUCT_POINTS_TBL</FeatureName>
+<FeatureNameType>FeatureClass</FeatureNameType>
+<Geometry>GEOM</Geometry>
+<VectorScaleRange>
+<MaxScale>1000</MaxScale>
+<ExtendedData1>
+<CompositeTypeStyle>
+<CompositeRule>
+<LegendLabel></LegendLabel>
+<CompositeSymbolization>
+<SymbolInstance>
+<SimpleSymbolDefinition>
+<Name>Rich Text</Name>
+<Description>Default Plain Text Symbol</Description>
+<Graphics>
+<Text>
+<Content>%CONTENT%</Content>
+<FontName>%FONTNAME%</FontName>
+<Bold>%BOLD%</Bold>
+<Italic>%ITALIC%</Italic>
+<Underlined>%UNDERLINED%</Underlined>
+<Height>%FONTHEIGHT%</Height>
+<HorizontalAlignment>%HORIZONTALALIGNMENT%</HorizontalAlignment>
+<VerticalAlignment>%VERTICALALIGNMENT%</VerticalAlignment>
+<Justification>%JUSTIFICATION%</Justification>
+<LineSpacing>%LINESPACING%</LineSpacing>
+<TextColor>%TEXTCOLOR%</TextColor>
+<GhostColor>%GHOSTCOLOR%</GhostColor>
+<Frame>
+<LineColor>%FRAMELINECOLOR%</LineColor>
+<FillColor>%FRAMEFILLCOLOR%</FillColor>
+</Frame>
+<ExtendedData1>
+<Overlined>%OVERLINED%</Overlined>
+<Markup>%MARKUP%</Markup>
+</ExtendedData1>
+</Text>
+</Graphics>
+<PointUsage>
+<Angle>%ROTATION%</Angle>
+</PointUsage>
+<ParameterDefinition>
+<Parameter>
+<Identifier>MARKUP</Identifier>
+<DefaultValue>&apos;MTEXT&apos;</DefaultValue>
+<DisplayName>&amp;Text Type</DisplayName>
+<Description>Markup format</Description>
+<ExtendedData1>
+<DataType>Markup</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>CONTENT</Identifier>
+<DefaultValue>&apos;label&apos;</DefaultValue>
+<DisplayName>T&amp;ext</DisplayName>
+<Description>Content</Description>
+<ExtendedData1>
+<DataType>Content</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>FONTNAME</Identifier>
+<DefaultValue>&apos;Arial&apos;</DefaultValue>
+<DisplayName>&amp;Font Name</DisplayName>
+<Description>FontName</Description>
+<ExtendedData1>
+<DataType>FontName</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>FONTHEIGHT</Identifier>
+<DefaultValue>1730.000</DefaultValue>
+<DisplayName>Font &amp;Size</DisplayName>
+<Description>Font Height</Description>
+<ExtendedData1>
+<DataType>FontHeight</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>BOLD</Identifier>
+<DefaultValue>false</DefaultValue>
+<DisplayName>Bold</DisplayName>
+<Description>Bold</Description>
+<ExtendedData1>
+<DataType>Bold</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>ITALIC</Identifier>
+<DefaultValue>false</DefaultValue>
+<DisplayName>Italic</DisplayName>
+<Description>Italic</Description>
+<ExtendedData1>
+<DataType>Italic</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>UNDERLINED</Identifier>
+<DefaultValue>false</DefaultValue>
+<DisplayName>Underlined</DisplayName>
+<Description>Underlined</Description>
+<ExtendedData1>
+<DataType>Underlined</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>OVERLINED</Identifier>
+<DefaultValue>false</DefaultValue>
+<DisplayName>Overlined</DisplayName>
+<Description>Overlined</Description>
+<ExtendedData1>
+<DataType>Overlined</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>JUSTIFICATION</Identifier>
+<DefaultValue>&apos;FromAlignment&apos;</DefaultValue>
+<DisplayName>Justification</DisplayName>
+<Description>Justification</Description>
+<ExtendedData1>
+<DataType>Justification</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>LINESPACING</Identifier>
+<DefaultValue>1.05</DefaultValue>
+<DisplayName>Line Spacing</DisplayName>
+<Description>Line Spacing</Description>
+<ExtendedData1>
+<DataType>LineSpacing</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>GHOSTCOLOR</Identifier>
+<DefaultValue></DefaultValue>
+<DisplayName>Text &apos;Ghost&apos; Color</DisplayName>
+<Description>Ghost Color</Description>
+<ExtendedData1>
+<DataType>GhostColor</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>FRAMELINECOLOR</Identifier>
+<DefaultValue></DefaultValue>
+<DisplayName>Frame Line Color</DisplayName>
+<Description>Line Color</Description>
+<ExtendedData1>
+<DataType>FrameLineColor</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>FRAMEFILLCOLOR</Identifier>
+<DefaultValue></DefaultValue>
+<DisplayName>Frame Fill Color</DisplayName>
+<Description>Fill Color</Description>
+<ExtendedData1>
+<DataType>FrameFillColor</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>TEXTCOLOR</Identifier>
+<DefaultValue>ff000000</DefaultValue>
+<DisplayName>Text Color</DisplayName>
+<Description>TextColor</Description>
+<ExtendedData1>
+<DataType>TextColor</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>HORIZONTALALIGNMENT</Identifier>
+<DefaultValue>&apos;Center&apos;</DefaultValue>
+<DisplayName>Hori&amp;zontal Alignment</DisplayName>
+<Description>Horizontal Alignment</Description>
+<ExtendedData1>
+<DataType>HorizontalAlignment</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>VERTICALALIGNMENT</Identifier>
+<DefaultValue>&apos;Halfline&apos;</DefaultValue>
+<DisplayName>&amp;Vertical Alignment</DisplayName>
+<Description>Vertical Alignment</Description>
+<ExtendedData1>
+<DataType>VerticalAlignment</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>ROTATION</Identifier>
+<DefaultValue>0.0</DefaultValue>
+<DisplayName>&amp;Rotation</DisplayName>
+<Description>Rotation</Description>
+<ExtendedData1>
+<DataType>Angle</DataType>
+</ExtendedData1>
+</Parameter>
+</ParameterDefinition>
+</SimpleSymbolDefinition>
+<ParameterOverrides>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>MARKUP</ParameterIdentifier>
+<ParameterValue>&apos;MTEXT&apos;</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>CONTENT</ParameterIdentifier>
+<ParameterValue>Concat(Concat(PRE,LABEL_TEXT),SUF)</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>FONTNAME</ParameterIdentifier>
+<ParameterValue>&apos;Arial&apos;</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>FONTHEIGHT</ParameterIdentifier>
+<ParameterValue>2</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>BOLD</ParameterIdentifier>
+<ParameterValue>true</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>ITALIC</ParameterIdentifier>
+<ParameterValue>false</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>UNDERLINED</ParameterIdentifier>
+<ParameterValue>false</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>OVERLINED</ParameterIdentifier>
+<ParameterValue>false</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>JUSTIFICATION</ParameterIdentifier>
+<ParameterValue>&apos;FromAlignment&apos;</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>LINESPACING</ParameterIdentifier>
+<ParameterValue>1.05</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>GHOSTCOLOR</ParameterIdentifier>
+<ParameterValue></ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>FRAMELINECOLOR</ParameterIdentifier>
+<ParameterValue></ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>FRAMEFILLCOLOR</ParameterIdentifier>
+<ParameterValue></ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>TEXTCOLOR</ParameterIdentifier>
+<ParameterValue>0xFFFF0000</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>HORIZONTALALIGNMENT</ParameterIdentifier>
+<ParameterValue>HORIZONTAL_ALIGNMENT</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>VERTICALALIGNMENT</ParameterIdentifier>
+<ParameterValue>&quot;VERTICAL_ALIGNMENT&quot;</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>ROTATION</ParameterIdentifier>
+<ParameterValue>0</ParameterValue>
+</Override>
+</ParameterOverrides>
+<ScaleX>2</ScaleX>
+<ScaleY>2</ScaleY>
+<AddToExclusionRegion>true</AddToExclusionRegion>
+<ExtendedData1>
+<GeometryContext>Point</GeometryContext>
+</ExtendedData1>
+</SymbolInstance>
+</CompositeSymbolization>
+</CompositeRule>
+</CompositeTypeStyle>
+</ExtendedData1>
+</VectorScaleRange>
+<VectorScaleRange>
+<MinScale>1001</MinScale>
+<MaxScale>2000</MaxScale>
+<ExtendedData1>
+<CompositeTypeStyle>
+<CompositeRule>
+<LegendLabel></LegendLabel>
+<CompositeSymbolization>
+<SymbolInstance>
+<SimpleSymbolDefinition>
+<Name>Rich Text</Name>
+<Description>Default Plain Text Symbol</Description>
+<Graphics>
+<Text>
+<Content>%CONTENT%</Content>
+<FontName>%FONTNAME%</FontName>
+<Bold>%BOLD%</Bold>
+<Italic>%ITALIC%</Italic>
+<Underlined>%UNDERLINED%</Underlined>
+<Height>%FONTHEIGHT%</Height>
+<HorizontalAlignment>%HORIZONTALALIGNMENT%</HorizontalAlignment>
+<VerticalAlignment>%VERTICALALIGNMENT%</VerticalAlignment>
+<Justification>%JUSTIFICATION%</Justification>
+<LineSpacing>%LINESPACING%</LineSpacing>
+<TextColor>%TEXTCOLOR%</TextColor>
+<GhostColor>%GHOSTCOLOR%</GhostColor>
+<Frame>
+<LineColor>%FRAMELINECOLOR%</LineColor>
+<FillColor>%FRAMEFILLCOLOR%</FillColor>
+</Frame>
+<ExtendedData1>
+<Overlined>%OVERLINED%</Overlined>
+<Markup>%MARKUP%</Markup>
+</ExtendedData1>
+</Text>
+</Graphics>
+<PointUsage>
+<Angle>%ROTATION%</Angle>
+</PointUsage>
+<ParameterDefinition>
+<Parameter>
+<Identifier>MARKUP</Identifier>
+<DefaultValue>&apos;MTEXT&apos;</DefaultValue>
+<DisplayName>&amp;Text Type</DisplayName>
+<Description>Markup format</Description>
+<ExtendedData1>
+<DataType>Markup</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>CONTENT</Identifier>
+<DefaultValue>&apos;label&apos;</DefaultValue>
+<DisplayName>T&amp;ext</DisplayName>
+<Description>Content</Description>
+<ExtendedData1>
+<DataType>Content</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>FONTNAME</Identifier>
+<DefaultValue>&apos;Arial&apos;</DefaultValue>
+<DisplayName>&amp;Font Name</DisplayName>
+<Description>FontName</Description>
+<ExtendedData1>
+<DataType>FontName</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>FONTHEIGHT</Identifier>
+<DefaultValue>1730.000</DefaultValue>
+<DisplayName>Font &amp;Size</DisplayName>
+<Description>Font Height</Description>
+<ExtendedData1>
+<DataType>FontHeight</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>BOLD</Identifier>
+<DefaultValue>false</DefaultValue>
+<DisplayName>Bold</DisplayName>
+<Description>Bold</Description>
+<ExtendedData1>
+<DataType>Bold</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>ITALIC</Identifier>
+<DefaultValue>false</DefaultValue>
+<DisplayName>Italic</DisplayName>
+<Description>Italic</Description>
+<ExtendedData1>
+<DataType>Italic</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>UNDERLINED</Identifier>
+<DefaultValue>false</DefaultValue>
+<DisplayName>Underlined</DisplayName>
+<Description>Underlined</Description>
+<ExtendedData1>
+<DataType>Underlined</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>OVERLINED</Identifier>
+<DefaultValue>false</DefaultValue>
+<DisplayName>Overlined</DisplayName>
+<Description>Overlined</Description>
+<ExtendedData1>
+<DataType>Overlined</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>JUSTIFICATION</Identifier>
+<DefaultValue>&apos;FromAlignment&apos;</DefaultValue>
+<DisplayName>Justification</DisplayName>
+<Description>Justification</Description>
+<ExtendedData1>
+<DataType>Justification</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>LINESPACING</Identifier>
+<DefaultValue>1.05</DefaultValue>
+<DisplayName>Line Spacing</DisplayName>
+<Description>Line Spacing</Description>
+<ExtendedData1>
+<DataType>LineSpacing</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>GHOSTCOLOR</Identifier>
+<DefaultValue></DefaultValue>
+<DisplayName>Text &apos;Ghost&apos; Color</DisplayName>
+<Description>Ghost Color</Description>
+<ExtendedData1>
+<DataType>GhostColor</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>FRAMELINECOLOR</Identifier>
+<DefaultValue></DefaultValue>
+<DisplayName>Frame Line Color</DisplayName>
+<Description>Line Color</Description>
+<ExtendedData1>
+<DataType>FrameLineColor</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>FRAMEFILLCOLOR</Identifier>
+<DefaultValue></DefaultValue>
+<DisplayName>Frame Fill Color</DisplayName>
+<Description>Fill Color</Description>
+<ExtendedData1>
+<DataType>FrameFillColor</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>TEXTCOLOR</Identifier>
+<DefaultValue>ff000000</DefaultValue>
+<DisplayName>Text Color</DisplayName>
+<Description>TextColor</Description>
+<ExtendedData1>
+<DataType>TextColor</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>HORIZONTALALIGNMENT</Identifier>
+<DefaultValue>&apos;Center&apos;</DefaultValue>
+<DisplayName>Hori&amp;zontal Alignment</DisplayName>
+<Description>Horizontal Alignment</Description>
+<ExtendedData1>
+<DataType>HorizontalAlignment</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>VERTICALALIGNMENT</Identifier>
+<DefaultValue>&apos;Halfline&apos;</DefaultValue>
+<DisplayName>&amp;Vertical Alignment</DisplayName>
+<Description>Vertical Alignment</Description>
+<ExtendedData1>
+<DataType>VerticalAlignment</DataType>
+</ExtendedData1>
+</Parameter>
+<Parameter>
+<Identifier>ROTATION</Identifier>
+<DefaultValue>0.0</DefaultValue>
+<DisplayName>&amp;Rotation</DisplayName>
+<Description>Rotation</Description>
+<ExtendedData1>
+<DataType>Angle</DataType>
+</ExtendedData1>
+</Parameter>
+</ParameterDefinition>
+</SimpleSymbolDefinition>
+<ParameterOverrides>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>MARKUP</ParameterIdentifier>
+<ParameterValue>&apos;MTEXT&apos;</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>CONTENT</ParameterIdentifier>
+<ParameterValue>Concat(Concat(PRE,LABEL_TEXT),SUF)</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>FONTNAME</ParameterIdentifier>
+<ParameterValue>&apos;Arial&apos;</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>FONTHEIGHT</ParameterIdentifier>
+<ParameterValue>1.8</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>BOLD</ParameterIdentifier>
+<ParameterValue>true</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>ITALIC</ParameterIdentifier>
+<ParameterValue>false</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>UNDERLINED</ParameterIdentifier>
+<ParameterValue>false</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>OVERLINED</ParameterIdentifier>
+<ParameterValue>false</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>JUSTIFICATION</ParameterIdentifier>
+<ParameterValue>&apos;FromAlignment&apos;</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>LINESPACING</ParameterIdentifier>
+<ParameterValue>1.05</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>GHOSTCOLOR</ParameterIdentifier>
+<ParameterValue></ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>FRAMELINECOLOR</ParameterIdentifier>
+<ParameterValue></ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>FRAMEFILLCOLOR</ParameterIdentifier>
+<ParameterValue></ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>TEXTCOLOR</ParameterIdentifier>
+<ParameterValue>0xFFFF0000</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>HORIZONTALALIGNMENT</ParameterIdentifier>
+<ParameterValue>HORIZONTAL_ALIGNMENT</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>VERTICALALIGNMENT</ParameterIdentifier>
+<ParameterValue>&quot;VERTICAL_ALIGNMENT&quot;</ParameterValue>
+</Override>
+<Override>
+<SymbolName>Rich Text</SymbolName>
+<ParameterIdentifier>ROTATION</ParameterIdentifier>
+<ParameterValue>0</ParameterValue>
+</Override>
+</ParameterOverrides>
+<ScaleX>2</ScaleX>
+<ScaleY>2</ScaleY>
+<AddToExclusionRegion>true</AddToExclusionRegion>
+<ExtendedData1>
+<GeometryContext>Point</GeometryContext>
+</ExtendedData1>
+</SymbolInstance>
+</CompositeSymbolization>
+</CompositeRule>
+</CompositeTypeStyle>
+</ExtendedData1>
+</VectorScaleRange>
+</VectorLayerDefinition>
+</LayerDefinition>
+</ns0:LayerDefinitionResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/FeatureSourceResource"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">Topobase_1</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">Default description</ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:FeatureSourceResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"><FeatureSource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="FeatureSource-1.0.0.xsd" version="1.0.0">
+<Provider>Autodesk.Topobase.3.2</Provider>
+<Parameter>
+<Name>Password</Name>
+<Value></Value>
+</Parameter>
+<Parameter>
+<Name>Service</Name>
+<Value>orcl</Value>
+</Parameter>
+<Parameter>
+<Name>Username</Name>
+<Value>tbsys</Value>
+</Parameter>
+<Parameter>
+<Name>DataStore</Name>
+<Value>LAND</Value>
+</Parameter>
+<ConfigurationDocument></ConfigurationDocument>
+<LongTransaction>1</LongTransaction>
+<Extension>
+<CalculatedProperty>
+<Name>Centroid_type</Name>
+<Expression>TB_SQL ( &apos;select to_char (a.ID_TYPE) from LANDUSE_TCEN b, LM_LANDUSE a 
+where a.FID = b.FID_CENTROID
+AND b.FID_TSUR = g.FID&apos; )</Expression>
+</CalculatedProperty>
+<Name>LANDUSE_TSUR_CalcProp1</Name>
+<FeatureClass>LAND:LANDUSE_TSUR</FeatureClass>
+</Extension>
+</FeatureSource>
+</ns0:FeatureSourceResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="LayerSchema">
+    <ns0:version xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">1</ns0:version>
+  </rdf:Description>
+</rdf:RDF>

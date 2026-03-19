@@ -1,0 +1,5 @@
+﻿{"DasLocal":{
+"IndexPipeline":{"IdleTimeout":"00:00:10","JobTimeout":"03:00:00","MaxParallelism":1,"PreferredPort": 4000},
+"Exporter":{"IdleTimeout":"00:00:10","JobTimeout":"00:10:00","MaxParallelism":1,"PreferredPort": 2022},
+"Encoder":{"IdleTimeout":"00:00:10","JobTimeout":"00:10:00","MaxParallelism":1,"PreferredPort":2024}},
+"CRXExporter":true,"EncodeBatchSize":128,"Mode":0}

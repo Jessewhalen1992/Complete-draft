@@ -1,0 +1,147 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="dbo:WA_C_POINT_out">
+    <ns0:FeatureSource xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" rdf:resource="fsd://IndustryModel_1" />
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:WA_C_POINT_out">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/LayerDefinitionResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:WA_C_POINT_out">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">WA_C_POINT</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:WA_C_POINT_out">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:WA_C_POINT_out">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:WA_C_POINT_out">
+    <ns0:LayerDefinitionResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <LayerDefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="LayerDefinition-2.4.0.xsd" version="2.4.0">
+        <VectorLayerDefinition>
+          <ResourceId>fsd://IndustryModel_1</ResourceId>
+          <FeatureName>dbo:WA_C_POINT</FeatureName>
+          <FeatureNameType>FeatureClass</FeatureNameType>
+          <Geometry>GEOM</Geometry>
+          <VectorScaleRange>
+            <MaxScale>500</MaxScale>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel>Control cable point</LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>Circle</Name>
+                      <Description>Default Point Symbol</Description>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M -1,0 A 1,1 0 1 1 1,0 A 1,1 0 1 1 -1,0</Geometry>
+                          <FillColor>%FILLCOLOR%</FillColor>
+                          <LineColor>%LINECOLOR%</LineColor>
+                          <LineWeight>%LINEWEIGHT%</LineWeight>
+                        </Path>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>FILLCOLOR</Identifier>
+                          <DefaultValue>ffffffff</DefaultValue>
+                          <DisplayName>&amp;Fill Color</DisplayName>
+                          <Description>Fill Color</Description>
+                          <DataType>FillColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINECOLOR</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Line &amp;Color</DisplayName>
+                          <Description>Line Color</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINEWEIGHT</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Line &amp;Thickness</DisplayName>
+                          <Description>Line Thickness</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>Circle</SymbolName>
+                        <ParameterIdentifier>FILLCOLOR</ParameterIdentifier>
+                        <ParameterValue>0xFF992600</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Circle</SymbolName>
+                        <ParameterIdentifier>LINECOLOR</ParameterIdentifier>
+                        <ParameterValue>ff000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Circle</SymbolName>
+                        <ParameterIdentifier>LINEWEIGHT</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Circle</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>0</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>500</ScaleX>
+                    <ScaleY>500</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+          </VectorScaleRange>
+        </VectorLayerDefinition>
+      </LayerDefinition>
+    </ns0:LayerDefinitionResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/FeatureSourceResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">IndustryModel_1</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:FeatureSourceResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <FeatureSource xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="1.0.0">
+  <Provider>OSGeo.SQLServerSpatial.3.4</Provider>
+  <Parameter>
+    <Name>DataStore</Name>
+    <Value></Value>
+  </Parameter>
+  <Parameter>
+    <Name>Service</Name>
+    <Value></Value>
+  </Parameter>
+  <ConfigurationDocument />
+  <LongTransaction />
+</FeatureSource>
+    </ns0:FeatureSourceResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="LayerSchema">
+    <ns0:version xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">1</ns0:version>
+  </rdf:Description>
+</rdf:RDF>

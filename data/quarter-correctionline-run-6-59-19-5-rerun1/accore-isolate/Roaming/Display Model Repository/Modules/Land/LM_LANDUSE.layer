@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="Library://LM_LANDUSE.LayerDefinition">
+    <ns0:FeatureSource xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" rdf:resource="fsd://Topobase_1"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://LM_LANDUSE.LayerDefinition">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/LayerDefinitionResource"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://LM_LANDUSE.LayerDefinition">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">LM_LANDUSE</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://LM_LANDUSE.LayerDefinition">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://LM_LANDUSE.LayerDefinition">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="Library://LM_LANDUSE.LayerDefinition">
+    <ns0:LayerDefinitionResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"><LayerDefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="LayerDefinition-1.0.0.xsd" version="1.0.0">
+<VectorLayerDefinition>
+<ResourceId>fsd://Topobase_1</ResourceId>
+<FeatureName>TB2010_LM_102:LM_LANDUSE</FeatureName>
+<FeatureNameType>FeatureClass</FeatureNameType>
+<Filter>GEOM INTERSECTS GeomFromText(&apos;POLYGON XYZ ((686021.998425836 333417.552677802 0, 690474.628717429 333417.552677802 0, 690474.628717429 337328.08764579 0, 686021.998425836 337328.08764579 0, 686021.998425836 333417.552677802 0))&apos;)</Filter>
+<Geometry>GEOM</Geometry>
+<VectorScaleRange>
+<MaxScale>1500</MaxScale>
+<PointTypeStyle>
+<DisplayAsText>false</DisplayAsText>
+<AllowOverpost>false</AllowOverpost>
+<PointRule>
+<LegendLabel></LegendLabel>
+<PointSymbolization2D>
+<Mark>
+<Unit>Millimeters</Unit>
+<SizeContext>DeviceUnits</SizeContext>
+<SizeX>1.5</SizeX>
+<SizeY>1.5</SizeY>
+<Rotation>0</Rotation>
+<Shape>Star</Shape>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FFFFFFFF</ForegroundColor>
+<BackgroundColor>ff000000</BackgroundColor>
+</Fill>
+<Edge>
+<LineStyle>Solid</LineStyle>
+<Thickness>0.0</Thickness>
+<Color>FFFFFFFF</Color>
+<Unit>Centimeters</Unit>
+<ExtendedData1>
+<SizeContext>DeviceUnits</SizeContext>
+</ExtendedData1>
+</Edge>
+</Mark>
+</PointSymbolization2D>
+</PointRule>
+</PointTypeStyle>
+</VectorScaleRange>
+<VectorScaleRange>
+<MinScale>1500</MinScale>
+<MaxScale>3000</MaxScale>
+<PointTypeStyle>
+<DisplayAsText>false</DisplayAsText>
+<AllowOverpost>false</AllowOverpost>
+<PointRule>
+<LegendLabel></LegendLabel>
+<PointSymbolization2D>
+<Mark>
+<Unit>Millimeters</Unit>
+<SizeContext>DeviceUnits</SizeContext>
+<SizeX>0.8</SizeX>
+<SizeY>0.8</SizeY>
+<Rotation>0</Rotation>
+<Shape>Star</Shape>
+<Fill>
+<FillPattern>Solid</FillPattern>
+<ForegroundColor>FFFFFFFF</ForegroundColor>
+<BackgroundColor>ff000000</BackgroundColor>
+</Fill>
+<Edge>
+<LineStyle>Solid</LineStyle>
+<Thickness>0.0</Thickness>
+<Color>FFFFFFFF</Color>
+<Unit>Centimeters</Unit>
+<ExtendedData1>
+<SizeContext>DeviceUnits</SizeContext>
+</ExtendedData1>
+</Edge>
+</Mark>
+</PointSymbolization2D>
+</PointRule>
+</PointTypeStyle>
+</VectorScaleRange>
+<VectorScaleRange>
+<MinScale>3000</MinScale>
+<PointTypeStyle>
+<DisplayAsText>false</DisplayAsText>
+<AllowOverpost>false</AllowOverpost>
+<PointRule>
+<LegendLabel></LegendLabel>
+</PointRule>
+</PointTypeStyle>
+</VectorScaleRange>
+</VectorLayerDefinition>
+</LayerDefinition>
+</ns0:LayerDefinitionResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/FeatureSourceResource"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">Topobase_1</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">Default description</ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://Topobase_1">
+    <ns0:FeatureSourceResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"><FeatureSource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="FeatureSource-1.0.0.xsd" version="1.0.0">
+<Provider>Autodesk.Topobase.3.2</Provider>
+<Parameter>
+<Name>Password</Name>
+<Value></Value>
+</Parameter>
+<Parameter>
+<Name>Service</Name>
+<Value>orcl</Value>
+</Parameter>
+<Parameter>
+<Name>Username</Name>
+<Value>tbsys</Value>
+</Parameter>
+<Parameter>
+<Name>DataStore</Name>
+<Value>TB2010_LM_102</Value>
+</Parameter>
+<ConfigurationDocument></ConfigurationDocument>
+<LongTransaction>1</LongTransaction>
+</FeatureSource>
+</ns0:FeatureSourceResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="LayerSchema">
+    <ns0:version xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">1</ns0:version>
+  </rdf:Description>
+</rdf:RDF>

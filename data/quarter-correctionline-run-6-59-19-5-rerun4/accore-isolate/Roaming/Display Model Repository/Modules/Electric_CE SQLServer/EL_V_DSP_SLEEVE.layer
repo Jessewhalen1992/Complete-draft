@@ -1,0 +1,384 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="dbo:EL_V_DSP_SLEEVE_out">
+    <ns0:FeatureSource xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" rdf:resource="fsd://IndustryModel_1" />
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:EL_V_DSP_SLEEVE_out">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/LayerDefinitionResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:EL_V_DSP_SLEEVE_out">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">EL_V_DSP_SLEEVE</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:EL_V_DSP_SLEEVE_out">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:EL_V_DSP_SLEEVE_out">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:EL_V_DSP_SLEEVE_out">
+    <ns0:LayerDefinitionResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <LayerDefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="LayerDefinition-2.4.0.xsd" version="2.4.0">
+        <VectorLayerDefinition>
+          <ResourceId>fsd://IndustryModel_1</ResourceId>
+          <FeatureName>EL_V_DSP_SLEEVE_CalcProp1</FeatureName>
+          <FeatureNameType>NamedExtension</FeatureNameType>
+          <Geometry>GEOM</Geometry>
+          <VectorScaleRange>
+            <MaxScale>5000</MaxScale>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel>Connecting Sleeve</LegendLabel>
+                <Filter>ID_SLEEVE_TYPE  = 3</Filter>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>V-Muffe</Name>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M -0.00472,-0.40062 L 0.75758,-0.01947 M 0.75758,-0.01947 L -0.00472,0.36168</Geometry>
+                          <LineColor>%COLORBYLAYER0%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                        <Path>
+                          <Geometry>M -0.00472,-0.40062 L 0.75758,-0.01947 L -0.00472,0.36168 L -0.76702,-0.01947 L -0.00472,-0.40062</Geometry>
+                          <FillColor>ff848484</FillColor>
+                        </Path>
+                        <Path>
+                          <Geometry>M -0.76702,-0.01947 L -0.00472,-0.40062 M -0.00472,0.36168 L -0.76702,-0.01947</Geometry>
+                          <LineColor>%COLORBYLAYER0%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>COLORBYLAYER0</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Color Defined ByLayer 0</DisplayName>
+                          <Description>Color Defined ByLayer 0</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LWBYLAYER0</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Lineweight Defined ByLayer 0</DisplayName>
+                          <Description>Lineweight Defined ByLayer 0</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>V-Muffe</SymbolName>
+                        <ParameterIdentifier>COLORBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>FF000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>V-Muffe</SymbolName>
+                        <ParameterIdentifier>LWBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>V-Muffe</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>CalcOrientation</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>327.954867173049</ScaleX>
+                    <ScaleY>655.909734346099</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <UsageContext>Point</UsageContext>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <CompositeRule>
+                <LegendLabel>T branch Tee</LegendLabel>
+                <Filter>ID_SLEEVE_TYPE  = 10</Filter>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>T-MUFFE</Name>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M -0.91476,0.0 L 0.91476,0.0</Geometry>
+                          <LineColor>%COLORBYLAYER0%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                        <Path>
+                          <Geometry>M -0.91476,0.0 h 1.82952 L 0.0,0.45738 L -0.91476,0.0</Geometry>
+                          <FillColor>ff848484</FillColor>
+                        </Path>
+                        <Path>
+                          <Geometry>M 0.91476,0.0 L 0.0,0.45738 M 0.0,0.45738 L -0.91476,0.0</Geometry>
+                          <LineColor>%COLORBYLAYER0%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>COLORBYLAYER0</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Color Defined ByLayer 0</DisplayName>
+                          <Description>Color Defined ByLayer 0</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LWBYLAYER0</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Lineweight Defined ByLayer 0</DisplayName>
+                          <Description>Lineweight Defined ByLayer 0</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>T-MUFFE</SymbolName>
+                        <ParameterIdentifier>COLORBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>FF000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>T-MUFFE</SymbolName>
+                        <ParameterIdentifier>LWBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>T-MUFFE</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>CalcOrientation</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>273.295729767254</ScaleX>
+                    <ScaleY>1093.18291906902</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <UsageContext>Point</UsageContext>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <CompositeRule>
+                <LegendLabel>End Sleeve</LegendLabel>
+                <Filter>ID_SLEEVE_TYPE  = 7</Filter>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>Endmuffe</Name>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M 0.7623,-0.38115 v 0.7623 L 0.0,0.0 L 0.7623,-0.38115</Geometry>
+                          <FillColor>ff848484</FillColor>
+                        </Path>
+                        <Path>
+                          <Geometry>M 0.0,0.0 L 0.7623,-0.38115 M 0.7623,0.38115 L 0.0,0.0 M 0.7623,-0.38115 L 0.7623,0.38115</Geometry>
+                          <LineColor>%COLORBYLAYER0%</LineColor>
+                          <LineWeight>%LWBYLAYER0%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>COLORBYLAYER0</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Color Defined ByLayer 0</DisplayName>
+                          <Description>Color Defined ByLayer 0</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LWBYLAYER0</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Lineweight Defined ByLayer 0</DisplayName>
+                          <Description>Lineweight Defined ByLayer 0</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>Endmuffe</SymbolName>
+                        <ParameterIdentifier>COLORBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>FF000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Endmuffe</SymbolName>
+                        <ParameterIdentifier>LWBYLAYER0</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Endmuffe</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>CalcOrientation</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>655.909734346099</ScaleX>
+                    <ScaleY>655.909734346099</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <UsageContext>Point</UsageContext>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <CompositeRule>
+                <LegendLabel>Default</LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>Circle</Name>
+                      <Description>Default Point Symbol</Description>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M -1,0 A 1,1 0 1 1 1,0 A 1,1 0 1 1 -1,0</Geometry>
+                          <FillColor>%FILLCOLOR%</FillColor>
+                          <LineColor>%LINECOLOR%</LineColor>
+                          <LineWeight>%LINEWEIGHT%</LineWeight>
+                        </Path>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>FILLCOLOR</Identifier>
+                          <DefaultValue>0xffffffff</DefaultValue>
+                          <DisplayName>&amp;Fill Color</DisplayName>
+                          <Description>Fill Color</Description>
+                          <DataType>FillColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINECOLOR</Identifier>
+                          <DefaultValue>0xff000000</DefaultValue>
+                          <DisplayName>Line &amp;Color</DisplayName>
+                          <Description>Line Color</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINEWEIGHT</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Line &amp;Thickness</DisplayName>
+                          <Description>Line Thickness</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>Circle</SymbolName>
+                        <ParameterIdentifier>FILLCOLOR</ParameterIdentifier>
+                        <ParameterValue>FF000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Circle</SymbolName>
+                        <ParameterIdentifier>LINECOLOR</ParameterIdentifier>
+                        <ParameterValue>FF000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Circle</SymbolName>
+                        <ParameterIdentifier>LINEWEIGHT</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Circle</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>CalcOrientation</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>250</ScaleX>
+                    <ScaleY>250</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <UsageContext>Point</UsageContext>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+          </VectorScaleRange>
+        </VectorLayerDefinition>
+      </LayerDefinition>
+    </ns0:LayerDefinitionResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/FeatureSourceResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">IndustryModel_1</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:FeatureSourceResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <FeatureSource xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="1.0.0">
+  <Provider>OSGeo.SQLServerSpatial.3.4</Provider>
+  <Parameter>
+    <Name>DataStore</Name>
+    <Value></Value>
+  </Parameter>
+  <Parameter>
+    <Name>Service</Name>
+    <Value></Value>
+  </Parameter>
+  <ConfigurationDocument />
+  <LongTransaction />
+  <Extension>
+    <CalculatedProperty>
+      <Name>CalcOrientation</Name>
+      <Expression>OrientationDegreeCCW(ORIENTATION)</Expression>
+    </CalculatedProperty>
+    <Name>EL_V_DSP_SLEEVE_CalcProp1</Name>
+    <FeatureClass>dbo:EL_V_DSP_SLEEVE</FeatureClass>
+  </Extension>
+</FeatureSource>
+    </ns0:FeatureSourceResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="LayerSchema">
+    <ns0:version xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">1</ns0:version>
+  </rdf:Description>
+</rdf:RDF>

@@ -1,0 +1,2 @@
+<?xml version="1.0"?>
+<Map3dErrorLog xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="AcMap3dErrorLog.xsd"><Session user="Work Test 2" start="3/16/2026 9:39:18 AM" document="Drawing1.dwg"><Error code="1" type="13" dispensation="2" sId="2" occurrence="1">The file 'M:\Jobs\2023\00101-23\Drafting\Reference Material\WLS\2_Tracks_Layer_18 (1).dbf' is corrupt or does not have the same number of objects as the file 'M:\Jobs\2023\00101-23\Drafting\Reference Material\WLS\2_Tracks_Layer_18 (1).shx'. </Error></Session></Map3dErrorLog>

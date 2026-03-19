@@ -1,0 +1,440 @@
+<?xml version="1.0" encoding="utf-8"?>
+<DisplayModelMap xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="1.3.0">
+  <Name>Wastewater</Name>
+  <Units>Meters</Units>
+  <WindowStatus>
+    <Left>0</Left>
+    <Top>0</Top>
+    <Width>120</Width>
+    <Height>115</Height>
+    <WindowState>Normal</WindowState>
+  </WindowStatus>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Construction Label</Name>
+      <ResourceId>CONSTRUCT_POINTS_TBL.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>true</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>Construction</Group>
+      <Order>2</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Construction Point</Name>
+      <ResourceId>CONSTRUCT_POINTS.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>true</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>Construction</Group>
+      <Order>3</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Construction Marker</Name>
+      <ResourceId>CONSTRUCT_MARKERS.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>true</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>Construction</Group>
+      <Order>4</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Construction Line</Name>
+      <ResourceId>CONSTRUCT_LINES.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>true</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>Construction</Group>
+      <Order>1</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>WW_SECTION_OBSERVE</Name>
+      <ResourceId>WW_SECTION_OBSERVE.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Inspection</Group>
+      <Order>1</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Cover label</Name>
+      <ResourceId>WW_COVER_TBL.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>true</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Label</Group>
+      <Order>1</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Label collection</Name>
+      <ResourceId>WW_V_DSP_LABELCOLLECT_TBL.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>true</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Label</Group>
+      <Order>3</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Sub drain  symbol and label</Name>
+      <ResourceId>WW_V_DSP_SUB_DRAIN_AREA_P.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Drain area</Group>
+      <Order>2</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Sub drain area</Name>
+      <ResourceId>WW_V_DSP_SUB_DRAIN_AREA.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Drain area</Group>
+      <Order>3</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Treatment plant label</Name>
+      <ResourceId>WW_TREATMENT_PLANT_TBL.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>true</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Site</Group>
+      <Order>2</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Fitting</Name>
+      <ResourceId>WW_V_DSP_FITTING.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Connecting net</Group>
+      <Order>2</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Cover</Name>
+      <ResourceId>WW_COVER.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Net</Group>
+      <Order>3</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Manhole</Name>
+      <ResourceId>WW_V_DSP_MANHOLE.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Net</Group>
+      <Order>4</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Point detail line</Name>
+      <ResourceId>WW_POINT_DETAIL_LINE.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Net</Group>
+      <Order>5</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Street drain</Name>
+      <ResourceId>WW_V_DSP_MANHOLE_2.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Connecting net</Group>
+      <Order>3</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Intermediate Point</Name>
+      <ResourceId>WW_V_DSP_INTERMEDIATE_PNT.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Net</Group>
+      <Order>6</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>WW_POINT</Name>
+      <ResourceId>WW_POINT.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>true</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Net</Group>
+      <Order>2</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>House connector</Name>
+      <ResourceId>WW_V_DSP_HOUSE_CONNECTOR.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Connecting net</Group>
+      <Order>4</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Section label</Name>
+      <ResourceId>WW_SECTION_TBL.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Label</Group>
+      <Order>4</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Drain area</Name>
+      <ResourceId>WW_DRAIN_AREA.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Drain area</Group>
+      <Order>1</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Valve</Name>
+      <ResourceId>WW_V_DSP_VALVE.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>true</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Site</Group>
+      <Order>3</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Restrictor</Name>
+      <ResourceId>WW_V_DSP_RESTRICTOR.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Site</Group>
+      <Order>4</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Point detail polygon</Name>
+      <ResourceId>WW_POINT_DETAIL_POLYGON.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Net</Group>
+      <Order>7</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Site line</Name>
+      <ResourceId>WW_SITE_LINE.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Site</Group>
+      <Order>5</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Discharge</Name>
+      <ResourceId>WW_V_DSP_DISCHARGE.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Net</Group>
+      <Order>8</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Intermediate label</Name>
+      <ResourceId>WW_INTERMEDIATE_POINT_TBL.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Label</Group>
+      <Order>5</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Treatment plant</Name>
+      <ResourceId>WW_V_DSP_TREATMENT_PLANT.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Site</Group>
+      <Order>6</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Manhole name</Name>
+      <ResourceId>WW_MANHOLE_TBL.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Label</Group>
+      <Order>2</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Site polygon</Name>
+      <ResourceId>WW_SITE_POLYGON.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Site</Group>
+      <Order>1</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Connection lines</Name>
+      <ResourceId>WW_V_DSP_SECTION.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Connecting net</Group>
+      <Order>1</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <DisplayModelMapLayer>
+    <MapLayer>
+      <Name>Section</Name>
+      <ResourceId>WW_V_DSP_SECTION_2.layer</ResourceId>
+      <Selectable>true</Selectable>
+      <ShowInLegend>false</ShowInLegend>
+      <ExpandInLegend>false</ExpandInLegend>
+      <Visible>true</Visible>
+      <Group>WW Net</Group>
+      <Order>1</Order>
+    </MapLayer>
+  </DisplayModelMapLayer>
+  <MapLayerGroup>
+    <Name>Construction</Name>
+    <Visible>true</Visible>
+    <ShowInLegend>false</ShowInLegend>
+    <ExpandInLegend>false</ExpandInLegend>
+    <LegendLabel />
+    <Order>1</Order>
+  </MapLayerGroup>
+  <MapLayerGroup>
+    <Name>WW Inspection</Name>
+    <Visible>true</Visible>
+    <ShowInLegend>false</ShowInLegend>
+    <ExpandInLegend>false</ExpandInLegend>
+    <LegendLabel />
+    <Order>2</Order>
+  </MapLayerGroup>
+  <MapLayerGroup>
+    <Name>WW Label</Name>
+    <Visible>true</Visible>
+    <ShowInLegend>false</ShowInLegend>
+    <ExpandInLegend>false</ExpandInLegend>
+    <LegendLabel />
+    <Order>3</Order>
+  </MapLayerGroup>
+  <MapLayerGroup>
+    <Name>WW Drain area</Name>
+    <Visible>true</Visible>
+    <ShowInLegend>false</ShowInLegend>
+    <ExpandInLegend>false</ExpandInLegend>
+    <LegendLabel />
+    <Order>4</Order>
+  </MapLayerGroup>
+  <MapLayerGroup>
+    <Name>WW Connecting net</Name>
+    <Visible>true</Visible>
+    <ShowInLegend>false</ShowInLegend>
+    <ExpandInLegend>false</ExpandInLegend>
+    <LegendLabel />
+    <Order>5</Order>
+  </MapLayerGroup>
+  <MapLayerGroup>
+    <Name>WW Site</Name>
+    <Visible>true</Visible>
+    <ShowInLegend>false</ShowInLegend>
+    <ExpandInLegend>false</ExpandInLegend>
+    <LegendLabel />
+    <Order>6</Order>
+  </MapLayerGroup>
+  <MapLayerGroup>
+    <Name>WW Net</Name>
+    <Visible>true</Visible>
+    <ShowInLegend>false</ShowInLegend>
+    <ExpandInLegend>false</ExpandInLegend>
+    <LegendLabel />
+    <Order>7</Order>
+  </MapLayerGroup>
+</DisplayModelMap>

@@ -1,0 +1,551 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=":GA_CASING_TBL_out">
+    <ns0:FeatureSource xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" rdf:resource="fsd://IndustryModel_1" />
+  </rdf:Description>
+  <rdf:Description rdf:about=":GA_CASING_TBL_out">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/LayerDefinitionResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about=":GA_CASING_TBL_out">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">GA_CASING_TBL</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about=":GA_CASING_TBL_out">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about=":GA_CASING_TBL_out">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about=":GA_CASING_TBL_out">
+    <ns0:LayerDefinitionResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <LayerDefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="LayerDefinition-2.4.0.xsd" version="2.4.0">
+        <VectorLayerDefinition>
+          <ResourceId>fsd://IndustryModel_1</ResourceId>
+          <FeatureName>GA_CASING_TBL_CalcProp1</FeatureName>
+          <FeatureNameType>NamedExtension</FeatureNameType>
+          <Geometry>GEOM</Geometry>
+          <VectorScaleRange>
+            <MaxScale>1500</MaxScale>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel>Casing label</LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>Plain Text</Name>
+                      <Description>Default Plain Text Symbol</Description>
+                      <Graphics>
+                        <Text>
+                          <Content>%CONTENT%</Content>
+                          <FontName>%FONTNAME%</FontName>
+                          <Bold>%BOLD%</Bold>
+                          <Italic>%ITALIC%</Italic>
+                          <Underlined>%UNDERLINED%</Underlined>
+                          <Overlined>%OVERLINED%</Overlined>
+                          <Height>%FONTHEIGHT%</Height>
+                          <Angle>%ANGLE%</Angle>
+                          <HorizontalAlignment>%HORIZONTALALIGNMENT%</HorizontalAlignment>
+                          <VerticalAlignment>%VERTICALALIGNMENT%</VerticalAlignment>
+                          <Justification>%JUSTIFICATION%</Justification>
+                          <LineSpacing>%LINESPACING%</LineSpacing>
+                          <TextColor>%TEXTCOLOR%</TextColor>
+                          <GhostColor>%GHOSTCOLOR%</GhostColor>
+                          <Frame>
+                            <LineColor>%FRAMELINECOLOR%</LineColor>
+                            <FillColor>%FRAMEFILLCOLOR%</FillColor>
+                          </Frame>
+                        </Text>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>CONTENT</Identifier>
+                          <DefaultValue>'text'</DefaultValue>
+                          <DataType>Content</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>FONTNAME</Identifier>
+                          <DefaultValue>'Arial'</DefaultValue>
+                          <DataType>FontName</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>FONTHEIGHT</Identifier>
+                          <DefaultValue>4.0</DefaultValue>
+                          <DataType>FontHeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>BOLD</Identifier>
+                          <DefaultValue>false</DefaultValue>
+                          <DataType>Bold</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ITALIC</Identifier>
+                          <DefaultValue>false</DefaultValue>
+                          <DataType>Italic</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>UNDERLINED</Identifier>
+                          <DefaultValue>false</DefaultValue>
+                          <DataType>Underlined</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>OVERLINED</Identifier>
+                          <DefaultValue>false</DefaultValue>
+                          <DataType>Overlined</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>JUSTIFICATION</Identifier>
+                          <DefaultValue>'FromAlignment'</DefaultValue>
+                          <DataType>Justification</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINESPACING</Identifier>
+                          <DefaultValue>1.05</DefaultValue>
+                          <DataType>LineSpacing</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>GHOSTCOLOR</Identifier>
+                          <DefaultValue></DefaultValue>
+                          <DataType>GhostColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>FRAMELINECOLOR</Identifier>
+                          <DefaultValue></DefaultValue>
+                          <DataType>FrameLineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>FRAMEFILLCOLOR</Identifier>
+                          <DefaultValue></DefaultValue>
+                          <DataType>FrameFillColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>TEXTCOLOR</Identifier>
+                          <DefaultValue>0xff000000</DefaultValue>
+                          <DataType>TextColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ANGLE</Identifier>
+                          <DefaultValue>0</DefaultValue>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>HORIZONTALALIGNMENT</Identifier>
+                          <DefaultValue>'Center'</DefaultValue>
+                          <DataType>HorizontalAlignment</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>VERTICALALIGNMENT</Identifier>
+                          <DefaultValue>'Halfline'</DefaultValue>
+                          <DataType>VerticalAlignment</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>MARKUP</Identifier>
+                          <DefaultValue>'MTEXT'</DefaultValue>
+                          <DisplayName>&amp;Texttyp</DisplayName>
+                          <Description>Markup format</Description>
+                          <DataType>Markup</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>CONTENT</ParameterIdentifier>
+                        <ParameterValue>'text'</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>FONTNAME</ParameterIdentifier>
+                        <ParameterValue>'Arial'</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>FONTHEIGHT</ParameterIdentifier>
+                        <ParameterValue>1250</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>BOLD</ParameterIdentifier>
+                        <ParameterValue>false</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>ITALIC</ParameterIdentifier>
+                        <ParameterValue>false</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>UNDERLINED</ParameterIdentifier>
+                        <ParameterValue>false</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>OVERLINED</ParameterIdentifier>
+                        <ParameterValue>false</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>JUSTIFICATION</ParameterIdentifier>
+                        <ParameterValue>'FromAlignment'</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>LINESPACING</ParameterIdentifier>
+                        <ParameterValue>1.05</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>GHOSTCOLOR</ParameterIdentifier>
+                        <ParameterValue></ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>FRAMELINECOLOR</ParameterIdentifier>
+                        <ParameterValue></ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>FRAMEFILLCOLOR</ParameterIdentifier>
+                        <ParameterValue></ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>TEXTCOLOR</ParameterIdentifier>
+                        <ParameterValue>ff000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>ANGLE</ParameterIdentifier>
+                        <ParameterValue>CalcOrientation</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>HORIZONTALALIGNMENT</ParameterIdentifier>
+                        <ParameterValue>"HORIZONTAL_ALIGNMENT"</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>VERTICALALIGNMENT</ParameterIdentifier>
+                        <ParameterValue>"VERTICAL_ALIGNMENT"</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>CalcOrientation</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>MARKUP</ParameterIdentifier>
+                        <ParameterValue>'Plain'</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>1344.59629240087</ScaleX>
+                    <ScaleY>1344.59629862324</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <UsageContext>Point</UsageContext>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+          </VectorScaleRange>
+          <VectorScaleRange>
+            <MinScale>1500</MinScale>
+            <MaxScale>5000</MaxScale>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel>Casing label</LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>Plain Text</Name>
+                      <Description>Default Plain Text Symbol</Description>
+                      <Graphics>
+                        <Text>
+                          <Content>%CONTENT%</Content>
+                          <FontName>%FONTNAME%</FontName>
+                          <Bold>%BOLD%</Bold>
+                          <Italic>%ITALIC%</Italic>
+                          <Underlined>%UNDERLINED%</Underlined>
+                          <Overlined>%OVERLINED%</Overlined>
+                          <Height>%FONTHEIGHT%</Height>
+                          <Angle>%ANGLE%</Angle>
+                          <HorizontalAlignment>%HORIZONTALALIGNMENT%</HorizontalAlignment>
+                          <VerticalAlignment>%VERTICALALIGNMENT%</VerticalAlignment>
+                          <Justification>%JUSTIFICATION%</Justification>
+                          <LineSpacing>%LINESPACING%</LineSpacing>
+                          <TextColor>%TEXTCOLOR%</TextColor>
+                          <GhostColor>%GHOSTCOLOR%</GhostColor>
+                          <Frame>
+                            <LineColor>%FRAMELINECOLOR%</LineColor>
+                            <FillColor>%FRAMEFILLCOLOR%</FillColor>
+                          </Frame>
+                        </Text>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>CONTENT</Identifier>
+                          <DefaultValue>'text'</DefaultValue>
+                          <DataType>Content</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>FONTNAME</Identifier>
+                          <DefaultValue>'Arial'</DefaultValue>
+                          <DataType>FontName</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>FONTHEIGHT</Identifier>
+                          <DefaultValue>4.0</DefaultValue>
+                          <DataType>FontHeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>BOLD</Identifier>
+                          <DefaultValue>false</DefaultValue>
+                          <DataType>Bold</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ITALIC</Identifier>
+                          <DefaultValue>false</DefaultValue>
+                          <DataType>Italic</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>UNDERLINED</Identifier>
+                          <DefaultValue>false</DefaultValue>
+                          <DataType>Underlined</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>OVERLINED</Identifier>
+                          <DefaultValue>false</DefaultValue>
+                          <DataType>Overlined</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>JUSTIFICATION</Identifier>
+                          <DefaultValue>'FromAlignment'</DefaultValue>
+                          <DataType>Justification</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINESPACING</Identifier>
+                          <DefaultValue>1.05</DefaultValue>
+                          <DataType>LineSpacing</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>GHOSTCOLOR</Identifier>
+                          <DefaultValue></DefaultValue>
+                          <DataType>GhostColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>FRAMELINECOLOR</Identifier>
+                          <DefaultValue></DefaultValue>
+                          <DataType>FrameLineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>FRAMEFILLCOLOR</Identifier>
+                          <DefaultValue></DefaultValue>
+                          <DataType>FrameFillColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>TEXTCOLOR</Identifier>
+                          <DefaultValue>0xff000000</DefaultValue>
+                          <DataType>TextColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ANGLE</Identifier>
+                          <DefaultValue>0</DefaultValue>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>HORIZONTALALIGNMENT</Identifier>
+                          <DefaultValue>'Center'</DefaultValue>
+                          <DataType>HorizontalAlignment</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>VERTICALALIGNMENT</Identifier>
+                          <DefaultValue>'Halfline'</DefaultValue>
+                          <DataType>VerticalAlignment</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>MARKUP</Identifier>
+                          <DefaultValue>'MTEXT'</DefaultValue>
+                          <DisplayName>&amp;Texttyp</DisplayName>
+                          <Description>Markup format</Description>
+                          <DataType>Markup</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>CONTENT</ParameterIdentifier>
+                        <ParameterValue>'text'</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>FONTNAME</ParameterIdentifier>
+                        <ParameterValue>'Arial'</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>FONTHEIGHT</ParameterIdentifier>
+                        <ParameterValue>8000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>BOLD</ParameterIdentifier>
+                        <ParameterValue>false</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>ITALIC</ParameterIdentifier>
+                        <ParameterValue>false</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>UNDERLINED</ParameterIdentifier>
+                        <ParameterValue>false</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>OVERLINED</ParameterIdentifier>
+                        <ParameterValue>false</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>JUSTIFICATION</ParameterIdentifier>
+                        <ParameterValue>'FromAlignment'</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>LINESPACING</ParameterIdentifier>
+                        <ParameterValue>1.05</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>GHOSTCOLOR</ParameterIdentifier>
+                        <ParameterValue></ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>FRAMELINECOLOR</ParameterIdentifier>
+                        <ParameterValue></ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>FRAMEFILLCOLOR</ParameterIdentifier>
+                        <ParameterValue></ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>TEXTCOLOR</ParameterIdentifier>
+                        <ParameterValue>ff000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>ANGLE</ParameterIdentifier>
+                        <ParameterValue>CalcOrientation</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>HORIZONTALALIGNMENT</ParameterIdentifier>
+                        <ParameterValue>"HORIZONTAL_ALIGNMENT"</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>VERTICALALIGNMENT</ParameterIdentifier>
+                        <ParameterValue>"VERTICAL_ALIGNMENT"</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>CalcOrientation</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Plain Text</SymbolName>
+                        <ParameterIdentifier>MARKUP</ParameterIdentifier>
+                        <ParameterValue>'Plain'</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>1344.59629240087</ScaleX>
+                    <ScaleY>1344.59629862324</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <UsageContext>Point</UsageContext>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+          </VectorScaleRange>
+        </VectorLayerDefinition>
+      </LayerDefinition>
+    </ns0:LayerDefinitionResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/FeatureSourceResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">IndustryModel_1</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:FeatureSourceResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <FeatureSource xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="1.0.0">
+  <Provider>Autodesk.Topobase.3.2</Provider>
+  <Parameter>
+    <Name>Password</Name>
+    <Value />
+  </Parameter>
+  <Parameter>
+    <Name>Service</Name>
+    <Value></Value>
+  </Parameter>
+  <Parameter>
+    <Name>Username</Name>
+    <Value></Value>
+  </Parameter>
+  <Parameter>
+    <Name>DataStore</Name>
+    <Value></Value>
+  </Parameter>
+  <ConfigurationDocument />
+  <LongTransaction>1</LongTransaction>
+  <Extension>
+    <CalculatedProperty>
+      <Name>CalcOrientation</Name>
+      <Expression>ToDouble ( TB_SQL ( 'TO_CHAR( OrientationDegreeCCW ( g.ORIENTATION ) )' ) )</Expression>
+    </CalculatedProperty>
+    <Name>GA_CASING_TBL_CalcProp1</Name>
+    <FeatureClass>:GA_CASING_TBL</FeatureClass>
+  </Extension>
+</FeatureSource>
+    </ns0:FeatureSourceResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="LayerSchema">
+    <ns0:version xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">1</ns0:version>
+  </rdf:Description>
+</rdf:RDF>

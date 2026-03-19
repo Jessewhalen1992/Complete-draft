@@ -1,0 +1,647 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about="dbo:EL_CS_DECORATION">
+    <ns0:FeatureSource xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" rdf:resource="fsd://IndustryModel_1" />
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:EL_CS_DECORATION">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/LayerDefinitionResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:EL_CS_DECORATION">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">EL_CS_DECORATION</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:EL_CS_DECORATION">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:EL_CS_DECORATION">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal"></ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="dbo:EL_CS_DECORATION">
+    <ns0:LayerDefinitionResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <LayerDefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="LayerDefinition-2.4.0.xsd" version="2.4.0">
+        <VectorLayerDefinition>
+          <ResourceId>fsd://IndustryModel_1</ResourceId>
+          <FeatureName>EL_CS_DECORATION_CalcProp1</FeatureName>
+          <FeatureNameType>NamedExtension</FeatureNameType>
+          <Geometry>GEOM</Geometry>
+          <VectorScaleRange>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel></LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>Circle</Name>
+                      <Description>Default Point Symbol</Description>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M -1,0 A 1,1 0 1 1 1,0 A 1,1 0 1 1 -1,0</Geometry>
+                          <FillColor>%FILLCOLOR%</FillColor>
+                          <LineColor>%LINECOLOR%</LineColor>
+                          <LineWeight>%LINEWEIGHT%</LineWeight>
+                        </Path>
+                      </Graphics>
+                      <PointUsage>
+                        <Angle>%ROTATION%</Angle>
+                      </PointUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>FILLCOLOR</Identifier>
+                          <DefaultValue>ffffffff</DefaultValue>
+                          <DisplayName>&amp;Fill Color</DisplayName>
+                          <Description>Fill Color</Description>
+                          <DataType>FillColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINECOLOR</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Line &amp;Color</DisplayName>
+                          <Description>Line Color</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINEWEIGHT</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Line &amp;Thickness</DisplayName>
+                          <Description>Line Thickness</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>ROTATION</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>&amp;Rotation</DisplayName>
+                          <Description>Rotation</Description>
+                          <DataType>Angle</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>Circle</SymbolName>
+                        <ParameterIdentifier>FILLCOLOR</ParameterIdentifier>
+                        <ParameterValue>0xFFC0C0C0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Circle</SymbolName>
+                        <ParameterIdentifier>LINECOLOR</ParameterIdentifier>
+                        <ParameterValue>ff000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Circle</SymbolName>
+                        <ParameterIdentifier>LINEWEIGHT</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Circle</SymbolName>
+                        <ParameterIdentifier>ROTATION</ParameterIdentifier>
+                        <ParameterValue>Angle</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>50</ScaleX>
+                    <ScaleY>50</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <AddToExclusionRegion>true</AddToExclusionRegion>
+                    <GeometryContext>Point</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel></LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>SOLID</Name>
+                      <Description>SOLID</Description>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M 0.0,0.0 h 4.0</Geometry>
+                          <LineColor>%LINECOLOR%</LineColor>
+                          <LineWeight>%LINEWEIGHT%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                      </Graphics>
+                      <LineUsage>
+                        <Repeat>4.0</Repeat>
+                      </LineUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>LINECOLOR</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Line &amp;Color</DisplayName>
+                          <Description>Line Color</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINEWEIGHT</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Line &amp;Thickness</DisplayName>
+                          <Description>Line Thickness</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>SOLID</SymbolName>
+                        <ParameterIdentifier>LINECOLOR</ParameterIdentifier>
+                        <ParameterValue>0xFF5B5B5B</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>SOLID</SymbolName>
+                        <ParameterIdentifier>LINEWEIGHT</ParameterIdentifier>
+                        <ParameterValue>0.06</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>10</ScaleX>
+                    <ScaleY>10</ScaleY>
+                    <GeometryContext>LineString</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+            <CompositeTypeStyle>
+              <CompositeRule>
+                <LegendLabel></LegendLabel>
+                <Filter>USER_FLAG  =  'Soil'</Filter>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <CompoundSymbolDefinition>
+                      <Name>AR-SAND</Name>
+                      <SimpleSymbol>
+                        <SimpleSymbolDefinition>
+                          <Name>AR-SAND</Name>
+                          <Graphics>
+                            <Path>
+                              <Geometry>M -0.9,-0.83 h 0.0 M -0.65685,-0.83 h 0.0 M 0.52315,-0.83 h 0.0 M 0.71655,1.847 h 0.0 M 0.96655,1.847 h 0.0 M 2.14655,1.847 h 0.0 M 2.33995,4.525 h 0.0 M 2.58995,4.525 h 0.0 M 3.76995,4.525 h 0.0 M 3.96335,7.2 h 0.0 M 4.21335,7.2 h 0.0 M 5.39335,7.2 h 0.0 M 5.58675,9.881 h 0.0 M 5.83675,9.881 h 0.0 M 7.01675,9.881 h 0.0 M 7.21,12.559 h 0.0 M 7.46,12.559 h 0.0 M 8.64,12.559 h 0.0 M 8.83355,15.237 h 0.0 M 9.08355,15.237 h 0.0 M 10.26355,15.237 h 0.0 M 10.45695,17.915 h 0.0 M 10.7,17.915 h 0.0 M 11.88695,17.915 h 0.0 M 12.08,20.593 h 0.0 M 12.33,20.593 h 0.0 M 13.51,20.593 h 0.0 M 13.7,23.271 h 0.0 M 13.95375,23.271 h 0.0 M 15.13375,23.271 h 0.0 M 15.32715,25.949 h 0.0 M 15.57715,25.949 h 0.0 M 16.75715,25.949 h 0.0 M 16.95,28.627 h 0.0 M 17.2,28.627 h 0.0 M 18.38,28.627 h 0.0</Geometry>
+                              <LineColor>%HATCHCOLOR%</LineColor>
+                            </Path>
+                          </Graphics>
+                          <AreaUsage>
+                            <Angle>%HATCHANGLE%-42.5</Angle>
+                            <RepeatX>2.78</RepeatX>
+                            <RepeatY>32.136</RepeatY>
+                          </AreaUsage>
+                          <ParameterDefinition>
+                            <Parameter>
+                              <Identifier>HATCHCOLOR</Identifier>
+                              <DefaultValue>0xff000000</DefaultValue>
+                              <DisplayName>&amp;Hatch Color</DisplayName>
+                              <Description>Color for the hatch style</Description>
+                              <DataType>FillColor</DataType>
+                            </Parameter>
+                            <Parameter>
+                              <Identifier>HATCHANGLE</Identifier>
+                              <DefaultValue>0.0</DefaultValue>
+                              <DisplayName>Hatch &amp;Angle</DisplayName>
+                              <Description>Rotation angle for the hatch style</Description>
+                              <DataType>Angle</DataType>
+                            </Parameter>
+                          </ParameterDefinition>
+                        </SimpleSymbolDefinition>
+                      </SimpleSymbol>
+                      <SimpleSymbol>
+                        <SimpleSymbolDefinition>
+                          <Name>AR-SAND</Name>
+                          <Graphics>
+                            <Path>
+                              <Geometry>M -1.03737,-0.66 h 0.0 M -0.53737,-0.66 h 0.0 M 1.26263,-0.66 h 0.0 M 1.586,1.01712 h 0.0 M 2.086,1.01712 h 0.0 M 3.886,1.01712 h 0.0 M 4.2,2.69512 h 0.0 M 4.7,2.69512 h 0.0 M 6.5,2.69512 h 0.0 M 6.83283,4.37312 h 0.0 M 7.33283,4.37312 h 0.0 M 9.13283,4.37312 h 0.0 M 9.45623,6.05112 h 0.0 M 9.95623,6.05112 h 0.0 M 11.75623,6.05112 h 0.0 M 12.07963,7.72912 h 0.0 M 12.57963,7.72912 h 0.0 M 14.37963,7.72912 h 0.0 M 14.7,9.4 h 0.0 M 15.2,9.4 h 0.0 M 17.0,9.4 h 0.0 M 17.32643,11.08512 h 0.0 M 17.82643,11.08512 h 0.0 M 19.62643,11.08512 h 0.0 M 19.94983,12.76312 h 0.0 M 20.44983,12.76312 h 0.0 M 22.24983,12.76312 h 0.0 M 22.57323,14.44112 h 0.0 M 23.07323,14.44112 h 0.0 M 24.87323,14.44112 h 0.0 M 25.19663,16.11912 h 0.0 M 25.69663,16.11912 h 0.0 M 27.49663,16.11912 h 0.0 M 27.82,17.79712 h 0.0 M 28.32,17.79712 h 0.0 M 30.12,17.79712 h 0.0 M 30.44343,19.47512 h 0.0 M 30.94343,19.47512 h 0.0 M 32.74343,19.47512 h 0.0 M 33.06683,21.15312 h 0.0 M 33.56683,21.15312 h 0.0 M 35.36683,21.15312 h 0.0 M 35.69,22.83112 h 0.0 M 36.19,22.83112 h 0.0 M 37.99,22.83112 h 0.0 M 38.31363,24.5 h 0.0 M 38.81363,24.5 h 0.0 M 40.61363,24.5 h 0.0 M 40.937,26.18712 h 0.0 M 41.437,26.18712 h 0.0 M 43.237,26.18712 h 0.0 M 43.56,27.86512 h 0.0 M 44.06,27.86512 h 0.0 M 45.86,27.86512 h 0.0 M 46.18383,29.54312 h 0.0 M 46.68383,29.54312 h 0.0 M 48.48383,29.54312 h 0.0 M 48.8,31.22112 h 0.0 M 49.3,31.22112 h 0.0 M 51.1,31.22112 h 0.0 M 51.43,32.89912 h 0.0 M 51.93,32.89912 h 0.0 M 53.73,32.89912 h 0.0 M 54.054,34.57712 h 0.0 M 54.554,34.57712 h 0.0 M 56.354,34.57712 h 0.0 M 56.67743,36.25512 h 0.0 M 57.17743,36.25512 h 0.0 M 58.97743,36.25512 h 0.0 M 59.3,37.93312 h 0.0 M 59.8,37.93312 h 0.0 M 61.6,37.93312 h 0.0 M 61.92423,39.61112 h 0.0 M 62.42423,39.61112 h 0.0 M 64.22423,39.61112 h 0.0 M 64.54763,41.28912 h 0.0 M 65.04763,41.28912 h 0.0 M 66.84763,41.28912 h 0.0 M 67.171,42.96712 h 0.0 M 67.671,42.96712 h 0.0 M 69.471,42.96712 h 0.0 M 69.79443,44.64512 h 0.0 M 70.29443,44.64512 h 0.0 M 72.09443,44.64512 h 0.0 M 72.41783,46.32312 h 0.0 M 72.91783,46.32312 h 0.0 M 74.71783,46.32312 h 0.0 M 75.04123,48.0 h 0.0 M 75.54123,48.0 h 0.0 M 77.34123,48.0 h 0.0 M 77.66463,49.67912 h 0.0 M 78.16463,49.67912 h 0.0 M 79.96463,49.67912 h 0.0 M 80.288,51.35712 h 0.0 M 80.788,51.35712 h 0.0 M 82.588,51.35712 h 0.0 M 82.91143,53.03512 h 0.0 M 83.41143,53.03512 h 0.0 M 85.21143,53.03512 h 0.0 M 85.53483,54.71312 h 0.0 M 86.03483,54.71312 h 0.0 M 87.83483,54.71312 h 0.0 M 88.15823,56.39112 h 0.0 M 88.65823,56.39112 h 0.0 M 90.45823,56.39112 h 0.0 M 90.78163,58.06912 h 0.0 M 91.28163,58.06912 h 0.0 M 93.08163,58.06912 h 0.0 M 93.4,59.74712 h 0.0 M 93.9,59.74712 h 0.0 M 95.7,59.74712 h 0.0 M 96.02843,61.42512 h 0.0 M 96.52843,61.42512 h 0.0 M 98.32843,61.42512 h 0.0 M 98.65183,63.1 h 0.0 M 99.15183,63.1 h 0.0 M 100.95183,63.1 h 0.0</Geometry>
+                              <LineColor>%HATCHCOLOR%</LineColor>
+                            </Path>
+                          </Graphics>
+                          <AreaUsage>
+                            <Angle>%HATCHANGLE%-32.5</Angle>
+                            <RepeatX>4.65</RepeatX>
+                            <RepeatY>65.442</RepeatY>
+                          </AreaUsage>
+                          <ParameterDefinition>
+                            <Parameter>
+                              <Identifier>HATCHCOLOR</Identifier>
+                              <DefaultValue>0xff000000</DefaultValue>
+                              <DisplayName>&amp;Hatch Color</DisplayName>
+                              <Description>Color for the hatch style</Description>
+                              <DataType>FillColor</DataType>
+                            </Parameter>
+                            <Parameter>
+                              <Identifier>HATCHANGLE</Identifier>
+                              <DefaultValue>0.0</DefaultValue>
+                              <DisplayName>Hatch &amp;Angle</DisplayName>
+                              <Description>Rotation angle for the hatch style</Description>
+                              <DataType>Angle</DataType>
+                            </Parameter>
+                          </ParameterDefinition>
+                        </SimpleSymbolDefinition>
+                      </SimpleSymbol>
+                      <SimpleSymbol>
+                        <SimpleSymbolDefinition>
+                          <Name>AR-SAND</Name>
+                          <Graphics>
+                            <Path>
+                              <Geometry>M 0.0,0.0 h 0.0 M 0.82,0.0 h 0.0 M 2.19,0.0 h 0.0 M 2.123,2.567 h 0.0 M 2.943,2.567 h 0.0 M 4.313,2.567 h 0.0 M 4.246,5.134 h 0.0 M 5.066,5.134 h 0.0 M 6.436,5.134 h 0.0 M 6.369,7.7 h 0.0 M 7.189,7.7 h 0.0 M 8.559,7.7 h 0.0 M 8.492,10.268 h 0.0 M 9.312,10.268 h 0.0 M 10.682,10.268 h 0.0 M 10.615,12.835 h 0.0 M 11.435,12.835 h 0.0 M 12.8,12.835 h 0.0 M 12.738,15.4 h 0.0 M 13.558,15.4 h 0.0 M 14.928,15.4 h 0.0 M 14.861,17.969 h 0.0 M 15.681,17.969 h 0.0 M 17.051,17.969 h 0.0 M 16.984,20.536 h 0.0 M 17.8,20.536 h 0.0 M 19.174,20.536 h 0.0 M 19.1,23.1 h 0.0 M 19.927,23.1 h 0.0 M 21.297,23.1 h 0.0 M 21.23,25.67 h 0.0 M 22.05,25.67 h 0.0 M 23.42,25.67 h 0.0 M 23.353,28.237 h 0.0 M 24.173,28.237 h 0.0 M 25.543,28.237 h 0.0 M 25.476,30.8 h 0.0 M 26.296,30.8 h 0.0 M 27.666,30.8 h 0.0 M 27.599,33.371 h 0.0 M 28.419,33.371 h 0.0 M 29.789,33.371 h 0.0 M 29.722,35.938 h 0.0 M 30.542,35.938 h 0.0 M 31.912,35.938 h 0.0 M 31.845,38.5 h 0.0 M 32.665,38.5 h 0.0 M 34.035,38.5 h 0.0 M 33.968,41.072 h 0.0 M 34.788,41.072 h 0.0 M 36.158,41.072 h 0.0 M 36.091,43.639 h 0.0 M 36.911,43.639 h 0.0 M 38.281,43.639 h 0.0 M 38.214,46.2 h 0.0 M 39.034,46.2 h 0.0 M 40.4,46.2 h 0.0 M 40.337,48.773 h 0.0 M 41.157,48.773 h 0.0 M 42.527,48.773 h 0.0 M 42.46,51.34 h 0.0 M 43.28,51.34 h 0.0 M 44.65,51.34 h 0.0 M 44.583,53.9 h 0.0 M 45.4,53.9 h 0.0 M 46.773,53.9 h 0.0 M 46.7,56.474 h 0.0 M 47.526,56.474 h 0.0 M 48.896,56.474 h 0.0 M 48.829,59.041 h 0.0 M 49.649,59.041 h 0.0 M 51.019,59.041 h 0.0 M 50.952,61.6 h 0.0 M 51.772,61.6 h 0.0 M 53.142,61.6 h 0.0 M 53.075,64.175 h 0.0 M 53.895,64.175 h 0.0 M 55.265,64.175 h 0.0 M 55.198,66.742 h 0.0 M 56.018,66.742 h 0.0 M 57.388,66.742 h 0.0 M 57.321,69.3 h 0.0 M 58.141,69.3 h 0.0 M 59.511,69.3 h 0.0 M 59.444,71.876 h 0.0 M 60.264,71.876 h 0.0 M 61.634,71.876 h 0.0 M 61.567,74.443 h 0.0 M 62.387,74.443 h 0.0 M 63.757,74.443 h 0.0 M 63.69,77.01 h 0.0 M 64.51,77.01 h 0.0 M 65.88,77.01 h 0.0 M 65.813,79.577 h 0.0 M 66.633,79.577 h 0.0 M 68.0,79.577 h 0.0 M 67.936,82.144 h 0.0 M 68.756,82.144 h 0.0 M 70.126,82.144 h 0.0 M 70.059,84.711 h 0.0 M 70.879,84.711 h 0.0 M 72.249,84.711 h 0.0 M 72.182,87.278 h 0.0 M 73.0,87.278 h 0.0 M 74.372,87.278 h 0.0 M 74.3,89.845 h 0.0 M 75.125,89.845 h 0.0 M 76.495,89.845 h 0.0 M 76.428,92.412 h 0.0 M 77.248,92.412 h 0.0 M 78.618,92.412 h 0.0 M 78.551,94.979 h 0.0 M 79.371,94.979 h 0.0 M 80.741,94.979 h 0.0 M 80.674,97.546 h 0.0 M 81.494,97.546 h 0.0 M 82.864,97.546 h 0.0 M 82.797,100.113 h 0.0 M 83.617,100.113 h 0.0 M 84.987,100.113 h 0.0 M 84.92,102.68 h 0.0 M 85.74,102.68 h 0.0 M 87.11,102.68 h 0.0 M 87.043,105.247 h 0.0 M 87.863,105.247 h 0.0 M 89.233,105.247 h 0.0 M 89.166,107.814 h 0.0 M 89.986,107.814 h 0.0 M 91.356,107.814 h 0.0 M 91.289,110.381 h 0.0 M 92.1,110.381 h 0.0 M 93.479,110.381 h 0.0 M 93.412,112.948 h 0.0 M 94.232,112.948 h 0.0 M 95.6,112.948 h 0.0 M 95.535,115.515 h 0.0 M 96.355,115.515 h 0.0 M 97.725,115.515 h 0.0 M 97.658,118.082 h 0.0 M 98.478,118.082 h 0.0 M 99.848,118.082 h 0.0 M 99.781,120.649 h 0.0 M 100.6,120.649 h 0.0 M 101.971,120.649 h 0.0 M 101.9,123.216 h 0.0 M 102.724,123.216 h 0.0 M 104.094,123.216 h 0.0 M 104.027,125.783 h 0.0 M 104.847,125.783 h 0.0 M 106.217,125.783 h 0.0 M 106.15,128.35 h 0.0 M 106.97,128.35 h 0.0 M 108.34,128.35 h 0.0 M 108.273,130.917 h 0.0 M 109.093,130.917 h 0.0 M 110.463,130.917 h 0.0 M 110.396,133.484 h 0.0 M 111.216,133.484 h 0.0 M 112.586,133.484 h 0.0 M 112.519,136.051 h 0.0 M 113.339,136.051 h 0.0 M 114.7,136.051 h 0.0 M 114.642,138.618 h 0.0 M 115.462,138.618 h 0.0 M 116.832,138.618 h 0.0</Geometry>
+                              <LineColor>%HATCHCOLOR%</LineColor>
+                            </Path>
+                          </Graphics>
+                          <AreaUsage>
+                            <Angle>%HATCHANGLE%+7.5</Angle>
+                            <RepeatX>2.715</RepeatX>
+                            <RepeatY>141.185</RepeatY>
+                          </AreaUsage>
+                          <ParameterDefinition>
+                            <Parameter>
+                              <Identifier>HATCHCOLOR</Identifier>
+                              <DefaultValue>0xff000000</DefaultValue>
+                              <DisplayName>&amp;Hatch Color</DisplayName>
+                              <Description>Color for the hatch style</Description>
+                              <DataType>FillColor</DataType>
+                            </Parameter>
+                            <Parameter>
+                              <Identifier>HATCHANGLE</Identifier>
+                              <DefaultValue>0.0</DefaultValue>
+                              <DisplayName>Hatch &amp;Angle</DisplayName>
+                              <Description>Rotation angle for the hatch style</Description>
+                              <DataType>Angle</DataType>
+                            </Parameter>
+                          </ParameterDefinition>
+                        </SimpleSymbolDefinition>
+                      </SimpleSymbol>
+                      <SimpleSymbol>
+                        <SimpleSymbolDefinition>
+                          <Name>AR-SAND</Name>
+                          <Graphics>
+                            <Path>
+                              <Geometry>M 0.0,0.0 h 0.0 M 1.52,0.0 h 0.0 M 3.22,0.0 h 0.0 M 1.123,1.567 h 0.0 M 2.643,1.567 h 0.0 M 4.343,1.567 h 0.0 M 2.246,3.134 h 0.0 M 3.766,3.134 h 0.0 M 5.466,3.134 h 0.0 M 3.369,4.7 h 0.0 M 4.889,4.7 h 0.0 M 6.589,4.7 h 0.0 M 4.492,6.268 h 0.0 M 6.012,6.268 h 0.0 M 7.712,6.268 h 0.0 M 5.615,7.835 h 0.0 M 7.135,7.835 h 0.0 M 8.835,7.835 h 0.0 M 6.738,9.4 h 0.0 M 8.258,9.4 h 0.0 M 9.958,9.4 h 0.0 M 7.861,10.969 h 0.0 M 9.381,10.969 h 0.0 M 11.081,10.969 h 0.0 M 8.984,12.536 h 0.0 M 10.5,12.536 h 0.0 M 12.2,12.536 h 0.0 M 10.1,14.1 h 0.0 M 11.627,14.1 h 0.0 M 13.327,14.1 h 0.0 M 11.23,15.67 h 0.0 M 12.75,15.67 h 0.0 M 14.45,15.67 h 0.0 M 12.353,17.237 h 0.0 M 13.873,17.237 h 0.0 M 15.573,17.237 h 0.0 M 13.476,18.8 h 0.0 M 14.996,18.8 h 0.0 M 16.696,18.8 h 0.0</Geometry>
+                              <LineColor>%HATCHCOLOR%</LineColor>
+                            </Path>
+                          </Graphics>
+                          <AreaUsage>
+                            <Angle>%HATCHANGLE%+37.5</Angle>
+                            <RepeatX>4.845</RepeatX>
+                            <RepeatY>20.371</RepeatY>
+                          </AreaUsage>
+                          <ParameterDefinition>
+                            <Parameter>
+                              <Identifier>HATCHCOLOR</Identifier>
+                              <DefaultValue>0xff000000</DefaultValue>
+                              <DisplayName>&amp;Hatch Color</DisplayName>
+                              <Description>Color for the hatch style</Description>
+                              <DataType>FillColor</DataType>
+                            </Parameter>
+                            <Parameter>
+                              <Identifier>HATCHANGLE</Identifier>
+                              <DefaultValue>0.0</DefaultValue>
+                              <DisplayName>Hatch &amp;Angle</DisplayName>
+                              <Description>Rotation angle for the hatch style</Description>
+                              <DataType>Angle</DataType>
+                            </Parameter>
+                          </ParameterDefinition>
+                        </SimpleSymbolDefinition>
+                      </SimpleSymbol>
+                      <ExtendedData1>
+                        <FileName>acad.pat</FileName>
+                      </ExtendedData1>
+                    </CompoundSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>AR-SAND</SymbolName>
+                        <ParameterIdentifier>HATCHCOLOR</ParameterIdentifier>
+                        <ParameterValue>0xff000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>AR-SAND</SymbolName>
+                        <ParameterIdentifier>HATCHANGLE</ParameterIdentifier>
+                        <ParameterValue>0.06</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>0.729188282088479</ScaleX>
+                    <ScaleY>0.481974716662154</ScaleY>
+                    <GeometryContext>Polygon</GeometryContext>
+                  </SymbolInstance>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>SOLID</Name>
+                      <Description>SOLID</Description>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M 0.0,0.0 h 4.0</Geometry>
+                          <LineColor>%LINECOLOR%</LineColor>
+                          <LineWeight>%LINEWEIGHT%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                      </Graphics>
+                      <LineUsage>
+                        <Repeat>4.0</Repeat>
+                      </LineUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>LINECOLOR</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Line &amp;Color</DisplayName>
+                          <Description>Line Color</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINEWEIGHT</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Line &amp;Thickness</DisplayName>
+                          <Description>Line Thickness</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>SOLID</SymbolName>
+                        <ParameterIdentifier>LINECOLOR</ParameterIdentifier>
+                        <ParameterValue></ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>SOLID</SymbolName>
+                        <ParameterIdentifier>LINEWEIGHT</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>0</ScaleX>
+                    <ScaleY>0</ScaleY>
+                    <GeometryContext>Polygon</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <CompositeRule>
+                <LegendLabel></LegendLabel>
+                <Filter>USER_FLAG  =  'Concrete'</Filter>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <CompoundSymbolDefinition>
+                      <Name>ANSI37</Name>
+                      <SimpleSymbol>
+                        <SimpleSymbolDefinition>
+                          <Name>ANSI37</Name>
+                          <Graphics>
+                            <Path>
+                              <Geometry>M 0.0,0.0 h 10.0</Geometry>
+                              <LineColor>%HATCHCOLOR%</LineColor>
+                            </Path>
+                          </Graphics>
+                          <AreaUsage>
+                            <Angle>%HATCHANGLE%</Angle>
+                            <RepeatX>10.0</RepeatX>
+                            <RepeatY>0.125</RepeatY>
+                          </AreaUsage>
+                          <ParameterDefinition>
+                            <Parameter>
+                              <Identifier>HATCHCOLOR</Identifier>
+                              <DefaultValue>0xff000000</DefaultValue>
+                              <DisplayName>&amp;Hatch Color</DisplayName>
+                              <Description>Color for the hatch style</Description>
+                              <DataType>FillColor</DataType>
+                            </Parameter>
+                            <Parameter>
+                              <Identifier>HATCHANGLE</Identifier>
+                              <DefaultValue>45.0</DefaultValue>
+                              <DisplayName>Hatch &amp;Angle</DisplayName>
+                              <Description>Rotation angle for the hatch style</Description>
+                              <DataType>Angle</DataType>
+                            </Parameter>
+                          </ParameterDefinition>
+                        </SimpleSymbolDefinition>
+                      </SimpleSymbol>
+                      <SimpleSymbol>
+                        <SimpleSymbolDefinition>
+                          <Name>ANSI37</Name>
+                          <Graphics>
+                            <Path>
+                              <Geometry>M 0.0,0.0 h 10.0</Geometry>
+                              <LineColor>%HATCHCOLOR%</LineColor>
+                            </Path>
+                          </Graphics>
+                          <AreaUsage>
+                            <Angle>%HATCHANGLE%+90.0</Angle>
+                            <RepeatX>10.0</RepeatX>
+                            <RepeatY>0.125</RepeatY>
+                          </AreaUsage>
+                          <ParameterDefinition>
+                            <Parameter>
+                              <Identifier>HATCHCOLOR</Identifier>
+                              <DefaultValue>0xff000000</DefaultValue>
+                              <DisplayName>&amp;Hatch Color</DisplayName>
+                              <Description>Color for the hatch style</Description>
+                              <DataType>FillColor</DataType>
+                            </Parameter>
+                            <Parameter>
+                              <Identifier>HATCHANGLE</Identifier>
+                              <DefaultValue>45.0</DefaultValue>
+                              <DisplayName>Hatch &amp;Angle</DisplayName>
+                              <Description>Rotation angle for the hatch style</Description>
+                              <DataType>Angle</DataType>
+                            </Parameter>
+                          </ParameterDefinition>
+                        </SimpleSymbolDefinition>
+                      </SimpleSymbol>
+                      <ExtendedData1>
+                        <FileName>acad.pat</FileName>
+                      </ExtendedData1>
+                    </CompoundSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>ANSI37</SymbolName>
+                        <ParameterIdentifier>HATCHCOLOR</ParameterIdentifier>
+                        <ParameterValue>0xff000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>ANSI37</SymbolName>
+                        <ParameterIdentifier>HATCHANGLE</ParameterIdentifier>
+                        <ParameterValue>45</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>353.553390683618</ScaleX>
+                    <ScaleY>707.106781367236</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <GeometryContext>Polygon</GeometryContext>
+                  </SymbolInstance>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>SOLID</Name>
+                      <Description>SOLID</Description>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M 0.0,0.0 h 4.0</Geometry>
+                          <LineColor>%LINECOLOR%</LineColor>
+                          <LineWeight>%LINEWEIGHT%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                      </Graphics>
+                      <LineUsage>
+                        <Repeat>4.0</Repeat>
+                      </LineUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>LINECOLOR</Identifier>
+                          <DefaultValue>ff000000</DefaultValue>
+                          <DisplayName>Line &amp;Color</DisplayName>
+                          <Description>Line Color</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINEWEIGHT</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Line &amp;Thickness</DisplayName>
+                          <Description>Line Thickness</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>SOLID</SymbolName>
+                        <ParameterIdentifier>LINECOLOR</ParameterIdentifier>
+                        <ParameterValue></ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>SOLID</SymbolName>
+                        <ParameterIdentifier>LINEWEIGHT</ParameterIdentifier>
+                        <ParameterValue>0.06</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>0</ScaleX>
+                    <ScaleY>0</ScaleY>
+                    <SizeContext>MappingUnits</SizeContext>
+                    <GeometryContext>Polygon</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <CompositeRule>
+                <LegendLabel></LegendLabel>
+                <CompositeSymbolization>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>Solid Fill</Name>
+                      <Description>Default Area Symbol</Description>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M 0.0,0.0 h 100.0 v 100.0 h -100.0 z</Geometry>
+                          <FillColor>%FILLCOLOR%</FillColor>
+                        </Path>
+                      </Graphics>
+                      <AreaUsage>
+                        <RepeatX>100.0</RepeatX>
+                        <RepeatY>100.0</RepeatY>
+                      </AreaUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>FILLCOLOR</Identifier>
+                          <DefaultValue>0xffbfbfbf</DefaultValue>
+                          <DisplayName>&amp;Fill Color</DisplayName>
+                          <Description>Fill Color</Description>
+                          <DataType>FillColor</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>Solid Fill</SymbolName>
+                        <ParameterIdentifier>FILLCOLOR</ParameterIdentifier>
+                        <ParameterValue>0xffbfbfbf</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <GeometryContext>Polygon</GeometryContext>
+                  </SymbolInstance>
+                  <SymbolInstance>
+                    <SimpleSymbolDefinition>
+                      <Name>Solid Line</Name>
+                      <Description>Default Line Symbol</Description>
+                      <Graphics>
+                        <Path>
+                          <Geometry>M 0.0,0.0 L 1.0,0.0</Geometry>
+                          <LineColor>%LINECOLOR%</LineColor>
+                          <LineWeight>%LINEWEIGHT%</LineWeight>
+                          <LineWeightScalable>false</LineWeightScalable>
+                        </Path>
+                      </Graphics>
+                      <LineUsage>
+                        <Repeat>1.0</Repeat>
+                      </LineUsage>
+                      <ParameterDefinition>
+                        <Parameter>
+                          <Identifier>LINECOLOR</Identifier>
+                          <DefaultValue>0xff000000</DefaultValue>
+                          <DisplayName>Line &amp;Color</DisplayName>
+                          <Description>Line Color</Description>
+                          <DataType>LineColor</DataType>
+                        </Parameter>
+                        <Parameter>
+                          <Identifier>LINEWEIGHT</Identifier>
+                          <DefaultValue>0.0</DefaultValue>
+                          <DisplayName>Line &amp;Thickness</DisplayName>
+                          <Description>Line Thickness</Description>
+                          <DataType>LineWeight</DataType>
+                        </Parameter>
+                      </ParameterDefinition>
+                    </SimpleSymbolDefinition>
+                    <ParameterOverrides>
+                      <Override>
+                        <SymbolName>Solid Line</SymbolName>
+                        <ParameterIdentifier>LINECOLOR</ParameterIdentifier>
+                        <ParameterValue>0xff000000</ParameterValue>
+                      </Override>
+                      <Override>
+                        <SymbolName>Solid Line</SymbolName>
+                        <ParameterIdentifier>LINEWEIGHT</ParameterIdentifier>
+                        <ParameterValue>0.0</ParameterValue>
+                      </Override>
+                    </ParameterOverrides>
+                    <ScaleX>0</ScaleX>
+                    <ScaleY>0</ScaleY>
+                    <GeometryContext>Polygon</GeometryContext>
+                  </SymbolInstance>
+                </CompositeSymbolization>
+              </CompositeRule>
+              <ShowInLegend>true</ShowInLegend>
+            </CompositeTypeStyle>
+          </VectorScaleRange>
+        </VectorLayerDefinition>
+      </LayerDefinition>
+    </ns0:LayerDefinitionResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <rdf:type rdf:resource="http://www.autodesk.com/gis/resource/definitions/FeatureSourceResource" />
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:name xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">IndustryModel_1</ns0:name>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:isURL xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">no</ns0:isURL>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:description xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">Default description</ns0:description>
+  </rdf:Description>
+  <rdf:Description rdf:about="fsd://IndustryModel_1">
+    <ns0:FeatureSourceResourceStream xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">
+      <FeatureSource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" version="1.0.0">
+  <Provider>OSGeo.SQLServerSpatial.3.4</Provider>
+  <Parameter>
+    <Name>DataStore</Name>
+    <Value></Value>
+  </Parameter>
+  <Parameter>
+    <Name>Service</Name>
+    <Value></Value>
+  </Parameter>
+  <ConfigurationDocument />
+  <LongTransaction />
+  <Extension>
+    <CalculatedProperty>
+      <Name>Angle</Name>
+      <Expression>OrientationDegreeCCW(ORIENTATION)</Expression>
+    </CalculatedProperty>
+    <Name>EL_CS_DECORATION_CalcProp1</Name>
+    <FeatureClass>dbo:EL_CS_DECORATION</FeatureClass>
+  </Extension>
+</FeatureSource>
+    </ns0:FeatureSourceResourceStream>
+  </rdf:Description>
+  <rdf:Description rdf:about="LayerSchema">
+    <ns0:version xmlns:ns0="http://www.autodesk.com/gis/resource/definitions/" xml:lang="en" rdf:parseType="Literal">1</ns0:version>
+  </rdf:Description>
+</rdf:RDF>

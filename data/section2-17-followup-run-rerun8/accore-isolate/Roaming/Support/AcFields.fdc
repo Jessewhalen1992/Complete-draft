@@ -1,0 +1,1748 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<FieldCatalog>
+   <AutoCAD>
+      <Fields>
+         <Field fieldId="51" name="CreateDate" evalId="AcVar" fieldFormatType="Date">
+            <DisplayName resource="201" src="AcFieldRes.dll"/>
+            <FieldCode>CreateDate</FieldCode>
+            <FieldCategories>Date</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="52" name="SaveDate" evalId="AcVar" fieldFormatType="Date">
+            <DisplayName resource="202" src="AcFieldRes.dll"/>
+            <FieldCode>SaveDate</FieldCode>
+            <FieldCategories>Date</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="53" name="Date" evalId="AcVar" fieldFormatType="Date" evalOption="32">
+            <DisplayName resource="203" src="AcFieldRes.dll"/>
+            <FieldCode>Date</FieldCode>
+            <FieldCategories>Date</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="54" name="Author" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="204" src="AcFieldRes.dll"/>
+            <FieldCode>Author</FieldCode>
+            <FieldCategories>Document</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="55" name="Title" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="205" src="AcFieldRes.dll"/>
+            <FieldCode>Title</FieldCode>
+            <FieldCategories>Document</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="56" name="Subject" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="206" src="AcFieldRes.dll"/>
+            <FieldCode>Subject</FieldCode>
+            <FieldCategories>Document</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="57" name="Filename" evalId="AcVar" fieldFormatType="Filename">
+            <DisplayName resource="207" src="AcFieldRes.dll"/>
+            <FieldCode>Filename</FieldCode>
+            <FieldCategories>Document</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="58" name="Filesize" evalId="AcVar" fieldFormatType="Bytes">
+            <DisplayName resource="208" src="AcFieldRes.dll"/>
+            <FieldCode>Filesize</FieldCode>
+            <FieldCategories>Document</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="59" name="Keywords" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="209" src="AcFieldRes.dll"/>
+            <FieldCode>Keywords</FieldCode>
+            <FieldCategories>Document</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="60" name="Comments" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="210" src="AcFieldRes.dll"/>
+            <FieldCode>Comments</FieldCode>
+            <FieldCategories>Document</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="61" name="HyperlinkBase" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="211" src="AcFieldRes.dll"/>
+            <FieldCode>HyperlinkBase</FieldCode>
+            <FieldCategories>Document</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="62" name="LastSavedBy" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="212" src="AcFieldRes.dll"/>
+            <FieldCode>LastSavedBy</FieldCode>
+            <FieldCategories>Document</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="63" name="Login" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="213" src="AcFieldRes.dll"/>
+            <FieldCode>Login</FieldCode>
+            <FieldCategories>Plot</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="64" name="PageSetupName" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="214" src="AcFieldRes.dll"/>
+            <FieldCode>PageSetupName</FieldCode>
+            <FieldCategories>Plot</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="65" name="DeviceName" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="215" src="AcFieldRes.dll"/>
+            <FieldCode>DeviceName</FieldCode>
+            <FieldCategories>Plot</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="66" name="PlotScale" evalId="AcVar" fieldFormatType="Scale">
+            <DisplayName resource="216" src="AcFieldRes.dll"/>
+            <FieldCode>PlotScale</FieldCode>
+            <FieldCategories>Plot</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="67" name="PaperSize" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="217" src="AcFieldRes.dll"/>
+            <FieldCode>PaperSize</FieldCode>
+            <FieldCategories>Plot</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="68" name="PlotOrientation" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="218" src="AcFieldRes.dll"/>
+            <FieldCode>PlotOrientation</FieldCode>
+            <FieldCategories>Plot</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="69" name="PlotStyleTable" evalId="AcVar" fieldFormatType="String">
+            <DisplayName resource="219" src="AcFieldRes.dll"/>
+            <FieldCode>PlotStyleTable</FieldCode>
+            <FieldCategories>Plot</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="70" name="PlotDate" evalId="AcVar" fieldFormatType="Date">
+            <DisplayName resource="220" src="AcFieldRes.dll"/>
+            <FieldCode>PlotDate</FieldCode>
+            <FieldCategories>Plot, Date</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="71" name="Hyperlink" evalId="AcVar" fieldFormatType="">
+            <DisplayName resource="231" src="AcFieldRes.dll"/>
+            <FieldCategories>Linked</FieldCategories>
+            <OptionDialog class="CHyperlinkDialog"/>
+         </Field>
+         <Field fieldId="72" name="SystemVariable" evalId="AcVar" fieldFormatType="">
+            <DisplayName resource="236" src="AcFieldRes.dll"/>
+            <FieldCategories>Other</FieldCategories>
+            <OptionDialog class="CVariableListDialog"/>
+         </Field>
+         <Field fieldId="73" name="LispVariable" evalId="AcVar" fieldFormatType="">
+            <DisplayName resource="237" src="AcFieldRes.dll"/>
+            <FieldCategories>Other</FieldCategories>
+            <OptionDialog class="CVariableListDialog"/>
+         </Field>
+         <Field fieldId="101" name="AcDbEntity" evalId="AcObjProp" fieldFormatType="">
+            <DisplayName resource="251" src="AcFieldRes.dll"/>
+            <FieldCategories>Objects</FieldCategories>
+            <OptionDialog class="CObjectPropertyDialog"/>
+         </Field>
+         <Field fieldId="102" name="NamedObject" evalId="AcObjProp" fieldFormatType="">
+            <DisplayName resource="252" src="AcFieldRes.dll"/>
+            <FieldCategories>Objects</FieldCategories>
+            <OptionDialog class="CObjectPropertyDialog"/>
+         </Field>
+         <Field fieldId="103" name="BlockPlaceholder" evalId="AcObjProp" fieldFormatType="">
+            <DisplayName resource="253" src="AcFieldRes.dll"/>
+            <FieldCategories>Objects</FieldCategories>
+            <OptionDialog class="CObjectPropertyDialog"/>
+         </Field>
+         <Field fieldId="104" name="Expression" evalId="AcExpr" fieldFormatType="">
+            <DisplayName resource="254" src="AcFieldRes.dll"/>
+            <FieldCategories>Objects</FieldCategories>
+            <OptionDialog class="CExpressionDialog"/>
+         </Field>
+         <Field fieldId="201" name="Diesel" evalId="AcDiesel" fieldFormatType="">
+            <DisplayName resource="276" src="AcFieldRes.dll"/>
+            <FieldCategories>Other</FieldCategories>
+            <OptionDialog class="CDieselDialog"/>
+         </Field>
+         <Field fieldId="401" name="Count" evalId="AcCount" fieldFormatType="">
+            <DisplayName resource="298" src="AcFieldRes.dll"/>
+            <FieldCategories>Objects</FieldCategories>
+            <OptionDialog class="CCountDialog"/>
+         </Field>
+         <Field fieldId="402" name="CountInArea" evalId="AcCount2" fieldFormatType="">
+            <DisplayName resource="299" src="AcFieldRes.dll"/>
+            <FieldCategories>Objects</FieldCategories>
+            <OptionDialog class="CCount2Dialog"/>
+         </Field>
+         <Field fieldId="301" name="SheetSet" evalId="AcSm" fieldFormatType="">
+            <DisplayName resource="277" src="AcFieldRes.dll"/>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetDialog"/>
+         </Field>
+         <Field fieldId="302" name="SheetView" evalId="AcSm" fieldFormatType="">
+            <DisplayName resource="278" src="AcFieldRes.dll"/>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetDialog"/>
+         </Field>
+         <Field fieldId="303" name="CurrentSheetSet" evalId="AcSm" fieldFormatType="String">
+            <DisplayName resource="279" src="AcFieldRes.dll"/>
+            <FieldCode>SheetSet.Name</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="304" name="CurrentSheetSubSet" evalId="AcSm" fieldFormatType="String">
+            <DisplayName resource="280" src="AcFieldRes.dll"/>
+            <FieldCode>Subset.Name</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="305" name="CurrentSheetTitle" evalId="AcSm" fieldFormatType="String">
+            <DisplayName resource="281" src="AcFieldRes.dll"/>
+            <FieldCode>Sheet.Title</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="306" name="CurrentSheetNumber" evalId="AcSm" fieldFormatType="String">
+            <DisplayName resource="282" src="AcFieldRes.dll"/>
+            <FieldCode>Sheet.Number</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="307" name="CurrentSheetNumberAndTitle" evalId="AcSm" fieldFormatType="String">
+            <DisplayName resource="283" src="AcFieldRes.dll"/>
+            <FieldCode>Sheet.NumberAndTitle</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="308" name="CurrentSheetDescription" evalId="AcSm" fieldFormatType="String">
+            <DisplayName resource="284" src="AcFieldRes.dll"/>
+            <FieldCode>Sheet.Description</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="309" name="CurrentSheetSetDescription" evalId="AcSm" fieldFormatType="String">
+            <DisplayName resource="285" src="AcFieldRes.dll"/>
+            <FieldCode>SheetSet.Description</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="310" name="CurrentSheetCustom" evalId="AcSm" fieldFormatType="String">
+            <DisplayName resource="286" src="AcFieldRes.dll"/>
+            <FieldCode>Sheet.%s</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="311" name="CurrentSheetSetCustom" evalId="AcSm" fieldFormatType="String">
+            <DisplayName resource="287" src="AcFieldRes.dll"/>
+            <FieldCode>SheetSet.%s</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="312" name="CurrentSheetSetProjectNumber" evalId="AcSm.16.2" fieldFormatType="String">
+            <DisplayName resource="288" src="AcFieldRes.dll"/>
+            <FieldCode>SheetSet.ProjectNumber</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="313" name="CurrentSheetSetProjectName" evalId="AcSm.16.2" fieldFormatType="String">
+            <DisplayName resource="289" src="AcFieldRes.dll"/>
+            <FieldCode>SheetSet.ProjectName</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="314" name="CurrentSheetSetProjectPhase" evalId="AcSm.16.2" fieldFormatType="String">
+            <DisplayName resource="290" src="AcFieldRes.dll"/>
+            <FieldCode>SheetSet.ProjectPhase</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="315" name="CurrentSheetSetProjectMilestone" evalId="AcSm.16.2" fieldFormatType="String">
+            <DisplayName resource="291" src="AcFieldRes.dll"/>
+            <FieldCode>SheetSet.ProjectMilestone</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="316" name="CurrentSheetRevisionNumber" evalId="AcSm.16.2" fieldFormatType="String">
+            <DisplayName resource="292" src="AcFieldRes.dll"/>
+            <FieldCode>Sheet.RevisionNumber</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="317" name="CurrentSheetRevisionDate" evalId="AcSm.16.2" fieldFormatType="String">
+            <DisplayName resource="293" src="AcFieldRes.dll"/>
+            <FieldCode>Sheet.RevisionDate</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="318" name="CurrentSheetIssuePurpose" evalId="AcSm.16.2" fieldFormatType="String">
+            <DisplayName resource="294" src="AcFieldRes.dll"/>
+            <FieldCode>Sheet.IssuePurpose</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="319" name="CurrentSheetCategory" evalId="AcSm.16.2" fieldFormatType="String">
+            <DisplayName resource="295" src="AcFieldRes.dll"/>
+            <FieldCode>Sheet.Category</FieldCode>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetCurrentDialog"/>
+         </Field>
+         <Field fieldId="320" name="SheetSetPlaceholder" evalId="AcSm" fieldFormatType="">
+            <DisplayName resource="296" src="AcFieldRes.dll"/>
+            <FieldCategories>SheetSet</FieldCategories>
+            <OptionDialog class="CSheetSetPlaceholderDialog"/>
+         </Field>
+         <Field fieldId="321" name="ViewType" evalId="AcVar" fieldFormatType="String" visible="64">
+            <DisplayName resource="260" src="AcFieldRes.dll"/>
+            <FieldCode>ViewType</FieldCode>
+            <FieldCategories>ModelDoc</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="322" name="ViewScale" evalId="AcVar" fieldFormatType="Scale" visible="128">
+            <DisplayName resource="261" src="AcFieldRes.dll"/>
+            <FieldCode>ViewScale</FieldCode>
+            <FieldCategories>ModelDoc</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="323" name="ViewSectionStartId" evalId="AcVar" fieldFormatType="String" visible="16">
+            <DisplayName resource="262" src="AcFieldRes.dll"/>
+            <FieldCode>ViewSectionStartId</FieldCode>
+            <FieldCategories>ModelDoc</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="324" name="ViewSectionEndId" evalId="AcVar" fieldFormatType="String" visible="16">
+            <DisplayName resource="263" src="AcFieldRes.dll"/>
+            <FieldCode>ViewSectionEndId</FieldCode>
+            <FieldCategories>ModelDoc</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field fieldId="325" name="ViewDetailId" evalId="AcVar" fieldFormatType="String" visible="32">
+            <DisplayName resource="264" src="AcFieldRes.dll"/>
+            <FieldCode>ViewDetailId</FieldCode>
+            <FieldCategories>ModelDoc</FieldCategories>
+            <OptionDialog class="CVariableDialog"/>
+         </Field>
+         <Field name="angbase" fieldType="2" evalId="AcVar" fieldFormatType="AUnits">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="date" fieldType="2" evalId="AcVar" fieldFormatType="Date">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="gfang" fieldType="2" evalId="AcVar" fieldFormatType="AUnits">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="hpang" fieldType="2" evalId="AcVar" fieldFormatType="AUnits">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="lastangle" fieldType="2" evalId="AcVar" fieldFormatType="AUnits">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="polarang" fieldType="2" evalId="AcVar" fieldFormatType="AUnits">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="snapang" fieldType="2" evalId="AcVar" fieldFormatType="AUnits">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="ucsaxisang" fieldType="2" evalId="AcVar" fieldFormatType="AUnits">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimalt" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimaso" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimlim" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimsd1" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimsd2" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimse1" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimse2" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimsho" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimsoxd" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimtih" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimtix" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimtofl" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimtoh" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimtol" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimupt" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="hidetext" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="intersectiondisplay" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="lwdisplay" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="wmfbkgnd" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="wmfforegnd" fieldType="2" evalId="AcVar" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="dimjogang" fieldType="2" evalId="AcVar" fieldFormatType="AUnits">
+            <FieldCategories>SystemVariables</FieldCategories>
+         </Field>
+         <Field name="EntityName" fieldType="3" visible="0">
+            <FieldCategories>AcDbEntity</FieldCategories>
+         </Field>
+         <Field name="EntityType" fieldType="3" visible="0">
+            <FieldCategories>AcDbEntity</FieldCategories>
+         </Field>
+         <Field name="HasExtensionDictionary" fieldType="3" visible="0">
+            <FieldCategories>AcDbEntity</FieldCategories>
+         </Field>
+         <Field name="ObjectID" fieldType="3" visible="0">
+            <FieldCategories>AcDbEntity</FieldCategories>
+         </Field>
+         <Field name="OwnerID" fieldType="3" visible="0">
+            <FieldCategories>AcDbEntity</FieldCategories>
+         </Field>
+         <Field name="Visible" fieldType="3" visible="0">
+            <FieldCategories>AcDbEntity</FieldCategories>
+         </Field>
+         <Field name="Area" fieldType="3" evalId="AcObjProp" fieldFormatType="Area">
+            <FieldCategories>AcDbEntity</FieldCategories>
+         </Field>
+         <Field name="Lineweight" fieldType="3" evalId="AcObjProp" fieldFormatType="Lineweight">
+            <FieldCategories>AcDbEntity</FieldCategories>
+         </Field>
+         <Field name="HorizontalAlignment" fieldType="3" visible="0">
+            <FieldCategories>AcDbText</FieldCategories>
+         </Field>
+         <Field name="TextGenerationFlag" fieldType="3" visible="0">
+            <FieldCategories>AcDbText</FieldCategories>
+         </Field>
+         <Field name="VerticalAlignment" fieldType="3" visible="0">
+            <FieldCategories>AcDbText</FieldCategories>
+         </Field>
+         <Field name="UpsideDown" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbText</FieldCategories>
+         </Field>
+         <Field name="Backward" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbText</FieldCategories>
+         </Field>
+         <Field name="Alignment" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%en1">
+            <FieldCategories>AcDbText</FieldCategories>
+         </Field>
+         <Field name="AttachmentPoint" fieldType="3" visible="0">
+            <FieldCategories>AcDbMText</FieldCategories>
+         </Field>
+         <Field name="BackgroundFill" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbMText</FieldCategories>
+         </Field>
+         <Field name="LineSpacingStyle" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%en2">
+            <FieldCategories>AcDbMText</FieldCategories>
+         </Field>
+         <Field name="Mode" fieldType="3" visible="0">
+            <FieldCategories>AcDbAttributeDefinition</FieldCategories>
+         </Field>
+         <Field name="Invisible" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbAttributeDefinition</FieldCategories>
+         </Field>
+         <Field name="Constant" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbAttributeDefinition</FieldCategories>
+         </Field>
+         <Field name="Verify" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbAttributeDefinition</FieldCategories>
+         </Field>
+         <Field name="Preset" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbAttributeDefinition</FieldCategories>
+         </Field>
+         <Field name="NumberOfLoops" fieldType="3" visible="0">
+            <FieldCategories>AcDbHatch</FieldCategories>
+         </Field>
+         <Field name="AssociativeHatch" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbHatch</FieldCategories>
+         </Field>
+         <Field name="GradientCentered" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbHatch</FieldCategories>
+         </Field>
+         <Field name="PatternDouble" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbHatch</FieldCategories>
+         </Field>
+         <Field name="HatchObjectType" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%en3">
+            <FieldCategories>AcDbHatch</FieldCategories>
+         </Field>
+         <Field name="HatchStyle" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%en4">
+            <FieldCategories>AcDbHatch</FieldCategories>
+         </Field>
+         <Field name="PatternType" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%en5">
+            <FieldCategories>AcDbHatch</FieldCategories>
+         </Field>
+         <Field name="IsPeriodic" fieldType="3" visible="0">
+            <FieldCategories>AcDbSpline</FieldCategories>
+         </Field>
+         <Field name="IsRational" fieldType="3" visible="0">
+            <FieldCategories>AcDbSpline</FieldCategories>
+         </Field>
+         <Field name="IsPlanar" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbSpline</FieldCategories>
+         </Field>
+         <Field name="StartParameter" fieldType="3" visible="0">
+            <FieldCategories>AcDbEllipse</FieldCategories>
+         </Field>
+         <Field name="EndParameter" fieldType="3" visible="0">
+            <FieldCategories>AcDbEllipse</FieldCategories>
+         </Field>
+         <Field name="Closed" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbPolyline</FieldCategories>
+         </Field>
+         <Field name="LinetypeGeneration" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl4">
+            <FieldCategories>AcDbPolyline</FieldCategories>
+         </Field>
+         <Field name="Type" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%en6">
+            <FieldCategories>AcDb3dPolyline</FieldCategories>
+         </Field>
+         <Field name="Closed" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDb3dPolyline</FieldCategories>
+         </Field>
+         <Field name="MClose" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbPolygonMesh</FieldCategories>
+         </Field>
+         <Field name="NClose" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl2">
+            <FieldCategories>AcDbPolygonMesh</FieldCategories>
+         </Field>
+         <Field name="CustomScale" fieldType="3" evalId="AcObjProp" fieldFormatType="Scale">
+            <FieldCategories>AcDbViewport</FieldCategories>
+         </Field>
+         <Field name="AltUnits" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>AcDbDimension</FieldCategories>
+         </Field>
+         <Field name="DimLine1Suppress" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>AcDbDimension</FieldCategories>
+         </Field>
+         <Field name="DimLine2Suppress" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>AcDbDimension</FieldCategories>
+         </Field>
+         <Field name="DimLineInside" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>AcDbDimension</FieldCategories>
+         </Field>
+         <Field name="ExtLine1Suppress" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>AcDbDimension</FieldCategories>
+         </Field>
+         <Field name="ExtLine2Suppress" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>AcDbDimension</FieldCategories>
+         </Field>
+         <Field name="ForceLineInside" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>AcDbDimension</FieldCategories>
+         </Field>
+         <Field name="TextInside" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>AcDbDimension</FieldCategories>
+         </Field>
+         <Field name="TextInsideAlign" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>AcDbDimension</FieldCategories>
+         </Field>
+         <Field name="TextOutsideAlign" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>AcDbDimension</FieldCategories>
+         </Field>
+         <Field name="ToleranceDisplay" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl3">
+            <FieldCategories>AcDbDimension</FieldCategories>
+         </Field>
+         <Field name="VisualStyle" fieldType="3" evalId="AcObjProp" fieldFormatType="String" fieldFormat="%bl0">
+            <FieldCategories>AcDbViewport</FieldCategories>
+         </Field>
+         <Field name="CustomScale" fieldType="3" evalId="AcObjProp" fieldFormatType="Scale">
+            <FieldCategories>AcDbViewBorder</FieldCategories>
+         </Field>
+      </Fields>
+      <DataTypes>
+         <!--Data types supported by table-->
+         <!--name is the name displayed in the UI-->
+         <!--dataType is AcValue::DataType enum value-->
+         <!--unitType is AcValue::UnitType enum value-->
+         <!--formatType is predefined format type string-->
+         <!--format is default format-->
+         <DataType name="General" dataType="General" unitType="Unitless" formatType="" format="">
+            <DisplayName resource="1301" src="AcFieldRes.dll"/>
+         </DataType>
+         <DataType name="Decimal Number" dataType="Double" unitType="Unitless" formatType="LUnits" format="%lu6">
+            <DisplayName resource="1302" src="AcFieldRes.dll"/>
+         </DataType>
+         <DataType name="Angle" dataType="Double" unitType="Angle" formatType="AUnits" format="%au5">
+            <DisplayName resource="1303" src="AcFieldRes.dll"/>
+         </DataType>
+         <DataType name="Text" dataType="String" unitType="Unitless" formatType="String" format="">
+            <DisplayName resource="1304" src="AcFieldRes.dll"/>
+         </DataType>
+         <DataType name="Date" dataType="Date" unitType="Unitless" formatType="Date" format="%x">
+            <DisplayName resource="1305" src="AcFieldRes.dll"/>
+         </DataType>
+        <DataType name="Whole Number" dataType="Long" unitType="Unitless" formatType="Long" format="">
+          <DisplayName resource="1307" src="AcFieldRes.dll"/>
+        </DataType>
+        <DataType name="Point" dataType="3dPoint" unitType="Unitless" formatType="Point" format="%lu6">
+            <DisplayName resource="1308" src="AcFieldRes.dll"/>
+         </DataType>
+        <DataType name="Percentage" dataType="Double" unitType="Percentage" formatType="Percentage" format="%lu2%pr2%ps[,%]">
+          <DisplayName resource="1310" src="AcFieldRes.dll"/>
+        </DataType>
+        <DataType name="Currency" dataType="Double" unitType="Currency" formatType="Currency" format="%lu2%pr2%ps[$,]">
+          <DisplayName resource="1309" src="AcFieldRes.dll"/>
+        </DataType>
+      </DataTypes>
+      <Units>
+        <!--Valid units to be recognized during data entry in table when it precedes or follows a number-->
+        <!--position flag is used to specify whether the unit can appear as prefix, suffix, or both-->
+        <!--position flags: 1-prefix, 2-suffix, 3-both-->
+        <!--unitType is AcValue::UnitType enum value-->
+        <!--unitFormat is AcFdImp::UnitFormat enum value-->
+        <!--conversionFactor is the factor to convert the user-entered value to basic unit for storage-->
+        <!--Currency symbols-->
+        <Unit name="₮" position="3" unitType="Currency"/>
+        <Unit name="$" position="3" unitType="Currency"/>
+        <Unit name="$b" position="3" unitType="Currency"/>
+        <Unit name="$U" position="3" unitType="Currency"/>
+        <Unit name="£" position="3" unitType="Currency"/>
+        <Unit name="¤" position="3" unitType="Currency"/>
+        <Unit name="¥" position="3" unitType="Currency"/>
+        <Unit name="￥" position="3" unitType="Currency"/>
+        <Unit name="₡" position="3" unitType="Currency"/>
+        <Unit name="₩" position="3" unitType="Currency"/>
+        <Unit name="₪" position="3" unitType="Currency"/>
+        <Unit name="₫" position="3" unitType="Currency"/>
+        <Unit name="฿" position="3" unitType="Currency"/>
+        <Unit name="€" position="3" unitType="Currency"/>
+        <Unit name="B/." position="3" unitType="Currency"/>
+        <Unit name="Bs" position="3" unitType="Currency"/>
+        <Unit name="BZ$" position="3" unitType="Currency"/>
+        <Unit name="C$" position="3" unitType="Currency"/>
+        <Unit name="CHF" position="3" unitType="Currency"/>
+        <Unit name="Din." position="3" unitType="Currency"/>
+        <Unit name="Ft" position="3" unitType="Currency"/>
+        <Unit name="Gs" position="3" unitType="Currency"/>
+        <Unit name="HK$" position="3" unitType="Currency"/>
+        <Unit name="J$" position="3" unitType="Currency"/>
+        <Unit name="Kč" position="3" unitType="Currency"/>
+        <Unit name="KM" position="3" unitType="Currency"/>
+        <Unit name="kn" position="3" unitType="Currency"/>
+        <Unit name="kr" position="3" unitType="Currency"/>
+        <Unit name="kr." position="3" unitType="Currency"/>
+        <Unit name="L." position="3" unitType="Currency"/>
+        <Unit name="Lari" position="3" unitType="Currency"/>
+        <Unit name="lei" position="3" unitType="Currency"/>
+        <Unit name="Lek" position="3" unitType="Currency"/>
+        <Unit name="Lm" position="3" unitType="Currency"/>
+        <Unit name="Ls" position="3" unitType="Currency"/>
+        <Unit name="Lt" position="3" unitType="Currency"/>
+        <Unit name="man." position="3" unitType="Currency"/>
+        <Unit name="MOP" position="3" unitType="Currency"/>
+        <Unit name="NT$" position="3" unitType="Currency"/>
+        <Unit name="Php" position="3" unitType="Currency"/>
+        <Unit name="Q" position="3" unitType="Currency"/>
+        <Unit name="R" position="3" unitType="Currency"/>
+        <Unit name="R$" position="3" unitType="Currency"/>
+        <Unit name="RD$" position="3" unitType="Currency"/>
+        <Unit name="Rp" position="3" unitType="Currency"/>
+        <Unit name="Rs" position="3" unitType="Currency"/>
+        <Unit name="S" position="3" unitType="Currency"/>
+        <Unit name="S/." position="3" unitType="Currency"/>
+        <Unit name="SFr." position="3" unitType="Currency"/>
+        <Unit name="SIT" position="3" unitType="Currency"/>
+        <Unit name="Sk" position="3" unitType="Currency"/>
+        <Unit name="su'm" position="3" unitType="Currency"/>
+        <Unit name="TT$" position="3" unitType="Currency"/>
+        <Unit name="YTL" position="3" unitType="Currency"/>
+        <Unit name="Z$" position="3" unitType="Currency"/>
+        <Unit name="zł" position="3" unitType="Currency"/>
+        <Unit name="грн." position="3" unitType="Currency"/>
+        <Unit name="ден." position="3" unitType="Currency"/>
+        <Unit name="Дин." position="3" unitType="Currency"/>
+        <Unit name="КМ" position="3" unitType="Currency"/>
+        <Unit name="лв" position="3" unitType="Currency"/>
+        <Unit name="ман." position="3" unitType="Currency"/>
+        <Unit name="р." position="3" unitType="Currency"/>
+        <Unit name="сом" position="3" unitType="Currency"/>
+        <Unit name="сўм" position="3" unitType="Currency"/>
+        <Unit name="Т" position="3" unitType="Currency"/>
+        <Unit name="դր." position="3" unitType="Currency"/>
+        <Unit name="ج.م.‏" position="3" unitType="Currency"/>
+        <Unit name="د.ا.‏" position="3" unitType="Currency"/>
+        <Unit name="د.إ.‏" position="3" unitType="Currency"/>
+        <Unit name="د.ب.‏" position="3" unitType="Currency"/>
+        <Unit name="د.ت.‏" position="3" unitType="Currency"/>
+        <Unit name="د.ج.‏" position="3" unitType="Currency"/>
+        <Unit name="د.ع.‏" position="3" unitType="Currency"/>
+        <Unit name="د.ك.‏" position="3" unitType="Currency"/>
+        <Unit name="د.ل.‏" position="3" unitType="Currency"/>
+        <Unit name="د.م.‏" position="3" unitType="Currency"/>
+        <Unit name="ر.س.‏" position="3" unitType="Currency"/>
+        <Unit name="ر.ع.‏" position="3" unitType="Currency"/>
+        <Unit name="ر.ق.‏" position="3" unitType="Currency"/>
+        <Unit name="ر.ي.‏" position="3" unitType="Currency"/>
+        <Unit name="ريال" position="3" unitType="Currency"/>
+        <Unit name="ل.س.‏" position="3" unitType="Currency"/>
+        <Unit name="ل.ل.‏" position="3" unitType="Currency"/>
+        <Unit name="रु" position="3" unitType="Currency"/>
+        <Unit name="ਰੁ" position="3" unitType="Currency"/>
+        <Unit name="રૂ" position="3" unitType="Currency"/>
+        <Unit name="ரூ" position="3" unitType="Currency"/>
+        <Unit name="రూ" position="3" unitType="Currency"/>
+        <Unit name="ರೂ" position="3" unitType="Currency"/>
+        <Unit name="ރ." position="3" unitType="Currency"/>
+        <!--ISO currency symbols-->
+        <Unit name="AED" position="3"  unitType="Currency"/>
+        <Unit name="ALL" position="3"  unitType="Currency"/>
+        <Unit name="AMD" position="3"  unitType="Currency"/>
+        <Unit name="ARS" position="3"  unitType="Currency"/>
+        <Unit name="AUD" position="3"  unitType="Currency"/>
+        <Unit name="AZM" position="3"  unitType="Currency"/>
+        <Unit name="BAM" position="3"  unitType="Currency"/>
+        <Unit name="BGL" position="3"  unitType="Currency"/>
+        <Unit name="BHD" position="3"  unitType="Currency"/>
+        <Unit name="BND" position="3"  unitType="Currency"/>
+        <Unit name="BOB" position="3"  unitType="Currency"/>
+        <Unit name="BRL" position="3"  unitType="Currency"/>
+        <Unit name="BYB" position="3"  unitType="Currency"/>
+        <Unit name="BZD" position="3"  unitType="Currency"/>
+        <Unit name="CAD" position="3"  unitType="Currency"/>
+        <Unit name="CHF" position="3"  unitType="Currency"/>
+        <Unit name="CLP" position="3"  unitType="Currency"/>
+        <Unit name="CNY" position="3"  unitType="Currency"/>
+        <Unit name="COP" position="3"  unitType="Currency"/>
+        <Unit name="CRC" position="3"  unitType="Currency"/>
+        <Unit name="CSD" position="3"  unitType="Currency"/>
+        <Unit name="CZK" position="3"  unitType="Currency"/>
+        <Unit name="DKK" position="3"  unitType="Currency"/>
+        <Unit name="DOP" position="3"  unitType="Currency"/>
+        <Unit name="DZD" position="3"  unitType="Currency"/>
+        <Unit name="EEK" position="3"  unitType="Currency"/>
+        <Unit name="EGP" position="3"  unitType="Currency"/>
+        <Unit name="EUR" position="3"  unitType="Currency"/>
+        <Unit name="GBP" position="3"  unitType="Currency"/>
+        <Unit name="GEL" position="3"  unitType="Currency"/>
+        <Unit name="GTQ" position="3"  unitType="Currency"/>
+        <Unit name="HKD" position="3"  unitType="Currency"/>
+        <Unit name="HNL" position="3"  unitType="Currency"/>
+        <Unit name="HRK" position="3"  unitType="Currency"/>
+        <Unit name="HUF" position="3"  unitType="Currency"/>
+        <Unit name="IDR" position="3"  unitType="Currency"/>
+        <Unit name="ILS" position="3"  unitType="Currency"/>
+        <Unit name="INR" position="3"  unitType="Currency"/>
+        <Unit name="IQD" position="3"  unitType="Currency"/>
+        <Unit name="IRR" position="3"  unitType="Currency"/>
+        <Unit name="ISK" position="3"  unitType="Currency"/>
+        <Unit name="JMD" position="3"  unitType="Currency"/>
+        <Unit name="JOD" position="3"  unitType="Currency"/>
+        <Unit name="JPY" position="3"  unitType="Currency"/>
+        <Unit name="KES" position="3"  unitType="Currency"/>
+        <Unit name="KGS" position="3"  unitType="Currency"/>
+        <Unit name="KRW" position="3"  unitType="Currency"/>
+        <Unit name="KWD" position="3"  unitType="Currency"/>
+        <Unit name="KZT" position="3"  unitType="Currency"/>
+        <Unit name="LBP" position="3"  unitType="Currency"/>
+        <Unit name="LTL" position="3"  unitType="Currency"/>
+        <Unit name="LVL" position="3"  unitType="Currency"/>
+        <Unit name="LYD" position="3"  unitType="Currency"/>
+        <Unit name="MAD" position="3"  unitType="Currency"/>
+        <Unit name="MKD" position="3"  unitType="Currency"/>
+        <Unit name="MNT" position="3"  unitType="Currency"/>
+        <Unit name="MOP" position="3"  unitType="Currency"/>
+        <Unit name="MTL" position="3"  unitType="Currency"/>
+        <Unit name="MVR" position="3"  unitType="Currency"/>
+        <Unit name="MXN" position="3"  unitType="Currency"/>
+        <Unit name="MYR" position="3"  unitType="Currency"/>
+        <Unit name="NIO" position="3"  unitType="Currency"/>
+        <Unit name="NOK" position="3"  unitType="Currency"/>
+        <Unit name="NZD" position="3"  unitType="Currency"/>
+        <Unit name="OMR" position="3"  unitType="Currency"/>
+        <Unit name="PAB" position="3"  unitType="Currency"/>
+        <Unit name="PEN" position="3"  unitType="Currency"/>
+        <Unit name="PHP" position="3"  unitType="Currency"/>
+        <Unit name="PKR" position="3"  unitType="Currency"/>
+        <Unit name="PLN" position="3"  unitType="Currency"/>
+        <Unit name="PYG" position="3"  unitType="Currency"/>
+        <Unit name="QAR" position="3"  unitType="Currency"/>
+        <Unit name="ROL" position="3"  unitType="Currency"/>
+        <Unit name="RUR" position="3"  unitType="Currency"/>
+        <Unit name="SAR" position="3"  unitType="Currency"/>
+        <Unit name="SEK" position="3"  unitType="Currency"/>
+        <Unit name="SGD" position="3"  unitType="Currency"/>
+        <Unit name="SIT" position="3"  unitType="Currency"/>
+        <Unit name="SKK" position="3"  unitType="Currency"/>
+        <Unit name="SYP" position="3"  unitType="Currency"/>
+        <Unit name="THB" position="3"  unitType="Currency"/>
+        <Unit name="TND" position="3"  unitType="Currency"/>
+        <Unit name="TRY" position="3"  unitType="Currency"/>
+        <Unit name="TTD" position="3"  unitType="Currency"/>
+        <Unit name="TWD" position="3"  unitType="Currency"/>
+        <Unit name="UAH" position="3"  unitType="Currency"/>
+        <Unit name="USD" position="3"  unitType="Currency"/>
+        <Unit name="UYU" position="3"  unitType="Currency"/>
+        <Unit name="UZS" position="3"  unitType="Currency"/>
+        <Unit name="VEB" position="3"  unitType="Currency"/>
+        <Unit name="VND" position="3"  unitType="Currency"/>
+        <Unit name="YER" position="3"  unitType="Currency"/>
+        <Unit name="ZAR" position="3"  unitType="Currency"/>
+        <Unit name="ZWD" position="3"  unitType="Currency"/>
+        <!--Percentage-->
+        <Unit name="%" position="3"  unitType="Percentage"/>
+        <!--Area-->
+        <Unit name="SQ.FT." position="2" unitType="Area" unitFormat="Feet" conversionFactor="144"/>
+        <Unit name="SQ. FT." position="2" unitType="Area" unitFormat="Feet" conversionFactor="144"/>
+        <Unit name="SQ FT" position="2" unitType="Area" unitFormat="Feet" conversionFactor="144"/>
+        <Unit name="SQ.FT" position="2" unitType="Area" unitFormat="Feet" conversionFactor="144"/>
+        <Unit name="SQ. FT" position="2" unitType="Area" unitFormat="Feet" conversionFactor="144"/>
+        <Unit name="SQ.IN." position="2" unitType="Area" unitFormat="Inches"/>
+        <Unit name="SQ. IN." position="2" unitType="Area" unitFormat="Inches"/>
+        <Unit name="SQ IN" position="2" unitType="Area" unitFormat="Inches"/>
+        <Unit name="SQ.IN" position="2" unitType="Area" unitFormat="Inches"/>
+        <!--Volume-->
+        <Unit name="CU.FT." position="2" unitType="Volume" unitFormat="Feet" conversionFactor="1728"/>
+        <Unit name="CU. FT." position="2" unitType="Volume" unitFormat="Feet" conversionFactor="1728"/>
+        <Unit name="CU FT" position="2" unitType="Volume" unitFormat="Feet" conversionFactor="1728"/>
+        <Unit name="CU.FT" position="2" unitType="Volume" unitFormat="Feet" conversionFactor="1728"/>
+        <Unit name="CU.IN." position="2" unitType="Volume" unitFormat="Inches"/>
+        <Unit name="CU. IN." position="2" unitType="Volume" unitFormat="Inches"/>
+        <Unit name="CU IN" position="2" unitType="Volume" unitFormat="Inches"/>
+        <Unit name="CU.IN" position="2" unitType="Volume" unitFormat="Inches"/>
+      </Units>
+      <Categories>
+         <Category catId="2" name="Date">
+            <DisplayName resource="302" src="AcFieldRes.dll"/>
+         </Category>
+         <Category catId="3" name="Document">
+            <DisplayName resource="303" src="AcFieldRes.dll"/>
+         </Category>
+         <Category catId="4" name="Objects">
+            <DisplayName resource="304" src="AcFieldRes.dll"/>
+         </Category>
+         <Category catId="5" name="Plot">
+            <DisplayName resource="305" src="AcFieldRes.dll"/>
+         </Category>
+         <Category catId="6" name="Linked">
+            <DisplayName resource="306" src="AcFieldRes.dll"/>
+         </Category>
+         <Category catId="7" name="SheetSet">
+            <DisplayName resource="307" src="AcFieldRes.dll"/>
+         </Category>
+         <Category catId="8" name="Other">
+            <DisplayName resource="308" src="AcFieldRes.dll"/>
+         </Category>
+         <Category catId="9" name="ModelDoc" visible="48" >
+            <DisplayName resource="309" src="AcFieldRes.dll"/>
+         </Category>
+         <Category catId="101" name="SystemVariables" visible="0"/>
+         <Category catId="102" name="LispVariables" visible="0"/>
+         <Category catId="201" name="AcDbEntity" visible="0"/>
+         <Category catId="202" name="AcDbText" visible="0"/>
+         <Category catId="203" name="AcDbMText" visible="0"/>
+         <Category catId="204" name="AcDbAttributeDefinition" visible="0"/>
+         <Category catId="205" name="AcDbHatch" visible="0"/>
+         <Category catId="206" name="AcDbPolyline" visible="0"/>
+         <Category catId="207" name="AcDb3dPolyline" visible="0"/>
+         <Category catId="208" name="AcDbPolygonMesh" visible="0"/>
+         <Category catId="209" name="AcDbSpline" visible="0"/>
+         <Category catId="210" name="AcDbEllipse" visible="0"/>
+         <Category catId="211" name="AcDbViewport" visible="0"/>
+         <Category catId="212" name="AcDbDimension" visible="0"/>
+         <Category catId="213" name="AcDbBlockReference" visible="0"/>
+         <Category catId="214" name="AcDbViewBorder" visible="0"/>
+      </Categories>
+      <FormatTypes>
+         <FormatType name="Date">
+            <HelpText resource="701" src="AcFieldRes.dll"/>
+            <Formats>
+               <Format>
+                  <DisplayName resource="401" src="AcFieldRes.dll"/>
+                  <FormatString resource="501" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="402" src="AcFieldRes.dll"/>
+                  <FormatString resource="502" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="403" src="AcFieldRes.dll"/>
+                  <FormatString resource="503" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="404" src="AcFieldRes.dll"/>
+                  <FormatString resource="504" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="405" src="AcFieldRes.dll"/>
+                  <FormatString resource="505" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="406" src="AcFieldRes.dll"/>
+                  <FormatString resource="506" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="407" src="AcFieldRes.dll"/>
+                  <FormatString resource="507" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="408" src="AcFieldRes.dll"/>
+                  <FormatString resource="508" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="409" src="AcFieldRes.dll"/>
+                  <FormatString resource="509" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="410" src="AcFieldRes.dll"/>
+                  <FormatString resource="510" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="411" src="AcFieldRes.dll"/>
+                  <FormatString resource="511" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="412" src="AcFieldRes.dll"/>
+                  <FormatString resource="512" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="413" src="AcFieldRes.dll"/>
+                  <FormatString resource="513" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="414" src="AcFieldRes.dll"/>
+                  <FormatString resource="514" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="415" src="AcFieldRes.dll"/>
+                  <FormatString resource="515" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="416" src="AcFieldRes.dll"/>
+                  <FormatString resource="516" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="417" src="AcFieldRes.dll"/>
+                  <FormatString resource="517" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="418" src="AcFieldRes.dll"/>
+                  <FormatString resource="518" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="419" src="AcFieldRes.dll"/>
+                  <FormatString resource="519" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="420" src="AcFieldRes.dll"/>
+                  <FormatString resource="520" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="421" src="AcFieldRes.dll"/>
+                  <FormatString resource="521" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="422" src="AcFieldRes.dll"/>
+                  <FormatString resource="522" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="423" src="AcFieldRes.dll"/>
+                  <FormatString resource="523" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="424" src="AcFieldRes.dll"/>
+                  <FormatString resource="524" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="425" src="AcFieldRes.dll"/>
+                  <FormatString resource="525" src="AcFieldRes.dll"/>
+               </Format>
+               <Format>
+                  <DisplayName resource="426" src="AcFieldRes.dll"/>
+                  <FormatString resource="526" src="AcFieldRes.dll"/>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="Bytes">
+            <Formats>
+               <Format>
+                  <DisplayName resource="461" src="AcFieldRes.dll"/>
+                  <FormatString>%ld%by1</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="462" src="AcFieldRes.dll"/>
+                  <FormatString>%.2f%by2</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="463" src="AcFieldRes.dll"/>
+                  <FormatString>%.2f%by3</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="Lineweight">
+            <Formats>
+               <Format>
+                  <DisplayName resource="451" src="AcFieldRes.dll"/>
+                  <FormatString>%.2f mm%lw1</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="452" src="AcFieldRes.dll"/>
+                  <FormatString>%.3f\"%lw2</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="Long">
+            <Formats><!--No formats supported--></Formats>
+         </FormatType>
+         <FormatType name="LUnits">
+            <Formats>
+               <Format>
+                  <DisplayName resource="471" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <Format>
+                  <DisplayName resource="472" src="AcFieldRes.dll"/>
+                  <FormatString>%lu6</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="473" src="AcFieldRes.dll"/>
+                  <FormatString>%lu2</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="474" src="AcFieldRes.dll"/>
+                  <FormatString>%lu4</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="475" src="AcFieldRes.dll"/>
+                  <FormatString>%lu3</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="476" src="AcFieldRes.dll"/>
+                  <FormatString>%lu5</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="477" src="AcFieldRes.dll"/>
+                  <FormatString>%lu1</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="AUnits">
+            <Formats>
+               <Format>
+                  <DisplayName resource="481" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <Format>
+                  <DisplayName resource="482" src="AcFieldRes.dll"/>
+                  <FormatString>%au5</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="483" src="AcFieldRes.dll"/>
+                  <FormatString>%au0</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="484" src="AcFieldRes.dll"/>
+                  <FormatString>%au1</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="485" src="AcFieldRes.dll"/>
+                  <FormatString>%au2</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="486" src="AcFieldRes.dll"/>
+                  <FormatString>%au3</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="487" src="AcFieldRes.dll"/>
+                  <FormatString>%au4</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="Area">
+            <Formats>
+               <Format>
+                  <DisplayName resource="471" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <Format>
+                  <DisplayName resource="472" src="AcFieldRes.dll"/>
+                  <FormatString>%lu6%qf1</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="473" src="AcFieldRes.dll"/>
+                  <FormatString>%lu2</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="474" src="AcFieldRes.dll"/>
+                  <FormatString>%lu2%ct4%qf1 SQ. FT.</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="475" src="AcFieldRes.dll"/>
+                  <FormatString>%lu2%ct4%qf1 SQ. FT.</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="476" src="AcFieldRes.dll"/>
+                  <FormatString>%lu5</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="477" src="AcFieldRes.dll"/>
+                  <FormatString>%lu1</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="Scale">
+            <Formats>
+               <Format>
+                  <DisplayName resource="491" src="AcFieldRes.dll"/>
+                  <FormatString>%lu2%qf2816</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="492" src="AcFieldRes.dll"/>
+                  <FormatString>%lu2%qf2816:1</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="493" src="AcFieldRes.dll"/>
+                  <FormatString>1:%lu2%ct1%qf2816</FormatString>
+               </Format>
+               <Format version="16.2">
+                  <DisplayName resource="494" src="AcFieldRes.dll"/>
+                  <FormatString>1\" = %lu2%zs12%ct9[0.0833333333333333]'</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="495" src="AcFieldRes.dll"/>
+                  <FormatString>%lu4%pr8%ct2%qf2816 = 1'</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="496" src="AcFieldRes.dll"/>
+                  <FormatString>%lu4%pr8%ct2%qf2816 = 1'-0\"</FormatString>
+               </Format>
+               <Format version="16.2">
+                  <DisplayName resource="497" src="AcFieldRes.dll"/>
+                  <FormatString>%sn</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="String">
+            <Formats>
+               <Format>
+                  <DisplayName resource="441" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <Format>
+                  <DisplayName resource="442" src="AcFieldRes.dll"/>
+                  <FormatString>%tc1</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="443" src="AcFieldRes.dll"/>
+                  <FormatString>%tc2</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="444" src="AcFieldRes.dll"/>
+                  <FormatString>%tc3</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="445" src="AcFieldRes.dll"/>
+                  <FormatString>%tc4</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="Filename">
+            <Formats>
+               <Format>
+                  <DisplayName resource="441" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <Format>
+                  <DisplayName resource="442" src="AcFieldRes.dll"/>
+                  <FormatString>%tc1</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="443" src="AcFieldRes.dll"/>
+                  <FormatString>%tc2</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="444" src="AcFieldRes.dll"/>
+                  <FormatString>%tc3</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="445" src="AcFieldRes.dll"/>
+                  <FormatString>%tc4</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="Point">
+            <Formats>
+               <Format>
+                  <DisplayName resource="471" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <Format>
+                  <DisplayName resource="472" src="AcFieldRes.dll"/>
+                  <FormatString>%lu6</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="473" src="AcFieldRes.dll"/>
+                  <FormatString>%lu2</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="474" src="AcFieldRes.dll"/>
+                  <FormatString>%lu4</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="475" src="AcFieldRes.dll"/>
+                  <FormatString>%lu3</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="476" src="AcFieldRes.dll"/>
+                  <FormatString>%lu5</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="477" src="AcFieldRes.dll"/>
+                  <FormatString>%lu1</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="Percentage">
+            <Formats>
+              <!--No formats-->
+            </Formats>
+         </FormatType>
+         <FormatType name="Currency">
+            <Formats>
+              <!--No formats-->
+            </Formats>
+         </FormatType>
+         <FormatType name="LUPrecArchitectural">
+            <Formats>
+               <!--Current precision-->
+               <Format>
+                  <DisplayName resource="609" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <!--0'-0"-->
+               <Format>
+                  <DisplayName resource="610" src="AcFieldRes.dll"/>
+                  <FormatString>%pr0</FormatString>
+               </Format>
+               <!--0'-0 1/2"-->
+               <Format>
+                  <DisplayName resource="611" src="AcFieldRes.dll"/>
+                  <FormatString>%pr1</FormatString>
+               </Format>
+               <!--0'-0 1/4"-->
+               <Format>
+                  <DisplayName resource="612" src="AcFieldRes.dll"/>
+                  <FormatString>%pr2</FormatString>
+               </Format>
+               <!--0'-0 1/8"-->
+               <Format>
+                  <DisplayName resource="613" src="AcFieldRes.dll"/>
+                  <FormatString>%pr3</FormatString>
+               </Format>
+               <!--0'-0 1/16"-->
+               <Format>
+                  <DisplayName resource="614" src="AcFieldRes.dll"/>
+                  <FormatString>%pr4</FormatString>
+               </Format>
+               <!--0'-0 1/32"-->
+               <Format>
+                  <DisplayName resource="615" src="AcFieldRes.dll"/>
+                  <FormatString>%pr5</FormatString>
+               </Format>
+               <!--0'-0 1/64"-->
+               <Format>
+                  <DisplayName resource="616" src="AcFieldRes.dll"/>
+                  <FormatString>%pr6</FormatString>
+               </Format>
+               <!--0'-0 1/128"-->
+               <Format>
+                  <DisplayName resource="617" src="AcFieldRes.dll"/>
+                  <FormatString>%pr7</FormatString>
+               </Format>
+               <!--0'-0 1/256"-->
+               <Format>
+                  <DisplayName resource="618" src="AcFieldRes.dll"/>
+                  <FormatString>%pr8</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="LUPrecDecimal">
+            <Formats>
+               <!--Current precision-->
+               <Format>
+                  <DisplayName resource="609" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <!--0-->
+               <Format>
+                  <DisplayName resource="620" src="AcFieldRes.dll"/>
+                  <FormatString>%pr0</FormatString>
+               </Format>
+               <!--0.0-->
+               <Format>
+                  <DisplayName resource="621" src="AcFieldRes.dll"/>
+                  <FormatString>%pr1</FormatString>
+               </Format>
+               <!--0.00-->
+               <Format>
+                  <DisplayName resource="622" src="AcFieldRes.dll"/>
+                  <FormatString>%pr2</FormatString>
+               </Format>
+               <!--0.000-->
+               <Format>
+                  <DisplayName resource="623" src="AcFieldRes.dll"/>
+                  <FormatString>%pr3</FormatString>
+               </Format>
+               <!--0.0000-->
+               <Format>
+                  <DisplayName resource="624" src="AcFieldRes.dll"/>
+                  <FormatString>%pr4</FormatString>
+               </Format>
+               <!--0.00000-->
+               <Format>
+                  <DisplayName resource="625" src="AcFieldRes.dll"/>
+                  <FormatString>%pr5</FormatString>
+               </Format>
+               <!--0.000000-->
+               <Format>
+                  <DisplayName resource="626" src="AcFieldRes.dll"/>
+                  <FormatString>%pr6</FormatString>
+               </Format>
+               <!--0.0000000-->
+               <Format>
+                  <DisplayName resource="627" src="AcFieldRes.dll"/>
+                  <FormatString>%pr7</FormatString>
+               </Format>
+               <!--0.00000000-->
+               <Format>
+                  <DisplayName resource="628" src="AcFieldRes.dll"/>
+                  <FormatString>%pr8</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="LUPrecEngineering">
+            <Formats>
+               <!--Current precision-->
+               <Format>
+                  <DisplayName resource="609" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <!--0'-0"-->
+               <Format>
+                  <DisplayName resource="630" src="AcFieldRes.dll"/>
+                  <FormatString>%pr0</FormatString>
+               </Format>
+               <!--0'-0.0"-->
+               <Format>
+                  <DisplayName resource="631" src="AcFieldRes.dll"/>
+                  <FormatString>%pr1</FormatString>
+               </Format>
+               <!--0'-0.00"-->
+               <Format>
+                  <DisplayName resource="632" src="AcFieldRes.dll"/>
+                  <FormatString>%pr2</FormatString>
+               </Format>
+               <!--0'-0.000"-->
+               <Format>
+                  <DisplayName resource="633" src="AcFieldRes.dll"/>
+                  <FormatString>%pr3</FormatString>
+               </Format>
+               <!--0'-0.0000"-->
+               <Format>
+                  <DisplayName resource="634" src="AcFieldRes.dll"/>
+                  <FormatString>%pr4</FormatString>
+               </Format>
+               <!--0'-0.00000"-->
+               <Format>
+                  <DisplayName resource="635" src="AcFieldRes.dll"/>
+                  <FormatString>%pr5</FormatString>
+               </Format>
+               <!--0'-0.000000"-->
+               <Format>
+                  <DisplayName resource="636" src="AcFieldRes.dll"/>
+                  <FormatString>%pr6</FormatString>
+               </Format>
+               <!--0'-0.0000000"-->
+               <Format>
+                  <DisplayName resource="637" src="AcFieldRes.dll"/>
+                  <FormatString>%pr7</FormatString>
+               </Format>
+               <!--0'-0.00000000"-->
+               <Format>
+                  <DisplayName resource="638" src="AcFieldRes.dll"/>
+                  <FormatString>%pr8</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="LUPrecFractional">
+            <Formats>
+               <!--Current precision-->
+               <Format>
+                  <DisplayName resource="609" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <!--0-->
+               <Format>
+                  <DisplayName resource="640" src="AcFieldRes.dll"/>
+                  <FormatString>%pr0</FormatString>
+               </Format>
+               <!--0 1/2-->
+               <Format>
+                  <DisplayName resource="641" src="AcFieldRes.dll"/>
+                  <FormatString>%pr1</FormatString>
+               </Format>
+               <!--0 1/4-->
+               <Format>
+                  <DisplayName resource="642" src="AcFieldRes.dll"/>
+                  <FormatString>%pr2</FormatString>
+               </Format>
+               <!--0 1/8-->
+               <Format>
+                  <DisplayName resource="643" src="AcFieldRes.dll"/>
+                  <FormatString>%pr3</FormatString>
+               </Format>
+               <!--0 1/16-->
+               <Format>
+                  <DisplayName resource="644" src="AcFieldRes.dll"/>
+                  <FormatString>%pr4</FormatString>
+               </Format>
+               <!--0 1/32-->
+               <Format>
+                  <DisplayName resource="645" src="AcFieldRes.dll"/>
+                  <FormatString>%pr5</FormatString>
+               </Format>
+               <!--0 1/64-->
+               <Format>
+                  <DisplayName resource="646" src="AcFieldRes.dll"/>
+                  <FormatString>%pr6</FormatString>
+               </Format>
+               <!--0 1/128-->
+               <Format>
+                  <DisplayName resource="647" src="AcFieldRes.dll"/>
+                  <FormatString>%pr7</FormatString>
+               </Format>
+               <!--0 1/256-->
+               <Format>
+                  <DisplayName resource="648" src="AcFieldRes.dll"/>
+                  <FormatString>%pr8</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="LUPrecScientific">
+            <Formats>
+               <!--Current precision-->
+               <Format>
+                  <DisplayName resource="609" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <!--0E+01-->
+               <Format>
+                  <DisplayName resource="650" src="AcFieldRes.dll"/>
+                  <FormatString>%pr0</FormatString>
+               </Format>
+               <!--0.0E+01-->
+               <Format>
+                  <DisplayName resource="651" src="AcFieldRes.dll"/>
+                  <FormatString>%pr1</FormatString>
+               </Format>
+               <!--0.00E+01-->
+               <Format>
+                  <DisplayName resource="652" src="AcFieldRes.dll"/>
+                  <FormatString>%pr2</FormatString>
+               </Format>
+               <!--0.000E+01-->
+               <Format>
+                  <DisplayName resource="653" src="AcFieldRes.dll"/>
+                  <FormatString>%pr3</FormatString>
+               </Format>
+               <!--0.0000E+01-->
+               <Format>
+                  <DisplayName resource="654" src="AcFieldRes.dll"/>
+                  <FormatString>%pr4</FormatString>
+               </Format>
+               <!--0.00000E+01-->
+               <Format>
+                  <DisplayName resource="655" src="AcFieldRes.dll"/>
+                  <FormatString>%pr5</FormatString>
+               </Format>
+               <!--0.000000E+01-->
+               <Format>
+                  <DisplayName resource="656" src="AcFieldRes.dll"/>
+                  <FormatString>%pr6</FormatString>
+               </Format>
+               <!--0.0000000E+01-->
+               <Format>
+                  <DisplayName resource="657" src="AcFieldRes.dll"/>
+                  <FormatString>%pr7</FormatString>
+               </Format>
+               <!--0.00000000E+01-->
+               <Format>
+                  <DisplayName resource="658" src="AcFieldRes.dll"/>
+                  <FormatString>%pr8</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="AUPrecDegrees">
+            <Formats>
+               <!--Current precision-->
+               <Format>
+                  <DisplayName resource="609" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <!--0d-->
+               <Format>
+                  <DisplayName resource="660" src="AcFieldRes.dll"/>
+                  <FormatString>%pr0</FormatString>
+               </Format>
+               <!--0d00'-->
+               <Format>
+                  <DisplayName resource="661" src="AcFieldRes.dll"/>
+                  <FormatString>%pr1</FormatString>
+               </Format>
+               <!--0d00'00"-->
+               <Format>
+                  <DisplayName resource="662" src="AcFieldRes.dll"/>
+                  <FormatString>%pr3</FormatString>
+               </Format>
+               <!--0d00'00.0"-->
+               <Format>
+                  <DisplayName resource="663" src="AcFieldRes.dll"/>
+                  <FormatString>%pr5</FormatString>
+               </Format>
+               <!--0d00'00.00"-->
+               <Format>
+                  <DisplayName resource="664" src="AcFieldRes.dll"/>
+                  <FormatString>%pr6</FormatString>
+               </Format>
+               <!--0d00'00.000"-->
+               <Format>
+                  <DisplayName resource="665" src="AcFieldRes.dll"/>
+                  <FormatString>%pr7</FormatString>
+               </Format>
+               <!--0d00'00.0000"-->
+               <Format>
+                  <DisplayName resource="666" src="AcFieldRes.dll"/>
+                  <FormatString>%pr8</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="AUPrecGrads">
+            <Formats>
+               <!--Current precision-->
+               <Format>
+                  <DisplayName resource="609" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <!--0g-->
+               <Format>
+                  <DisplayName resource="670" src="AcFieldRes.dll"/>
+                  <FormatString>%pr0</FormatString>
+               </Format>
+               <!--0.0g-->
+               <Format>
+                  <DisplayName resource="671" src="AcFieldRes.dll"/>
+                  <FormatString>%pr1</FormatString>
+               </Format>
+               <!--0.00g-->
+               <Format>
+                  <DisplayName resource="672" src="AcFieldRes.dll"/>
+                  <FormatString>%pr2</FormatString>
+               </Format>
+               <!--0.000g-->
+               <Format>
+                  <DisplayName resource="673" src="AcFieldRes.dll"/>
+                  <FormatString>%pr3</FormatString>
+               </Format>
+               <!--0.0000g-->
+               <Format>
+                  <DisplayName resource="674" src="AcFieldRes.dll"/>
+                  <FormatString>%pr4</FormatString>
+               </Format>
+               <!--0.00000g-->
+               <Format>
+                  <DisplayName resource="675" src="AcFieldRes.dll"/>
+                  <FormatString>%pr5</FormatString>
+               </Format>
+               <!--0.000000g-->
+               <Format>
+                  <DisplayName resource="676" src="AcFieldRes.dll"/>
+                  <FormatString>%pr6</FormatString>
+               </Format>
+               <!--0.0000000g-->
+               <Format>
+                  <DisplayName resource="677" src="AcFieldRes.dll"/>
+                  <FormatString>%pr7</FormatString>
+               </Format>
+               <!--0.00000000g-->
+               <Format>
+                  <DisplayName resource="678" src="AcFieldRes.dll"/>
+                  <FormatString>%pr8</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="AUPrecRadians">
+            <Formats>
+               <!--Current precision-->
+               <Format>
+                  <DisplayName resource="609" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <!--0r-->
+               <Format>
+                  <DisplayName resource="680" src="AcFieldRes.dll"/>
+                  <FormatString>%pr0</FormatString>
+               </Format>
+               <!--0.0r-->
+               <Format>
+                  <DisplayName resource="681" src="AcFieldRes.dll"/>
+                  <FormatString>%pr1</FormatString>
+               </Format>
+               <!--0.00r-->
+               <Format>
+                  <DisplayName resource="682" src="AcFieldRes.dll"/>
+                  <FormatString>%pr2</FormatString>
+               </Format>
+               <!--0.000r-->
+               <Format>
+                  <DisplayName resource="683" src="AcFieldRes.dll"/>
+                  <FormatString>%pr3</FormatString>
+               </Format>
+               <!--0.0000r-->
+               <Format>
+                  <DisplayName resource="684" src="AcFieldRes.dll"/>
+                  <FormatString>%pr4</FormatString>
+               </Format>
+               <!--0.00000r-->
+               <Format>
+                  <DisplayName resource="685" src="AcFieldRes.dll"/>
+                  <FormatString>%pr5</FormatString>
+               </Format>
+               <!--0.000000r-->
+               <Format>
+                  <DisplayName resource="686" src="AcFieldRes.dll"/>
+                  <FormatString>%pr6</FormatString>
+               </Format>
+               <!--0.0000000r-->
+               <Format>
+                  <DisplayName resource="687" src="AcFieldRes.dll"/>
+                  <FormatString>%pr7</FormatString>
+               </Format>
+               <!--0.00000000r-->
+               <Format>
+                  <DisplayName resource="688" src="AcFieldRes.dll"/>
+                  <FormatString>%pr8</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="AUPrecSurveyor">
+            <Formats>
+               <!--Current precision-->
+               <Format>
+                  <DisplayName resource="609" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <!--N 0d E-->
+               <Format>
+                  <DisplayName resource="690" src="AcFieldRes.dll"/>
+                  <FormatString>%pr0</FormatString>
+               </Format>
+               <!--N 0d00' E-->
+               <Format>
+                  <DisplayName resource="691" src="AcFieldRes.dll"/>
+                  <FormatString>%pr1</FormatString>
+               </Format>
+               <!--N 0d00'00" E-->
+               <Format>
+                  <DisplayName resource="692" src="AcFieldRes.dll"/>
+                  <FormatString>%pr3</FormatString>
+               </Format>
+               <!--N 0d00'00.0" E-->
+               <Format>
+                  <DisplayName resource="693" src="AcFieldRes.dll"/>
+                  <FormatString>%pr5</FormatString>
+               </Format>
+               <!--N 0d00'00.00" E-->
+               <Format>
+                  <DisplayName resource="694" src="AcFieldRes.dll"/>
+                  <FormatString>%pr6</FormatString>
+               </Format>
+               <!--N 0d00'00.000" E-->
+               <Format>
+                  <DisplayName resource="695" src="AcFieldRes.dll"/>
+                  <FormatString>%pr7</FormatString>
+               </Format>
+               <!--N 0d00'00.0000" E-->
+               <Format>
+                  <DisplayName resource="696" src="AcFieldRes.dll"/>
+                  <FormatString>%pr8</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="DecimalSeparator">
+            <Formats>
+               <Format>
+                  <DisplayName resource="551" src="AcFieldRes.dll"/>
+                  <FormatString>%ds46</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="552" src="AcFieldRes.dll"/>
+                  <FormatString>%ds44</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="553" src="AcFieldRes.dll"/>
+                  <FormatString>%ds32</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="ListSeparator">
+            <Formats>
+               <Format>
+                  <DisplayName resource="561" src="AcFieldRes.dll"/>
+                  <FormatString>%ls44</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="562" src="AcFieldRes.dll"/>
+                  <FormatString>%ls59</FormatString>
+               </Format>
+               <Format>
+                  <DisplayName resource="563" src="AcFieldRes.dll"/>
+                  <FormatString>%ls47</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+         <FormatType name="ThousandSeparator">
+            <Formats>
+               <Format>
+                  <!--None-->
+                  <DisplayName resource="581" src="AcFieldRes.dll"/>
+                  <FormatString/>
+               </Format>
+               <Format>
+                  <!--Comma-->
+                  <DisplayName resource="582" src="AcFieldRes.dll"/>
+                  <FormatString>%th44</FormatString>
+               </Format>
+               <Format>
+                  <!--Period-->
+                  <DisplayName resource="583" src="AcFieldRes.dll"/>
+                  <FormatString>%th46</FormatString>
+               </Format>
+               <Format>
+                  <!--Single quote-->
+                  <DisplayName resource="584" src="AcFieldRes.dll"/>
+                  <FormatString>%th39</FormatString>
+               </Format>
+            </Formats>
+         </FormatType>
+      </FormatTypes>
+   </AutoCAD>
+</FieldCatalog>

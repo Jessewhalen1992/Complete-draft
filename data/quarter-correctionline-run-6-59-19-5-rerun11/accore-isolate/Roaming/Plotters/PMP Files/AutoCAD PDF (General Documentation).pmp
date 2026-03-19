@@ -1,0 +1,303 @@
+PIAFILEVERSION_3.0,json
+{
+ "data" : 
+ {
+  "meta" : 
+  {
+   "canonical_family_name" : "Autodesk ePlot",
+   "canonical_model_name" : "pdf",
+   "default_system_cfg" : false,
+   "dm_driver_version" : 0,
+   "driver_pathname" : "C:\\Program Files\\Autodesk\\AutoCAD 2025\\drv\\pdfplot17.hdi",
+   "driver_tag_line" : "PDF ePlot - by Autodesk",
+   "driver_type" : 3,
+   "driver_version" : "1.1-17.0.154.0 [v018-1]",
+   "file_only" : true,
+   "friendly_net_name" : "",
+   "locale" : "4B00409",
+   "localized_family_name" : "Autodesk ePlot (PDF)",
+   "localized_model_name" : "DWG To PDF",
+   "model_abilities" : "000550055000",
+   "platform" : "2,10,0",
+   "short_net_name" : "",
+   "show_custom_first" : false,
+   "toolkit_version" : 1,
+   "truetype_as_text" : true,
+   "udm_description" : "",
+   "user_defined_model_basename" : "",
+   "user_defined_model_pathname" : "C:\\Users\\Work Test 2\\appdata\\roaming\\autodesk\\autodesk autocad map 3d 2025\\r25.0\\enu\\plotters\\pmp files\\AutoCAD PDF (General Documentation).pmp"
+  },
+  "mod" : 
+  {
+   "media" : 
+   {
+    "abilities" : "500005500500505555000005550000000550000500000500000",
+    "caps_state" : "000000000000000000000000000000000000000000000000000",
+    "size_max_x" : 5080.0,
+    "size_max_y" : 5080.0,
+    "ui_owner" : "11111111111111111111000"
+   }
+  },
+  "udm" : 
+  {
+   "calibration" : 
+   {
+    "_x" : 1.0,
+    "_y" : 1.0
+   },
+   "media" : 
+   {
+    "description" : 
+    {
+     "0" : 
+     {
+      "caps_type" : 2,
+      "dimensional" : true,
+      "media_bounds_urx" : 215.89999389648438,
+      "media_bounds_ury" : 355.60000610351562,
+      "name" : "User-1",
+      "printable_area" : 73185.3359375,
+      "printable_bounds_llx" : 3.1749999523162842,
+      "printable_bounds_lly" : 3.1749999523162842,
+      "printable_bounds_urx" : 212.72499084472656,
+      "printable_bounds_ury" : 352.42501831054688
+     },
+     "1" : 
+     {
+      "caps_type" : 2,
+      "dimensional" : true,
+      "media_bounds_urx" : 3048.0,
+      "media_bounds_ury" : 3048.0,
+      "name" : "User-2",
+      "printable_area" : 9251634.0,
+      "printable_bounds_llx" : 3.1749999523162842,
+      "printable_bounds_lly" : 3.1749999523162842,
+      "printable_bounds_urx" : 3044.824951171875,
+      "printable_bounds_ury" : 3044.824951171875
+     },
+     "10" : 
+     {
+      "caps_type" : 2,
+      "dimensional" : true,
+      "media_bounds_urx" : 5080.0,
+      "media_bounds_ury" : 5080.0,
+      "name" : "User-11",
+      "printable_area" : 25806400.0,
+      "printable_bounds_llx" : 0.0,
+      "printable_bounds_lly" : 0.0,
+      "printable_bounds_urx" : 5080.0,
+      "printable_bounds_ury" : 5080.0
+     },
+     "2" : 
+     {
+      "caps_type" : 2,
+      "dimensional" : true,
+      "media_bounds_urx" : 914.4000244140625,
+      "media_bounds_ury" : 3048.0,
+      "name" : "User-3",
+      "printable_area" : 2761970.25,
+      "printable_bounds_llx" : 3.1749999523162842,
+      "printable_bounds_lly" : 3.1749999523162842,
+      "printable_bounds_urx" : 911.22503662109375,
+      "printable_bounds_ury" : 3044.824951171875
+     },
+     "3" : 
+     {
+      "caps_type" : 2,
+      "dimensional" : true,
+      "media_bounds_urx" : 3048.0,
+      "media_bounds_ury" : 1117.5999755859375,
+      "name" : "User-4",
+      "printable_area" : 3406444.75,
+      "printable_bounds_llx" : 0.0,
+      "printable_bounds_lly" : 0.0,
+      "printable_bounds_urx" : 3048.0,
+      "printable_bounds_ury" : 1117.5999755859375
+     },
+     "4" : 
+     {
+      "caps_type" : 2,
+      "dimensional" : true,
+      "media_bounds_urx" : 812.79998779296875,
+      "media_bounds_ury" : 1828.800048828125,
+      "name" : "User-5",
+      "printable_area" : 1469714.75,
+      "printable_bounds_llx" : 3.1749999523162842,
+      "printable_bounds_lly" : 3.1749999523162842,
+      "printable_bounds_urx" : 809.625,
+      "printable_bounds_ury" : 1825.625
+     },
+     "5" : 
+     {
+      "caps_type" : 2,
+      "dimensional" : true,
+      "media_bounds_urx" : 1270.0,
+      "media_bounds_ury" : 914.4000244140625,
+      "name" : "User-6",
+      "printable_area" : 1161288.0,
+      "printable_bounds_llx" : 0.0,
+      "printable_bounds_lly" : 0.0,
+      "printable_bounds_urx" : 1270.0,
+      "printable_bounds_ury" : 914.4000244140625
+     },
+     "6" : 
+     {
+      "caps_type" : 2,
+      "dimensional" : true,
+      "media_bounds_urx" : 762.0,
+      "media_bounds_ury" : 3048.0,
+      "name" : "User-7",
+      "printable_area" : 2298422.75,
+      "printable_bounds_llx" : 3.1749999523162842,
+      "printable_bounds_lly" : 3.1749999523162842,
+      "printable_bounds_urx" : 758.82501220703125,
+      "printable_bounds_ury" : 3044.824951171875
+     },
+     "7" : 
+     {
+      "caps_type" : 2,
+      "dimensional" : true,
+      "media_bounds_urx" : 1600.2000732421875,
+      "media_bounds_ury" : 3048.0,
+      "name" : "User-8",
+      "printable_area" : 4847933.5,
+      "printable_bounds_llx" : 3.1749999523162842,
+      "printable_bounds_lly" : 3.1749999523162842,
+      "printable_bounds_urx" : 1597.0250244140625,
+      "printable_bounds_ury" : 3044.824951171875
+     },
+     "8" : 
+     {
+      "caps_type" : 2,
+      "dimensional" : true,
+      "media_bounds_urx" : 812.79998779296875,
+      "media_bounds_ury" : 2032.0,
+      "name" : "User-9",
+      "printable_area" : 1651609.625,
+      "printable_bounds_llx" : 0.0,
+      "printable_bounds_lly" : 0.0,
+      "printable_bounds_urx" : 812.79998779296875,
+      "printable_bounds_ury" : 2032.0
+     },
+     "9" : 
+     {
+      "caps_type" : 2,
+      "dimensional" : true,
+      "media_bounds_urx" : 215.90000915527344,
+      "media_bounds_ury" : 355.60000610351562,
+      "name" : "User-10",
+      "printable_area" : 76774.0390625,
+      "printable_bounds_llx" : 0.0,
+      "printable_bounds_lly" : 0.0,
+      "printable_bounds_urx" : 215.89999389648438,
+      "printable_bounds_ury" : 355.60000610351562
+     }
+    },
+    "size" : 
+    {
+     "0" : 
+     {
+      "caps_type" : 2,
+      "landscape_mode" : true,
+      "localized_name" : "Previous paper size (120.00 x 120.00 Inches)",
+      "media_description_name" : "User-2",
+      "media_group" : 14,
+      "name" : "User-2"
+     },
+     "1" : 
+     {
+      "caps_type" : 2,
+      "landscape_mode" : true,
+      "localized_name" : "Previous paper size (1270.00 x 914.40 MM)",
+      "media_description_name" : "User-6",
+      "media_group" : 15,
+      "name" : "User-6"
+     },
+     "10" : 
+     {
+      "caps_type" : 2,
+      "landscape_mode" : true,
+      "localized_name" : "Previous paper size (5080.00 x 5080.00 MM)",
+      "media_description_name" : "User-11",
+      "media_group" : 15,
+      "name" : "User-11"
+     },
+     "2" : 
+     {
+      "caps_type" : 2,
+      "landscape_mode" : true,
+      "localized_name" : "Previous paper size (1600.20 x 3048.00 MM)",
+      "media_description_name" : "User-8",
+      "media_group" : 15,
+      "name" : "User-8"
+     },
+     "3" : 
+     {
+      "caps_type" : 2,
+      "landscape_mode" : false,
+      "localized_name" : "Previous paper size (215.90 x 355.60 MM)",
+      "media_description_name" : "User-1",
+      "media_group" : 15,
+      "name" : "User-1"
+     },
+     "4" : 
+     {
+      "caps_type" : 2,
+      "landscape_mode" : true,
+      "localized_name" : "Previous paper size (3048.00 x 1117.60 MM)",
+      "media_description_name" : "User-4",
+      "media_group" : 15,
+      "name" : "User-4"
+     },
+     "5" : 
+     {
+      "caps_type" : 2,
+      "landscape_mode" : true,
+      "localized_name" : "Previous paper size (762.00 x 3048.00 MM)",
+      "media_description_name" : "User-7",
+      "media_group" : 15,
+      "name" : "User-7"
+     },
+     "6" : 
+     {
+      "caps_type" : 2,
+      "landscape_mode" : true,
+      "localized_name" : "Previous paper size (8.50 x 14.00 Inches)",
+      "media_description_name" : "User-10",
+      "media_group" : 14,
+      "name" : "User-10"
+     },
+     "7" : 
+     {
+      "caps_type" : 2,
+      "landscape_mode" : true,
+      "localized_name" : "Previous paper size (812.80 x 1828.80 MM)",
+      "media_description_name" : "User-5",
+      "media_group" : 15,
+      "name" : "User-5"
+     },
+     "8" : 
+     {
+      "caps_type" : 2,
+      "landscape_mode" : true,
+      "localized_name" : "Previous paper size (812.80 x 2032.00 MM)",
+      "media_description_name" : "User-9",
+      "media_group" : 15,
+      "name" : "User-9"
+     },
+     "9" : 
+     {
+      "caps_type" : 2,
+      "landscape_mode" : true,
+      "localized_name" : "Previous paper size (914.40 x 3048.00 MM)",
+      "media_description_name" : "User-3",
+      "media_group" : 15,
+      "name" : "User-3"
+     }
+    }
+   }
+  }
+ },
+ "subver" : "json",
+ "version" : 0.01
+}
