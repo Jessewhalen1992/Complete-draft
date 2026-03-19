@@ -1,0 +1,24 @@
+{
+  "checks": [
+    {
+      "type": "point_match",
+      "layer": "L-QSEC",
+      "point_kind": "endpoint",
+      "tolerance": 0.05,
+      "point": [
+        509718.024,
+        5990739.877
+      ]
+    },
+    {
+      "type": "point_match",
+      "layer": "L-QSEC",
+      "point_kind": "endpoint",
+      "tolerance": 0.05,
+      "point": [
+        510545.814,
+        5990742.205
+      ]
+    }
+  ]
+}

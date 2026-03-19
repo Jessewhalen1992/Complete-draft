@@ -1932,13 +1932,14 @@ namespace AtsBackgroundBuilder
                         {
                             var target = verticalTargets[ti];
                             var isMatchingBand = AreMatchingTieInBands(source.Layer, target.Layer);
+                            var isOrdinaryTieInTarget = IsOrdinaryUsecTieInLayer(target.Layer);
                             var isHardBoundaryTarget =
                                 string.Equals(target.Layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
                                 string.Equals(target.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
                                 string.Equals(target.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
                                 string.Equals(target.Layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
                                 string.Equals(target.Layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
-                            if (!isMatchingBand && !isHardBoundaryTarget)
+                            if (!isMatchingBand && !isHardBoundaryTarget && !isOrdinaryTieInTarget)
                             {
                                 continue;
                             }
@@ -1951,6 +1952,12 @@ namespace AtsBackgroundBuilder
                             if (Math.Abs(intersection.X - target.AxisX) > axisTol ||
                                 intersection.Y < target.MinY - spanTol ||
                                 intersection.Y > target.MaxY + spanTol)
+                            {
+                                continue;
+                            }
+
+                            // Tie-in overhang trim should only shorten the live source span.
+                            if (DistancePointToSegment(intersection, a, b) > spanTol)
                             {
                                 continue;
                             }
@@ -2041,8 +2048,9 @@ namespace AtsBackgroundBuilder
                         {
                             var target = horizontalTargets[ti];
                             var isMatchingBand = AreMatchingTieInBands(source.Layer, target.Layer);
+                            var isOrdinaryTieInTarget = IsOrdinaryUsecTieInLayer(target.Layer);
                             var isHardBoundaryTarget = EndpointTouchesHardAnchorLayer(target.Layer);
-                            if (!isMatchingBand && !isHardBoundaryTarget)
+                            if (!isMatchingBand && !isHardBoundaryTarget && !isOrdinaryTieInTarget)
                             {
                                 continue;
                             }
@@ -2055,6 +2063,12 @@ namespace AtsBackgroundBuilder
                             if (Math.Abs(intersection.Y - target.AxisY) > axisTol ||
                                 intersection.X < target.MinX - spanTol ||
                                 intersection.X > target.MaxX + spanTol)
+                            {
+                                continue;
+                            }
+
+                            // Tie-in overhang trim should only shorten the live source span.
+                            if (DistancePointToSegment(intersection, a, b) > spanTol)
                             {
                                 continue;
                             }

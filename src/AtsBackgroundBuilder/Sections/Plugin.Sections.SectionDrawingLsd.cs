@@ -368,9 +368,7 @@ namespace AtsBackgroundBuilder
                 }
 
                 var boundarySegments = new List<(Point2d A, Point2d B, string Layer)>();
-                var quarterDividerSegments = new List<(Point2d A, Point2d B)>();
-                var correctionSouthBoundarySegments = new List<(Point2d A, Point2d B, string Layer)>();
-                var correctionNorthBoundarySegments = new List<(Point2d A, Point2d B, string Layer)>();
+                var quarterDividerSegments = new List<(ObjectId Id, Point2d A, Point2d B)>();
                 foreach (ObjectId id in modelSpace)
                 {
                     if (!(transaction.GetObject(id, OpenMode.ForRead, false) is Entity ent) || ent.IsErased)
@@ -388,30 +386,28 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (string.Equals(ent.Layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
+                    var normalizedLayer = (ent.Layer ?? string.Empty).Trim();
+                    if (string.Equals(normalizedLayer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
                     {
-                        quarterDividerSegments.Add((a, b));
+                        quarterDividerSegments.Add((id, a, b));
                         continue;
                     }
 
-                    if (!IsQuarterViewBoundaryCandidateLayer(ent.Layer))
+                    if (!IsQuarterViewBoundaryCandidateLayer(normalizedLayer))
                     {
                         continue;
                     }
 
-                    if (string.Equals(ent.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
-                    {
-                        correctionSouthBoundarySegments.Add((a, b, LayerUsecCorrectionZero));
-                        correctionNorthBoundarySegments.Add((a, b, LayerUsecCorrectionZero));
-                    }
-                    else if (string.Equals(ent.Layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase))
-                    {
-                        correctionSouthBoundarySegments.Add((a, b, LayerUsecCorrection));
-                        correctionNorthBoundarySegments.Add((a, b, LayerUsecCorrection));
-                    }
-
-                    boundarySegments.Add((a, b, ent.Layer ?? string.Empty));
+                    boundarySegments.Add((a, b, normalizedLayer));
                 }
+
+                var correctionSouthBoundarySegments = boundarySegments
+                    .Where(s => IsQuarterSouthCorrectionCandidateLayer(s.Layer))
+                    .ToList();
+                var correctionNorthBoundarySegments = boundarySegments
+                    .Where(s => string.Equals(s.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(s.Layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
 
                 var hardBoundaryCornerClusters = new List<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)>();
                 const double cornerClusterTolerance = 0.40;
@@ -562,9 +558,11 @@ namespace AtsBackgroundBuilder
                     var dividerLineA = frame.BottomAnchor;
                     var dividerLineB = frame.TopAnchor;
                     var dividerSource = "anchors";
+                    var dividerSegmentId = ObjectId.Null;
                     if (TryResolveQuarterViewVerticalDividerSegmentFromQsec(
                             frame,
                             quarterDividerSegments,
+                            out dividerSegmentId,
                             out var qsecDividerA,
                             out var qsecDividerB))
                     {
@@ -1345,7 +1343,8 @@ namespace AtsBackgroundBuilder
                         ref southAtWestV,
                         ref southAtMidU,
                         ref southAtMidV,
-                        ref southAtEastV);
+                        ref southAtEastV,
+                        logger);
 
                     if (!northWestLockedByApparentIntersection &&
                         hasWestBoundarySegment &&
@@ -1900,6 +1899,8 @@ namespace AtsBackgroundBuilder
                     var seSw = swSe;
                     var seSe = QuarterViewLocalToWorld(frame, southAtEastU, eastSouthV);
                     var neNe = QuarterViewLocalToWorld(frame, northAtEastU, eastNorthV);
+                    var northMid = QuarterViewLocalToWorld(frame, northAtMidU, northAtMidV);
+                    var eastMid = QuarterViewLocalToWorld(frame, eastAtMidU, eastAtMidV);
                     protectedSouthMidCorners.Add(swSe);
                     var nwW = QuarterViewLocalToWorld(frame, westAtNorthU, westNorthV);
                     logger?.WriteLine(
@@ -3172,11 +3173,56 @@ namespace AtsBackgroundBuilder
             ref double southAtWestV,
             ref double southAtMidU,
             ref double southAtMidV,
-            ref double southAtEastV)
+            ref double southAtEastV,
+            Logger? logger)
         {
             if (!isCorrectionSouthBoundary)
             {
                 return;
+            }
+
+            WriteQuarterCorrectionSouthDirectDiagnostics(
+                frame,
+                boundarySegments,
+                dividerLineA,
+                dividerLineB,
+                dividerU,
+                hasWestBoundarySegment,
+                westBoundarySegmentA,
+                westBoundarySegmentB,
+                logger);
+
+            var resolvedLocalCorrectionWest = false;
+            if (hasWestBoundarySegment &&
+                TryResolveQuarterSouthWestCorrectionCorner(
+                    frame,
+                    boundarySegments,
+                    westBoundarySegmentA,
+                    westBoundarySegmentB,
+                    centerU: dividerU,
+                    minQuarterSpan: 0.0,
+                    out var localCorrectionWestU,
+                    out var localCorrectionWestV,
+                    out _,
+                    out _))
+            {
+                westAtSouthU = localCorrectionWestU;
+                southAtWestV = localCorrectionWestV;
+                resolvedLocalCorrectionWest = true;
+            }
+
+            var resolvedLocalCorrectionSouthMid = TryResolveQuarterSouthDividerCorrectionIntersection(
+                frame,
+                boundarySegments,
+                dividerLineA,
+                dividerLineB,
+                out var localCorrectionSouthMidU,
+                out var localCorrectionSouthMidV,
+                out _);
+            if (resolvedLocalCorrectionSouthMid)
+            {
+                southAtMidU = localCorrectionSouthMidU;
+                southAtMidV = localCorrectionSouthMidV;
             }
 
             var southCorrectionSouthA = selectedSouthBoundarySegmentA;
@@ -3186,7 +3232,8 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            if (TryResolveQuarterViewSouthWestCorrectionIntersection(
+            if (!resolvedLocalCorrectionWest &&
+                TryResolveQuarterViewSouthWestCorrectionIntersection(
                     frame,
                     boundarySegments,
                     southCorrectionSouthA,
@@ -3202,7 +3249,8 @@ namespace AtsBackgroundBuilder
                 // Keep the SW-quarter SE corner on the same south correction boundary,
                 // but preserve the mid blind-line perpendicular crossing using the
                 // actual quarter-divider line (BottomAnchor -> TopAnchor).
-                if (TryIntersectLocalInfiniteLineWithBoundedSegmentExtension(
+                if (!resolvedLocalCorrectionSouthMid &&
+                    TryIntersectLocalInfiniteLineWithBoundedSegmentExtension(
                         frame,
                         dividerLineA,
                         dividerLineB,
@@ -3215,17 +3263,19 @@ namespace AtsBackgroundBuilder
                     southAtMidU = apparentSouthMidU;
                     southAtMidV = apparentSouthMidV;
                 }
-                else if (TryProjectBoundarySegmentVAtU(
-                        frame,
-                        southCorrectionSouthA,
-                        southCorrectionSouthB,
-                        dividerU,
-                        out var forcedSouthMidV))
+                else if (!resolvedLocalCorrectionSouthMid &&
+                         TryProjectBoundarySegmentVAtU(
+                         frame,
+                         southCorrectionSouthA,
+                         southCorrectionSouthB,
+                         dividerU,
+                         out var forcedSouthMidV))
                 {
                     southAtMidU = dividerU;
                     southAtMidV = forcedSouthMidV;
                 }
-                else if (TryIntersectBoundarySegmentsLocal(
+                else if (!resolvedLocalCorrectionSouthMid &&
+                         TryIntersectBoundarySegmentsLocal(
                              frame,
                              dividerLineA,
                              dividerLineB,
@@ -3245,11 +3295,13 @@ namespace AtsBackgroundBuilder
                         frame.EastEdgeU,
                         out var forcedSouthEastV))
                 {
-                    southAtEastV = forcedSouthEastV;
+                        southAtEastV = forcedSouthEastV;
                 }
             }
 
-            if (hasWestBoundarySegment &&
+            if (!resolvedLocalCorrectionWest &&
+                !resolvedLocalCorrectionSouthMid &&
+                hasWestBoundarySegment &&
                 TryIntersectBoundarySegmentWithLocalLine(
                     frame,
                     westBoundarySegmentA,
@@ -3635,10 +3687,12 @@ namespace AtsBackgroundBuilder
 
         private static bool TryResolveQuarterViewVerticalDividerSegmentFromQsec(
             QuarterViewSectionFrame frame,
-            IReadOnlyList<(Point2d A, Point2d B)> dividerSegments,
+            IReadOnlyList<(ObjectId Id, Point2d A, Point2d B)> dividerSegments,
+            out ObjectId segmentId,
             out Point2d segmentA,
             out Point2d segmentB)
         {
+            segmentId = ObjectId.Null;
             segmentA = default;
             segmentB = default;
             if (dividerSegments == null || dividerSegments.Count == 0)
@@ -3691,6 +3745,7 @@ namespace AtsBackgroundBuilder
                 {
                     found = true;
                     bestScore = centerGap;
+                    segmentId = seg.Id;
                     segmentA = seg.A;
                     segmentB = seg.B;
                 }
@@ -4096,8 +4151,7 @@ namespace AtsBackgroundBuilder
             currentError = double.NaN;
             promotedError = double.NaN;
 
-            if (string.Equals(southSource, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
-                !TryResolveQuarterViewSouthMostCorrectionBoundarySegment(
+            if (!TryResolveQuarterViewSouthMostCorrectionBoundarySegment(
                     frame,
                     correctionSouthBoundarySegments,
                     out var promotedCorrectionSouthA,
@@ -4117,9 +4171,12 @@ namespace AtsBackgroundBuilder
             var currentOutwardDistance = hasSouthBoundarySegment
                 ? ResolveOutwardDistanceAtMidU(frame, southBoundarySegmentA, southBoundarySegmentB, centerU, southBoundaryV)
                 : (frame.SouthEdgeV - southBoundaryV);
-            var southPromotionTargetInset = southFallbackOffset > 0.5
-                ? southFallbackOffset
-                : RoadAllowanceSecWidthMeters;
+            var promoteTowardHardRoadAllowance =
+                string.Equals(southSource, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(southSource, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase);
+            var southPromotionTargetInset = promoteTowardHardRoadAllowance
+                ? RoadAllowanceSecWidthMeters
+                : (southFallbackOffset > 0.5 ? southFallbackOffset : RoadAllowanceSecWidthMeters);
             var candidateError = Math.Abs(candidateOutwardDistance - southPromotionTargetInset);
             var localCurrentError = Math.Abs(currentOutwardDistance - southPromotionTargetInset);
             if (candidateError + minPromotionImprovement >= localCurrentError)
@@ -4849,11 +4906,12 @@ namespace AtsBackgroundBuilder
                     dividerLineA,
                     dividerLineB,
                     out var correctionSouthV,
+                    out var correctionSouthLayer,
                     out var correctionSouthA,
                     out var correctionSouthB))
             {
                 resolvedV = correctionSouthV;
-                resolvedLayer = LayerUsecCorrectionZero;
+                resolvedLayer = correctionSouthLayer;
                 resolvedA = correctionSouthA;
                 resolvedB = correctionSouthB;
                 return true;
@@ -5251,10 +5309,12 @@ namespace AtsBackgroundBuilder
             Point2d dividerLineA,
             Point2d dividerLineB,
             out double boundaryV,
+            out string sourceLayer,
             out Point2d segmentA,
             out Point2d segmentB)
         {
             boundaryV = default;
+            sourceLayer = string.Empty;
             segmentA = default;
             segmentB = default;
             if (correctionSegments == null || correctionSegments.Count == 0)
@@ -5267,26 +5327,72 @@ namespace AtsBackgroundBuilder
             const double minOffset = 0.5;
             const double maxOffset = 40.0;
             const double maxDividerIntersectionExtension = 80.0;
+            const double preferSouthDefinitionThreshold = 12.0;
             var maxUnlinkedDividerGap = RoadAllowanceSecWidthMeters * 0.6;
             var frameSpan = Math.Max(frame.EastEdgeU - frame.WestEdgeU, minProjectedOverlap);
-            var bestScore = double.MaxValue;
-            var bestTargetError = double.MaxValue;
-            var bestCenterGap = double.MaxValue;
-            var bestDividerGap = double.MaxValue;
-            var bestOutwardDistance = double.MaxValue;
-            var bestBoundaryV = default(double);
-            var bestSegmentA = default(Point2d);
-            var bestSegmentB = default(Point2d);
-            var foundAny = false;
-            var bestLinkedScore = double.MaxValue;
-            var bestLinkedTargetError = double.MaxValue;
-            var bestLinkedCenterGap = double.MaxValue;
-            var bestLinkedDividerGap = double.MaxValue;
-            var bestLinkedOutwardDistance = double.MaxValue;
-            var bestLinkedBoundaryV = default(double);
-            var bestLinkedSegmentA = default(Point2d);
-            var bestLinkedSegmentB = default(Point2d);
-            var foundLinked = false;
+            var foundHard = false;
+            var bestHardScore = double.MaxValue;
+            var bestHardTargetError = double.MaxValue;
+            var bestHardCenterGap = double.MaxValue;
+            var bestHardDividerGap = double.MaxValue;
+            var bestHardOutwardDistance = double.MaxValue;
+            var bestHardBoundaryV = default(double);
+            var bestHardSourceLayer = string.Empty;
+            var bestHardSegmentA = default(Point2d);
+            var bestHardSegmentB = default(Point2d);
+            var foundHardLinked = false;
+            var bestHardLinkedScore = double.MaxValue;
+            var bestHardLinkedTargetError = double.MaxValue;
+            var bestHardLinkedCenterGap = double.MaxValue;
+            var bestHardLinkedDividerGap = double.MaxValue;
+            var bestHardLinkedOutwardDistance = double.MaxValue;
+            var bestHardLinkedBoundaryV = default(double);
+            var bestHardLinkedSourceLayer = string.Empty;
+            var bestHardLinkedSegmentA = default(Point2d);
+            var bestHardLinkedSegmentB = default(Point2d);
+            var foundInset = false;
+            var bestInsetScore = double.MaxValue;
+            var bestInsetTargetError = double.MaxValue;
+            var bestInsetCenterGap = double.MaxValue;
+            var bestInsetDividerGap = double.MaxValue;
+            var bestInsetOutwardDistance = double.MaxValue;
+            var bestInsetBoundaryV = default(double);
+            var bestInsetSourceLayer = string.Empty;
+            var bestInsetSegmentA = default(Point2d);
+            var bestInsetSegmentB = default(Point2d);
+            var foundInsetLinked = false;
+            var bestInsetLinkedScore = double.MaxValue;
+            var bestInsetLinkedTargetError = double.MaxValue;
+            var bestInsetLinkedCenterGap = double.MaxValue;
+            var bestInsetLinkedDividerGap = double.MaxValue;
+            var bestInsetLinkedOutwardDistance = double.MaxValue;
+            var bestInsetLinkedBoundaryV = default(double);
+            var bestInsetLinkedSourceLayer = string.Empty;
+            var bestInsetLinkedSegmentA = default(Point2d);
+            var bestInsetLinkedSegmentB = default(Point2d);
+
+            static bool IsBetterCorrectionSouthCandidate(
+                double score,
+                double bestScore,
+                double dividerGap,
+                double bestDividerGap,
+                double centerGap,
+                double bestCenterGap,
+                double targetError,
+                double bestTargetError,
+                double outwardDistance,
+                double bestOutwardDistance)
+            {
+                return score < bestScore ||
+                       (Math.Abs(score - bestScore) <= 1e-6 && dividerGap < bestDividerGap) ||
+                       (Math.Abs(score - bestScore) <= 1e-6 && centerGap < bestCenterGap) ||
+                       (Math.Abs(score - bestScore) <= 1e-6 && targetError < bestTargetError) ||
+                       (Math.Abs(score - bestScore) <= 1e-6 &&
+                        Math.Abs(dividerGap - bestDividerGap) <= 1e-6 &&
+                        Math.Abs(centerGap - bestCenterGap) <= 1e-6 &&
+                        Math.Abs(targetError - bestTargetError) <= 1e-6 &&
+                        outwardDistance < bestOutwardDistance);
+            }
             for (var i = 0; i < correctionSegments.Count; i++)
             {
                 var seg = correctionSegments[i];
@@ -5357,11 +5463,22 @@ namespace AtsBackgroundBuilder
                 var centerPenalty = GetQuarterSouthBoundaryCenterGapPenalty(centerGap);
                 var dividerGap = DistanceToClosedInterval(preferredDividerU, segmentMinU, segmentMaxU);
                 var dividerPenalty = GetQuarterDividerSpanPenalty(dividerGap);
-                var prefersInset = CorrectionSouthBoundaryPreference.IsCloserToInsetThanHardBoundary(
+                var dividerLinkedCandidate = TryIntersectLocalInfiniteLineWithBoundedSegmentExtension(
+                    frame,
+                    dividerLineA,
+                    dividerLineB,
+                    seg.A,
+                    seg.B,
+                    maxDividerIntersectionExtension,
+                    out _,
+                    out _);
+                var prefersInset = outwardDistance < preferSouthDefinitionThreshold &&
+                    CorrectionSouthBoundaryPreference.IsCloserToInsetThanHardBoundary(
                     outwardDistance,
                     CorrectionLineInsetMeters,
                     RoadAllowanceSecWidthMeters);
                 if (!prefersInset &&
+                    !dividerLinkedCandidate &&
                     !CorrectionSouthBoundaryPreference.IsHardBoundaryCoverageAcceptable(overlap, frameSpan))
                 {
                     continue;
@@ -5389,7 +5506,8 @@ namespace AtsBackgroundBuilder
                 var targetOffset = prefersInset ? CorrectionLineInsetMeters : RoadAllowanceSecWidthMeters;
                 var targetError = Math.Abs(candidateOutwardDistance - targetOffset);
                 var score = targetError + centerPenalty + dividerPenalty;
-                var dividerLinkedCandidate = TryIntersectLocalInfiniteLineWithBoundedSegmentExtension(
+                var candidateBoundaryV = frame.SouthEdgeV - candidateOutwardDistance;
+                dividerLinkedCandidate = TryIntersectLocalInfiniteLineWithBoundedSegmentExtension(
                     frame,
                     dividerLineA,
                     dividerLineB,
@@ -5399,78 +5517,155 @@ namespace AtsBackgroundBuilder
                     out _,
                     out _);
 
-                if (!foundAny ||
-                    score < bestScore ||
-                    (Math.Abs(score - bestScore) <= 1e-6 && dividerGap < bestDividerGap) ||
-                    (Math.Abs(score - bestScore) <= 1e-6 && centerGap < bestCenterGap) ||
-                    (Math.Abs(score - bestScore) <= 1e-6 && targetError < bestTargetError) ||
-                    (Math.Abs(score - bestScore) <= 1e-6 &&
-                     Math.Abs(dividerGap - bestDividerGap) <= 1e-6 &&
-                     Math.Abs(centerGap - bestCenterGap) <= 1e-6 &&
-                     Math.Abs(targetError - bestTargetError) <= 1e-6 &&
-                     outwardDistance < bestOutwardDistance))
+                if (!prefersInset)
                 {
-                    foundAny = true;
-                    bestScore = score;
-                    bestTargetError = targetError;
-                    bestCenterGap = centerGap;
-                    bestDividerGap = dividerGap;
-                    bestOutwardDistance = candidateOutwardDistance;
-                    bestBoundaryV = frame.SouthEdgeV - candidateOutwardDistance;
-                    bestSegmentA = candidateA;
-                    bestSegmentB = candidateB;
-                }
+                    if (!foundHard ||
+                        IsBetterCorrectionSouthCandidate(
+                            score,
+                            bestHardScore,
+                            dividerGap,
+                            bestHardDividerGap,
+                            centerGap,
+                            bestHardCenterGap,
+                            targetError,
+                            bestHardTargetError,
+                            candidateOutwardDistance,
+                            bestHardOutwardDistance))
+                    {
+                        foundHard = true;
+                        bestHardScore = score;
+                        bestHardTargetError = targetError;
+                        bestHardCenterGap = centerGap;
+                        bestHardDividerGap = dividerGap;
+                        bestHardOutwardDistance = candidateOutwardDistance;
+                        bestHardBoundaryV = candidateBoundaryV;
+                        bestHardSourceLayer = layer;
+                        bestHardSegmentA = candidateA;
+                        bestHardSegmentB = candidateB;
+                    }
 
-                if (!dividerLinkedCandidate)
-                {
+                    if (dividerLinkedCandidate &&
+                        (!foundHardLinked ||
+                         IsBetterCorrectionSouthCandidate(
+                             score,
+                             bestHardLinkedScore,
+                             dividerGap,
+                             bestHardLinkedDividerGap,
+                             centerGap,
+                             bestHardLinkedCenterGap,
+                             targetError,
+                             bestHardLinkedTargetError,
+                             candidateOutwardDistance,
+                             bestHardLinkedOutwardDistance)))
+                    {
+                        foundHardLinked = true;
+                        bestHardLinkedScore = score;
+                        bestHardLinkedTargetError = targetError;
+                        bestHardLinkedCenterGap = centerGap;
+                        bestHardLinkedDividerGap = dividerGap;
+                        bestHardLinkedOutwardDistance = candidateOutwardDistance;
+                        bestHardLinkedBoundaryV = candidateBoundaryV;
+                        bestHardLinkedSourceLayer = layer;
+                        bestHardLinkedSegmentA = candidateA;
+                        bestHardLinkedSegmentB = candidateB;
+                    }
+
                     continue;
                 }
 
-                if (!foundLinked ||
-                    score < bestLinkedScore ||
-                    (Math.Abs(score - bestLinkedScore) <= 1e-6 && dividerGap < bestLinkedDividerGap) ||
-                    (Math.Abs(score - bestLinkedScore) <= 1e-6 && centerGap < bestLinkedCenterGap) ||
-                    (Math.Abs(score - bestLinkedScore) <= 1e-6 && targetError < bestLinkedTargetError) ||
-                    (Math.Abs(score - bestLinkedScore) <= 1e-6 &&
-                     Math.Abs(dividerGap - bestLinkedDividerGap) <= 1e-6 &&
-                     Math.Abs(centerGap - bestLinkedCenterGap) <= 1e-6 &&
-                     Math.Abs(targetError - bestLinkedTargetError) <= 1e-6 &&
-                     outwardDistance < bestLinkedOutwardDistance))
+                if (!foundInset ||
+                    IsBetterCorrectionSouthCandidate(
+                        score,
+                        bestInsetScore,
+                        dividerGap,
+                        bestInsetDividerGap,
+                        centerGap,
+                        bestInsetCenterGap,
+                        targetError,
+                        bestInsetTargetError,
+                        candidateOutwardDistance,
+                        bestInsetOutwardDistance))
                 {
-                    foundLinked = true;
-                    bestLinkedScore = score;
-                    bestLinkedTargetError = targetError;
-                    bestLinkedCenterGap = centerGap;
-                    bestLinkedDividerGap = dividerGap;
-                    bestLinkedOutwardDistance = candidateOutwardDistance;
-                    bestLinkedBoundaryV = frame.SouthEdgeV - candidateOutwardDistance;
-                    bestLinkedSegmentA = candidateA;
-                    bestLinkedSegmentB = candidateB;
+                    foundInset = true;
+                    bestInsetScore = score;
+                    bestInsetTargetError = targetError;
+                    bestInsetCenterGap = centerGap;
+                    bestInsetDividerGap = dividerGap;
+                    bestInsetOutwardDistance = candidateOutwardDistance;
+                    bestInsetBoundaryV = candidateBoundaryV;
+                    bestInsetSourceLayer = layer;
+                    bestInsetSegmentA = candidateA;
+                    bestInsetSegmentB = candidateB;
+                }
+
+                if (dividerLinkedCandidate &&
+                    (!foundInsetLinked ||
+                     IsBetterCorrectionSouthCandidate(
+                         score,
+                         bestInsetLinkedScore,
+                         dividerGap,
+                         bestInsetLinkedDividerGap,
+                         centerGap,
+                         bestInsetLinkedCenterGap,
+                         targetError,
+                         bestInsetLinkedTargetError,
+                         candidateOutwardDistance,
+                         bestInsetLinkedOutwardDistance)))
+                {
+                    foundInsetLinked = true;
+                    bestInsetLinkedScore = score;
+                    bestInsetLinkedTargetError = targetError;
+                    bestInsetLinkedCenterGap = centerGap;
+                    bestInsetLinkedDividerGap = dividerGap;
+                    bestInsetLinkedOutwardDistance = candidateOutwardDistance;
+                    bestInsetLinkedBoundaryV = candidateBoundaryV;
+                    bestInsetLinkedSourceLayer = layer;
+                    bestInsetLinkedSegmentA = candidateA;
+                    bestInsetLinkedSegmentB = candidateB;
                 }
             }
 
-            if (foundLinked)
+            if (foundHardLinked)
             {
-                boundaryV = bestLinkedBoundaryV;
-                segmentA = bestLinkedSegmentA;
-                segmentB = bestLinkedSegmentB;
+                boundaryV = bestHardLinkedBoundaryV;
+                sourceLayer = bestHardLinkedSourceLayer;
+                segmentA = bestHardLinkedSegmentA;
+                segmentB = bestHardLinkedSegmentB;
                 return true;
             }
 
-            if (foundAny)
+            if (foundHard &&
+                CorrectionSouthBoundaryPreference.IsUnlinkedDividerGapAcceptable(
+                    bestHardDividerGap,
+                    maxUnlinkedDividerGap))
             {
-                // A correction south owner that cannot reach the quarter divider will make the
-                // quarter midline and LSD endpoints cross the road allowance in that quarter.
-                if (!CorrectionSouthBoundaryPreference.IsUnlinkedDividerGapAcceptable(
-                        bestDividerGap,
-                        maxUnlinkedDividerGap))
-                {
-                    return false;
-                }
+                // Quarter definitions on correction lines should include the road allowance when
+                // a usable hard south boundary exists; inset candidates are fallback-only.
+                boundaryV = bestHardBoundaryV;
+                sourceLayer = bestHardSourceLayer;
+                segmentA = bestHardSegmentA;
+                segmentB = bestHardSegmentB;
+                return true;
+            }
 
-                boundaryV = bestBoundaryV;
-                segmentA = bestSegmentA;
-                segmentB = bestSegmentB;
+            if (foundInsetLinked)
+            {
+                boundaryV = bestInsetLinkedBoundaryV;
+                sourceLayer = bestInsetLinkedSourceLayer;
+                segmentA = bestInsetLinkedSegmentA;
+                segmentB = bestInsetLinkedSegmentB;
+                return true;
+            }
+
+            if (foundInset &&
+                CorrectionSouthBoundaryPreference.IsUnlinkedDividerGapAcceptable(
+                    bestInsetDividerGap,
+                    maxUnlinkedDividerGap))
+            {
+                boundaryV = bestInsetBoundaryV;
+                sourceLayer = bestInsetSourceLayer;
+                segmentA = bestInsetSegmentA;
+                segmentB = bestInsetSegmentB;
                 return true;
             }
 
@@ -5908,7 +6103,9 @@ namespace AtsBackgroundBuilder
                 }
                 else
                 {
-                    if (!CorrectionSouthBoundaryPreference.IsHardBoundaryCoverageAcceptable(overlap, frameSpan))
+                    var centerLinkedCandidate = centerGap <= 5.0;
+                    if (!centerLinkedCandidate &&
+                        !CorrectionSouthBoundaryPreference.IsHardBoundaryCoverageAcceptable(overlap, frameSpan))
                     {
                         continue;
                     }
@@ -5937,6 +6134,13 @@ namespace AtsBackgroundBuilder
 
             if (foundInset)
             {
+                // Quarter-view correction promotion should restore the road-allowance edge when it exists;
+                // inset candidates are only the fallback when no usable hard correction boundary is available.
+                if (foundHard)
+                {
+                    return foundHard;
+                }
+
                 segmentA = insetSegmentA;
                 segmentB = insetSegmentB;
                 return true;
@@ -6178,6 +6382,15 @@ namespace AtsBackgroundBuilder
                 }
             }
 
+            if (foundHard)
+            {
+                resolvedU = hardResolvedU;
+                resolvedV = hardResolvedV;
+                boundaryOffset = hardBoundaryOffset;
+                southOffset = hardSouthOffset;
+                return true;
+            }
+
             if (foundInset)
             {
                 resolvedU = insetResolvedU;
@@ -6187,12 +6400,226 @@ namespace AtsBackgroundBuilder
                 return true;
             }
 
+            return false;
+        }
+
+        private static void WriteQuarterCorrectionSouthDirectDiagnostics(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            Point2d dividerLineA,
+            Point2d dividerLineB,
+            double dividerU,
+            bool hasWestBoundarySegment,
+            Point2d westBoundarySegmentA,
+            Point2d westBoundarySegmentB,
+            Logger? logger)
+        {
+            if (logger == null || boundarySegments == null || boundarySegments.Count == 0)
+            {
+                return;
+            }
+
+            var westHard = 0;
+            var westInset = 0;
+            var dividerHard = 0;
+            var dividerInset = 0;
+            for (var i = 0; i < boundarySegments.Count; i++)
+            {
+                var seg = boundarySegments[i];
+                if (!IsQuarterSouthCorrectionCandidateLayer(seg.Layer))
+                {
+                    continue;
+                }
+
+                var delta = seg.B - seg.A;
+                var eastComp = Math.Abs(delta.DotProduct(frame.EastUnit));
+                var northComp = Math.Abs(delta.DotProduct(frame.NorthUnit));
+                if (eastComp <= northComp)
+                {
+                    continue;
+                }
+
+                if (hasWestBoundarySegment &&
+                    TryIntersectLocalInfiniteLines(
+                        frame,
+                        westBoundarySegmentA,
+                        westBoundarySegmentB,
+                        seg.A,
+                        seg.B,
+                        out var westCandidateU,
+                        out var westCandidateV) &&
+                    westCandidateU <= dividerU)
+                {
+                    var westSouthOffset = frame.SouthEdgeV - westCandidateV;
+                    if (CorrectionSouthBoundaryPreference.IsCloserToInsetThanHardBoundary(
+                            westSouthOffset,
+                            CorrectionLineInsetMeters,
+                            RoadAllowanceSecWidthMeters) &&
+                        CorrectionSouthBoundaryPreference.IsPlausibleInsetOffset(
+                            westSouthOffset,
+                            CorrectionLineInsetMeters))
+                    {
+                        westInset++;
+                    }
+                    else
+                    {
+                        westHard++;
+                    }
+                }
+
+                if (TryIntersectLocalInfiniteLineWithBoundedSegmentExtension(
+                        frame,
+                        dividerLineA,
+                        dividerLineB,
+                        seg.A,
+                        seg.B,
+                        maxSegmentExtension: 80.0,
+                        out _,
+                        out var dividerCandidateV))
+                {
+                    var dividerSouthOffset = frame.SouthEdgeV - dividerCandidateV;
+                    if (CorrectionSouthBoundaryPreference.IsCloserToInsetThanHardBoundary(
+                            dividerSouthOffset,
+                            CorrectionLineInsetMeters,
+                            RoadAllowanceSecWidthMeters) &&
+                        CorrectionSouthBoundaryPreference.IsPlausibleInsetOffset(
+                            dividerSouthOffset,
+                            CorrectionLineInsetMeters))
+                    {
+                        dividerInset++;
+                    }
+                    else
+                    {
+                        dividerHard++;
+                    }
+                }
+            }
+
+            logger.WriteLine(
+                $"VERIFY-QTR-CORR-DIRECT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                $"westHard={westHard} westInset={westInset} dividerHard={dividerHard} dividerInset={dividerInset}");
+        }
+
+        private static bool TryResolveQuarterSouthDividerCorrectionIntersection(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            Point2d dividerLineA,
+            Point2d dividerLineB,
+            out double resolvedU,
+            out double resolvedV,
+            out double southOffset)
+        {
+            resolvedU = default;
+            resolvedV = default;
+            southOffset = default;
+            if (boundarySegments == null || boundarySegments.Count == 0)
+            {
+                return false;
+            }
+
+            const double minOffset = -6.0;
+            const double maxOffset = 90.0;
+            const double maxDividerIntersectionExtension = 80.0;
+            var foundInset = false;
+            var bestInsetScore = double.MaxValue;
+            var insetResolvedU = default(double);
+            var insetResolvedV = default(double);
+            var insetSouthOffset = default(double);
+            var foundHard = false;
+            var bestHardScore = double.MaxValue;
+            var hardResolvedU = default(double);
+            var hardResolvedV = default(double);
+            var hardSouthOffset = default(double);
+
+            for (var i = 0; i < boundarySegments.Count; i++)
+            {
+                var seg = boundarySegments[i];
+                if (!IsQuarterSouthCorrectionCandidateLayer(seg.Layer))
+                {
+                    continue;
+                }
+
+                var delta = seg.B - seg.A;
+                var eastComp = Math.Abs(delta.DotProduct(frame.EastUnit));
+                var northComp = Math.Abs(delta.DotProduct(frame.NorthUnit));
+                if (eastComp <= northComp)
+                {
+                    continue;
+                }
+
+                if (!TryIntersectLocalInfiniteLineWithBoundedSegmentExtension(
+                        frame,
+                        dividerLineA,
+                        dividerLineB,
+                        seg.A,
+                        seg.B,
+                        maxDividerIntersectionExtension,
+                        out var candidateU,
+                        out var candidateV))
+                {
+                    continue;
+                }
+
+                if (candidateU < (frame.WestEdgeU - maxDividerIntersectionExtension) ||
+                    candidateU > (frame.EastEdgeU + maxDividerIntersectionExtension))
+                {
+                    continue;
+                }
+
+                var candidateSouthOffset = frame.SouthEdgeV - candidateV;
+                if (candidateSouthOffset < minOffset || candidateSouthOffset > maxOffset)
+                {
+                    continue;
+                }
+
+                var insetLike = CorrectionSouthBoundaryPreference.IsCloserToInsetThanHardBoundary(
+                    candidateSouthOffset,
+                    CorrectionLineInsetMeters,
+                    RoadAllowanceSecWidthMeters);
+                var prefersInset =
+                    insetLike &&
+                    CorrectionSouthBoundaryPreference.IsPlausibleInsetOffset(
+                        candidateSouthOffset,
+                        CorrectionLineInsetMeters);
+                var targetSouthOffset = prefersInset ? CorrectionLineInsetMeters : RoadAllowanceSecWidthMeters;
+                var score = Math.Abs(candidateSouthOffset - targetSouthOffset);
+                if (prefersInset)
+                {
+                    if (!foundInset || score < bestInsetScore)
+                    {
+                        foundInset = true;
+                        bestInsetScore = score;
+                        insetResolvedU = candidateU;
+                        insetResolvedV = candidateV;
+                        insetSouthOffset = candidateSouthOffset;
+                    }
+                }
+                else
+                {
+                    if (!foundHard || score < bestHardScore)
+                    {
+                        foundHard = true;
+                        bestHardScore = score;
+                        hardResolvedU = candidateU;
+                        hardResolvedV = candidateV;
+                        hardSouthOffset = candidateSouthOffset;
+                    }
+                }
+            }
+
             if (foundHard)
             {
                 resolvedU = hardResolvedU;
                 resolvedV = hardResolvedV;
-                boundaryOffset = hardBoundaryOffset;
                 southOffset = hardSouthOffset;
+                return true;
+            }
+
+            if (foundInset)
+            {
+                resolvedU = insetResolvedU;
+                resolvedV = insetResolvedV;
+                southOffset = insetSouthOffset;
                 return true;
             }
 
@@ -6338,8 +6765,9 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            return string.Equals(layerName, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(layerName, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase);
+            var normalizedLayer = layerName.Trim();
+            return string.Equals(normalizedLayer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalizedLayer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool TryResolveQuarterViewSouthWestCorrectionIntersection(

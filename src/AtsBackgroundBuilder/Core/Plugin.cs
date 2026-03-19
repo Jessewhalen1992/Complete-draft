@@ -6888,7 +6888,22 @@ namespace AtsBackgroundBuilder
                             var dA = source.A.GetDistanceTo(p);
                             var dB = source.B.GetDistanceTo(p);
                             var moveStart = dA <= dB;
-                            if ((moveStart && !canTrimStart) || (!moveStart && !canTrimEnd))
+                            var allowConnectedStartTrim =
+                                moveStart &&
+                                !canTrimStart &&
+                                !endpointAOnBoundary &&
+                                endpointAConnected &&
+                                (endpointBConnected || endpointBOnBoundary) &&
+                                !string.Equals(source.Layer, target.Layer, StringComparison.OrdinalIgnoreCase);
+                            var allowConnectedEndTrim =
+                                !moveStart &&
+                                !canTrimEnd &&
+                                !endpointBOnBoundary &&
+                                endpointBConnected &&
+                                (endpointAConnected || endpointAOnBoundary) &&
+                                !string.Equals(source.Layer, target.Layer, StringComparison.OrdinalIgnoreCase);
+                            if ((moveStart && !canTrimStart && !allowConnectedStartTrim) ||
+                                (!moveStart && !canTrimEnd && !allowConnectedEndTrim))
                             {
                                 continue;
                             }

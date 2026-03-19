@@ -1,0 +1,22 @@
+{
+  "build": {
+    "client": "TEST",
+    "zone": 11,
+    "rows": [
+      {
+        "quarter": "ALL",
+        "section": "2",
+        "township": "59",
+        "range": "19",
+        "meridian": "5"
+      },
+      {
+        "quarter": "ALL",
+        "section": "17",
+        "township": "59",
+        "range": "19",
+        "meridian": "5"
+      }
+    ]
+  }
+}

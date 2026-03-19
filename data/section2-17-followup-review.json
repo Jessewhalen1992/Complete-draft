@@ -1,0 +1,24 @@
+{
+  "checks": [
+    {
+      "type": "point_match",
+      "layer": "L-SECTION-LSD",
+      "point_kind": "endpoint",
+      "tolerance": 0.05,
+      "point": [
+        516687.634,
+        5990782.885
+      ]
+    },
+    {
+      "type": "point_match",
+      "layer": "L-USEC-2012",
+      "point_kind": "endpoint",
+      "tolerance": 0.05,
+      "point": [
+        512979.659,
+        5994019.466
+      ]
+    }
+  ]
+}
