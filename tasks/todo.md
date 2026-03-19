@@ -6477,3 +6477,14 @@ Regression follow-up:
 - Fix: added priority-10 hare/rabbit burrow and feeding regex rules, exact keyword rows for the requested phrases, and new `Snowshoe Hare / Burrow` and `Snowshoe Hare / Feeding` rows in `SpeciesFindingTypes` across all workbook copies that WLS uses.
 - Verification: programmatic workbook checks now resolve `hare burrow -> Snowshoe Hare burrow`, `rabbit feeding -> Snowshoe Hare Feeding`, `rabbit burrows -> Snowshoe Hare burrow`, and `hare feeding sign -> Snowshoe Hare Feeding` in both the authoritative workbook and the live `bin\\Release` workbook copy.
 - Parked note: the user found a separate ATS builder regression where quarter definitions on correction lines are broken after recent correction-line fixes; that investigation is deferred until tomorrow.
+
+## 2026-03-18 - Add WLS lookup mapping for Hares_Tracks
+- [x] Trace why `Hares_Tracks` misses the Snowshoe Hare bucket in the current workbook.
+- [x] Update the authoritative, backup, source-mirror, and live release workbook copies with a plural-hare track mapping.
+- [x] Verify the normalized `Hares_Tracks` phrase resolves before the generic track fallback.
+
+### Review
+- Root cause: `Hares_Tracks` preprocesses to `hares tracks`, but the Snowshoe Hare track regex only matched singular `hare`, so the phrase fell through to the generic regex track fallback.
+- Fix: added a priority-10 regex and exact keyword for `hares tracks`, both mapping to the existing canonical `Snowshoe Hare Tracks` description across all workbook copies.
+- Verification: programmatic workbook checks now resolve `Hares_Tracks -> Snowshoe Hare Tracks` and `hares tracks -> Snowshoe Hare Tracks` in both the authoritative workbook and the live `bin\\Release` workbook copy.
+- Assumption: treated `Snowshow Hare Tracks` in the request as a typo and kept the canonical workbook spelling `Snowshoe Hare Tracks` for consistency with the rest of the Snowshoe Hare rules.

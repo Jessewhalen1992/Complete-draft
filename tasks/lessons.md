@@ -440,3 +440,4 @@
 
 - 2026-03-18: In the WLS findings lookup, regex rules run before keyword rules and stop at the first matching priority tier; if an exact phrase like Squirrel Tracks or Beaver Den is falling through to a generic fallback, add a higher-priority specific regex (and any missing species/finding-type pair) instead of only adding a keyword row.
 - 2026-03-18: After any correction-line fix, rerun quarter-definition drawing checks on correction lines separately from LSD/table ATS checks. Recent correction-line changes can leave LSD placement looking right while breaking 1/4-definition geometry or usage on those correction lines.
+- 2026-03-18: For WLS lookup aliases, remember that normalization keeps plural animal words like `hares` intact. If a species regex only matches singular `hare`, pluralized labels such as `Hares_Tracks` can bypass the intended bucket and fall into generic track fallbacks unless a plural-aware regex or exact alias row is added.
