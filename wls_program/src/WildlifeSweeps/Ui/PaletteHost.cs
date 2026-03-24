@@ -15,7 +15,7 @@ namespace WildlifeSweeps
             _paletteSet = new PaletteSet("Wildlife Sweeps")
             {
                 Style = PaletteSetStyles.ShowAutoHideButton | PaletteSetStyles.ShowCloseButton,
-                MinimumSize = new System.Drawing.Size(320, 380)
+                MinimumSize = new System.Drawing.Size(360, 620)
             };
 
             _control = new PaletteControl(settings);

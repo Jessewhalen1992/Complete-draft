@@ -105,5 +105,19 @@ namespace WildlifeSweeps
             var service = new CompleteFromPhotosService();
             service.ExportWorkbookFromTable(doc, editor);
         }
+
+        [CommandMethod("WLS_MATCH_TABLE_TO_PHOTOS")]
+        public void RunMatchTableToPhotos()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null)
+            {
+                return;
+            }
+
+            var editor = doc.Editor;
+            var service = new MatchTableToPhotosService();
+            service.Execute(doc, editor);
+        }
     }
 }

@@ -469,10 +469,22 @@ namespace WildlifeSweeps
                     .Select(record => new PhotoLayoutRecord(record.Number, record.ImagePath, false, record.WildlifeFinding))
                     .ToList();
                 var report = new List<string>();
-                if (photoLayoutRecords.Count > 0
-                    && !PhotoLayoutHelper.PlacePhotoGroups(doc.Database, editor, settings, photoLayoutRecords, out report))
+                if (photoLayoutRecords.Count > 0)
                 {
-                    return;
+                    var photoLayoutSucceeded = PhotoLayoutHelper.PlacePhotoGroups(doc.Database, editor, settings, photoLayoutRecords, out report);
+                    if (!photoLayoutSucceeded)
+                    {
+                        if (report.Count > 0)
+                        {
+                            editor.WriteMessage("\n--- Photo Sheet Report ---");
+                            foreach (var entry in report)
+                            {
+                                editor.WriteMessage($"\n{entry}");
+                            }
+                            editor.WriteMessage("\n-------------------------");
+                        }
+                        return;
+                    }
                 }
 
                 var workbookPath = PromptForWorkbookPath();
@@ -2094,43 +2106,51 @@ namespace WildlifeSweeps
                     return false;
                 }
 
-                using var scratchDb = db.Wblock();
-                var removedScratchEntities = RemoveScratchAtsLinework(scratchDb);
-                var preExistingQuarterLayerIds = CollectQuarterLayerEntityIds(scratchDb);
-                var previousWorkingDb = HostApplicationServices.WorkingDatabase;
-                object? sectionDrawResult;
-                try
+                if (!TryOpenFileBackedScratchDatabase(db, out var scratchDb, out var scratchDetail))
                 {
-                    HostApplicationServices.WorkingDatabase = scratchDb;
-                    sectionDrawResult = drawSectionsMethod.Invoke(
-                        null,
-                        new object[] { editor, scratchDb, requestList, config, logger, false, true, false });
-                }
-                finally
-                {
-                    HostApplicationServices.WorkingDatabase = previousWorkingDb;
-                }
-
-                if (sectionDrawResult == null)
-                {
-                    detail = "ATS scratch quarter build returned no result.";
+                    detail = scratchDetail;
                     return false;
                 }
 
-                quarterLayerSources = LoadQuarterLayerSources(scratchDb, locationResolver, preExistingQuarterLayerIds);
-                var totalMatches = quarterLayerSources.Sum(source => source.Matches.Count);
-                if (quarterLayerSources.Count == 0 || totalMatches == 0)
+                using (scratchDb)
                 {
-                    detail = $"ATS scratch quarter build did not produce any new {QuarterValidationLayerName} quarter polygons.";
-                    return false;
-                }
+                    var removedScratchEntities = RemoveScratchAtsLinework(scratchDb);
+                    var preExistingQuarterLayerIds = CollectQuarterLayerEntityIds(scratchDb);
+                    var previousWorkingDb = HostApplicationServices.WorkingDatabase;
+                    object? sectionDrawResult;
+                    try
+                    {
+                        HostApplicationServices.WorkingDatabase = scratchDb;
+                        sectionDrawResult = drawSectionsMethod.Invoke(
+                            null,
+                            new object[] { editor, scratchDb, requestList, config, logger, false, true, false });
+                    }
+                    finally
+                    {
+                        HostApplicationServices.WorkingDatabase = previousWorkingDb;
+                    }
 
-                var sourceSummary = string.Join(
-                    ", ",
-                    quarterLayerSources.Select(source => $"{source.LayerName}={source.Matches.Count}"));
-                detail =
-                    $"using {totalMatches} road-allowance-aware quarter polygon(s) generated in an isolated scratch drawing from {addedRequestCount} section request(s) after removing {removedScratchEntities} cloned ATS helper entity(ies) [{sourceSummary}] ({assemblySource}).";
-                return true;
+                    if (sectionDrawResult == null)
+                    {
+                        detail = "ATS scratch quarter build returned no result.";
+                        return false;
+                    }
+
+                    quarterLayerSources = LoadQuarterLayerSources(scratchDb, locationResolver, preExistingQuarterLayerIds);
+                    var totalMatches = quarterLayerSources.Sum(source => source.Matches.Count);
+                    if (quarterLayerSources.Count == 0 || totalMatches == 0)
+                    {
+                        detail = $"ATS scratch quarter build did not produce any new {QuarterValidationLayerName} quarter polygons.";
+                        return false;
+                    }
+
+                    var sourceSummary = string.Join(
+                        ", ",
+                        quarterLayerSources.Select(source => $"{source.LayerName}={source.Matches.Count}"));
+                    detail =
+                        $"using {totalMatches} road-allowance-aware quarter polygon(s) generated in an isolated file-backed scratch drawing from {addedRequestCount} section request(s) after removing {removedScratchEntities} ATS helper entity(ies) [{sourceSummary}] ({assemblySource}).";
+                    return true;
+                }
             }
             catch (TargetInvocationException ex)
             {
@@ -2151,6 +2171,42 @@ namespace WildlifeSweeps
                 {
                     disposableLogger.Dispose();
                 }
+            }
+        }
+
+        private static bool TryOpenFileBackedScratchDatabase(
+            Database sourceDb,
+            out Database? scratchDb,
+            out string detail)
+        {
+            scratchDb = null;
+            detail = string.Empty;
+            if (sourceDb == null)
+            {
+                detail = "The active drawing database was unavailable for ATS quarter generation.";
+                return false;
+            }
+
+            var sourcePath = sourceDb.Filename;
+            if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+            {
+                detail = "ATS quarter generation requires the current drawing to be saved so WLS can open a file-backed scratch database.";
+                return false;
+            }
+
+            try
+            {
+                scratchDb = new Database(false, true);
+                scratchDb.ReadDwgFile(sourcePath, FileOpenMode.OpenForReadAndAllShare, allowCPConversion: false, password: null);
+                scratchDb.CloseInput(true);
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                scratchDb?.Dispose();
+                scratchDb = null;
+                detail = $"Failed to open a file-backed ATS scratch database from '{sourcePath}': {ex.Message}";
+                return false;
             }
         }
 

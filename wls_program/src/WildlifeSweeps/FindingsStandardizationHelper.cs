@@ -19,8 +19,6 @@ namespace WildlifeSweeps
                 {
                     return new FindingsDescriptionStandardizer.PromptResult(
                         string.Empty,
-                        string.Empty,
-                        string.Empty,
                         true,
                         true,
                         false);
@@ -41,8 +39,6 @@ namespace WildlifeSweeps
 
                     return new FindingsDescriptionStandardizer.PromptResult(
                         description,
-                        string.Empty,
-                        string.Empty,
                         true,
                         false,
                         false);
@@ -50,8 +46,6 @@ namespace WildlifeSweeps
 
                 return new FindingsDescriptionStandardizer.PromptResult(
                     context.CleanedOriginal,
-                    string.Empty,
-                    string.Empty,
                     false,
                     false,
                     true);

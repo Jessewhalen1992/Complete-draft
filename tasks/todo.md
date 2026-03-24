@@ -6682,3 +6682,269 @@ Regression follow-up:
 - Behavior note: this does not add any grace-zone or exception buffer. The selected closed polyline remains the binary in/out authority; sampled containment is now only a backup when the exact evaluation cannot classify the point cleanly.
 - Verification: `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore` passed with `0` warnings and `0` errors, producing the live Release DLL. A second alternate-output verification attempt hit project intermediate-output issues after the successful live build, so the main compile is the verified build for this change.
 - Follow-up correction: the live `01147-24-WLS-R0P1_buffer_debug.txt` report showed points 30 and 31 were not fallback mistakes at all; both exact and sampled containment agreed they were outside the actual selected 100m boundary by `58.305 m` and `120.612 m`. To catch stacked/hidden `Defpoints` polylines being selected by mistake, `wls_program\src\WildlifeSweeps\CompleteFromPhotosService.cs` and `wls_program\src\WildlifeSweeps\SortBufferPhotosService.cs` now require an interior confirmation click for `Defpoints` buffer boundaries and reject the selected boundary if that point is not actually inside it.
+
+## 2026-03-20 - WLS recurring ATS scratch `eKeyNotFound`
+- [x] Trace the active WLS quarter-build path and confirm why `eKeyNotFound` is still reachable.
+- [x] Replace the fragile in-memory ATS scratch quarter build with a safer file-backed scratch flow.
+- [x] Build WLS, verify the updated quarter-build path compiles cleanly, and record the review result.
+
+### Review
+- Root cause: the live WLS quarter-generation path in `wls_program\src\WildlifeSweeps\CompleteFromPhotosService.cs` was still invoking ATS against `db.Wblock()` with a working-database swap. That was exactly the brittle in-memory scratch pattern previously called out as not faithful enough for ATS road-allowance cleanup, so `ErrorStatus.eKeyNotFound` could still recur even after the earlier mitigations.
+- Fix: replaced the `db.Wblock()` scratch creation in `TryBuildQuarterSourcesViaAtsScratch(...)` with a file-backed side database opened from the saved DWG via `Database.ReadDwgFile(...)` and `CloseInput(true)`. WLS still strips ATS helper layers from that isolated scratch DB, runs the reflected ATS `DrawSectionsFromRequests(...)` build there, and harvests only the newly generated `L-QUATER` quarter polygons back into WLS logic. The live drawing remains untouched.
+- Behavior note: this path now requires the current drawing to be saved to disk. If the drawing has no file path yet, WLS fails safely with an explicit message instead of silently dropping back to the fragile in-memory quarter build.
+- Verification: `dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore` passed with `0` warnings and `0` errors.
+
+## 2026-03-23 - WLS title block controls
+- [x] Add a WLS `TITLE BLOCK CONTROLs` sub-UI with the requested input controls, ATS location-fill action, and apply/cancel flow.
+- [x] Implement title-block placeholder replacement on `Layout 1...` while preserving the existing text entities' formatting.
+- [x] Build the WLS project and record the verification result.
+
+### Review
+- Root cause: WLS had no title-block workflow in the palette, no reusable ATS boundary-to-location formatter on the WLS side, and no paper-space placeholder replacement flow for the `1.` through `7.` title-block tokens.
+- Fix: added a collapsible `TITLE BLOCK CONTROLs` section to the WLS palette with the requested sweep type, purpose, location, survey dates, sub-region, existing-land, and spacing inputs plus `Apply` and `Cancel`. The location field now supports `ADD SECTIONS FROM BDY` and formats grouped ATS quarter text from selected closed boundaries. Added `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` to collect ATS-style location text and replace placeholders on the first `Layout 1*` paper-space layout by updating existing `MText`, `DBText`, and block attributes in place so the original text formatting is preserved. Increased the palette minimum size to fit the new controls cleanly.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS Environmental Conditions detail rows and mixed casing follow-up
+- [ ] Add the four manual-entry Environmental Conditions detail rows under each survey-date row without reintroducing merged-cell behavior.
+- [ ] Restore uppercase text for green title-block replacements while keeping blue purpose text in display case.
+- [ ] Rebuild WLS, verify the result, and document the follow-up review and lesson.
+- Follow-up correction: live first-sheet tabs can be named like `1 of 5`, not just `Layout 1`. `TitleBlockControlService` now matches first-sheet names like `1 of _`, still accepts `Layout 1`, and only errors when no first-sheet paper-space tab can be identified.
+
+## 2026-03-23 - WLS footprint-based natural sub-region lookup
+- [x] Replace the title-block sub-region picker with a footprint-driven lookup workflow and button in the WLS palette.
+- [x] Import the Alberta natural sub-region shapefile through a location-window-limited Map import, read `NSRNAME` / `NRNAME`, and format the title-block text.
+- [x] Keep matching region linework only when multiple natural-region polygons overlap the selected footprint; otherwise clean up the temporary import.
+- [x] Build WLS and record the verification result.
+
+### Review
+- Root cause: the title-block sub-region field was still using a manual hardcoded list, which did not reflect the user’s actual proposed footprint and could not surface the rare multi-region case visually.
+- Fix: changed the WLS title-block sub-region UI to a freeform text box with `GET SUB-REGION FROM FOOTPRINT`, added `wls_program/src/WildlifeSweeps/NaturalRegionLookupService.cs`, and wired it to select closed footprint boundaries, import the Alberta natural-subregion shapefile through a bounded location window, read `NSRNAME` / `NRNAME` from imported Object Data, and format text like `Lower Foothills Sub-region of the Foothills Region`. When exactly one unique match is found, the temporary imported linework is erased; when multiple unique matches are found, only the matching imported linework is left visible for review.
+- Safety note: if the Map importer cannot apply a location window, WLS now refuses the import instead of risking a full-dataset load from the provincial shapefile.
+- Follow-up correction: AutoCAD could crash right after a successful single-match lookup because the first implementation deleted the temporary Object Data table immediately after reflection-based OD reads and entity cleanup. The lookup now keeps the temporary OD table definition in place, runs the OD read phase separately from the erase phase, opens imported entities `ForRead` during evaluation, and explicitly disposes reflection-based table/record/enumerator wrappers to match the safer ATS lifetime pattern.
+
+## 2026-03-23 - WLS Environmental Conditions tables per survey date
+- [x] Trace the current survey-date output path and choose the least invasive layout anchor for Environmental Conditions tables.
+- [x] Add per-survey-date Environmental Conditions table generation with the requested heading, text sizing, colors, backgrounds, and borders.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: title-block survey dates were only being injected into placeholder `4.` text in `TitleBlockControlService`, so there was no existing path to create or refresh any per-date Environmental Conditions tables on the layout.
+- Fix: updated `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` so `Apply(...)` now rebuilds Environmental Conditions tables whenever survey dates are present. The first table includes a merged `ENVIRONMENTAL CONDITIONS` heading row with text size `16` and ACI `14`, and every survey date gets its own three-column row with the formatted survey date, `START OF SWEEP`, and `END OF SWEEP` using text size `10`, red text, ACI `254` background, and full borders. Re-runs first remove earlier Environmental Conditions tables, then recreate them. The insertion anchor is resolved from the first existing Environmental Conditions table if present, otherwise from the survey-date placeholder entity on the target layout so the behavior survives subsequent applies.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+- Follow-up correction: Environmental Conditions tables now ignore the survey-date placeholder anchor and always start at fixed paper-space coordinates `(67.256, 753.705)` on the target layout, then stack downward from there on each apply.
+
+## 2026-03-23 - WLS safe title-block color gating
+- [x] Audit the title-block replacement path and define a fail-closed gate so only intended placeholder text can be updated.
+- [x] Restrict WLS title-block replacements to blue or green `DBText`, block attributes, and inline-formatted `MText` placeholders.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the title-block replacement flow was broad enough to risk updating placeholder-looking text anywhere on the first layout, even when the visible text was not part of the blue/green editable title-block fields the user intended to target.
+- Fix: tightened `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` so `DBText` and block attributes are only updated when their effective visible color resolves to blue or green through direct color, `ByLayer`, or `ByBlock` inheritance, and `MText` now checks inline `\C...;` / `\c...;` color overrides before falling back to the entity color. The allowed colors are fail-closed to exact blue/green values so white body text in the same layout is left untouched.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-23 - WLS Environmental Conditions formatting polish
+- [x] Update Environmental Conditions table alignment, date casing, and non-bold text styling.
+- [x] Normalize methodology spacing output to remove the gap before `m`.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the first Environmental Conditions pass left the heading and date cell left-aligned, reused mixed-case survey-date formatting from the narrative text path, and still emitted methodology spacing like `30 m` instead of the tighter `30m` format the user wanted.
+- Fix: updated `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` so Environmental Conditions heading and value cells are centered, the table-only survey date formatter now uppercases the date text, and table cells force a non-bold clone of their active text style when the underlying style is bold. Methodology spacing output now removes the space before the terminal `m`.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-23 - WLS natural-region wording correction
+- [x] Locate the natural-region formatter that emits the title-block sub-region text.
+- [x] Update the region suffix wording from `Region` to `Natural Region` in the lookup formatter.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the footprint-driven sub-region formatter in `wls_program/src/WildlifeSweeps/NaturalRegionLookupService.cs` normalized `NRNAME` values to plain `Region`, which produced output like `Lower Foothills Sub-region of the Foothills Region` instead of the desired `Foothills Natural Region`.
+- Fix: updated `FormatNaturalRegionText(...)` so region names already ending in `Natural Region` are preserved, names ending in plain `Region` are rewritten to `Natural Region`, and bare names append `Natural Region`.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-23 - WLS Match Table to Photos
+- [x] Add a WLS action/command that prompts for an existing summary table and syncs photo labels from its numbered finding rows.
+- [x] Update only matching `PHOTO #...` labels in the same space, using all-caps captions derived from the table wording.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: WLS already had table export/rebuild and photo-label generation paths, but there was no maintenance action to push updated wording from an edited summary table back into the existing `PHOTO #...` labels.
+- Fix: added `wls_program/src/WildlifeSweeps/MatchTableToPhotosService.cs`, which prompts for a summary table, reads numbered finding rows from column 0/1, and updates matching `PHOTO #...` `MText` labels in the same drawing space as the table. The new service reuses `PhotoLayoutHelper`'s photo-label parser/formatter so captions stay escaped and all caps. Wired it into the main WLS command surface with `WLS_MATCH_TABLE_TO_PHOTOS` in `wls_program/src/WildlifeSweeps/Commands.cs` and added a `Match Table to Photos` palette button in `wls_program/src/WildlifeSweeps/Ui/PaletteControl.cs`.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS Environmental Conditions and purpose casing follow-up
+- [x] Fix later Environmental Conditions tables so they render as three cells instead of a single merged row.
+- [x] Keep Environmental Conditions month text uppercase while leaving ordinal suffixes lowercase.
+- [x] Keep title-block token `1.` uppercase while formatting token `2.` in mixed case.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the one-row Environmental Conditions tables were still inheriting AutoCAD table style title/header behavior, which could collapse the second table into a single merged-looking row, and the earlier all-caps date formatter uppercased the ordinal suffix as well. Separately, title-block token `2.` was still using the raw uppercase combo-box text even though the blue purpose field should read in display case.
+- Fix: updated `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` so generated Environmental Conditions tables explicitly suppress style title/header behavior before sizing rows, the table-specific survey date formatter now emits an uppercase month with lowercase ordinal suffixes, and token `2.` now uses a dedicated purpose formatter that maps the known uppercase choices into mixed-case display text while token `1.` remains unchanged.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS Environmental Conditions detail rows and color-specific purpose casing
+- [x] Add the four manual-entry Environmental Conditions rows under each survey-date row.
+- [x] Keep purpose text uppercase on green title fields while preserving mixed-case purpose text on blue narrative fields.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the Environmental Conditions table builder only emitted the date/start/end row, so there was nowhere for the user to manually enter temperature, wind speed, precipitation, and cloud cover values. Separately, the previous purpose-casing change assumed placeholder casing was token-specific, but the same purpose token can appear in both green title text and blue narrative text with different casing expectations.
+- Fix: updated `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` so every Environmental Conditions table now adds four bordered detail rows for `TEMPERATURE (C°)`, `WIND SPEED (km/h)`, `PRECIPITATION (mm)`, and `CLOUD COVER (%)`, leaving the start/end value cells blank for manual entry. The same file now resolves replacement text per occurrence, using the target text color to keep purpose replacements uppercase on green text and mixed case on blue text.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS Environmental Conditions inter-table gap removal
+- [x] Remove the visible gap between stacked Environmental Conditions tables.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` was still applying a fixed `EnvironmentalConditionsVerticalGap` when stacking one generated Environmental Conditions table under the next, so each later survey-date table was intentionally offset downward.
+- Fix: changed `EnvironmentalConditionsVerticalGap` to `0.0` so the generated tables stack flush while leaving row heights, borders, and the initial anchor position unchanged.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+## 2026-03-24 - WLS photo layout template sheets
+- [x] Inspect the current WLS photo generation flow and identify the safest place to clone `4 of 5` as a template layout.
+- [x] Implement per-4-photo layout copying and viewport centering on the generated photo group extents.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: WLS already chunked photos into 4-up model-space groups, but it had no paper-space follow-up. There was no layout cloning, no viewport selection logic, and no viewport-centering pass tied to the same 4-slot geometry used to place photos.
+- Fix: updated `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs` so photo placement now also syncs paper-space photo sheets from template layout `4 of 5`. The helper removes old generated photo-sheet copies, reuses `4 of 5` for the first photo group, copies it for later groups, finds the main floating viewport on each sheet, and recenters that viewport on the canonical 4-slot model-space frame for each group while preserving the template scale. The same helper also refreshes those photo sheets after photo reflow so remove/renumber flows do not leave stale viewport positions behind. Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` to print photo-layout report messages before returning on failure.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS photo sheet viewport target correction
+- [x] Fix the photo-sheet viewport centering so copied `4 of 5` layouts actually pan to the photo group after placement.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the first photo-sheet pass tried to pan copied layout viewports by writing `Viewport.ViewCenter` from transformed model coordinates. For these template viewports that left the copied sheets on their original template framing instead of moving the actual view to the photo group.
+- Fix: updated `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs` so sheet centering now moves the viewport by setting `Viewport.ViewTarget` to the canonical group center and resetting `Viewport.ViewCenter` to `Point2d.Origin`, while still preserving the template scale and lock state.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS photo sheet viewport template detection fallback
+- [x] Fix the photo-sheet viewport selector so the `4 of 5` template viewport is recognized even when it is not numbered as a typical floating viewport.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the first viewport selector only accepted viewports with `Viewport.Number > 1`, which assumed the template sheet used AutoCAD's usual floating-viewport numbering. Your `4 of 5` template did contain a usable viewport, but it was being rejected by that narrow rule so sheet centering never ran.
+- Fix: updated `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs` so viewport selection now ranks candidates instead of hard-rejecting them. It still prefers numbered floating viewports first, but now falls back to locked/on viewports and then the largest usable viewport on the layout.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS photo sheet model-space + template safety correction
+- [x] Force photo placement and reflow to operate on model space instead of the active current space.
+- [x] Treat `4 of 5` as a pure template and copy it for every generated photo sheet, including the first group.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the first photo-sheet pass still inserted photos and read existing photo layouts from `db.CurrentSpaceId`, so running the command while sitting on layout `4 of 5` could write photo entities into paper space instead of model space. On top of that, the paper-space sync path reused the real `4 of 5` layout as sheet 1, so the template itself could be modified instead of being used purely as a copy source.
+- Fix: updated `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs` so the insertion-point prompt temporarily switches to `Model` for the pick, actual photo placement/reflow always reads and writes the model-space block table record, and photo-sheet generation now copies `4 of 5` for every group into generated layouts like `4 of 5 - PHOTO 1`, leaving the original template untouched.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS generated photo sheet blank viewport follow-up
+- [x] Inspect the copied photo-sheet viewport pan logic and confirm why generated layouts are blank.
+- [x] Fix viewport centering so copied layouts preserve the template viewport framing while targeting the correct photo group.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the copied photo-sheet layouts were still vulnerable to selecting the overall paper-space viewport instead of the actual model viewport. On copied layouts where `Viewport.Number` was not a reliable discriminator, the fallback logic could rank the full-sheet paper-space viewport as the "largest usable" candidate, and panning that viewport makes the entire generated layout appear blank.
+- Fix: updated `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs` so `TryGetPrimaryPhotoViewport(...)` now rejects viewports that match the paper-space page size and page-center signature of AutoCAD's overall layout viewport. The centering path still preserves the copied template viewport's existing `ViewCenter`, so generated sheets now pan only the real photo viewport toward the canonical 4-photo group.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS photo sheet blank viewport follow-up
+- [x] Reinspect the copied photo-sheet viewport centering logic against the live `4 of 5` template behavior.
+- [x] Apply the smallest safe viewport fix so generated photo sheets show the model-space photo groups without mutating the template layout.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the previous viewport-target patch moved copied photo-sheet viewports to the correct model-space `ViewTarget`, but then it also forced `Viewport.ViewCenter = Point2d.Origin`. That discarded the template viewport's existing DCS framing, so copied sheets could pan off into blank space even though the template layout itself stayed protected.
+- Fix: updated `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs` so copied photo-sheet viewports now preserve their original `ViewCenter` and only retarget the model-space `ViewTarget` to the canonical 4-photo group center. This keeps the template scale and hand-tuned viewport framing intact while still panning each generated sheet to its group.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS photo sheet blank viewport investigation
+- [x] Inspect the current photo-sheet viewport-centering code in `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs`.
+- [x] Compare the viewport target/center writes against the copied-template behavior and identify the likeliest blank-view failure mode.
+- [x] Record the reasoning and recommended narrow fix.
+
+### Review
+- Root cause under investigation: in `TryCenterPhotoSheetViewports(...)`, the copied template viewport is updated with a new `ViewTarget`, but the code also forcibly resets `Viewport.ViewCenter` to `Point2d.Origin`. On a hand-tuned template layout, `ViewCenter` is part of the preserved DCS framing. Zeroing it discards the template's existing pan/centering and can shift the view away from the intended model-space target, which matches the observed blank generated sheets after the model-space/template safety fixes.
+- Recommended narrow fix: preserve the copied viewport's existing `ViewCenter` and other template view parameters, and update only `ViewTarget` (plus `On`/`Locked` handling). If a follow-up adjustment is still needed after that, inspect the copied viewport's original `ViewCenter`/`CustomScale`/`ViewHeight` at runtime instead of zeroing DCS state.
+
+## 2026-03-24 - WLS photo sheet diagnostics
+- [x] Add structured photo-sheet logging to the existing WLS report/output path.
+- [x] Capture template detection, generated layouts, viewport candidates, selected viewport state, and target center details.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: although the photo-sheet helper already had a basic `report` list, it did not yet log enough context to explain the next failure quickly. We still had to infer whether a bad run came from the prompt context, generated layout cleanup/copy, group base-point math, or the viewport state chosen on each sheet.
+- Fix: expanded `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs` to log the photo-sheet prompt context, chosen insertion point, model-space group placement anchors, template-layout confirmation, generated-layout cleanup/copy actions, and richer viewport details including `CustomScale`, `TwistAngle`, `ViewTarget`, and `ViewCenter`. The existing report plumbing in `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` already prints these entries to the AutoCAD command line on failure and in the final report on success, so no second logging channel was needed.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS photo sheet layout-tab regression
+- [x] Inspect the current copied-layout viewport mutation flow for anything that can leave layout tabs unusable.
+- [x] Apply the narrowest safe fix to avoid corrupting layout/view state while still supporting photo-sheet centering.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the photo-sheet diagnostics showed two concrete failures. First, the helper was still selecting the oversized dormant viewport whose `ViewCenter` mirrored its paper-space center instead of the real photo viewport whose `ViewCenter` already carried a model-space location. Second, the actual viewport edit then failed with `eNotInPaperspace`, which means WLS was trying to retarget the copied sheet viewport without activating that layout in paper space first.
+- Fix: updated `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs` so each generated photo sheet is activated before viewport edits, including an explicit `SwitchToPaperSpace()` call and restoration of the user's original layout afterward. The viewport selector now strongly prefers viewports whose stored `ViewCenter` is meaningfully distinct from their paper-space center, which biases selection toward the real model viewport and away from the oversized dormant sheet viewport seen in the log.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug -o C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\build\verify-photo-layout-fix` passed with `0` warnings and `0` errors while the normal debug DLL remained locked by AutoCAD.
+
+## 2026-03-24 - WLS photo sheet diagnostics logging
+- [x] Inspect the current photo-sheet report/output path and choose the highest-signal runtime diagnostics to print.
+- [x] Add targeted logging for layout cleanup/copy, viewport selection, and viewport centering in the photo-sheet helper flow.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the photo-sheet path already carried a `report` list from `PhotoLayoutHelper` back to `CompleteFromPhotosService`, but it only emitted sparse failure messages, so recent viewport/layout regressions still required guesswork. On top of that, successful photo-layout runs printed the same report twice: once immediately after placement and again in the final `--- Report ---` block.
+- Fix: updated `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs` so the photo-sheet helper now logs sync start parameters, template discovery, generated-layout cleanup/copy actions, per-layout viewport scans, skipped viewport reasons, selected viewport details, and the before/after targeting values used during centering. Updated `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` so failed photo-layout runs still print the diagnostics immediately before returning, while successful runs defer to the existing final report block and avoid duplicate output.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS photo sheet layout-tab safety follow-up
+- [x] Reinspect the generated-layout viewport-edit path for anything that can leave layout tabs unstable after the photo command.
+- [x] Reduce layout/viewport write scope to the minimum safe transaction pattern and preserve diagnostics.
+- [x] Rebuild WLS and record the verification result.
+
+### Review
+- Root cause: the photo-sheet centering path was still scanning viewport candidates `ForWrite` and then modifying every generated layout viewport inside one long transaction. That is broader than necessary for AutoCAD layout objects, and it increases the risk of leaving copied layout tabs in a bad UI state if one viewport/layout interaction goes sideways.
+- Fix: updated `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs` so viewport candidate scans now run `ForRead`, the helper records only the selected viewport `ObjectId`, and each generated layout is reopened and centered in its own short transaction. Only the chosen viewport for that one layout is upgraded `ForWrite`, while the existing photo-sheet diagnostics remain intact.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS photo sheet pan-property correction
+- [x] Reconcile the latest photo-sheet report with the current centering write path.
+- [x] Pan copied photo sheets through the template viewport property that actually stores model-space center.
+- [x] Rebuild the live DLL and record the verification result.
+
+### Review
+- Root cause: the latest photo-sheet report showed the correct viewport was finally selected and the edit succeeded, but the visible sheet did not move. The selected template viewport already stored a real model-space center in `ViewCenter` while `ViewTarget` remained `(0, 0, 0)`, so WLS was still updating the wrong pan property for this template.
+- Fix: updated `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs` so centering now chooses a pan mode per selected viewport. When the template viewport clearly carries a model-space `ViewCenter`, WLS keeps `ViewTarget` unchanged and moves `ViewCenter` to the canonical photo-group center. The old `ViewTarget` path remains as the fallback for templates that do not encode model-space pan in `ViewCenter`. The diagnostics now log `panMode=ViewCenter` or `panMode=ViewTarget` plus old/new center values.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS photo sheet visual-centering polish
+- [x] Inspect the remaining vertical centering bias after the viewport starts panning correctly.
+- [x] Include the photo-caption footprint in the canonical 4-photo group center calculation.
+- [x] Rebuild the live DLL and record the verification result.
+
+### Review
+- Root cause: even after the correct viewport and pan property were fixed, the canonical photo-group center in `wls_program/src/WildlifeSweeps/PhotoLayoutHelper.cs` still measured only the four image rectangles. The real visual footprint extends farther south because each photo has a two-line caption centered `48` units below the image, so the computed center stayed slightly too far north and made the viewport framing look a bit south-heavy.
+- Fix: updated `BuildCanonicalPhotoGroupCenter(...)` to include the caption footprint when calculating the overall 4-up extents. The helper now uses shared label geometry constants and expands the vertical extent downward by the caption offset plus an approximate two-line text half-height. I also replaced the duplicated hardcoded caption offset/text-height values in the photo-label helper paths with those shared constants so the centering math and actual label placement stay in sync.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors.
+
+## 2026-03-24 - WLS simplified finding-name mapping workbook
+- [x] Inspect the current finding-name lookup workbook and code source of truth to identify the review-friendly mapping fields.
+- [x] Generate a simplified XLSX that shows the current finding-name input-to-output mappings in a compact format for manual review.
+- [x] Verify the workbook contents/location and record the result.
+
+### Review
+- Source of truth confirmed: the WLS finding-name standardizer loads rules from `wls_program/src/WildlifeSweeps/wildlife_parsing_codex_lookup.xlsx`, specifically the `RecognitionKeywords`, `RecognitionRegex`, and `Skips` sheets. No saved custom prompt mappings were present under `%APPDATA%\\WildlifeSweeps\\custom_mappings.json`, so the export reflects the current workbook-driven behavior only.
+- Deliverable: created `output/spreadsheet/wls_finding_name_mapping_simplified.xlsx` with a `Summary` sheet plus two review sheets: `LookupSimple` (source order) and `ByOutput` (sorted by final standardized description). Each row shows the rule type, trigger text/pattern, resulting standardized description, species, finding type, notes, and source sheet/row.
+- Verification: opened the generated workbook with `openpyxl` and confirmed it exists, contains the expected three sheets, and includes 400 mapped rows total (281 keyword rules, 96 regex rules, and 23 skip rows).
+
+## 2026-03-24 - WLS direct-mapping finding lookup simplification
+- [x] Remove species/finding-type dependencies from the WLS finding standardizer and keep only direct input-to-output mapping behavior.
+- [x] Rewrite the source lookup workbook(s) to direct-mapping sheets and regenerate the simplified review export to match.
+- [x] Build WLS, verify the new workbook structure/load path, and record the lesson from this correction.
+
+### Review
+- Root cause: even after producing a simplified review export, the active WLS standardizer and source lookup workbook still carried the older species/finding-type model internally. That left the code, source workbook, and review workbook out of sync with the user’s actual requirement, which is a direct “this becomes this” mapping model.
+- Fix: simplified `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs` to treat keyword/regex/custom matches as direct standardized-description mappings only, removed the species/finding-type pair validation/reverse-lookup path, shrank `PromptResult`, `RecognitionRule`, `RecognitionMatch`, `CustomMapping`, and `StandardizedFinding` to description-focused data, and removed the now-dead `wls_program/src/WildlifeSweeps/FindingOtherValueHelper.cs`. Updated `wls_program/src/WildlifeSweeps/FindingsStandardizationHelper.cs` to the smaller prompt contract. Rewrote the lookup workbooks at `wls_program/wildlife_parsing_codex_lookup.xlsx`, `wls_program/wildlife_parsing_codex_lookup_backup.xlsx`, `wls_program/src/WildlifeSweeps/wildlife_parsing_codex_lookup.xlsx`, and `wls_program/docs/wildlife_parsing_codex_lookup.xlsx` to use only `RecognitionKeywords`, `RecognitionRegex`, and `Skips`, with direct-mapping columns (`Priority`, trigger text/pattern, `StandardDescription`, `Notes`). Regenerated `output/spreadsheet/wls_finding_name_mapping_simplified.xlsx` to remove species/finding-type columns as well.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors. Verified the source, backup, debug-output, and simplified export workbooks with `openpyxl`; each now has the expected direct-mapping sheet structure and no `SpeciesFindingTypes` sheet.

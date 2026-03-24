@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
@@ -13,6 +14,15 @@ namespace WildlifeSweeps
 {
     internal static class PhotoLayoutHelper
     {
+        internal const string PhotoLabelLayerName = "DETAIL-T";
+        private const int PhotosPerGroup = 4;
+        private const string PhotoSheetTemplateLayoutName = "4 of 5";
+        private const string GeneratedPhotoSheetLayoutNamePrefix = PhotoSheetTemplateLayoutName + " - PHOTO ";
+        private const double CanonicalPhotoFrameDimension = 400.0;
+        private const double PhotoLabelOffsetBelowImage = 48.0;
+        private const double PhotoLabelTextHeight = 20.0;
+        private const double PhotoLabelApproximateLineCount = 2.0;
+
         public static void EnsureLayer(Database db, string layerName, Transaction tr)
         {
             EnsureLayer(db, layerName, Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, 7), tr);
@@ -51,11 +61,11 @@ namespace WildlifeSweeps
 
             using var trLayer = db.TransactionManager.StartTransaction();
             EnsureLayer(db, settings.PhotoLayer, trLayer);
-            EnsureLayer(db, "DETAIL-T", Autodesk.AutoCAD.Colors.Color.FromRgb(0, 255, 0), trLayer);
+            EnsureLayer(db, PhotoLabelLayerName, Autodesk.AutoCAD.Colors.Color.FromRgb(0, 255, 0), trLayer);
             trLayer.Commit();
 
             var ordered = records.OrderBy(r => r.PhotoNumber).ToList();
-            var groups = ChunkList(ordered, 4).ToList();
+            var groups = ChunkList(ordered, PhotosPerGroup).ToList();
             if (groups.Count == 0)
             {
                 return false;
@@ -72,12 +82,44 @@ namespace WildlifeSweeps
             var firstGroup = groups.First();
             var firstPhoto = firstGroup.First().PhotoNumber;
             var lastPhoto = firstGroup.Last().PhotoNumber;
-            var startPointResult = editor.GetPoint($"\nPick insertion point for Group 1 (Photos {firstPhoto} - {lastPhoto}): ");
+            var layoutManager = LayoutManager.Current;
+            var originalLayoutName = layoutManager?.CurrentLayout ?? string.Empty;
+            var switchedToModel = layoutManager != null &&
+                                 !string.Equals(originalLayoutName, "Model", StringComparison.OrdinalIgnoreCase);
+            report.Add(
+                $"PHOTO SHEET prompt: currentLayout='{originalLayoutName}', switchedToModel={switchedToModel}, " +
+                $"records={ordered.Count}, groups={groups.Count}, firstGroupRange={firstPhoto}-{lastPhoto}");
+            PromptPointResult startPointResult;
+            try
+            {
+                if (switchedToModel)
+                {
+                    layoutManager!.CurrentLayout = "Model";
+                }
+
+                startPointResult = editor.GetPoint($"\nPick insertion point for Group 1 (Photos {firstPhoto} - {lastPhoto}): ");
+            }
+            finally
+            {
+                if (switchedToModel)
+                {
+                    try
+                    {
+                        layoutManager!.CurrentLayout = originalLayoutName;
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
             if (startPointResult.Status != PromptStatus.OK)
             {
+                report.Add($"PHOTO SHEET prompt cancelled: status={startPointResult.Status}");
                 return false;
             }
 
+            report.Add($"PHOTO SHEET prompt result: insertionPoint={FormatPoint(startPointResult.Value)}");
             return PlacePhotoGroupsAtPoint(db, settings, ordered, startPointResult.Value, out report);
         }
 
@@ -160,18 +202,21 @@ namespace WildlifeSweeps
                 tr.Commit();
             }
 
+            var report = new List<string>();
+            var sheetSyncSucceeded = TrySyncPhotoSheetLayouts(db, settings, firstLayout.AnchorPoint, survivingLayouts.Count, report);
+
             if (survivingLayouts.Count == 0)
             {
-                return new PhotoLayoutUpdateResult(true, removedLabels, removedImages, 0, unmatchedImageCount, new List<string>());
+                return new PhotoLayoutUpdateResult(sheetSyncSucceeded, removedLabels, removedImages, 0, unmatchedImageCount, report);
             }
 
             return new PhotoLayoutUpdateResult(
-                true,
+                sheetSyncSucceeded,
                 removedLabels,
                 removedImages,
                 survivingLayouts.Count,
                 unmatchedImageCount,
-                new List<string>());
+                report);
         }
 
         private static bool TryEraseEntity(Transaction tr, ObjectId entityId)
@@ -225,14 +270,19 @@ namespace WildlifeSweeps
 
             using var trLayer = db.TransactionManager.StartTransaction();
             EnsureLayer(db, settings.PhotoLayer, trLayer);
-            EnsureLayer(db, "DETAIL-T", Autodesk.AutoCAD.Colors.Color.FromRgb(0, 255, 0), trLayer);
+            EnsureLayer(db, PhotoLabelLayerName, Autodesk.AutoCAD.Colors.Color.FromRgb(0, 255, 0), trLayer);
             trLayer.Commit();
 
-            var groups = ChunkList(ordered, 4).ToList();
+            var groups = ChunkList(ordered, PhotosPerGroup).ToList();
             if (groups.Count == 0)
             {
                 return false;
             }
+
+            report.Add(
+                $"PHOTO SHEET placement: startPoint={FormatPoint(startPoint)}, records={ordered.Count}, groups={groups.Count}, " +
+                $"offsetX={settings.GroupOffsetX.ToString("0.###", CultureInfo.InvariantCulture)}, " +
+                $"offsetY={settings.GroupOffsetY.ToString("0.###", CultureInfo.InvariantCulture)}");
 
             var hadFailures = false;
             var offsets = new List<Vector3d>
@@ -247,9 +297,12 @@ namespace WildlifeSweeps
             {
                 var group = groups[groupIndex - 1];
                 var basePoint = startPoint + new Vector3d(settings.GroupSpacingX * (groupIndex - 1), 0, 0);
+                report.Add(
+                    $"PHOTO SHEET placement group: index={groupIndex}, photoRange={group.First().PhotoNumber}-{group.Last().PhotoNumber}, " +
+                    $"basePoint={FormatPoint(basePoint)}");
 
                 using var tr = db.TransactionManager.StartTransaction();
-                var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+                var space = GetModelSpace(tr, db, OpenMode.ForWrite);
 
                 for (var i = 0; i < group.Count; i++)
                 {
@@ -273,7 +326,520 @@ namespace WildlifeSweeps
                 tr.Commit();
             }
 
+            if (!TrySyncPhotoSheetLayouts(db, settings, startPoint, ordered.Count, report))
+            {
+                hadFailures = true;
+            }
+
             return !hadFailures;
+        }
+
+        private static bool TrySyncPhotoSheetLayouts(
+            Database db,
+            PluginSettings settings,
+            Point3d firstGroupStartPoint,
+            int photoRecordCount,
+            List<string> report)
+        {
+            if (report == null)
+            {
+                throw new ArgumentNullException(nameof(report));
+            }
+
+            var groupCount = photoRecordCount <= 0
+                ? 0
+                : (int)Math.Ceiling(photoRecordCount / (double)PhotosPerGroup);
+
+            report.Add(
+                $"PHOTO SHEET sync start: photos={photoRecordCount}, groups={groupCount}, template='{PhotoSheetTemplateLayoutName}', firstGroupStart={FormatPoint(firstGroupStartPoint)}, groupSpacingX={settings.GroupSpacingX.ToString("0.###", CultureInfo.InvariantCulture)}, imageScale={settings.ImageScale.ToString("0.###", CultureInfo.InvariantCulture)}, imageRotation={settings.ImageRotationDegrees.ToString("0.###", CultureInfo.InvariantCulture)}");
+
+            if (groupCount == 0)
+            {
+                return TryRemoveGeneratedPhotoSheetLayouts(db, report);
+            }
+
+            if (!TryPreparePhotoSheetLayouts(db, groupCount, report, out var layoutNames))
+            {
+                return false;
+            }
+
+            return TryCenterPhotoSheetViewports(db, settings, firstGroupStartPoint, layoutNames, report);
+        }
+
+        private static bool TryPreparePhotoSheetLayouts(
+            Database db,
+            int groupCount,
+            List<string> report,
+            out List<string> layoutNames)
+        {
+            layoutNames = new List<string>();
+            if (groupCount <= 0)
+            {
+                return true;
+            }
+
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                var templateLayout = FindLayoutByName(tr, db, PhotoSheetTemplateLayoutName);
+                if (templateLayout == null)
+                {
+                    report.Add($"Photo sheet template layout '{PhotoSheetTemplateLayoutName}' was not found.");
+                    return false;
+                }
+
+                report.Add(
+                    $"PHOTO SHEET template found: layout='{templateLayout.LayoutName}', tabOrder={templateLayout.TabOrder}, paper={templateLayout.PlotPaperSize.X.ToString("0.###", CultureInfo.InvariantCulture)}x{templateLayout.PlotPaperSize.Y.ToString("0.###", CultureInfo.InvariantCulture)}");
+
+                tr.Commit();
+            }
+            catch (System.Exception ex)
+            {
+                report.Add($"Unable to inspect photo sheet template layout '{PhotoSheetTemplateLayoutName}'. {ex.Message}");
+                return false;
+            }
+
+            if (!TryRemoveGeneratedPhotoSheetLayouts(db, report))
+            {
+                return false;
+            }
+
+            try
+            {
+                var layoutManager = LayoutManager.Current;
+                EnsureCurrentLayoutIsSafeForPhotoSheetCleanup(layoutManager, report);
+
+                for (var sheetIndex = 1; sheetIndex <= groupCount; sheetIndex++)
+                {
+                    var layoutName = BuildGeneratedPhotoSheetLayoutName(sheetIndex);
+                    layoutManager.CopyLayout(PhotoSheetTemplateLayoutName, layoutName);
+                    layoutNames.Add(layoutName);
+                    report.Add($"PHOTO SHEET copied: '{PhotoSheetTemplateLayoutName}' -> '{layoutName}'");
+                }
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                report.Add($"Unable to create photo sheet layouts from '{PhotoSheetTemplateLayoutName}'. {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool TryRemoveGeneratedPhotoSheetLayouts(Database db, List<string> report)
+        {
+            try
+            {
+                var layoutNames = GetGeneratedPhotoSheetLayoutNames(db);
+                if (layoutNames.Count == 0)
+                {
+                    report.Add("PHOTO SHEET cleanup: no generated layouts to remove.");
+                    return true;
+                }
+
+                var layoutManager = LayoutManager.Current;
+                EnsureCurrentLayoutIsSafeForPhotoSheetCleanup(layoutManager, report);
+                foreach (var layoutName in layoutNames)
+                {
+                    layoutManager.DeleteLayout(layoutName);
+                    report.Add($"PHOTO SHEET cleanup: deleted '{layoutName}'");
+                }
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                report.Add($"Unable to remove existing generated photo sheet layouts. {ex.Message}");
+                return false;
+            }
+        }
+
+        private static void EnsureCurrentLayoutIsSafeForPhotoSheetCleanup(LayoutManager layoutManager, List<string>? report = null)
+        {
+            if (layoutManager == null)
+            {
+                return;
+            }
+
+            var currentLayoutName = layoutManager.CurrentLayout ?? string.Empty;
+            if (currentLayoutName.StartsWith(GeneratedPhotoSheetLayoutNamePrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                layoutManager.CurrentLayout = PhotoSheetTemplateLayoutName;
+                report?.Add(
+                    $"PHOTO SHEET cleanup: switched current layout from '{currentLayoutName}' to '{PhotoSheetTemplateLayoutName}' before deleting/regenerating generated sheets.");
+            }
+        }
+
+        private static bool TryCenterPhotoSheetViewports(
+            Database db,
+            PluginSettings settings,
+            Point3d firstGroupStartPoint,
+            IReadOnlyList<string> layoutNames,
+            List<string> report)
+        {
+            var succeeded = true;
+            var layoutManager = LayoutManager.Current;
+            var originalLayoutName = layoutManager?.CurrentLayout ?? string.Empty;
+            try
+            {
+                for (var groupIndex = 0; groupIndex < layoutNames.Count; groupIndex++)
+                {
+                    var layoutName = layoutNames[groupIndex];
+                    if (!TryActivateLayoutForViewportEdit(layoutManager, layoutName, report))
+                    {
+                        succeeded = false;
+                        continue;
+                    }
+
+                    using var tr = db.TransactionManager.StartTransaction();
+                    var layout = FindLayoutByName(tr, db, layoutName);
+                    if (layout == null)
+                    {
+                        report.Add($"Photo sheet layout '{layoutName}' could not be opened.");
+                        succeeded = false;
+                        continue;
+                    }
+
+                    if (!TryGetPrimaryPhotoViewport(tr, layout, report, out var viewportId) || viewportId.IsNull)
+                    {
+                        report.Add($"Photo sheet layout '{layout.LayoutName}' does not contain a floating viewport to center.");
+                        succeeded = false;
+                        continue;
+                    }
+
+                    if (tr.GetObject(viewportId, OpenMode.ForWrite, false) is not Viewport viewport || viewport.IsErased)
+                    {
+                        report.Add($"Photo sheet layout '{layout.LayoutName}' selected viewport could not be opened for write.");
+                        succeeded = false;
+                        continue;
+                    }
+
+                    var groupBasePoint = BuildPhotoGroupBasePoint(firstGroupStartPoint, settings, groupIndex);
+                    var groupCenter = BuildCanonicalPhotoGroupCenter(groupBasePoint, settings);
+                    var wasLocked = viewport.Locked;
+                    var useModelViewCenterPan = HasDistinctModelViewCenter(viewport);
+                    var originalViewCenter = viewport.ViewCenter;
+                    var originalViewTarget = viewport.ViewTarget;
+
+                    report.Add(
+                        $"PHOTO SHEET center: layout='{layout.LayoutName}', groupIndex={groupIndex + 1}, groupBase={FormatPoint(groupBasePoint)}, groupCenter={FormatPoint(groupCenter)}, panMode={(useModelViewCenterPan ? "ViewCenter" : "ViewTarget")}, viewport={DescribeViewport(viewport)}");
+
+                    try
+                    {
+                        viewport.Locked = false;
+                        if (useModelViewCenterPan)
+                        {
+                            viewport.ViewTarget = originalViewTarget;
+                            viewport.ViewCenter = new Point2d(groupCenter.X, groupCenter.Y);
+                        }
+                        else
+                        {
+                            viewport.ViewTarget = new Point3d(groupCenter.X, groupCenter.Y, viewport.ViewTarget.Z);
+                            viewport.ViewCenter = originalViewCenter;
+                        }
+
+                        if (!viewport.On)
+                        {
+                            viewport.On = true;
+                        }
+
+                        report.Add(
+                            $"PHOTO SHEET centered: layout='{layout.LayoutName}', panMode={(useModelViewCenterPan ? "ViewCenter" : "ViewTarget")}, oldTarget={FormatPoint(originalViewTarget)}, newTarget={FormatPoint(viewport.ViewTarget)}, oldViewCenter={FormatPoint(originalViewCenter)}, newViewCenter={FormatPoint(viewport.ViewCenter)}, lockedRestored={wasLocked}");
+                    }
+                    catch (System.Exception ex)
+                    {
+                        report.Add($"Unable to center viewport on layout '{layout.LayoutName}'. {ex.Message}");
+                        succeeded = false;
+                    }
+                    finally
+                    {
+                        viewport.Locked = wasLocked;
+                    }
+
+                    tr.Commit();
+                }
+            }
+            finally
+            {
+                RestoreCurrentLayout(layoutManager, originalLayoutName, report);
+            }
+
+            report.Add($"PHOTO SHEET sync complete: success={succeeded}, centeredLayouts={layoutNames.Count}");
+            return succeeded;
+        }
+
+        private static bool TryActivateLayoutForViewportEdit(LayoutManager? layoutManager, string layoutName, List<string> report)
+        {
+            if (layoutManager == null)
+            {
+                report.Add($"Photo sheet layout '{layoutName}' could not be activated because the layout manager was unavailable.");
+                return false;
+            }
+
+            try
+            {
+                if (!string.Equals(layoutManager.CurrentLayout, layoutName, StringComparison.OrdinalIgnoreCase))
+                {
+                    layoutManager.CurrentLayout = layoutName;
+                    report.Add($"PHOTO SHEET activate: switched current layout to '{layoutName}'.");
+                }
+
+                Application.DocumentManager.MdiActiveDocument?.Editor.SwitchToPaperSpace();
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                report.Add($"Photo sheet layout '{layoutName}' could not be activated for viewport editing. {ex.Message}");
+                return false;
+            }
+        }
+
+        private static void RestoreCurrentLayout(LayoutManager? layoutManager, string originalLayoutName, List<string>? report = null)
+        {
+            if (layoutManager == null || string.IsNullOrWhiteSpace(originalLayoutName))
+            {
+                return;
+            }
+
+            try
+            {
+                if (!string.Equals(layoutManager.CurrentLayout, originalLayoutName, StringComparison.OrdinalIgnoreCase))
+                {
+                    layoutManager.CurrentLayout = originalLayoutName;
+                    report?.Add($"PHOTO SHEET activate: restored current layout to '{originalLayoutName}'.");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                report?.Add($"PHOTO SHEET activate: unable to restore original layout '{originalLayoutName}'. {ex.Message}");
+            }
+        }
+
+        private static Layout? FindLayoutByName(Transaction tr, Database db, string layoutName)
+        {
+            if (string.IsNullOrWhiteSpace(layoutName))
+            {
+                return null;
+            }
+
+            var layoutDictionary = (DBDictionary)tr.GetObject(db.LayoutDictionaryId, OpenMode.ForRead);
+            foreach (DBDictionaryEntry entry in layoutDictionary)
+            {
+                if (!entry.Key.Equals(layoutName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return tr.GetObject(entry.Value, OpenMode.ForRead, false) as Layout;
+            }
+
+            return null;
+        }
+
+        private static BlockTableRecord GetModelSpace(Transaction tr, Database db, OpenMode openMode)
+        {
+            var blockTable = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            return (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], openMode);
+        }
+
+        private static List<string> GetGeneratedPhotoSheetLayoutNames(Database db)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            var layoutDictionary = (DBDictionary)tr.GetObject(db.LayoutDictionaryId, OpenMode.ForRead);
+            var names = new List<string>();
+            foreach (DBDictionaryEntry entry in layoutDictionary)
+            {
+                if (entry.Key.StartsWith(GeneratedPhotoSheetLayoutNamePrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    names.Add(entry.Key);
+                }
+            }
+
+            tr.Commit();
+            return names
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static string BuildGeneratedPhotoSheetLayoutName(int sheetIndex)
+        {
+            return $"{GeneratedPhotoSheetLayoutNamePrefix}{sheetIndex}";
+        }
+
+        private static bool TryGetPrimaryPhotoViewport(
+            Transaction tr,
+            Layout layout,
+            List<string> report,
+            out ObjectId viewportId)
+        {
+            viewportId = ObjectId.Null;
+            var bestScore = int.MinValue;
+            var bestArea = double.MinValue;
+            var blockTableRecord = (BlockTableRecord)tr.GetObject(layout.BlockTableRecordId, OpenMode.ForRead);
+            report.Add($"PHOTO SHEET viewport scan: layout='{layout.LayoutName}'");
+            foreach (ObjectId entityId in blockTableRecord)
+            {
+                if (tr.GetObject(entityId, OpenMode.ForRead, false) is not Viewport candidate || candidate.IsErased)
+                {
+                    continue;
+                }
+
+                if (candidate.Width <= 0.0 || candidate.Height <= 0.0)
+                {
+                    report.Add(
+                        $"PHOTO SHEET viewport skip: layout='{layout.LayoutName}', reason='zero-size', viewport={DescribeViewport(candidate)}");
+                    continue;
+                }
+
+                if (LooksLikePaperSpaceViewport(layout, candidate))
+                {
+                    report.Add(
+                        $"PHOTO SHEET viewport skip: layout='{layout.LayoutName}', reason='paper-space-signature', viewport={DescribeViewport(candidate)}");
+                    continue;
+                }
+
+                var score = GetViewportSelectionScore(candidate);
+                var area = candidate.Width * candidate.Height;
+                report.Add(
+                    $"PHOTO SHEET viewport candidate: layout='{layout.LayoutName}', score={score}, area={area.ToString("0.###", CultureInfo.InvariantCulture)}, viewport={DescribeViewport(candidate)}");
+                if (viewportId.IsNull || score > bestScore || (score == bestScore && area > bestArea))
+                {
+                    viewportId = entityId;
+                    bestScore = score;
+                    bestArea = area;
+                }
+            }
+
+            if (!viewportId.IsNull &&
+                tr.GetObject(viewportId, OpenMode.ForRead, false) is Viewport selectedViewport &&
+                !selectedViewport.IsErased)
+            {
+                report.Add(
+                    $"PHOTO SHEET viewport selected: layout='{layout.LayoutName}', score={bestScore}, area={bestArea.ToString("0.###", CultureInfo.InvariantCulture)}, viewport={DescribeViewport(selectedViewport)}");
+            }
+
+            return !viewportId.IsNull;
+        }
+
+        private static bool LooksLikePaperSpaceViewport(Layout layout, Viewport viewport)
+        {
+            var paperSize = layout.PlotPaperSize;
+            if (paperSize.X <= 0.0 || paperSize.Y <= 0.0)
+            {
+                return false;
+            }
+
+            var paperCenter = new Point3d(paperSize.X * 0.5, paperSize.Y * 0.5, viewport.CenterPoint.Z);
+            var widthMatchesPaper = viewport.Width >= paperSize.X * 0.98;
+            var heightMatchesPaper = viewport.Height >= paperSize.Y * 0.98;
+            var centeredOnPaper = Math.Abs(viewport.CenterPoint.X - paperCenter.X) <= paperSize.X * 0.05 &&
+                                  Math.Abs(viewport.CenterPoint.Y - paperCenter.Y) <= paperSize.Y * 0.05;
+
+            return widthMatchesPaper && heightMatchesPaper && centeredOnPaper;
+        }
+
+        private static int GetViewportSelectionScore(Viewport viewport)
+        {
+            var score = 0;
+            if (viewport.Number > 1)
+            {
+                score += 100;
+            }
+
+            if (viewport.Locked)
+            {
+                score += 50;
+            }
+
+            if (viewport.On)
+            {
+                score += 25;
+            }
+
+            if (HasDistinctModelViewCenter(viewport))
+            {
+                score += 200;
+            }
+            else
+            {
+                score -= 200;
+            }
+
+            return score;
+        }
+
+        private static bool HasDistinctModelViewCenter(Viewport viewport)
+        {
+            var viewCenterOffset = new Vector2d(
+                viewport.ViewCenter.X - viewport.CenterPoint.X,
+                viewport.ViewCenter.Y - viewport.CenterPoint.Y);
+            var offsetMagnitude = viewCenterOffset.Length;
+            var viewportSpan = Math.Max(viewport.Width, viewport.Height);
+            return offsetMagnitude > Math.Max(10.0, viewportSpan * 2.0);
+        }
+
+        private static string DescribeViewport(Viewport viewport)
+        {
+            return
+                $"id={FormatObjectId(viewport.ObjectId)}, number={viewport.Number}, on={viewport.On}, locked={viewport.Locked}, center={FormatPoint(viewport.CenterPoint)}, size={viewport.Width.ToString("0.###", CultureInfo.InvariantCulture)}x{viewport.Height.ToString("0.###", CultureInfo.InvariantCulture)}, customScale={viewport.CustomScale.ToString("0.###", CultureInfo.InvariantCulture)}, twist={viewport.TwistAngle.ToString("0.###", CultureInfo.InvariantCulture)}, viewTarget={FormatPoint(viewport.ViewTarget)}, viewCenter={FormatPoint(viewport.ViewCenter)}";
+        }
+
+        private static string FormatObjectId(ObjectId objectId)
+        {
+            return objectId.IsNull ? "null" : objectId.Handle.ToString();
+        }
+
+        private static string FormatPoint(Point3d point)
+        {
+            return
+                $"({point.X.ToString("0.###", CultureInfo.InvariantCulture)}, {point.Y.ToString("0.###", CultureInfo.InvariantCulture)}, {point.Z.ToString("0.###", CultureInfo.InvariantCulture)})";
+        }
+
+        private static string FormatPoint(Point2d point)
+        {
+            return
+                $"({point.X.ToString("0.###", CultureInfo.InvariantCulture)}, {point.Y.ToString("0.###", CultureInfo.InvariantCulture)})";
+        }
+
+        private static Point3d BuildPhotoGroupBasePoint(Point3d firstGroupStartPoint, PluginSettings settings, int groupIndex)
+        {
+            return firstGroupStartPoint + new Vector3d(settings.GroupSpacingX * groupIndex, 0.0, 0.0);
+        }
+
+        private static Point3d BuildCanonicalPhotoGroupCenter(Point3d groupBasePoint, PluginSettings settings)
+        {
+            var placeholderDimension = CanonicalPhotoFrameDimension * Math.Min(1.0, settings.ImageScale);
+            var uVector = Vector3d.XAxis.MultiplyBy(placeholderDimension);
+            var vVector = Vector3d.YAxis.MultiplyBy(placeholderDimension);
+            var minX = double.MaxValue;
+            var maxX = double.MinValue;
+            var minY = double.MaxValue;
+            var maxY = double.MinValue;
+            var labelHalfHeight = (PhotoLabelTextHeight * PhotoLabelApproximateLineCount) * 0.5;
+            foreach (var offset in GetPhotoSlotOffsets(settings))
+            {
+                var corners = GetTransformedCorners(
+                    groupBasePoint + offset,
+                    uVector,
+                    vVector,
+                    settings.ImageRotationDegrees,
+                    out _,
+                    out _,
+                    out _);
+
+                minX = Math.Min(minX, corners.Min(point => point.X));
+                maxX = Math.Max(maxX, corners.Max(point => point.X));
+                maxY = Math.Max(maxY, corners.Max(point => point.Y));
+
+                var imageMinY = corners.Min(point => point.Y);
+                var labelCenterY = imageMinY - PhotoLabelOffsetBelowImage;
+                minY = Math.Min(minY, labelCenterY - labelHalfHeight);
+            }
+
+            return new Point3d(
+                (minX + maxX) * 0.5,
+                (minY + maxY) * 0.5,
+                groupBasePoint.Z);
         }
 
         private static bool TryAttachImage(
@@ -371,7 +937,7 @@ namespace WildlifeSweeps
         {
             unmatchedImageCount = 0;
             using var tr = db.TransactionManager.StartTransaction();
-            var space = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
+            var space = GetModelSpace(tr, db, OpenMode.ForRead);
 
             var labels = new List<ExistingPhotoLabel>();
             var images = new List<ExistingPhotoImage>();
@@ -379,7 +945,7 @@ namespace WildlifeSweeps
             {
                 if (id.ObjectClass == RXObject.GetClass(typeof(MText)) &&
                     tr.GetObject(id, OpenMode.ForRead, false) is MText label &&
-                    string.Equals(label.Layer, "DETAIL-T", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(label.Layer, PhotoLabelLayerName, StringComparison.OrdinalIgnoreCase) &&
                     TryParsePhotoLabel(label, out var photoNumber, out var caption))
                 {
                     labels.Add(new ExistingPhotoLabel(id, photoNumber, caption, label.Location));
@@ -404,7 +970,7 @@ namespace WildlifeSweeps
                 for (var i = 0; i < availableImages.Count; i++)
                 {
                     var candidate = availableImages[i];
-                    var expectedLabelPoint = new Point3d(candidate.CenterPoint.X, candidate.MinPoint.Y - 48.0, label.Location.Z);
+                    var expectedLabelPoint = new Point3d(candidate.CenterPoint.X, candidate.MinPoint.Y - PhotoLabelOffsetBelowImage, label.Location.Z);
                     var dx = label.Location.X - expectedLabelPoint.X;
                     var dy = label.Location.Y - expectedLabelPoint.Y;
                     if (Math.Abs(dx) > 250.0 || Math.Abs(dy) > 250.0)
@@ -453,8 +1019,8 @@ namespace WildlifeSweeps
 
         private static Point3d BuildPhotoSlotAnchor(Point3d startPoint, PluginSettings settings, int sequenceIndex)
         {
-            var groupIndex = sequenceIndex / 4;
-            var slotIndex = sequenceIndex % 4;
+            var groupIndex = sequenceIndex / PhotosPerGroup;
+            var slotIndex = sequenceIndex % PhotosPerGroup;
             var offsets = GetPhotoSlotOffsets(settings);
             return startPoint + new Vector3d(settings.GroupSpacingX * groupIndex, 0, 0) + offsets[slotIndex];
         }
@@ -500,7 +1066,7 @@ namespace WildlifeSweeps
             }
         }
 
-        private static bool TryParsePhotoLabel(MText label, out int photoNumber, out string? caption)
+        internal static bool TryParsePhotoLabel(MText label, out int photoNumber, out string? caption)
         {
             photoNumber = 0;
             caption = null;
@@ -616,15 +1182,15 @@ namespace WildlifeSweeps
             var minX = corners.Min(point => point.X);
             var maxX = corners.Max(point => point.X);
             var minY = corners.Min(point => point.Y);
-            var labelPoint = new Point3d((minX + maxX) * 0.5, minY - 48.0, insertPoint.Z);
+            var labelPoint = new Point3d((minX + maxX) * 0.5, minY - PhotoLabelOffsetBelowImage, insertPoint.Z);
 
             var label = new MText
             {
                 Contents = BuildPhotoLabelContents(photoNumber, caption),
-                TextHeight = 20.0,
+                TextHeight = PhotoLabelTextHeight,
                 Location = labelPoint,
                 Attachment = AttachmentPoint.MiddleCenter,
-                Layer = "DETAIL-T",
+                Layer = PhotoLabelLayerName,
                 Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, 3),
                 Rotation = 0.0
             };
@@ -647,7 +1213,7 @@ namespace WildlifeSweeps
             AddPhotoLabel(space, tr, insertPoint, uVector, vVector, settings, photoNumber, caption);
         }
 
-        private static string BuildPhotoLabelContents(int photoNumber, string? caption)
+        internal static string BuildPhotoLabelContents(int photoNumber, string? caption)
         {
             var numberText = photoNumber.ToString(CultureInfo.InvariantCulture);
             var labelText = "PHOTO #" + numberText;

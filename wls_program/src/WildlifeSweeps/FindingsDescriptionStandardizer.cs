@@ -13,8 +13,6 @@ namespace WildlifeSweeps
 {
     internal sealed class FindingsDescriptionStandardizer
     {
-        private const string OtherValue = "Other";
-        private const string RabbitHareSpecies = "Rabbit / Hare";
         private const string SnowshoeHareSpecies = "Snowshoe Hare";
         private const string PreserveOriginalStandardDescription = "[Keep Original]";
         private static readonly RegexOptions RuleRegexOptions = RegexOptions.IgnoreCase | RegexOptions.Compiled;
@@ -40,11 +38,6 @@ namespace WildlifeSweeps
 
         private readonly IReadOnlyList<RecognitionRule> _regexRules;
         private readonly IReadOnlyList<RecognitionRule> _keywordRules;
-        private readonly IReadOnlyList<string> _speciesOptions;
-        private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _findingTypesBySpecies;
-        private readonly IReadOnlyList<string> _standardDescriptions;
-        private readonly Dictionary<string, (string Species, string FindingType)> _standardDescriptionMap;
-        private readonly HashSet<(string Species, string FindingType)> _validPairs;
         private readonly HashSet<string> _skipNormalizedFindings;
         private readonly string _customMappingsPath;
         private readonly string _lookupWorkbookPath;
@@ -57,11 +50,6 @@ namespace WildlifeSweeps
             var workbook = LookupWorkbook.Load(lookupPath, logWarning);
             _regexRules = workbook.RegexRules;
             _keywordRules = workbook.KeywordRules;
-            _speciesOptions = workbook.SpeciesOptions;
-            _findingTypesBySpecies = workbook.FindingTypesBySpecies;
-            _standardDescriptions = workbook.StandardDescriptions;
-            _standardDescriptionMap = workbook.StandardDescriptionMap;
-            _validPairs = workbook.ValidPairs;
             _skipNormalizedFindings = workbook.SkipNormalizedFindings;
             _lookupWorkbookPath = workbook.SourcePath;
             _logWarning = logWarning;
@@ -72,61 +60,6 @@ namespace WildlifeSweeps
             _unparsedFindingsPath = GetUnparsedFindingsPath();
         }
 
-        internal IReadOnlyList<string> SpeciesOptions => _speciesOptions;
-
-        internal IReadOnlyDictionary<string, IReadOnlyList<string>> FindingTypesBySpecies => _findingTypesBySpecies;
-
-        internal IReadOnlyList<string> StandardDescriptionOptions => _standardDescriptions;
-
-        internal bool IsValidPair(string? species, string? findingType)
-        {
-            species = CanonicalizeSpecies(species);
-            if (string.IsNullOrWhiteSpace(species) || string.IsNullOrWhiteSpace(findingType))
-            {
-                return false;
-            }
-
-            return _validPairs.Contains((species.Trim(), findingType.Trim()));
-        }
-
-        internal bool TryResolveStandardDescription(string? description, out string species, out string findingType)
-        {
-            species = string.Empty;
-            findingType = string.Empty;
-            description = CanonicalizeStandardDescription(description);
-
-            if (string.IsNullOrWhiteSpace(description))
-            {
-                return false;
-            }
-
-            return _standardDescriptionMap.TryGetValue(description.Trim(), out var resolved)
-                   && AssignResolved(resolved, out species, out findingType);
-        }
-
-        internal bool TryGetDefaultDescriptionForPair(string? species, string? findingType, out string description)
-        {
-            description = string.Empty;
-            species = CanonicalizeSpecies(species);
-
-            if (string.IsNullOrWhiteSpace(species) || string.IsNullOrWhiteSpace(findingType))
-            {
-                return false;
-            }
-
-            var match = _standardDescriptionMap
-                .FirstOrDefault(item => item.Value.Species.Equals(species, StringComparison.OrdinalIgnoreCase)
-                                        && item.Value.FindingType.Equals(findingType, StringComparison.OrdinalIgnoreCase));
-            if (!string.IsNullOrWhiteSpace(match.Key))
-            {
-                description = match.Key;
-                return true;
-            }
-
-            description = CanonicalizeStandardDescription($"{TitleCase.ToTitleCase(species.Trim())} {TitleCase.ToTitleCase(findingType.Trim())}");
-            return true;
-        }
-
         internal IReadOnlyList<StandardizedFinding> Standardize(string? originalText, Func<PromptContext, PromptResult> promptForUnmapped)
         {
             var preprocess = Preprocess(originalText);
@@ -134,7 +67,7 @@ namespace WildlifeSweeps
             {
                 return new List<StandardizedFinding>
                 {
-                    new StandardizedFinding(preprocess, string.Empty, string.Empty, string.Empty, StandardizationSource.Skipped)
+                    new StandardizedFinding(preprocess, string.Empty, StandardizationSource.Skipped)
                 };
             }
 
@@ -142,7 +75,7 @@ namespace WildlifeSweeps
             {
                 return new List<StandardizedFinding>
                 {
-                    new StandardizedFinding(preprocess, string.Empty, string.Empty, preprocess.CleanedOriginal, StandardizationSource.Ignored)
+                    new StandardizedFinding(preprocess, preprocess.CleanedOriginal, StandardizationSource.Ignored)
                 };
             }
 
@@ -151,7 +84,7 @@ namespace WildlifeSweeps
                 custom = CanonicalizeCustomMapping(custom);
                 return BuildResults(preprocess, new List<RecognitionMatch>
                 {
-                    new RecognitionMatch(custom.Species, custom.FindingType, custom.StandardDescription, StandardizationSource.CustomMapping)
+                    new RecognitionMatch(custom.StandardDescription, StandardizationSource.CustomMapping)
                 }, promptForUnmapped);
             }
 
@@ -179,7 +112,7 @@ namespace WildlifeSweeps
 
             if (matches.Any(match => ShouldSkipMatch(match)))
             {
-                results.Add(new StandardizedFinding(preprocess, string.Empty, string.Empty, preprocess.CleanedOriginal, StandardizationSource.Ignored));
+                results.Add(new StandardizedFinding(preprocess, preprocess.CleanedOriginal, StandardizationSource.Ignored));
                 return results;
             }
 
@@ -203,12 +136,12 @@ namespace WildlifeSweeps
 
                 var canonicalMatch = CanonicalizeMatch(match);
                 var standardDescription = ResolveMatchedStandardDescription(preprocess, canonicalMatch.StandardDescription);
-                results.Add(new StandardizedFinding(preprocess, canonicalMatch.Species, canonicalMatch.FindingType, standardDescription, canonicalMatch.Source));
+                results.Add(new StandardizedFinding(preprocess, standardDescription, canonicalMatch.Source));
             }
 
             return results
                 .GroupBy(
-                    item => $"{item.Species}|{item.FindingType}|{item.StandardDescription}",
+                    item => item.StandardDescription,
                     StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
                 .ToList();
@@ -222,21 +155,12 @@ namespace WildlifeSweeps
 
         private bool IsUsableMatch(RecognitionMatch match)
         {
-            return !string.IsNullOrWhiteSpace(match.StandardDescription)
-                   || IsValidPair(match.Species, match.FindingType)
-                   || FindingOtherValueHelper.IsOtherValue(match.Species, OtherValue)
-                   || FindingOtherValueHelper.IsOtherValue(match.FindingType, OtherValue);
+            return !string.IsNullOrWhiteSpace(match.StandardDescription);
         }
 
         private bool ShouldSkipMatch(RecognitionMatch match)
         {
-            if (IsSkippedNormalized(Preprocess(match.StandardDescription).NormalizedText))
-            {
-                return true;
-            }
-
-            var pairText = $"{match.Species} {match.FindingType}";
-            return IsSkippedNormalized(Preprocess(pairText).NormalizedText);
+            return IsSkippedNormalized(Preprocess(match.StandardDescription).NormalizedText);
         }
 
         private StandardizedFinding ResolvePromptResult(
@@ -246,7 +170,7 @@ namespace WildlifeSweeps
         {
             if (promptResult.Ignored)
             {
-                return new StandardizedFinding(preprocess, string.Empty, string.Empty, string.Empty, StandardizationSource.Ignored);
+                return new StandardizedFinding(preprocess, string.Empty, StandardizationSource.Ignored);
             }
 
             if (promptResult.Skipped)
@@ -254,78 +178,21 @@ namespace WildlifeSweeps
                 TrackUnparsedFinding(preprocess.CleanedOriginal);
                 return new StandardizedFinding(
                     preprocess,
-                    OtherValue,
-                    OtherValue,
                     string.IsNullOrWhiteSpace(preprocess.CleanedOriginal)
-                        ? OtherValue
+                        ? string.Empty
                         : preprocess.CleanedOriginal,
                     StandardizationSource.Skipped);
             }
 
-            var species = FindingOtherValueHelper.NormalizeOtherValue(promptResult.Species, OtherValue);
-            var findingType = FindingOtherValueHelper.NormalizeOtherValue(promptResult.FindingType, OtherValue);
-            var description = FindingOtherValueHelper.NormalizeOtherValue(promptResult.StandardDescription, OtherValue);
-            description = CanonicalizeStandardDescription(description);
-            species = CanonicalizeSpecies(species);
+            var description = CanonicalizeStandardDescription(promptResult.StandardDescription);
 
             if (string.IsNullOrWhiteSpace(description))
-            {
-                if (!string.IsNullOrWhiteSpace(species) && !string.IsNullOrWhiteSpace(findingType))
-                {
-                    if (FindingOtherValueHelper.IsOtherValue(species, OtherValue) ||
-                        FindingOtherValueHelper.IsOtherValue(findingType, OtherValue))
-                    {
-                        description = OtherValue;
-                    }
-                    else
-                    {
-                        TryGetDefaultDescriptionForPair(species, findingType, out description);
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(description))
-                {
-                    var retry = promptForUnmapped(new PromptContext(preprocess.CleanedOriginal, preprocess.NormalizedText));
-                    return ResolvePromptResult(preprocess, retry, promptForUnmapped);
-                }
-            }
-
-            if ((!string.IsNullOrWhiteSpace(species) || !string.IsNullOrWhiteSpace(findingType)) &&
-                !IsValidPair(species, findingType) &&
-                !FindingOtherValueHelper.IsOtherValue(species, OtherValue) &&
-                !FindingOtherValueHelper.IsOtherValue(findingType, OtherValue))
             {
                 var retry = promptForUnmapped(new PromptContext(preprocess.CleanedOriginal, preprocess.NormalizedText));
                 return ResolvePromptResult(preprocess, retry, promptForUnmapped);
             }
 
-            if (string.IsNullOrWhiteSpace(species) || string.IsNullOrWhiteSpace(findingType))
-            {
-                if (FindingOtherValueHelper.IsOtherValue(description, OtherValue))
-                {
-                    if (string.IsNullOrWhiteSpace(species))
-                    {
-                        species = OtherValue;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(findingType))
-                    {
-                        findingType = OtherValue;
-                    }
-                }
-                else if (TryResolveStandardDescription(description, out var resolvedSpecies, out var resolvedFindingType))
-                {
-                    species = resolvedSpecies;
-                    findingType = resolvedFindingType;
-                }
-                else
-                {
-                    species = string.Empty;
-                    findingType = string.Empty;
-                }
-            }
-
-            var result = CanonicalizeStandardizedFinding(new StandardizedFinding(preprocess, species, findingType, description, StandardizationSource.Prompt));
+            var result = CanonicalizeStandardizedFinding(new StandardizedFinding(preprocess, description, StandardizationSource.Prompt));
             if (promptResult.RememberMapping)
             {
                 RememberPromptMapping(preprocess, result);
@@ -343,8 +210,6 @@ namespace WildlifeSweeps
 
             _customMappings[preprocess.NormalizedText] = new CustomMapping(
                 preprocess.NormalizedText,
-                result.Species,
-                result.FindingType,
                 result.StandardDescription);
 
             if (!string.IsNullOrWhiteSpace(_lookupWorkbookPath) &&
@@ -385,7 +250,7 @@ namespace WildlifeSweeps
                     break;
                 }
 
-                matches.Add(new RecognitionMatch(rule.Species, rule.FindingType, rule.StandardDescription, rule.Source));
+                matches.Add(new RecognitionMatch(rule.StandardDescription, rule.Source));
             }
 
             return matches;
@@ -484,30 +349,6 @@ namespace WildlifeSweeps
                 .Distinct(StringComparer.OrdinalIgnoreCase);
         }
 
-        private static bool AssignResolved((string Species, string FindingType) resolved, out string species, out string findingType)
-        {
-            species = CanonicalizeSpecies(resolved.Species);
-            findingType = resolved.FindingType;
-            return !string.IsNullOrWhiteSpace(species) && !string.IsNullOrWhiteSpace(findingType);
-        }
-
-        private static string CanonicalizeSpecies(string? species)
-        {
-            var trimmed = species?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(trimmed))
-            {
-                return string.Empty;
-            }
-
-            var synonymNormalized = NormalizeRabbitHareSynonyms(trimmed);
-
-            return string.Equals(synonymNormalized, RabbitHareSpecies, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(synonymNormalized, "Rabbit/Hare", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(synonymNormalized, "Rabbit", StringComparison.OrdinalIgnoreCase)
-                    ? SnowshoeHareSpecies
-                    : trimmed;
-        }
-
         private static string CanonicalizeStandardDescription(string? description)
         {
             var trimmed = description?.Trim() ?? string.Empty;
@@ -531,7 +372,6 @@ namespace WildlifeSweeps
         {
             return rule with
             {
-                Species = CanonicalizeSpecies(rule.Species),
                 StandardDescription = CanonicalizeStandardDescription(rule.StandardDescription)
             };
         }
@@ -540,7 +380,6 @@ namespace WildlifeSweeps
         {
             return match with
             {
-                Species = CanonicalizeSpecies(match.Species),
                 StandardDescription = CanonicalizeStandardDescription(match.StandardDescription)
             };
         }
@@ -556,7 +395,6 @@ namespace WildlifeSweeps
         {
             return mapping with
             {
-                Species = CanonicalizeSpecies(mapping.Species),
                 StandardDescription = CanonicalizeStandardDescription(mapping.StandardDescription)
             };
         }
@@ -565,15 +403,12 @@ namespace WildlifeSweeps
         {
             return finding with
             {
-                Species = CanonicalizeSpecies(finding.Species),
                 StandardDescription = CanonicalizeStandardDescription(finding.StandardDescription)
             };
         }
 
         internal readonly record struct StandardizedFinding(
             PreprocessResult Preprocess,
-            string Species,
-            string FindingType,
             string StandardDescription,
             StandardizationSource Source)
         {
@@ -588,8 +423,6 @@ namespace WildlifeSweeps
 
         internal readonly record struct PromptResult(
             string StandardDescription,
-            string Species,
-            string FindingType,
             bool RememberMapping,
             bool Ignored,
             bool Skipped);
@@ -606,8 +439,6 @@ namespace WildlifeSweeps
 
         private sealed record RecognitionRule(
             int Priority,
-            string Species,
-            string FindingType,
             string StandardDescription,
             string Pattern,
             bool IsRegexMatch,
@@ -625,15 +456,11 @@ namespace WildlifeSweeps
         }
 
         private sealed record RecognitionMatch(
-            string Species,
-            string FindingType,
             string StandardDescription,
             StandardizationSource Source);
 
         private sealed record CustomMapping(
             string NormalizedText,
-            string Species,
-            string FindingType,
             string StandardDescription)
         {
             public static string GetDefaultPath()
@@ -679,7 +506,6 @@ namespace WildlifeSweeps
         {
             private const string RegexSheet = "RecognitionRegex";
             private const string KeywordSheet = "RecognitionKeywords";
-            private const string TypesSheet = "SpeciesFindingTypes";
             private const string SkipsSheet = "Skips";
             private const string SkippedSheet = "Skipped";
             private const string PrimaryLookupFileName = "wildlife_parsing_codex_lookup.xlsx";
@@ -692,19 +518,7 @@ namespace WildlifeSweeps
 
             public IReadOnlyList<RecognitionRule> KeywordRules { get; private init; } = Array.Empty<RecognitionRule>();
 
-            public IReadOnlyList<string> SpeciesOptions { get; private init; } = Array.Empty<string>();
-
-            public IReadOnlyDictionary<string, IReadOnlyList<string>> FindingTypesBySpecies { get; private init; }
-                = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
-
-            public IReadOnlyList<string> StandardDescriptions { get; private init; } = Array.Empty<string>();
-
             public string SourcePath { get; private init; } = string.Empty;
-            public Dictionary<string, (string Species, string FindingType)> StandardDescriptionMap { get; private init; }
-                = new Dictionary<string, (string Species, string FindingType)>(StringComparer.OrdinalIgnoreCase);
-
-            public HashSet<(string Species, string FindingType)> ValidPairs { get; private init; }
-                = new HashSet<(string Species, string FindingType)>();
 
             public HashSet<string> SkipNormalizedFindings { get; private init; }
                 = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -873,9 +687,6 @@ namespace WildlifeSweeps
                 var keywordRows = sheets.TryGetValue(KeywordSheet, out var keywordSheet)
                     ? keywordSheet
                     : new List<Dictionary<string, string>>();
-                var typeRows = sheets.TryGetValue(TypesSheet, out var typesSheet)
-                    ? typesSheet
-                    : new List<Dictionary<string, string>>();
                 var skipRows = sheets.TryGetValue(SkipsSheet, out var skipsSheet)
                     ? skipsSheet
                     : (sheets.TryGetValue(SkippedSheet, out var skippedSheet)
@@ -896,70 +707,13 @@ namespace WildlifeSweeps
                     .OrderBy(rule => rule.Priority)
                     .ToList();
 
-                var validPairs = new HashSet<(string Species, string FindingType)>();
-                var speciesOptions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var findingTypesBySpecies = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-                foreach (var row in typeRows)
-                {
-                    if (!row.TryGetValue("Species", out var species) || string.IsNullOrWhiteSpace(species))
-                    {
-                        continue;
-                    }
-
-                    if (!row.TryGetValue("FindingType", out var findingType) || string.IsNullOrWhiteSpace(findingType))
-                    {
-                        continue;
-                    }
-
-                    species = CanonicalizeSpecies(species);
-                    findingType = findingType.Trim();
-                    validPairs.Add((species, findingType));
-                    speciesOptions.Add(species);
-
-                    if (!findingTypesBySpecies.TryGetValue(species, out var list))
-                    {
-                        list = new List<string>();
-                        findingTypesBySpecies[species] = list;
-                    }
-
-                    if (!list.Contains(findingType, StringComparer.OrdinalIgnoreCase))
-                    {
-                        list.Add(findingType);
-                    }
-                }
-
-                foreach (var list in findingTypesBySpecies.Values)
-                {
-                    list.Sort(StringComparer.OrdinalIgnoreCase);
-                }
-
-                var descriptionMap = new Dictionary<string, (string Species, string FindingType)>(StringComparer.OrdinalIgnoreCase);
-                foreach (var rule in regexRules.Concat(keywordRules))
-                {
-                    if (!string.IsNullOrWhiteSpace(rule.StandardDescription)
-                        && !descriptionMap.ContainsKey(rule.StandardDescription))
-                    {
-                        descriptionMap[rule.StandardDescription] = (rule.Species, rule.FindingType);
-                    }
-                }
-
-                var standardDescriptions = descriptionMap.Keys
-                    .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
                 var skipNormalizedFindings = ParseSkipFindings(skipRows);
 
                 return new LookupWorkbook
                 {
                     RegexRules = regexRules,
                     KeywordRules = keywordRules,
-                    SpeciesOptions = speciesOptions.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToList(),
-                    FindingTypesBySpecies = findingTypesBySpecies.ToDictionary(
-                        pair => pair.Key,
-                        pair => (IReadOnlyList<string>)pair.Value),
-                    StandardDescriptions = standardDescriptions,
                     SourcePath = path,
-                    StandardDescriptionMap = descriptionMap,
-                    ValidPairs = validPairs,
                     SkipNormalizedFindings = skipNormalizedFindings
                 };
             }
@@ -971,18 +725,12 @@ namespace WildlifeSweeps
                     return null;
                 }
 
-                row.TryGetValue("Species", out var species);
-                row.TryGetValue("FindingType", out var findingType);
                 row.TryGetValue("StandardDescription", out var description);
                 row.TryGetValue("Priority", out var priorityRaw);
                 _ = int.TryParse(priorityRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var priority);
 
-                species = species?.Trim() ?? string.Empty;
-                findingType = findingType?.Trim() ?? string.Empty;
                 description = description?.Trim() ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(species) &&
-                    string.IsNullOrWhiteSpace(findingType) &&
-                    string.IsNullOrWhiteSpace(description))
+                if (string.IsNullOrWhiteSpace(description))
                 {
                     return null;
                 }
@@ -994,8 +742,6 @@ namespace WildlifeSweeps
 
                 return CanonicalizeRule(new RecognitionRule(
                     priority,
-                    species,
-                    findingType,
                     description,
                     pattern.Trim(),
                     isRegex,
@@ -1109,9 +855,7 @@ namespace WildlifeSweeps
                 var header = ParseRow(rows[0], sharedStrings);
                 var priorityColumn = GetHeaderColumnIndex(header, "Priority", 0);
                 var keywordColumn = GetHeaderColumnIndex(header, "Keyword", 1);
-                var speciesColumn = GetHeaderColumnIndex(header, "Species", 2);
-                var findingTypeColumn = GetHeaderColumnIndex(header, "FindingType", 3);
-                var descriptionColumn = GetHeaderColumnIndex(header, "StandardDescription", 4);
+                var descriptionColumn = GetHeaderColumnIndex(header, "StandardDescription", 2);
                 var normalizedKeyword = NormalizeKeyword(keyword);
 
                 XElement? matchedRow = null;
@@ -1141,8 +885,6 @@ namespace WildlifeSweeps
 
                 SetNumericCellValue(matchedRow, rowNumber, priorityColumn + 1, "1");
                 SetInlineStringCellValue(matchedRow, rowNumber, keywordColumn + 1, keyword);
-                SetInlineStringCellValue(matchedRow, rowNumber, speciesColumn + 1, string.Empty);
-                SetInlineStringCellValue(matchedRow, rowNumber, findingTypeColumn + 1, string.Empty);
                 SetInlineStringCellValue(matchedRow, rowNumber, descriptionColumn + 1, standardDescription);
 
                 ReplaceEntry(archive, target, sheetDocument);
@@ -1154,9 +896,7 @@ namespace WildlifeSweeps
                     new XAttribute("r", 1),
                     CreateInlineStringCell("A1", "Priority"),
                     CreateInlineStringCell("B1", "Keyword"),
-                    CreateInlineStringCell("C1", "Species"),
-                    CreateInlineStringCell("D1", "FindingType"),
-                    CreateInlineStringCell("E1", "StandardDescription"));
+                    CreateInlineStringCell("C1", "StandardDescription"));
             }
 
             private static int GetHeaderColumnIndex(IReadOnlyList<string> header, string name, int fallback)
