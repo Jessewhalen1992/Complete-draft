@@ -34,6 +34,7 @@ namespace WildlifeSweeps
         private readonly ListBox _titleBlockSurveyDates = new ListBox();
         private readonly TextBox _titleBlockSubRegion = new TextBox();
         private readonly Button _titleBlockAddSubRegionFromFootprint = new Button();
+        private readonly Button _titleBlockUpdateFindingStatement = new Button();
         private readonly TextBox _titleBlockMethodologySpacing = new TextBox();
         private readonly List<CheckBox> _titleBlockExistingLinearInfrastructure = new List<CheckBox>();
         private readonly List<CheckBox> _titleBlockExistingLeases = new List<CheckBox>();
@@ -285,6 +286,9 @@ namespace WildlifeSweeps
             _titleBlockAddSubRegionFromFootprint.Text = "GET SUB-REGION FROM FOOTPRINT";
             _titleBlockAddSubRegionFromFootprint.AutoSize = true;
             _titleBlockAddSubRegionFromFootprint.Click += (_, __) => RunAddTitleBlockSubRegionFromFootprint();
+            _titleBlockUpdateFindingStatement.Text = "Upd. Finding Statement";
+            _titleBlockUpdateFindingStatement.AutoSize = true;
+            _titleBlockUpdateFindingStatement.Click += (_, __) => RunUpdateFindingStatement();
 
             _titleBlockSurveyCalendar.MaxSelectionCount = 31;
             _titleBlockAddSurveyDates.Text = "ADD SELECTED DATE(S)";
@@ -385,6 +389,7 @@ namespace WildlifeSweeps
                 AutoSize = true
             };
             cancelButton.Click += (_, __) => LoadTitleBlockInput(_lastAppliedTitleBlockInput);
+            actionsPanel.Controls.Add(_titleBlockUpdateFindingStatement);
             actionsPanel.Controls.Add(applyButton);
             actionsPanel.Controls.Add(cancelButton);
             AddStackRow(content, actionsPanel);
@@ -889,6 +894,34 @@ namespace WildlifeSweeps
             }
         }
 
+        private void RunUpdateFindingStatement()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null)
+            {
+                return;
+            }
+
+            ClearValidation();
+            SetStatus("Updating findings statement...");
+            if (_titleBlockControlService.UpdateFindingStatement(doc, doc.Editor, out var message))
+            {
+                SetStatus(message);
+                if (!string.IsNullOrWhiteSpace(message))
+                {
+                    doc.Editor.WriteMessage($"\n{message}");
+                }
+
+                return;
+            }
+
+            SetStatus(string.IsNullOrWhiteSpace(message) ? "Unable to update the findings statement." : message);
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                doc.Editor.WriteMessage($"\n{message}");
+            }
+        }
+
         private void ApplyTooltips()
         {
             _toolTip.SetToolTip(_photoStartNumber, "Starting number for photo blocks and photo layout.");
@@ -910,6 +943,9 @@ namespace WildlifeSweeps
             _toolTip.SetToolTip(
                 _titleBlockAddSubRegionFromFootprint,
                 "Select the proposed footprint and fill the sub-region text from the Alberta natural sub-region shapefile.");
+            _toolTip.SetToolTip(
+                _titleBlockUpdateFindingStatement,
+                "Select a findings table, answer the key-feature prompts, and update the page-1 findings statement in blue.");
         }
 
         private void ApplyCompleteFromPhotosBufferMode(PluginSettings settings)

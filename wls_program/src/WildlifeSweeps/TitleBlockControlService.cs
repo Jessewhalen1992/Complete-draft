@@ -35,19 +35,39 @@ namespace WildlifeSweeps
         private const string LegacyLayoutPrefix = "Layout 1";
         private const string DefaultSectionIndexFolder = @"C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\RES MANAGER";
         private const string EnvironmentalConditionsLayerName = "WLS-ENV-COND";
+        private const string WildlifeFeatureStatusLayerName = "WLS-WILDLIFE-FEATURES";
+        private const string WildlifeGroupStatusLayerName = "WLS-WILDLIFE-GROUPS";
         private const string EnvironmentalConditionsHeading = "ENVIRONMENTAL CONDITIONS";
+        private const string WildlifeFeatureStatusHeading = "KEY WILDLIFE FEATURES IDENTIFIED";
+        private const string WildlifeGroupStatusHeaderLeft = "WILDLIFE SPECIES LOCATED";
+        private const string WildlifeGroupStatusHeaderRight = "SIGHTING OR SIGN";
         private const string StartOfSweepLabel = "START OF SWEEP";
         private const string EndOfSweepLabel = "END OF SWEEP";
+        private const string FindingStatementPlaceholderText = "This Statement Must be written based on findings";
+        private const short YellowColorIndex = 2;
         private const short BlueColorIndex = 5;
         private const short GreenColorIndex = 3;
+        private const short OutsideBufferTableColorIndex = 254;
+        private const double ProposedHundredSpacerRowHeight = 125.0;
         private const double EnvironmentalConditionsRowHeight = 20.0;
         private const double EnvironmentalConditionsHeadingTextHeight = 16.0;
         private const double EnvironmentalConditionsValueTextHeight = 10.0;
         private const double EnvironmentalConditionsVerticalGap = 0.0;
         private const double EnvironmentalConditionsAnchorX = 67.256;
         private const double EnvironmentalConditionsAnchorY = 753.705;
+        private const double WildlifeFeatureStatusAnchorX = -447.107;
+        private const double WildlifeFeatureStatusAnchorY = 593.275;
+        private const double WildlifeFeatureStatusRowHeight = 20.0;
+        private const double WildlifeFeatureStatusHeadingTextHeight = 16.0;
+        private const double WildlifeFeatureStatusTextHeight = 10.0;
+        private const double WildlifeGroupStatusAnchorX = -445.662;
+        private const double WildlifeGroupStatusAnchorY = 752.205;
+        private const double WildlifeGroupStatusRowHeight = 20.0;
+        private const double WildlifeGroupStatusTextHeight = 10.0;
         private const string EnvironmentalConditionsNonBoldStyleSuffix = "_WLS_NB";
         private static readonly double[] EnvironmentalConditionsColumnWidths = { 185.0, 135.0, 135.0 };
+        private static readonly double[] WildlifeFeatureStatusColumnWidths = { 200.0, 200.0 };
+        private static readonly double[] WildlifeGroupStatusColumnWidths = { 250.0, 170.0 };
         private static readonly string[] EnvironmentalConditionsDetailLabels =
         {
             "TEMPERATURE (C\u00B0)",
@@ -55,11 +75,69 @@ namespace WildlifeSweeps
             "PRECIPITATION (mm)",
             "CLOUD COVER (%)"
         };
+        private static readonly string[] WildlifeGroupStatusLabels =
+        {
+            "AMPHIBIANS",
+            "BIRDS",
+            "MAMMALS",
+            "REPTILES"
+        };
+        private static readonly string[] WildlifeFeatureStatusLabels =
+        {
+            "OCCUPIED NEST",
+            "OCCUPIED DENS",
+            "HIBERNACULA",
+            "MINERAL LICKS"
+        };
+        private static readonly string[] FindingTypeSuffixes =
+        {
+            "Abandoned / Inactive Nest",
+            "Abandoned/Inactive Nest",
+            "Occupied Nest",
+            "Occupied Den",
+            "Natural Mineral Lick",
+            "Mineral Lick",
+            "Feeding Cavity",
+            "Browse / Feeding Sign",
+            "Browse/Feeding Sign",
+            "Feeding Sign",
+            "Scat / Droppings",
+            "Scat/Droppings",
+            "Hair / Fur",
+            "Hair/Fur",
+            "Sighting",
+            "Audible",
+            "Visual",
+            "Tracks",
+            "Track",
+            "Scat",
+            "Droppings",
+            "Browse",
+            "Trail",
+            "Trails",
+            "Burrow",
+            "Burrows",
+            "Cavity",
+            "Cavities",
+            "Den",
+            "Dens",
+            "Nest",
+            "Nests",
+            "Lodge",
+            "Lodges",
+            "Wallow",
+            "Wallows",
+            "Sign"
+        };
         private static readonly Color EnvironmentalConditionsHeadingColor = Color.FromColorIndex(ColorMethod.ByAci, 14);
         private static readonly Color EnvironmentalConditionsValueColor = Color.FromColorIndex(ColorMethod.ByAci, 1);
         private static readonly Color EnvironmentalConditionsDetailColor = Color.FromColorIndex(ColorMethod.ByAci, 7);
         private static readonly Color EnvironmentalConditionsBackgroundColor = Color.FromColorIndex(ColorMethod.ByAci, 254);
         private static readonly Color EnvironmentalConditionsBorderColor = Color.FromColorIndex(ColorMethod.ByAci, 7);
+        private static readonly Color WildlifeFeatureStatusHeaderColor = EnvironmentalConditionsHeadingColor;
+        private static readonly Color WildlifeFeatureStatusValueColor = Color.FromColorIndex(ColorMethod.ByAci, 7);
+        private static readonly Color WildlifeGroupStatusHeaderColor = EnvironmentalConditionsHeadingColor;
+        private static readonly Color WildlifeGroupStatusValueColor = Color.FromColorIndex(ColorMethod.ByAci, 7);
 
         public bool TryCollectLocationText(
             Document doc,
@@ -194,6 +272,71 @@ namespace WildlifeSweeps
             }
         }
 
+        public bool UpdateFindingStatement(
+            Document doc,
+            Editor editor,
+            out string message)
+        {
+            message = string.Empty;
+            if (doc == null)
+            {
+                message = "Document is required.";
+                return false;
+            }
+
+            if (editor == null)
+            {
+                message = "Editor is required.";
+                return false;
+            }
+
+            if (!TryCollectFindingStatementRequest(doc, editor, out var request, out message))
+            {
+                return false;
+            }
+
+            var statement = WildlifeFindingsStatementBuilder.Build(
+                request.Rows,
+                request.Flags,
+                request.FindingsPageNumber);
+
+            using (doc.LockDocument())
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                var layout = FindTargetLayout(tr, doc.Database);
+                if (layout == null)
+                {
+                    message = "Could not find the first paper-space layout. Expected a tab like '1 of 5' or 'Layout 1'.";
+                    return false;
+                }
+
+                var updatedCount = ApplyFindingStatementToLayout(tr, layout, statement);
+                if (updatedCount <= 0)
+                {
+                    message = $"Could not find the yellow page-1 findings placeholder text on layout '{layout.LayoutName}'.";
+                    return false;
+                }
+
+                RemoveWildlifeFeatureStatusTables(tr, layout);
+                var wildlifeFeatureTableCount = RebuildWildlifeFeatureStatusTables(
+                    tr,
+                    doc.Database,
+                    layout,
+                    request.Flags);
+
+                RemoveWildlifeGroupStatusTables(tr, layout);
+                var wildlifeGroupTableCount = RebuildWildlifeGroupStatusTables(
+                    tr,
+                    doc.Database,
+                    layout,
+                    request.WildlifeGroupStatuses);
+
+                tr.Commit();
+                message = $"Updated the wildlife findings statement on layout '{layout.LayoutName}' using the selected findings table from page {request.FindingsPageNumber} ({updatedCount} statement object(s) updated, {wildlifeFeatureTableCount} key-wildlife-features table(s) rebuilt, {wildlifeGroupTableCount} wildlife-group table(s) rebuilt).";
+                return true;
+            }
+        }
+
         public static string FormatSurveyDates(IEnumerable<DateTime>? dates)
         {
             if (dates == null)
@@ -213,6 +356,1204 @@ namespace WildlifeSweeps
             }
 
             return JoinReadableList(ordered.Select(FormatSurveyDate));
+        }
+
+        private static bool TryCollectFindingStatementRequest(
+            Document doc,
+            Editor editor,
+            out FindingStatementUpdateRequest request,
+            out string message)
+        {
+            request = default!;
+            message = string.Empty;
+
+            var options = new PromptEntityOptions("\nSelect the findings table to summarize: ");
+            options.SetRejectMessage("\nOnly AutoCAD tables are supported.");
+            options.AddAllowedClass(typeof(Table), false);
+
+            RefreshEditorPrompt(editor);
+            var selection = editor.GetEntity(options);
+            if (selection.Status != PromptStatus.OK)
+            {
+                message = "Finding-table selection was canceled.";
+                return false;
+            }
+
+            var standardizer = new FindingsDescriptionStandardizer(
+                lookupPath: null,
+                logWarning: warning =>
+                {
+                    if (!string.IsNullOrWhiteSpace(warning))
+                    {
+                        editor.WriteMessage($"\n{warning}");
+                    }
+                });
+
+            List<FindingRow>? rows;
+            IReadOnlyDictionary<string, WildlifeGroupObservationStatus>? wildlifeGroupStatuses;
+            var findingsPageNumber = 0;
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                if (tr.GetObject(selection.ObjectId, OpenMode.ForRead, false) is not Table table)
+                {
+                    message = "The selected object is not an AutoCAD table.";
+                    return false;
+                }
+
+                if (!TryBuildFindingRowsFromTable(tr, table, editor, standardizer, out rows, out wildlifeGroupStatuses, out findingsPageNumber, out message))
+                {
+                    return false;
+                }
+
+                tr.Commit();
+            }
+
+            if (!TryPromptForWildlifeFeatureFlags(editor, out var flags, out message))
+            {
+                return false;
+            }
+
+            request = new FindingStatementUpdateRequest(rows, flags, findingsPageNumber, wildlifeGroupStatuses);
+            return true;
+        }
+
+        private static bool TryPromptForWildlifeFeatureFlags(
+            Editor editor,
+            out WildlifeFeatureFlags flags,
+            out string message)
+        {
+            flags = default!;
+            message = string.Empty;
+
+            if (!TryPromptForYesNo(editor, "\nAny occupied nests [Yes/No] <No>: ", defaultYes: false, out var occupiedNest))
+            {
+                message = "Finding-statement prompt was canceled.";
+                return false;
+            }
+
+            if (!TryPromptForYesNo(editor, "\nAny occupied dens [Yes/No] <No>: ", defaultYes: false, out var occupiedDen))
+            {
+                message = "Finding-statement prompt was canceled.";
+                return false;
+            }
+
+            if (!TryPromptForYesNo(editor, "\nAny hibernacula [Yes/No] <No>: ", defaultYes: false, out var hibernacula))
+            {
+                message = "Finding-statement prompt was canceled.";
+                return false;
+            }
+
+            if (!TryPromptForYesNo(editor, "\nAny natural mineral licks [Yes/No] <No>: ", defaultYes: false, out var mineralLick))
+            {
+                message = "Finding-statement prompt was canceled.";
+                return false;
+            }
+
+            flags = new WildlifeFeatureFlags(occupiedNest, occupiedDen, hibernacula, mineralLick);
+            return true;
+        }
+
+        private static bool TryPromptForYesNo(
+            Editor editor,
+            string prompt,
+            bool defaultYes,
+            out bool value)
+        {
+            value = defaultYes;
+            var options = new PromptKeywordOptions(prompt)
+            {
+                AllowNone = true
+            };
+            options.Keywords.Add("Yes");
+            options.Keywords.Add("No");
+            options.Keywords.Default = defaultYes ? "Yes" : "No";
+
+            RefreshEditorPrompt(editor);
+            var result = editor.GetKeywords(options);
+            if (result.Status == PromptStatus.OK)
+            {
+                value = string.Equals(result.StringResult, "Yes", StringComparison.OrdinalIgnoreCase);
+                return true;
+            }
+
+            if (result.Status == PromptStatus.None)
+            {
+                value = defaultYes;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryBuildFindingRowsFromTable(
+            Transaction tr,
+            Table table,
+            Editor editor,
+            FindingsDescriptionStandardizer standardizer,
+            [NotNullWhen(true)] out List<FindingRow>? rows,
+            [NotNullWhen(true)] out IReadOnlyDictionary<string, WildlifeGroupObservationStatus>? wildlifeGroupStatuses,
+            out int findingsPageNumber,
+            out string message)
+        {
+            rows = null;
+            wildlifeGroupStatuses = null;
+            findingsPageNumber = 0;
+            message = string.Empty;
+
+            if (!TryResolveFindingsPageNumber(tr, table, out findingsPageNumber))
+            {
+                message = "Could not determine the findings page number from the selected table's layout.";
+                return false;
+            }
+
+            var result = new List<FindingRow>();
+            var wildlifeGroupStatusMap = WildlifeGroupStatusLabels.ToDictionary(
+                label => label,
+                _ => WildlifeGroupObservationStatus.None,
+                StringComparer.OrdinalIgnoreCase);
+            var currentInsideZone = WildlifeFindingZone.Proposed;
+            var promptedWildlifeGroupsByNormalizedDescription = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            for (var rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
+            {
+                if (IsProposedHundredSpacerRow(table, rowIndex))
+                {
+                    currentInsideZone = WildlifeFindingZone.Buffer100;
+                    continue;
+                }
+
+                var numberText = GetTableCellText(table, rowIndex, 0);
+                if (!int.TryParse(numberText, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+                {
+                    continue;
+                }
+
+                var standardDescription = GetTableCellText(table, rowIndex, 1);
+                if (string.IsNullOrWhiteSpace(standardDescription))
+                {
+                    continue;
+                }
+
+                var zone = IsOutsideBufferTableRow(table, rowIndex)
+                    ? WildlifeFindingZone.Outside100
+                    : currentInsideZone;
+                var parsed = ParseFindingDescriptor(standardDescription);
+                if (!TryResolveFindingWildlifeGroup(
+                        editor,
+                        standardizer,
+                        standardDescription,
+                        parsed.Species,
+                        promptedWildlifeGroupsByNormalizedDescription,
+                        out var wildlifeGroup,
+                        out message))
+                {
+                    return false;
+                }
+
+                MergeWildlifeGroupObservationStatus(
+                    wildlifeGroupStatusMap,
+                    wildlifeGroup,
+                    ResolveWildlifeGroupObservationStatus(parsed.FindingType, standardDescription));
+
+                result.Add(new FindingRow(
+                    zone,
+                    parsed.Species,
+                    parsed.FindingType,
+                    standardDescription.Trim()));
+            }
+
+            if (result.Count == 0)
+            {
+                message = "The selected table does not contain any numbered finding rows.";
+                return false;
+            }
+
+            rows = result;
+            wildlifeGroupStatuses = wildlifeGroupStatusMap;
+            return true;
+        }
+
+        private static bool TryResolveFindingWildlifeGroup(
+            Editor editor,
+            FindingsDescriptionStandardizer standardizer,
+            string standardDescription,
+            string suggestedSpecies,
+            IDictionary<string, string> promptedWildlifeGroupsByNormalizedDescription,
+            out string wildlifeGroup,
+            out string message)
+        {
+            wildlifeGroup = string.Empty;
+            message = string.Empty;
+
+            var normalizedDescription = FindingsDescriptionStandardizer.NormalizeLookupFindingKey(standardDescription);
+            if (string.IsNullOrWhiteSpace(normalizedDescription))
+            {
+                wildlifeGroup = InferSuggestedWildlifeGroup(suggestedSpecies, standardDescription);
+                return true;
+            }
+
+            if (promptedWildlifeGroupsByNormalizedDescription.TryGetValue(normalizedDescription, out wildlifeGroup) &&
+                !string.IsNullOrWhiteSpace(wildlifeGroup))
+            {
+                return true;
+            }
+
+            if (standardizer.TryResolveWildlifeGroup(standardDescription, out wildlifeGroup) &&
+                !string.IsNullOrWhiteSpace(wildlifeGroup))
+            {
+                promptedWildlifeGroupsByNormalizedDescription[normalizedDescription] = wildlifeGroup;
+                return true;
+            }
+
+            if (!TryPromptForWildlifeGroup(editor, standardizer, standardDescription, suggestedSpecies, out wildlifeGroup, out message))
+            {
+                return false;
+            }
+
+            promptedWildlifeGroupsByNormalizedDescription[normalizedDescription] = wildlifeGroup;
+            standardizer.TryRememberWildlifeGroup(standardDescription, wildlifeGroup);
+            return true;
+        }
+
+        private static bool TryPromptForWildlifeGroup(
+            Editor editor,
+            FindingsDescriptionStandardizer standardizer,
+            string standardDescription,
+            string suggestedSpecies,
+            out string wildlifeGroup,
+            out string message)
+        {
+            wildlifeGroup = string.Empty;
+            message = string.Empty;
+            var suggestedWildlifeGroup = InferSuggestedWildlifeGroup(suggestedSpecies, standardDescription);
+
+            while (true)
+            {
+                using var dialog = new WildlifeGroupSelectionDialog(
+                    standardDescription,
+                    standardizer.GetKnownWildlifeGroups(),
+                    suggestedWildlifeGroup);
+                var result = dialog.ShowDialog();
+                if (result == System.Windows.Forms.DialogResult.OK)
+                {
+                    wildlifeGroup = dialog.SelectedWildlifeGroup.Trim();
+                    if (string.IsNullOrWhiteSpace(wildlifeGroup))
+                    {
+                        System.Windows.Forms.MessageBox.Show(
+                            "Select a wildlife group before continuing.",
+                            "Missing Wildlife Group",
+                            System.Windows.Forms.MessageBoxButtons.OK,
+                            System.Windows.Forms.MessageBoxIcon.Warning);
+                        continue;
+                    }
+
+                    return true;
+                }
+
+                message = $"Wildlife group selection was canceled for '{standardDescription}'.";
+                return false;
+            }
+        }
+
+        private static string InferSuggestedWildlifeGroup(string? suggestedSpecies, string? standardDescription)
+        {
+            var combined = $"{suggestedSpecies} {standardDescription}".Trim();
+            if (string.IsNullOrWhiteSpace(combined))
+            {
+                return string.Empty;
+            }
+
+            if (ContainsAnyKeyword(combined, "frog", "toad", "salamander", "amphib"))
+            {
+                return "AMPHIBIANS";
+            }
+
+            if (ContainsAnyKeyword(combined, "snake", "turtle", "lizard", "rept"))
+            {
+                return "REPTILES";
+            }
+
+            if (ContainsAnyKeyword(combined,
+                    "bird",
+                    "grouse",
+                    "owl",
+                    "raptor",
+                    "woodpecker",
+                    "sapsucker",
+                    "songbird",
+                    "nest",
+                    "cavity",
+                    "chicken",
+                    "hawk",
+                    "eagle",
+                    "falcon",
+                    "duck",
+                    "goose"))
+            {
+                return "BIRDS";
+            }
+
+            if (ContainsAnyKeyword(combined,
+                    "moose",
+                    "deer",
+                    "elk",
+                    "bear",
+                    "beaver",
+                    "coyote",
+                    "wolf",
+                    "fox",
+                    "hare",
+                    "rabbit",
+                    "squirrel",
+                    "mammal",
+                    "ungulate",
+                    "rodent",
+                    "dog",
+                    "cat",
+                    "otter",
+                    "marten",
+                    "weasel",
+                    "porcupine",
+                    "bat"))
+            {
+                return "MAMMALS";
+            }
+
+            return string.Empty;
+        }
+
+        private static bool ContainsAnyKeyword(string text, params string[] keywords)
+        {
+            foreach (var keyword in keywords)
+            {
+                if (!string.IsNullOrWhiteSpace(keyword) &&
+                    text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void MergeWildlifeGroupObservationStatus(
+            IDictionary<string, WildlifeGroupObservationStatus> statuses,
+            string? wildlifeGroup,
+            WildlifeGroupObservationStatus status)
+        {
+            if (statuses == null ||
+                string.IsNullOrWhiteSpace(wildlifeGroup) ||
+                !statuses.TryGetValue(wildlifeGroup.Trim(), out var currentStatus) ||
+                status <= currentStatus)
+            {
+                return;
+            }
+
+            statuses[wildlifeGroup.Trim()] = status;
+        }
+
+        private static WildlifeGroupObservationStatus ResolveWildlifeGroupObservationStatus(
+            string? findingType,
+            string? standardDescription)
+        {
+            var normalized = NormalizeComparableText($"{findingType} {standardDescription}");
+            if (ContainsAnyKeyword(normalized, "sighting", "audible", "visual", "observation", "call", "heard"))
+            {
+                return WildlifeGroupObservationStatus.Sighting;
+            }
+
+            return string.IsNullOrWhiteSpace(normalized)
+                ? WildlifeGroupObservationStatus.None
+                : WildlifeGroupObservationStatus.Sign;
+        }
+
+        private static bool TryResolveFindingsPageNumber(
+            Transaction tr,
+            Table table,
+            out int findingsPageNumber)
+        {
+            findingsPageNumber = 0;
+            if (table == null || table.OwnerId.IsNull)
+            {
+                return false;
+            }
+
+            if (tr.GetObject(table.OwnerId, OpenMode.ForRead, false) is not BlockTableRecord owner)
+            {
+                return false;
+            }
+
+            if (owner.LayoutId.IsNull ||
+                tr.GetObject(owner.LayoutId, OpenMode.ForRead, false) is not Layout layout ||
+                layout.ModelType)
+            {
+                return false;
+            }
+
+            if (TryParseLayoutPageNumber(layout.LayoutName, out findingsPageNumber))
+            {
+                return true;
+            }
+
+            if (layout.TabOrder > 0)
+            {
+                findingsPageNumber = layout.TabOrder;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryParseLayoutPageNumber(string? layoutName, out int pageNumber)
+        {
+            pageNumber = 0;
+            if (string.IsNullOrWhiteSpace(layoutName))
+            {
+                return false;
+            }
+
+            var trimmed = layoutName.Trim();
+            var parts = trimmed.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 3 &&
+                int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out pageNumber) &&
+                parts[1].Equals("of", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (trimmed.StartsWith("Layout", StringComparison.OrdinalIgnoreCase))
+            {
+                var suffix = trimmed["Layout".Length..].Trim();
+                if (int.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out pageNumber))
+                {
+                    return true;
+                }
+            }
+
+            return int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out pageNumber);
+        }
+
+        private static string GetTableCellText(Table table, int rowIndex, int columnIndex)
+        {
+            return (table.Cells[rowIndex, columnIndex].TextString ?? string.Empty).Trim();
+        }
+
+        private static bool IsOutsideBufferTableRow(Table table, int rowIndex)
+        {
+            try
+            {
+                return table.Cells[rowIndex, 0].BackgroundColor.ColorIndex == OutsideBufferTableColorIndex;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsProposedHundredSpacerRow(Table table, int rowIndex)
+        {
+            if (table == null || rowIndex < 0 || rowIndex >= table.Rows.Count)
+            {
+                return false;
+            }
+
+            if (Math.Abs(table.Rows[rowIndex].Height - ProposedHundredSpacerRowHeight) > 0.5)
+            {
+                return false;
+            }
+
+            for (var columnIndex = 0; columnIndex < table.Columns.Count; columnIndex++)
+            {
+                if (!string.IsNullOrWhiteSpace(GetTableCellText(table, rowIndex, columnIndex)))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static ParsedFindingDescriptor ParseFindingDescriptor(string standardDescription)
+        {
+            var description = standardDescription?.Trim() ?? string.Empty;
+            foreach (var suffix in FindingTypeSuffixes.OrderByDescending(value => value.Length))
+            {
+                if (!description.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var species = description[..(description.Length - suffix.Length)].Trim();
+                species = species.Trim(' ', '-', ',', '/', ';', ':');
+                return new ParsedFindingDescriptor(species, suffix);
+            }
+
+            return new ParsedFindingDescriptor(string.Empty, string.Empty);
+        }
+
+        private static int ApplyFindingStatementToLayout(
+            Transaction tr,
+            Layout layout,
+            string statement)
+        {
+            var updatedCount = 0;
+            var blockTableRecord = (BlockTableRecord)tr.GetObject(layout.BlockTableRecordId, OpenMode.ForWrite);
+            foreach (ObjectId entityId in blockTableRecord)
+            {
+                if (tr.GetObject(entityId, OpenMode.ForWrite, false) is not Entity entity || entity.IsErased)
+                {
+                    continue;
+                }
+
+                updatedCount += ApplyFindingStatementToEntity(tr, entity, statement);
+            }
+
+            return updatedCount;
+        }
+
+        private static int ApplyFindingStatementToEntity(
+            Transaction tr,
+            Entity entity,
+            string statement)
+        {
+            switch (entity)
+            {
+                case MText mtext when IsFindingStatementPlaceholderMatch(mtext.Text) && HasYellowMTextDisplayColor(tr, mtext):
+                    if (TryReplaceFindingStatementInMTextContents(tr, mtext, statement, out var updatedContents))
+                    {
+                        mtext.Contents = updatedContents;
+                        return 1;
+                    }
+
+                    return 0;
+
+                case DBText dbText when IsFindingStatementPlaceholderMatch(dbText.TextString) &&
+                                       TryResolveEffectiveEntityColor(tr, dbText, null, out var dbTextColor) &&
+                                       IsYellowTextColor(dbTextColor):
+                    if (TryReplaceFindingStatementPlaceholderText(dbText.TextString, statement, out var updatedDbText))
+                    {
+                        dbText.TextString = updatedDbText;
+                        if (dbText.Database != null)
+                        {
+                            dbText.TextStyleId = EnsureNonBoldTextStyleId(tr, dbText.Database, dbText.TextStyleId);
+                        }
+
+                        dbText.Color = Color.FromColorIndex(ColorMethod.ByAci, BlueColorIndex);
+                        return 1;
+                    }
+
+                    return 0;
+
+                case BlockReference blockReference:
+                    var updated = 0;
+                    foreach (ObjectId attributeId in blockReference.AttributeCollection)
+                    {
+                        if (tr.GetObject(attributeId, OpenMode.ForWrite, false) is not AttributeReference attributeReference ||
+                            attributeReference.IsErased ||
+                            !IsFindingStatementPlaceholderMatch(attributeReference.TextString) ||
+                            !TryResolveEffectiveEntityColor(tr, attributeReference, blockReference, out var attributeColor) ||
+                            !IsYellowTextColor(attributeColor))
+                        {
+                            continue;
+                        }
+
+                        if (TryReplaceFindingStatementPlaceholderText(attributeReference.TextString, statement, out var updatedText))
+                        {
+                            attributeReference.TextString = updatedText;
+                            if (attributeReference.Database != null)
+                            {
+                                attributeReference.TextStyleId = EnsureNonBoldTextStyleId(tr, attributeReference.Database, attributeReference.TextStyleId);
+                            }
+
+                            attributeReference.Color = Color.FromColorIndex(ColorMethod.ByAci, BlueColorIndex);
+                            updated++;
+                        }
+                    }
+
+                    return updated;
+            }
+
+            return 0;
+        }
+
+        private static bool IsFindingStatementPlaceholderMatch(string? text)
+        {
+            var normalizedText = NormalizeComparableText(text);
+            var normalizedPlaceholder = NormalizeComparableText(FindingStatementPlaceholderText);
+            return !string.IsNullOrEmpty(normalizedText) &&
+                   !string.IsNullOrEmpty(normalizedPlaceholder) &&
+                   normalizedText.IndexOf(normalizedPlaceholder, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool HasYellowMTextDisplayColor(Transaction tr, MText mtext)
+        {
+            if (ContainsYellowInlineMTextColor(mtext.Contents))
+            {
+                return true;
+            }
+
+            if (TryGetInlineMTextColor(mtext.Contents ?? string.Empty, (mtext.Contents ?? string.Empty).Length, out var inlineColor) &&
+                IsYellowTextColor(inlineColor))
+            {
+                return true;
+            }
+
+            return TryResolveEffectiveEntityColor(tr, mtext, null, out var effectiveColor) &&
+                   IsYellowTextColor(effectiveColor);
+        }
+
+        private static bool ContainsYellowInlineMTextColor(string? contents)
+        {
+            if (string.IsNullOrWhiteSpace(contents))
+            {
+                return false;
+            }
+
+            return contents.IndexOf("\\C2;", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   contents.IndexOf("\\c255,255,0;", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool TryReplaceFindingStatementPlaceholderText(
+            string? currentText,
+            string statement,
+            [NotNullWhen(true)] out string? updatedText)
+        {
+            updatedText = null;
+            if (string.IsNullOrWhiteSpace(currentText))
+            {
+                return false;
+            }
+
+            var startIndex = currentText.IndexOf(FindingStatementPlaceholderText, StringComparison.OrdinalIgnoreCase);
+            if (startIndex < 0)
+            {
+                return false;
+            }
+
+            updatedText = currentText.Remove(startIndex, FindingStatementPlaceholderText.Length)
+                .Insert(startIndex, statement);
+            return true;
+        }
+
+        private static bool TryReplaceFindingStatementInMTextContents(
+            Transaction tr,
+            MText mtext,
+            string statement,
+            [NotNullWhen(true)] out string? updatedContents)
+        {
+            updatedContents = null;
+            var currentContents = mtext.Contents;
+            if (string.IsNullOrWhiteSpace(currentContents))
+            {
+                return false;
+            }
+
+            if (!TryFindMTextPlaceholderRawSpan(currentContents, out var rawStartIndex, out var rawLength))
+            {
+                return false;
+            }
+
+            var replacement = BuildBlueFindingStatementMTextRun(tr, mtext, statement);
+            updatedContents = currentContents.Remove(rawStartIndex, rawLength)
+                .Insert(rawStartIndex, replacement);
+            return true;
+        }
+
+        private static bool TryFindMTextPlaceholderRawSpan(
+            string contents,
+            out int rawStartIndex,
+            out int rawLength)
+        {
+            rawStartIndex = -1;
+            rawLength = 0;
+
+            var visibleCharacters = ExtractVisibleMTextCharacters(contents);
+            if (visibleCharacters.Count == 0)
+            {
+                return false;
+            }
+
+            if (!TryFindVisiblePlaceholderRange(visibleCharacters, out var visibleStartIndex, out var visibleEndIndexExclusive))
+            {
+                return false;
+            }
+
+            rawStartIndex = visibleCharacters[visibleStartIndex].RawStart;
+            var rawEndIndexExclusive = visibleCharacters[visibleEndIndexExclusive - 1].RawEnd;
+            rawLength = Math.Max(0, rawEndIndexExclusive - rawStartIndex);
+            return rawLength > 0;
+        }
+
+        private static bool TryFindVisiblePlaceholderRange(
+            IReadOnlyList<VisibleMTextCharacter> visibleCharacters,
+            out int visibleStartIndex,
+            out int visibleEndIndexExclusive)
+        {
+            visibleStartIndex = -1;
+            visibleEndIndexExclusive = -1;
+
+            if (visibleCharacters.Count == 0)
+            {
+                return false;
+            }
+
+            var normalizedBuilder = new StringBuilder();
+            var normalizedVisibleIndexMap = new List<int>();
+            var previousWasWhitespace = false;
+            for (var index = 0; index < visibleCharacters.Count; index++)
+            {
+                var character = visibleCharacters[index].Character;
+                if (char.IsWhiteSpace(character))
+                {
+                    if (previousWasWhitespace)
+                    {
+                        continue;
+                    }
+
+                    previousWasWhitespace = true;
+                    normalizedBuilder.Append(' ');
+                    normalizedVisibleIndexMap.Add(index);
+                    continue;
+                }
+
+                previousWasWhitespace = false;
+                normalizedBuilder.Append(character);
+                normalizedVisibleIndexMap.Add(index);
+            }
+
+            var normalizedVisible = normalizedBuilder.ToString();
+            var normalizedPlaceholder = NormalizeComparableText(FindingStatementPlaceholderText);
+            if (string.IsNullOrWhiteSpace(normalizedVisible) || string.IsNullOrWhiteSpace(normalizedPlaceholder))
+            {
+                return false;
+            }
+
+            var normalizedStartIndex = normalizedVisible.IndexOf(normalizedPlaceholder, StringComparison.OrdinalIgnoreCase);
+            if (normalizedStartIndex < 0)
+            {
+                return false;
+            }
+
+            var normalizedEndIndexExclusive = normalizedStartIndex + normalizedPlaceholder.Length;
+            visibleStartIndex = normalizedVisibleIndexMap[normalizedStartIndex];
+            visibleEndIndexExclusive = normalizedVisibleIndexMap[normalizedEndIndexExclusive - 1] + 1;
+            return visibleStartIndex >= 0 && visibleEndIndexExclusive > visibleStartIndex;
+        }
+
+        private static List<VisibleMTextCharacter> ExtractVisibleMTextCharacters(string contents)
+        {
+            var visibleCharacters = new List<VisibleMTextCharacter>();
+            for (var index = 0; index < contents.Length; index++)
+            {
+                var current = contents[index];
+                if (current == '{' || current == '}')
+                {
+                    continue;
+                }
+
+                if (current != '\\' || index + 1 >= contents.Length)
+                {
+                    visibleCharacters.Add(new VisibleMTextCharacter(current, index, index + 1));
+                    continue;
+                }
+
+                var code = contents[index + 1];
+                switch (code)
+                {
+                    case '\\':
+                    case '{':
+                    case '}':
+                        visibleCharacters.Add(new VisibleMTextCharacter(code, index, index + 2));
+                        index++;
+                        continue;
+                    case 'P':
+                    case '~':
+                        visibleCharacters.Add(new VisibleMTextCharacter(' ', index, index + 2));
+                        index++;
+                        continue;
+                    case 'L':
+                    case 'l':
+                    case 'O':
+                    case 'o':
+                    case 'K':
+                    case 'k':
+                        index++;
+                        continue;
+                    default:
+                        if (TryReadMTextFormatValue(contents, index + 2, out _, out var endIndex))
+                        {
+                            index = endIndex;
+                            continue;
+                        }
+
+                        index++;
+                        continue;
+                }
+            }
+
+            return visibleCharacters;
+        }
+
+        private static string BuildBlueFindingStatementMTextRun(Transaction tr, MText mtext, string statement)
+        {
+            var builder = new StringBuilder();
+            builder.Append("{\\l\\o\\k\\C");
+            builder.Append(BlueColorIndex.ToString(CultureInfo.InvariantCulture));
+            builder.Append(';');
+            builder.Append(BuildNonBoldMTextFontOverride(tr, mtext));
+            builder.Append(EscapeMTextLiteral(statement));
+            builder.Append('}');
+            return builder.ToString();
+        }
+
+        private static string EscapeMTextLiteral(string value)
+        {
+            return (value ?? string.Empty)
+                .Replace("\\", "\\\\", StringComparison.Ordinal)
+                .Replace("{", "\\{", StringComparison.Ordinal)
+                .Replace("}", "\\}", StringComparison.Ordinal);
+        }
+
+        private static string BuildNonBoldMTextFontOverride(Transaction tr, MText mtext)
+        {
+            if (mtext.Database == null)
+            {
+                return string.Empty;
+            }
+
+            var styleId = mtext.TextStyleId.IsNull ? mtext.Database.Textstyle : mtext.TextStyleId;
+            if (styleId.IsNull ||
+                tr.GetObject(styleId, OpenMode.ForRead, false) is not TextStyleTableRecord styleRecord ||
+                styleRecord.IsErased)
+            {
+                return string.Empty;
+            }
+
+            var font = styleRecord.Font;
+            if (string.IsNullOrWhiteSpace(font.TypeFace))
+            {
+                return string.Empty;
+            }
+
+            return $"\\f{EscapeMTextFontName(font.TypeFace)}|b0|i{(font.Italic ? "1" : "0")};";
+        }
+
+        private static string EscapeMTextFontName(string value)
+        {
+            return (value ?? string.Empty)
+                .Replace("\\", "\\\\", StringComparison.Ordinal)
+                .Replace(";", "\\;", StringComparison.Ordinal)
+                .Replace("{", "\\{", StringComparison.Ordinal)
+                .Replace("}", "\\}", StringComparison.Ordinal);
+        }
+
+        private static string NormalizeComparableText(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            return string.Join(
+                " ",
+                text.Split((char[])null, StringSplitOptions.RemoveEmptyEntries))
+                .Trim();
+        }
+
+        private static int RebuildWildlifeGroupStatusTables(
+            Transaction tr,
+            Database db,
+            Layout layout,
+            IReadOnlyDictionary<string, WildlifeGroupObservationStatus> wildlifeGroupStatuses)
+        {
+            var blockTableRecord = (BlockTableRecord)tr.GetObject(layout.BlockTableRecordId, OpenMode.ForWrite);
+            var table = BuildWildlifeGroupStatusTable(
+                tr,
+                db,
+                new Point3d(WildlifeGroupStatusAnchorX, WildlifeGroupStatusAnchorY, 0.0),
+                wildlifeGroupStatuses);
+            blockTableRecord.AppendEntity(table);
+            tr.AddNewlyCreatedDBObject(table, true);
+            table.GenerateLayout();
+            return 1;
+        }
+
+        private static int RebuildWildlifeFeatureStatusTables(
+            Transaction tr,
+            Database db,
+            Layout layout,
+            WildlifeFeatureFlags flags)
+        {
+            var blockTableRecord = (BlockTableRecord)tr.GetObject(layout.BlockTableRecordId, OpenMode.ForWrite);
+            var table = BuildWildlifeFeatureStatusTable(
+                tr,
+                db,
+                new Point3d(WildlifeFeatureStatusAnchorX, WildlifeFeatureStatusAnchorY, 0.0),
+                flags);
+            blockTableRecord.AppendEntity(table);
+            tr.AddNewlyCreatedDBObject(table, true);
+            table.GenerateLayout();
+            return 1;
+        }
+
+        private static void RemoveWildlifeFeatureStatusTables(Transaction tr, Layout layout)
+        {
+            var blockTableRecord = (BlockTableRecord)tr.GetObject(layout.BlockTableRecordId, OpenMode.ForWrite);
+            foreach (ObjectId entityId in blockTableRecord)
+            {
+                if (tr.GetObject(entityId, OpenMode.ForWrite, false) is not Table table || table.IsErased)
+                {
+                    continue;
+                }
+
+                if (IsWildlifeFeatureStatusTable(table))
+                {
+                    table.Erase(true);
+                }
+            }
+        }
+
+        private static bool IsWildlifeFeatureStatusTable(Table table)
+        {
+            if (table == null || table.IsErased || table.Columns.Count != 2 || table.Rows.Count != WildlifeFeatureStatusLabels.Length + 1)
+            {
+                return false;
+            }
+
+            if (!ContainsNormalizedCellText(table.Cells[0, 0], WildlifeFeatureStatusHeading))
+            {
+                return false;
+            }
+
+            for (var index = 0; index < WildlifeFeatureStatusLabels.Length; index++)
+            {
+                if (!ContainsNormalizedCellText(table.Cells[index + 1, 0], WildlifeFeatureStatusLabels[index]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static void RemoveWildlifeGroupStatusTables(Transaction tr, Layout layout)
+        {
+            var blockTableRecord = (BlockTableRecord)tr.GetObject(layout.BlockTableRecordId, OpenMode.ForWrite);
+            foreach (ObjectId entityId in blockTableRecord)
+            {
+                if (tr.GetObject(entityId, OpenMode.ForWrite, false) is not Table table || table.IsErased)
+                {
+                    continue;
+                }
+
+                if (IsWildlifeGroupStatusTable(table))
+                {
+                    table.Erase(true);
+                }
+            }
+        }
+
+        private static bool IsWildlifeGroupStatusTable(Table table)
+        {
+            if (table == null || table.IsErased || table.Columns.Count != 2 || table.Rows.Count != WildlifeGroupStatusLabels.Length + 1)
+            {
+                return false;
+            }
+
+            if (!ContainsNormalizedCellText(table.Cells[0, 0], WildlifeGroupStatusHeaderLeft) ||
+                !ContainsNormalizedCellText(table.Cells[0, 1], WildlifeGroupStatusHeaderRight))
+            {
+                return false;
+            }
+
+            for (var index = 0; index < WildlifeGroupStatusLabels.Length; index++)
+            {
+                if (!ContainsNormalizedCellText(table.Cells[index + 1, 0], WildlifeGroupStatusLabels[index]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static Table BuildWildlifeFeatureStatusTable(
+            Transaction tr,
+            Database db,
+            Point3d insertPoint,
+            WildlifeFeatureFlags flags)
+        {
+            PhotoLayoutHelper.EnsureLayer(db, WildlifeFeatureStatusLayerName, tr);
+
+            var table = new Table
+            {
+                TableStyle = db.Tablestyle,
+                Position = insertPoint,
+                Layer = WildlifeFeatureStatusLayerName
+            };
+
+#pragma warning disable CS0618
+            table.IsTitleSuppressed = true;
+            table.IsHeaderSuppressed = true;
+#pragma warning restore CS0618
+
+            table.SetSize(WildlifeFeatureStatusLabels.Length + 1, 2);
+            table.Columns[0].Width = WildlifeFeatureStatusColumnWidths[0];
+            table.Columns[1].Width = WildlifeFeatureStatusColumnWidths[1];
+
+            for (var rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
+            {
+                table.Rows[rowIndex].Height = WildlifeFeatureStatusRowHeight;
+            }
+
+            ConfigureWildlifeFeatureStatusHeadingRow(tr, db, table);
+            ConfigureWildlifeFeatureStatusDataRow(tr, db, table, 1, WildlifeFeatureStatusLabels[0], flags.OccupiedNest);
+            ConfigureWildlifeFeatureStatusDataRow(tr, db, table, 2, WildlifeFeatureStatusLabels[1], flags.OccupiedDen);
+            ConfigureWildlifeFeatureStatusDataRow(tr, db, table, 3, WildlifeFeatureStatusLabels[2], flags.Hibernacula);
+            ConfigureWildlifeFeatureStatusDataRow(tr, db, table, 4, WildlifeFeatureStatusLabels[3], flags.MineralLick);
+            return table;
+        }
+
+        private static Table BuildWildlifeGroupStatusTable(
+            Transaction tr,
+            Database db,
+            Point3d insertPoint,
+            IReadOnlyDictionary<string, WildlifeGroupObservationStatus> wildlifeGroupStatuses)
+        {
+            PhotoLayoutHelper.EnsureLayer(db, WildlifeGroupStatusLayerName, tr);
+
+            var table = new Table
+            {
+                TableStyle = db.Tablestyle,
+                Position = insertPoint,
+                Layer = WildlifeGroupStatusLayerName
+            };
+
+#pragma warning disable CS0618
+            table.IsTitleSuppressed = true;
+            table.IsHeaderSuppressed = true;
+#pragma warning restore CS0618
+
+            table.SetSize(WildlifeGroupStatusLabels.Length + 1, 2);
+            table.Columns[0].Width = WildlifeGroupStatusColumnWidths[0];
+            table.Columns[1].Width = WildlifeGroupStatusColumnWidths[1];
+
+            for (var rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
+            {
+                table.Rows[rowIndex].Height = WildlifeGroupStatusRowHeight;
+            }
+
+            ConfigureWildlifeGroupStatusCell(
+                tr,
+                db,
+                table.Cells[0, 0],
+                WildlifeGroupStatusHeaderLeft,
+                WildlifeGroupStatusHeaderColor);
+            ConfigureWildlifeGroupStatusCell(
+                tr,
+                db,
+                table.Cells[0, 1],
+                WildlifeGroupStatusHeaderRight,
+                WildlifeGroupStatusHeaderColor);
+
+            for (var index = 0; index < WildlifeGroupStatusLabels.Length; index++)
+            {
+                var groupLabel = WildlifeGroupStatusLabels[index];
+                ConfigureWildlifeGroupStatusCell(
+                    tr,
+                    db,
+                    table.Cells[index + 1, 0],
+                    groupLabel,
+                    WildlifeGroupStatusValueColor);
+                ConfigureWildlifeGroupStatusCell(
+                    tr,
+                    db,
+                    table.Cells[index + 1, 1],
+                    FormatWildlifeGroupObservationStatus(
+                        wildlifeGroupStatuses != null &&
+                        wildlifeGroupStatuses.TryGetValue(groupLabel, out var status)
+                            ? status
+                            : WildlifeGroupObservationStatus.None),
+                    WildlifeGroupStatusValueColor);
+            }
+
+            return table;
+        }
+
+        private static void ConfigureWildlifeFeatureStatusHeadingRow(Transaction tr, Database db, Table table)
+        {
+            for (var columnIndex = 0; columnIndex < 2; columnIndex++)
+            {
+                var cell = table.Cells[0, columnIndex];
+                cell.TextString = columnIndex == 0 ? WildlifeFeatureStatusHeading : string.Empty;
+                cell.TextHeight = WildlifeFeatureStatusHeadingTextHeight;
+                cell.Alignment = CellAlignment.MiddleCenter;
+                cell.ContentColor = WildlifeFeatureStatusHeaderColor;
+                ApplyEnvironmentalConditionsTextStyle(tr, db, cell);
+                SetCellBackgroundNone(cell);
+                SetAllBorders(cell, true);
+            }
+
+            table.MergeCells(CellRange.Create(table, 0, 0, 0, 1));
+            table.Cells[0, 0].Alignment = CellAlignment.MiddleCenter;
+        }
+
+        private static void ConfigureWildlifeFeatureStatusDataRow(
+            Transaction tr,
+            Database db,
+            Table table,
+            int rowIndex,
+            string label,
+            bool isPresent)
+        {
+            ConfigureWildlifeFeatureStatusCell(tr, db, table.Cells[rowIndex, 0], label, WildlifeFeatureStatusValueColor);
+            ConfigureWildlifeFeatureStatusCell(tr, db, table.Cells[rowIndex, 1], FormatWildlifeFeatureFlag(isPresent), WildlifeFeatureStatusValueColor);
+        }
+
+        private static void ConfigureWildlifeFeatureStatusCell(
+            Transaction tr,
+            Database db,
+            Cell cell,
+            string text,
+            Color color)
+        {
+            cell.TextString = text;
+            cell.TextHeight = WildlifeFeatureStatusTextHeight;
+            cell.Alignment = CellAlignment.MiddleCenter;
+            cell.ContentColor = color;
+            ApplyEnvironmentalConditionsTextStyle(tr, db, cell);
+            SetCellBackgroundNone(cell);
+            SetAllBorders(cell, true);
+        }
+
+        private static void ConfigureWildlifeGroupStatusCell(
+            Transaction tr,
+            Database db,
+            Cell cell,
+            string text,
+            Color color)
+        {
+            cell.TextString = text;
+            cell.TextHeight = WildlifeGroupStatusTextHeight;
+            cell.Alignment = CellAlignment.MiddleCenter;
+            cell.ContentColor = color;
+            ApplyEnvironmentalConditionsTextStyle(tr, db, cell);
+            SetCellBackgroundNone(cell);
+            SetAllBorders(cell, true);
+        }
+
+        private static string FormatWildlifeGroupObservationStatus(WildlifeGroupObservationStatus status)
+        {
+            return status switch
+            {
+                WildlifeGroupObservationStatus.Sighting => "SIGHTING",
+                WildlifeGroupObservationStatus.Sign => "SIGN",
+                _ => "N/A"
+            };
+        }
+
+        private static string FormatWildlifeFeatureFlag(bool isPresent)
+        {
+            return isPresent ? "YES" : "NO";
         }
 
         public static string BuildExistingLandSummary(
@@ -1148,6 +2489,17 @@ namespace WildlifeSweeps
             }
 
             return color.ColorIndex == BlueColorIndex || (color.Red == 0 && color.Green == 0 && color.Blue == 255);
+        }
+
+        private static bool IsYellowTextColor(Color color)
+        {
+            if (color == null)
+            {
+                return false;
+            }
+
+            return color.ColorIndex == YellowColorIndex ||
+                   (color.Red == 255 && color.Green == 255 && color.Blue == 0);
         }
 
         private static bool IsAllowedRgbColor(int red, int green, int blue)
@@ -2216,6 +3568,28 @@ namespace WildlifeSweeps
             public int TownshipSortKey { get; }
             public int RangeSortKey { get; }
             public int MeridianSortKey { get; }
+        }
+
+        private sealed record FindingStatementUpdateRequest(
+            IReadOnlyCollection<FindingRow> Rows,
+            WildlifeFeatureFlags Flags,
+            int FindingsPageNumber,
+            IReadOnlyDictionary<string, WildlifeGroupObservationStatus> WildlifeGroupStatuses);
+
+        private sealed record ParsedFindingDescriptor(
+            string Species,
+            string FindingType);
+
+        private sealed record VisibleMTextCharacter(
+            char Character,
+            int RawStart,
+            int RawEnd);
+
+        private enum WildlifeGroupObservationStatus
+        {
+            None = 0,
+            Sign = 1,
+            Sighting = 2
         }
 
         private readonly struct SectionExtents

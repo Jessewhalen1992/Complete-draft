@@ -1285,6 +1285,11 @@ namespace WildlifeSweeps
                 Layer = "CG-NOTES"
             };
 
+#pragma warning disable CS0618
+            table.IsTitleSuppressed = true;
+            table.IsHeaderSuppressed = true;
+#pragma warning restore CS0618
+
             table.SetSize(totalRows, columnCount);
             table.SetRowHeight(25.0);
             table.SetColumnWidth(150.0);

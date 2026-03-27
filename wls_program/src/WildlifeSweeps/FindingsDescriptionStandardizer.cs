@@ -13,6 +13,14 @@ namespace WildlifeSweeps
 {
     internal sealed class FindingsDescriptionStandardizer
     {
+        internal static readonly string[] WildlifeGroups =
+        {
+            "AMPHIBIANS",
+            "BIRDS",
+            "MAMMALS",
+            "REPTILES"
+        };
+
         private const string SnowshoeHareSpecies = "Snowshoe Hare";
         private const string PreserveOriginalStandardDescription = "[Keep Original]";
         private static readonly RegexOptions RuleRegexOptions = RegexOptions.IgnoreCase | RegexOptions.Compiled;
@@ -39,6 +47,7 @@ namespace WildlifeSweeps
         private readonly IReadOnlyList<RecognitionRule> _regexRules;
         private readonly IReadOnlyList<RecognitionRule> _keywordRules;
         private readonly HashSet<string> _skipNormalizedFindings;
+        private readonly Dictionary<string, string> _wildlifeGroupByNormalizedDescription;
         private readonly string _customMappingsPath;
         private readonly string _lookupWorkbookPath;
         private readonly Action<string>? _logWarning;
@@ -51,6 +60,7 @@ namespace WildlifeSweeps
             _regexRules = workbook.RegexRules;
             _keywordRules = workbook.KeywordRules;
             _skipNormalizedFindings = workbook.SkipNormalizedFindings;
+            _wildlifeGroupByNormalizedDescription = new Dictionary<string, string>(workbook.WildlifeGroupByNormalizedDescription, StringComparer.OrdinalIgnoreCase);
             _lookupWorkbookPath = workbook.SourcePath;
             _logWarning = logWarning;
 
@@ -58,6 +68,49 @@ namespace WildlifeSweeps
             _customMappings = CustomMapping.Load(_customMappingsPath, logWarning);
 
             _unparsedFindingsPath = GetUnparsedFindingsPath();
+        }
+
+        internal bool TryResolveWildlifeGroup(string? standardDescription, out string wildlifeGroup)
+        {
+            wildlifeGroup = string.Empty;
+            var key = NormalizeLookupFindingKey(standardDescription);
+            return !string.IsNullOrWhiteSpace(key) &&
+                   _wildlifeGroupByNormalizedDescription.TryGetValue(key, out wildlifeGroup) &&
+                   !string.IsNullOrWhiteSpace(wildlifeGroup);
+        }
+
+        internal IReadOnlyList<string> GetKnownWildlifeGroups()
+        {
+            return WildlifeGroups;
+        }
+
+        internal bool TryRememberWildlifeGroup(string? standardDescription, string? wildlifeGroup)
+        {
+            var key = NormalizeLookupFindingKey(standardDescription);
+            var trimmedWildlifeGroup = NormalizeWildlifeGroup(wildlifeGroup);
+            if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(trimmedWildlifeGroup))
+            {
+                return false;
+            }
+
+            _wildlifeGroupByNormalizedDescription[key] = trimmedWildlifeGroup;
+            return LookupWorkbook.TryUpsertWildlifeGroupMapping(
+                _lookupWorkbookPath,
+                standardDescription ?? string.Empty,
+                trimmedWildlifeGroup,
+                _logWarning);
+        }
+
+        internal static string NormalizeWildlifeGroup(string? wildlifeGroup)
+        {
+            if (string.IsNullOrWhiteSpace(wildlifeGroup))
+            {
+                return string.Empty;
+            }
+
+            var normalized = wildlifeGroup.Trim().ToUpperInvariant();
+            return WildlifeGroups.FirstOrDefault(value => string.Equals(value, normalized, StringComparison.OrdinalIgnoreCase))
+                   ?? string.Empty;
         }
 
         internal IReadOnlyList<StandardizedFinding> Standardize(string? originalText, Func<PromptContext, PromptResult> promptForUnmapped)
@@ -101,6 +154,11 @@ namespace WildlifeSweeps
             }
 
             return BuildResults(preprocess, new List<RecognitionMatch>(), promptForUnmapped);
+        }
+
+        internal static string NormalizeLookupFindingKey(string? text)
+        {
+            return Preprocess(text).NormalizedText;
         }
 
         private IReadOnlyList<StandardizedFinding> BuildResults(
@@ -506,6 +564,7 @@ namespace WildlifeSweeps
         {
             private const string RegexSheet = "RecognitionRegex";
             private const string KeywordSheet = "RecognitionKeywords";
+            private const string SpeciesSheet = "FindingSpecies";
             private const string SkipsSheet = "Skips";
             private const string SkippedSheet = "Skipped";
             private const string PrimaryLookupFileName = "wildlife_parsing_codex_lookup.xlsx";
@@ -522,6 +581,9 @@ namespace WildlifeSweeps
 
             public HashSet<string> SkipNormalizedFindings { get; private init; }
                 = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            public IReadOnlyDictionary<string, string> WildlifeGroupByNormalizedDescription { get; private init; }
+                = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             public static LookupWorkbook Load(string? path, Action<string>? logWarning)
             {
@@ -687,6 +749,9 @@ namespace WildlifeSweeps
                 var keywordRows = sheets.TryGetValue(KeywordSheet, out var keywordSheet)
                     ? keywordSheet
                     : new List<Dictionary<string, string>>();
+                var speciesRows = sheets.TryGetValue(SpeciesSheet, out var speciesSheet)
+                    ? speciesSheet
+                    : new List<Dictionary<string, string>>();
                 var skipRows = sheets.TryGetValue(SkipsSheet, out var skipsSheet)
                     ? skipsSheet
                     : (sheets.TryGetValue(SkippedSheet, out var skippedSheet)
@@ -707,6 +772,7 @@ namespace WildlifeSweeps
                     .OrderBy(rule => rule.Priority)
                     .ToList();
 
+                var wildlifeGroupByNormalizedDescription = ParseWildlifeGroupMappings(speciesRows);
                 var skipNormalizedFindings = ParseSkipFindings(skipRows);
 
                 return new LookupWorkbook
@@ -714,6 +780,7 @@ namespace WildlifeSweeps
                     RegexRules = regexRules,
                     KeywordRules = keywordRules,
                     SourcePath = path,
+                    WildlifeGroupByNormalizedDescription = wildlifeGroupByNormalizedDescription,
                     SkipNormalizedFindings = skipNormalizedFindings
                 };
             }
@@ -757,7 +824,7 @@ namespace WildlifeSweeps
                 return normalized;
             }
 
-                        public static bool TryUpsertKeywordMapping(string path, string keyword, string standardDescription, Action<string>? logWarning)
+            public static bool TryUpsertKeywordMapping(string path, string keyword, string standardDescription, Action<string>? logWarning)
             {
                 if (string.IsNullOrWhiteSpace(path) ||
                     string.IsNullOrWhiteSpace(keyword) ||
@@ -807,6 +874,66 @@ namespace WildlifeSweeps
                 if (failures.Count > 0)
                 {
                     logWarning?.Invoke($"Failed to sync one or more findings lookup workbook copies: {string.Join(" | ", failures)}");
+                }
+
+                return updatedCount > 0;
+            }
+
+            public static bool TryUpsertWildlifeGroupMapping(string path, string standardDescription, string wildlifeGroup, Action<string>? logWarning)
+            {
+                if (string.IsNullOrWhiteSpace(path) ||
+                    string.IsNullOrWhiteSpace(standardDescription) ||
+                    string.IsNullOrWhiteSpace(wildlifeGroup))
+                {
+                    return false;
+                }
+
+                var replicaPaths = GetLookupReplicaPaths(path)
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (replicaPaths.Count == 0)
+                {
+                    return false;
+                }
+
+                var seedPath = replicaPaths.FirstOrDefault(File.Exists);
+                if (string.IsNullOrWhiteSpace(seedPath))
+                {
+                    return false;
+                }
+
+                var trimmedDescription = standardDescription.Trim();
+                var trimmedWildlifeGroup = NormalizeWildlifeGroup(wildlifeGroup);
+                if (string.IsNullOrWhiteSpace(trimmedWildlifeGroup))
+                {
+                    return false;
+                }
+
+                var updatedCount = 0;
+                var failures = new List<string>();
+
+                foreach (var replicaPath in replicaPaths)
+                {
+                    try
+                    {
+                        if (!File.Exists(replicaPath))
+                        {
+                            File.Copy(seedPath, replicaPath, overwrite: false);
+                        }
+
+                        UpsertWildlifeGroupMapping(replicaPath, trimmedDescription, trimmedWildlifeGroup);
+                        updatedCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        failures.Add($"{Path.GetFileName(replicaPath)}: {ex.Message}");
+                    }
+                }
+
+                if (failures.Count > 0)
+                {
+                    logWarning?.Invoke($"Failed to sync one or more findings wildlife-group workbook copies: {string.Join(" | ", failures)}");
                 }
 
                 return updatedCount > 0;
@@ -890,6 +1017,90 @@ namespace WildlifeSweeps
                 ReplaceEntry(archive, target, sheetDocument);
             }
 
+            private static void UpsertWildlifeGroupMapping(string path, string standardDescription, string wildlifeGroup)
+            {
+                using var archive = ZipFile.Open(path, ZipArchiveMode.Update);
+                var sharedStrings = LoadSharedStrings(archive);
+                var workbook = XDocument.Load(GetEntryStream(archive, "xl/workbook.xml"));
+                var rels = XDocument.Load(GetEntryStream(archive, "xl/_rels/workbook.xml.rels"));
+                var relMap = rels
+                    .Descendants(RelationshipsNs + "Relationship")
+                    .ToDictionary(
+                        rel => rel.Attribute("Id")?.Value ?? string.Empty,
+                        rel => rel.Attribute("Target")?.Value?.TrimStart('/') ?? string.Empty);
+
+                var sheet = workbook
+                    .Descendants(SpreadsheetNs + "sheet")
+                    .FirstOrDefault(node => string.Equals(node.Attribute("name")?.Value, SpeciesSheet, StringComparison.OrdinalIgnoreCase))
+                    ?? throw new InvalidOperationException($"Workbook does not contain the {SpeciesSheet} sheet.");
+
+                var relId = sheet.Attribute(DocumentRelationshipsNs + "id")?.Value ?? string.Empty;
+                if (!relMap.TryGetValue(relId, out var target) || string.IsNullOrWhiteSpace(target))
+                {
+                    throw new InvalidOperationException($"Workbook relationship for {SpeciesSheet} is missing.");
+                }
+
+                if (!target.StartsWith("xl/", StringComparison.OrdinalIgnoreCase))
+                {
+                    target = "xl/" + target.TrimStart('/');
+                }
+
+                var sheetDocument = XDocument.Load(GetEntryStream(archive, target));
+                var sheetData = sheetDocument.Root?.Element(SpreadsheetNs + "sheetData")
+                    ?? throw new InvalidOperationException($"Workbook sheet data for {SpeciesSheet} is missing.");
+                var rows = sheetData.Elements(SpreadsheetNs + "row").ToList();
+                if (rows.Count == 0)
+                {
+                    var headerRow = CreateSpeciesHeaderRow();
+                    sheetData.Add(headerRow);
+                    rows.Add(headerRow);
+                }
+
+                var header = ParseRow(rows[0], sharedStrings);
+                var descriptionColumn = GetHeaderColumnIndex(header, "StandardDescription", 0);
+                var wildlifeGroupColumn = GetHeaderColumnIndex(header, "WildlifeGroup", 1);
+                if (wildlifeGroupColumn == 1 && !header.Any(value => string.Equals(value, "WildlifeGroup", StringComparison.OrdinalIgnoreCase)))
+                {
+                    wildlifeGroupColumn = GetHeaderColumnIndex(header, "Species", 1);
+                }
+                var notesColumn = GetHeaderColumnIndex(header, "Notes", 2);
+                var normalizedDescription = NormalizeLookupFindingKey(standardDescription);
+
+                XElement? matchedRow = null;
+                foreach (var row in rows.Skip(1))
+                {
+                    var values = ParseRow(row, sharedStrings);
+                    var existingDescription = descriptionColumn < values.Count ? values[descriptionColumn] : string.Empty;
+                    if (string.Equals(NormalizeLookupFindingKey(existingDescription), normalizedDescription, StringComparison.OrdinalIgnoreCase))
+                    {
+                        matchedRow = row;
+                        break;
+                    }
+                }
+
+                var rowNumber = matchedRow != null
+                    ? ((int?)matchedRow.Attribute("r") ?? GetNextRowNumber(rows))
+                    : GetNextRowNumber(rows);
+                if (matchedRow == null)
+                {
+                    matchedRow = new XElement(SpreadsheetNs + "row", new XAttribute("r", rowNumber));
+                    sheetData.Add(matchedRow);
+                }
+                else
+                {
+                    matchedRow.SetAttributeValue("r", rowNumber);
+                }
+
+                SetInlineStringCellValue(matchedRow, rowNumber, descriptionColumn + 1, standardDescription);
+                SetInlineStringCellValue(matchedRow, rowNumber, wildlifeGroupColumn + 1, wildlifeGroup);
+                if (notesColumn >= 0)
+                {
+                    SetInlineStringCellValue(matchedRow, rowNumber, notesColumn + 1, "Prompt-added wildlife group");
+                }
+
+                ReplaceEntry(archive, target, sheetDocument);
+            }
+
             private static XElement CreateHeaderRow()
             {
                 return new XElement(SpreadsheetNs + "row",
@@ -897,6 +1108,15 @@ namespace WildlifeSweeps
                     CreateInlineStringCell("A1", "Priority"),
                     CreateInlineStringCell("B1", "Keyword"),
                     CreateInlineStringCell("C1", "StandardDescription"));
+            }
+
+            private static XElement CreateSpeciesHeaderRow()
+            {
+                return new XElement(SpreadsheetNs + "row",
+                    new XAttribute("r", 1),
+                    CreateInlineStringCell("A1", "StandardDescription"),
+                    CreateInlineStringCell("B1", "WildlifeGroup"),
+                    CreateInlineStringCell("C1", "Notes"));
             }
 
             private static int GetHeaderColumnIndex(IReadOnlyList<string> header, string name, int fallback)
@@ -1100,6 +1320,39 @@ namespace WildlifeSweeps
                     {
                         values.Add(normalized);
                     }
+                }
+
+                return values;
+            }
+
+            private static Dictionary<string, string> ParseWildlifeGroupMappings(IEnumerable<Dictionary<string, string>> rows)
+            {
+                var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var row in rows)
+                {
+                    if (!row.TryGetValue("StandardDescription", out var standardDescription))
+                    {
+                        continue;
+                    }
+
+                    var wildlifeGroup = string.Empty;
+                    if (row.TryGetValue("WildlifeGroup", out var explicitWildlifeGroup))
+                    {
+                        wildlifeGroup = explicitWildlifeGroup;
+                    }
+                    else if (row.TryGetValue("Species", out var legacySpecies))
+                    {
+                        wildlifeGroup = legacySpecies;
+                    }
+
+                    var normalizedDescription = NormalizeLookupFindingKey(standardDescription);
+                    var normalizedWildlifeGroup = NormalizeWildlifeGroup(wildlifeGroup);
+                    if (string.IsNullOrWhiteSpace(normalizedDescription) || string.IsNullOrWhiteSpace(normalizedWildlifeGroup))
+                    {
+                        continue;
+                    }
+
+                    values[normalizedDescription] = normalizedWildlifeGroup;
                 }
 
                 return values;
