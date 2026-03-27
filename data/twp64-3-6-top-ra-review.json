@@ -1,0 +1,43 @@
+{
+  "checks": [
+    {
+      "type": "segment_match",
+      "layer": "L-SEC",
+      "endpoint_tolerance": 12.0,
+      "a": [
+        406104.027,
+        6050021.238
+      ],
+      "b": [
+        406897.098,
+        6050005.556
+      ]
+    },
+    {
+      "type": "segment_match",
+      "layer": "L-SEC",
+      "endpoint_tolerance": 12.0,
+      "a": [
+        407730.373,
+        6049989.078
+      ],
+      "b": [
+        408523.453,
+        6049973.38
+      ]
+    },
+    {
+      "type": "segment_match",
+      "layer": "L-USEC-0",
+      "endpoint_tolerance": 1.0,
+      "a": [
+        406073.871,
+        6050021.834
+      ],
+      "b": [
+        406075.509,
+        6050101.134
+      ]
+    }
+  ]
+}

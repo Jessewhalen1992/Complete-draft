@@ -55,6 +55,8 @@ namespace AtsBackgroundBuilder
                 new List<ObjectId>(),
                 new List<ObjectId>(),
                 new List<ObjectId>(),
+                new List<ObjectId>(),
+                new List<ObjectId>(),
                 new Dictionary<ObjectId, int>(),
                 false);
         }

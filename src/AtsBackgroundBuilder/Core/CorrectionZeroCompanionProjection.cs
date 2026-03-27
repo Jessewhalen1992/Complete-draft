@@ -33,7 +33,9 @@ namespace AtsBackgroundBuilder
             var outwardUnitX = outwardX / outwardLength;
             var outwardUnitY = outwardY / outwardLength;
             var bestFound = false;
-            var bestShift = double.MaxValue;
+            var bestSegmentGap = double.MaxValue;
+            var bestShiftDelta = double.MaxValue;
+            var bestOrdinaryOffsetDelta = double.MaxValue;
             var bestAlong = double.MaxValue;
             for (var i = 0; i < correctionZeroSegments.Count; i++)
             {
@@ -50,23 +52,34 @@ namespace AtsBackgroundBuilder
                 }
 
                 var ordinaryOffset = Math.Abs(DistancePointToInfiniteLine(ordinaryTarget, correction.A, correction.B));
-                if (Math.Abs(ordinaryOffset - expectedInsetMeters) > insetToleranceMeters)
+                var ordinaryOffsetDelta = Math.Abs(ordinaryOffset - expectedInsetMeters);
+                if (ordinaryOffsetDelta > insetToleranceMeters)
                 {
                     continue;
                 }
 
                 var shift = Distance(candidate, ordinaryTarget);
-                if (Math.Abs(shift - expectedInsetMeters) > insetToleranceMeters)
+                var shiftDelta = Math.Abs(shift - expectedInsetMeters);
+                if (shiftDelta > insetToleranceMeters)
                 {
                     continue;
                 }
 
+                var segmentGap = DistancePointToSegment(candidate, correction.A, correction.B);
+
                 if (!bestFound ||
-                    shift < bestShift - 1e-6 ||
-                    (Math.Abs(shift - bestShift) <= 1e-6 && along < bestAlong - 1e-6))
+                    segmentGap < bestSegmentGap - 1e-6 ||
+                    (Math.Abs(segmentGap - bestSegmentGap) <= 1e-6 &&
+                     (shiftDelta < bestShiftDelta - 1e-6 ||
+                      (Math.Abs(shiftDelta - bestShiftDelta) <= 1e-6 &&
+                       (ordinaryOffsetDelta < bestOrdinaryOffsetDelta - 1e-6 ||
+                        (Math.Abs(ordinaryOffsetDelta - bestOrdinaryOffsetDelta) <= 1e-6 &&
+                         along < bestAlong - 1e-6))))))
                 {
                     bestFound = true;
-                    bestShift = shift;
+                    bestSegmentGap = segmentGap;
+                    bestShiftDelta = shiftDelta;
+                    bestOrdinaryOffsetDelta = ordinaryOffsetDelta;
                     bestAlong = along;
                     correctionTarget = candidate;
                 }
@@ -111,6 +124,34 @@ namespace AtsBackgroundBuilder
             }
 
             return ((point.X - lineA.X) * dirY - (point.Y - lineA.Y) * dirX) / length;
+        }
+
+        private static double DistancePointToSegment(LineDistancePoint point, LineDistancePoint segmentA, LineDistancePoint segmentB)
+        {
+            var dirX = segmentB.X - segmentA.X;
+            var dirY = segmentB.Y - segmentA.Y;
+            var lengthSquared = (dirX * dirX) + (dirY * dirY);
+            if (lengthSquared <= 1e-12)
+            {
+                return Distance(point, segmentA);
+            }
+
+            var projection =
+                (((point.X - segmentA.X) * dirX) + ((point.Y - segmentA.Y) * dirY)) / lengthSquared;
+            if (projection <= 0.0)
+            {
+                return Distance(point, segmentA);
+            }
+
+            if (projection >= 1.0)
+            {
+                return Distance(point, segmentB);
+            }
+
+            var closest = new LineDistancePoint(
+                segmentA.X + (dirX * projection),
+                segmentA.Y + (dirY * projection));
+            return Distance(point, closest);
         }
 
         private static double Distance(LineDistancePoint left, LineDistancePoint right)

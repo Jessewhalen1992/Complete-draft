@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "type": "point_match",
+      "layer": "L-USEC2012",
+      "point_kind": "endpoint",
+      "tolerance": 0.05,
+      "point": [
+        519551.435,
+        5990794.711
+      ]
+    }
+  ]
+}

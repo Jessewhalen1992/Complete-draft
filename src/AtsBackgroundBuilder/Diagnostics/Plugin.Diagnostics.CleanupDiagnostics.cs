@@ -44,7 +44,8 @@ namespace AtsBackgroundBuilder
                         sectionDrawResult.SectionPolylineIds,
                         LayerQuarterView,
                         logger,
-                        "1/4 definition quarter view");
+                        "1/4 definition quarter view",
+                        sectionDrawResult.PreexistingQuarterViewEntityIds);
                 }
 
                 // Keep internal quarter helper lines when ATS fabric is requested; otherwise
@@ -67,6 +68,11 @@ namespace AtsBackgroundBuilder
                 if (cleanupPlan.EraseQuarterHelpers)
                 {
                     EraseEntities(database, sectionDrawResult.QuarterHelperEntityIds, logger, "quarter helper lines");
+                }
+
+                if (cleanupPlan.EraseGeneratedRoadAllowanceEntities)
+                {
+                    EraseEntities(database, sectionDrawResult.GeneratedRoadAllowanceEntityIds, logger, "generated road allowance/correction line");
                 }
 
                 if (cleanupPlan.EraseSectionOutlines)
@@ -196,7 +202,8 @@ namespace AtsBackgroundBuilder
             IEnumerable<ObjectId> sectionIds,
             string layerName,
             Logger logger,
-            string label)
+            string label,
+            IEnumerable<ObjectId>? preserveEntityIds = null)
         {
             if (database == null || sectionIds == null || string.IsNullOrWhiteSpace(layerName))
             {
@@ -210,6 +217,9 @@ namespace AtsBackgroundBuilder
             }
 
             const double cleanupWindowPadding = 80.0;
+            var preserveSet = preserveEntityIds == null
+                ? new HashSet<ObjectId>()
+                : new HashSet<ObjectId>(preserveEntityIds.Where(id => !id.IsNull));
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var windows = new List<Extents3d>();
@@ -261,6 +271,11 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
+                    if (preserveSet.Contains(id))
+                    {
+                        continue;
+                    }
+
                     if (!string.Equals(entity.Layer, layerName, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
@@ -279,7 +294,7 @@ namespace AtsBackgroundBuilder
                     var inScope = false;
                     for (var i = 0; i < windows.Count; i++)
                     {
-                        if (DoExtentsOverlapOrTouchForCleanup(entityExtents, windows[i], 0.01))
+                        if (DoExtentsOverlap(entityExtents, windows[i], 0.01))
                         {
                             inScope = true;
                             break;
@@ -308,14 +323,6 @@ namespace AtsBackgroundBuilder
                     logger?.WriteLine($"Cleanup: erased {erased} {label} entities in requested section scope");
                 }
             }
-        }
-
-        private static bool DoExtentsOverlapOrTouchForCleanup(Extents3d a, Extents3d b, double tolerance)
-        {
-            return a.MinPoint.X <= (b.MaxPoint.X + tolerance) &&
-                   a.MaxPoint.X >= (b.MinPoint.X - tolerance) &&
-                   a.MinPoint.Y <= (b.MaxPoint.Y + tolerance) &&
-                   a.MaxPoint.Y >= (b.MinPoint.Y - tolerance);
         }
 
         private static void EraseEntitiesOnLayer(Database database, string layerName, Logger logger, string label)

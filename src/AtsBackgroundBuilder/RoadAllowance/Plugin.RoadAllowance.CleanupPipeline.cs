@@ -364,12 +364,22 @@ namespace AtsBackgroundBuilder
                     protectRequestedCore: false);
             }
 
-            var restoredNearbySectionIds = RestoreStashedSectionBuildingGeometry(
-                context.Database,
-                context.StashedNearbySectionEntities,
-                context.Logger);
-            if (context.KeepGeneratedAtsFabric)
+            void RestoreNearbySectionGeometry(bool runOverlapCleanup)
             {
+                var restoredNearbySectionIds = RestoreStashedSectionBuildingGeometry(
+                    context.Database,
+                    context.StashedNearbySectionEntities,
+                    context.Logger);
+                if (!runOverlapCleanup)
+                {
+                    if (restoredNearbySectionIds.Count > 0)
+                    {
+                        context.Logger?.WriteLine("Cleanup: skipped overlap shortest-wins on restored existing section segments (ATS fabric disabled).");
+                    }
+
+                    return;
+                }
+
                 var postRestoreCleanupWindows = ExpandClipWindows(
                     context.RequestedIsolationWindows,
                     PostRestoreOverlapCleanupExpansionMeters);
@@ -379,9 +389,14 @@ namespace AtsBackgroundBuilder
                     restoredNearbySectionIds,
                     context.Logger);
             }
-            else
+
+            if (context.KeepGeneratedAtsFabric)
             {
-                context.Logger?.WriteLine("Cleanup: skipped overlap shortest-wins on restored existing section segments (ATS fabric disabled).");
+                RestoreNearbySectionGeometry(runOverlapCleanup: true);
+            }
+            else if (context.StashedNearbySectionEntities.Count > 0)
+            {
+                context.Logger?.WriteLine("Cleanup: ATS fabric disabled; delaying restore of stashed existing section segments until after generated correction-line cleanup.");
             }
 
             ApplyCorrectionLinePostBuildRules(
@@ -440,9 +455,37 @@ namespace AtsBackgroundBuilder
                 }
                 TrimLateCorrectionSegments("after final correction outer consistency.");
             }
+            var ordinaryUsecTieInsTrimmedAfterFinalTrim = TrimOrdinaryUsecTieInOverhangsToVerticalBoundaries(
+                context.Database,
+                context.RequestedScopeIds,
+                context.Logger);
+            if (ordinaryUsecTieInsTrimmedAfterFinalTrim)
+            {
+                context.Logger?.WriteLine("Cleanup: rerunning final 100m trim after final ordinary USEC tie-in overhang trim.");
+                TrimContextSectionsToBufferedWindows(
+                    context.Database,
+                    context.ContextSectionIds,
+                    context.RequestedScopeIds,
+                    context.Logger);
+                if (context.GeneratedRoadAllowanceIds.Count > 0)
+                {
+                    TrimContextSectionsToBufferedWindows(
+                        context.Database,
+                        context.GeneratedRoadAllowanceIds,
+                        context.RequestedScopeIds,
+                        context.Logger,
+                        protectRequestedCore: false);
+                }
+                TrimLateCorrectionSegments("after final ordinary USEC tie-in overhang trim.");
+            }
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-final-ordinary-usec-tiein-trim", context.Logger);
             TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-final-correction-outer-consistency", context.Logger);
             NormalizeCorrectionLayerEntityColorByLayer(context.Database, context.Logger);
             EnforceZeroTwentyEndpointsOnCorrectionZeroBoundaries(
+                context.Database,
+                context.RequestedScopeIds,
+                context.Logger);
+            TrimZeroTwentyVerticalOverhangsToHardHorizontalSections(
                 context.Database,
                 context.RequestedScopeIds,
                 context.Logger);
@@ -465,7 +508,67 @@ namespace AtsBackgroundBuilder
                     context.LsdQuarterInfos.ToList());
                 RebuildLsdLabelsAtFinalIntersections(context.Database, context.LsdQuarterInfos.ToList(), context.Logger);
             }
+            if (!context.KeepGeneratedAtsFabric)
+            {
+                CaptureRemainingGeneratedRoadAllowanceEntityIds(context);
+                RestoreNearbySectionGeometry(runOverlapCleanup: false);
+            }
+
             context.Logger?.WriteLine("Cleanup: final endpoint convergence pass complete.");
+        }
+
+        private static void CaptureRemainingGeneratedRoadAllowanceEntityIds(RoadAllowanceCleanupContext context)
+        {
+            if (context?.Database == null || context.RequestedIsolationWindows == null || context.RequestedIsolationWindows.Count == 0)
+            {
+                return;
+            }
+
+            var captured = 0;
+            using (var tr = context.Database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(context.Database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    var layer = ent.Layer ?? string.Empty;
+                    var isRoadAllowanceLayer =
+                        IsUsecLayer(layer) ||
+                        string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
+                    if (!isRoadAllowanceLayer)
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenLinearSegment(ent, out var a, out var b))
+                    {
+                        continue;
+                    }
+
+                    if (!IntersectsAnyClipWindow(a, b, context.RequestedIsolationWindows))
+                    {
+                        continue;
+                    }
+
+                    if (context.GeneratedRoadAllowanceIds.Add(id))
+                    {
+                        captured++;
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            if (captured > 0)
+            {
+                context.Logger?.WriteLine($"Cleanup: captured {captured} remaining generated road allowance/correction line id(s) for final ATS-fabric-off cleanup.");
+            }
         }
 
         private static List<ObjectId> CollectCorrectionLayerSegmentIdsForFinalTrim(

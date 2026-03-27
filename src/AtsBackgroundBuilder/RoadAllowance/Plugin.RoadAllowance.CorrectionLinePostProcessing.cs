@@ -1589,12 +1589,6 @@ namespace AtsBackgroundBuilder
                        (IsUsecTwentyLikeLayer(sourceLayer) && IsUsecTwentyLikeLayer(targetLayer));
             }
 
-            bool IsCorrectionUsecLayer(string layer)
-            {
-                return string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
-            }
-
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
@@ -1669,13 +1663,13 @@ namespace AtsBackgroundBuilder
                     }
                 }
 
-                var hasCorrectionTargets =
-                    verticalTargets.Exists(target => IsCorrectionUsecLayer(target.Layer)) ||
-                    horizontalTargets.Exists(target => IsCorrectionUsecLayer(target.Layer));
-                if (!hasCorrectionTargets)
+                var hasHardTrimTargets =
+                    verticalTargets.Exists(target => EndpointTouchesHardAnchorLayer(target.Layer)) ||
+                    horizontalTargets.Exists(target => EndpointTouchesHardAnchorLayer(target.Layer));
+                if (!hasHardTrimTargets)
                 {
                     tr.Commit();
-                    logger?.WriteLine("CorrectionLine: ordinary USEC tie-in overhang trim skipped (no live correction targets in buffered windows).");
+                    logger?.WriteLine("CorrectionLine: ordinary USEC tie-in overhang trim skipped (no live hard-target rows in buffered windows).");
                     return false;
                 }
 
@@ -1744,6 +1738,8 @@ namespace AtsBackgroundBuilder
                     (verticalSources.Count == 0 || horizontalTargets.Count == 0))
                 {
                     tr.Commit();
+                    logger?.WriteLine(
+                        $"CorrectionLine: ordinary USEC tie-in overhang trim skipped (horizontalSources={horizontalSources.Count}, verticalSources={verticalSources.Count}, verticalTargets={verticalTargets.Count}, horizontalTargets={horizontalTargets.Count}).");
                     return false;
                 }
 
@@ -1949,9 +1945,7 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
 
-                            if (Math.Abs(intersection.X - target.AxisX) > axisTol ||
-                                intersection.Y < target.MinY - spanTol ||
-                                intersection.Y > target.MaxY + spanTol)
+                            if (DistancePointToSegment(intersection, target.A, target.B) > spanTol)
                             {
                                 continue;
                             }
@@ -2060,9 +2054,7 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
 
-                            if (Math.Abs(intersection.Y - target.AxisY) > axisTol ||
-                                intersection.X < target.MinX - spanTol ||
-                                intersection.X > target.MaxX + spanTol)
+                            if (DistancePointToSegment(intersection, target.A, target.B) > spanTol)
                             {
                                 continue;
                             }
@@ -3070,7 +3062,11 @@ namespace AtsBackgroundBuilder
             {
                 return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
             }
 
             bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForCorrectionLinePost(writable, moveStart, target, moveTol);
@@ -3491,12 +3487,23 @@ namespace AtsBackgroundBuilder
                         return false;
                     }
 
-                    if (preferredDirectionSign > 0 && connectionPoint.Y > moveEndpoint.Y + directionAxisTol)
+                    var targetLayer = targetWritable.Layer ?? string.Empty;
+                    var allowSecInsetDirectionBypass =
+                        (string.Equals(targetLayer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(targetLayer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(targetLayer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase)) &&
+                        moveEndpoint.GetDistanceTo(connectionPoint) <= CorrectionLinePostInsetMeters + 1.0;
+
+                    if (!allowSecInsetDirectionBypass &&
+                        preferredDirectionSign > 0 &&
+                        connectionPoint.Y < moveEndpoint.Y - directionAxisTol)
                     {
                         return false;
                     }
 
-                    if (preferredDirectionSign < 0 && connectionPoint.Y < moveEndpoint.Y - directionAxisTol)
+                    if (!allowSecInsetDirectionBypass &&
+                        preferredDirectionSign < 0 &&
+                        connectionPoint.Y > moveEndpoint.Y + directionAxisTol)
                     {
                         return false;
                     }
@@ -3507,7 +3514,6 @@ namespace AtsBackgroundBuilder
                         return false;
                     }
 
-                    var targetLayer = targetWritable.Layer ?? string.Empty;
                     if (!TryMoveEndpoint(targetWritable, moveStart, connectionPoint, endpointMoveTol))
                     {
                         return false;

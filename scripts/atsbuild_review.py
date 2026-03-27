@@ -242,6 +242,40 @@ def run_point_match(entities, check):
     }
 
 
+def run_segment_match(entities, check):
+    expected_layer = check["layer"]
+    endpoint_tolerance = float(check.get("endpoint_tolerance", 0.05))
+    expected_a = tuple(check["a"])
+    expected_b = tuple(check["b"])
+
+    best = None
+    for entity in entities:
+        direct = distance(entity["a"], expected_a) + distance(entity["b"], expected_b)
+        reverse = distance(entity["a"], expected_b) + distance(entity["b"], expected_a)
+        delta = min(direct, reverse)
+        if best is None or delta < best["delta"]:
+            best = {
+                "entity": entity,
+                "delta": delta,
+            }
+
+    passed = (
+        best is not None
+        and best["delta"] <= endpoint_tolerance
+        and best["entity"]["layer"] == expected_layer
+    )
+    return {
+        "type": "segment_match",
+        "expected": {
+            "layer": expected_layer,
+            "a": expected_a,
+            "b": expected_b,
+        },
+        "best": best,
+        "passed": passed,
+    }
+
+
 def run_checks(entities, config):
     results = []
     for check in config.get("checks", []):
@@ -250,6 +284,8 @@ def run_checks(entities, config):
             results.append(run_blind_midpoints(entities, check))
         elif check_type == "point_match":
             results.append(run_point_match(entities, check))
+        elif check_type == "segment_match":
+            results.append(run_segment_match(entities, check))
         else:
             results.append({"type": check_type or "unknown", "passed": False, "error": "Unsupported check type."})
     return results

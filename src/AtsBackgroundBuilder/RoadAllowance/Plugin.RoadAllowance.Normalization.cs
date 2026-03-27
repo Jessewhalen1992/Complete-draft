@@ -726,9 +726,13 @@ namespace AtsBackgroundBuilder
 
             bool IsHorizontalLike(Point2d a, Point2d b) => IsHorizontalLikeForNormalization(a, b);
 
-            // Baseline township forcing targets SEC + surveyed hard-boundary rows (0/20.12),
-            // but never 30.16/30.18 corridor bands.
-            bool IsSeamLayer(string layer) => IsSeamLayerForNormalization(layer, includeUsecBaseLayer: true);
+            // Baseline township forcing targets the surveyed baseline row itself.
+            // In some top/bottom township cases that row can still be carrying a 30.18 band label
+            // before this pass runs, so include L-USEC3018 here and let the explicit baseline-hint
+            // geometry decide whether it should be promoted to L-SEC.
+            bool IsSeamLayer(string layer) =>
+                IsSeamLayerForNormalization(layer, includeUsecBaseLayer: true) ||
+                string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase);
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -1018,11 +1022,11 @@ namespace AtsBackgroundBuilder
                 tr.Commit();
                 if (normalized > 0)
                 {
-                    logger?.WriteLine($"Cleanup: normalized {normalized} bottom-township seam segment(s) to expected L-SEC/L-USEC layer.");
+                    logger?.WriteLine($"Cleanup: normalized {normalized} baseline-township seam segment(s) to expected L-SEC/L-USEC layer.");
                 }
                 if (baselineForcedToSec > 0)
                 {
-                    logger?.WriteLine($"Cleanup: baseline-township rule forced {baselineForcedToSec} bottom-township seam segment(s) to L-SEC.");
+                    logger?.WriteLine($"Cleanup: baseline-township rule forced {baselineForcedToSec} baseline-township seam segment(s) to L-SEC.");
                 }
             }
         }
@@ -1342,13 +1346,17 @@ namespace AtsBackgroundBuilder
             const double axisTolerance = 1.25;
             const double minSpanOverlap = 0.20;
             const double maxSpanGap = 0.80;
-            const double companionAxisTol = 1.20;
-            const double companionMinOverlap = 220.0;
             const double edgeBand = 145.0;
             var generatedSet = generatedRoadAllowanceIds == null
                 ? new HashSet<ObjectId>()
                 : new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
             var secAnchorSet = originalRangeEdgeSecAnchors ?? Array.Empty<(bool Horizontal, double Axis, double SpanMin, double SpanMax)>();
+            if (secAnchorSet.Count == 0)
+            {
+                logger?.WriteLine("Cleanup: skipped range-edge L-SEC reapply because no original range-edge L-SEC anchors were captured.");
+                return;
+            }
+
             var clipMinX = clipWindows.Min(w => w.MinPoint.X);
             var clipMaxX = clipWindows.Max(w => w.MaxPoint.X);
 
@@ -1389,59 +1397,9 @@ namespace AtsBackgroundBuilder
             {
                 var adjusted = 0;
                 var adjustedByAnchor = 0;
-                var adjustedByCompanion = 0;
-                var adjustedByRangeEdgeTwenty = 0;
+                var adjustedByGeneratedAnchor = 0;
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-
-                var secCompanionAnchors = new List<(bool Horizontal, double Axis, double SpanMin, double SpanMax)>();
-                foreach (ObjectId id in ms)
-                {
-                    Entity? ent = null;
-                    try
-                    {
-                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
-                    }
-                    catch (Autodesk.AutoCAD.Runtime.Exception)
-                    {
-                        continue;
-                    }
-
-                    if (ent == null || ent.IsErased ||
-                        !string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    if (!TryReadOpenSegment(ent, out var a, out var b) ||
-                        !DoesSegmentIntersectAnyWindow(a, b))
-                    {
-                        continue;
-                    }
-
-                    if (a.GetDistanceTo(b) < minSegmentLength)
-                    {
-                        continue;
-                    }
-
-                    var horizontal = IsHorizontalLike(a, b);
-                    var vertical = IsVerticalLike(a, b);
-                    if (!horizontal && !vertical)
-                    {
-                        continue;
-                    }
-
-                    var axis = horizontal
-                        ? 0.5 * (a.Y + b.Y)
-                        : 0.5 * (a.X + b.X);
-                    var spanMin = horizontal
-                        ? Math.Min(a.X, b.X)
-                        : Math.Min(a.Y, b.Y);
-                    var spanMax = horizontal
-                        ? Math.Max(a.X, b.X)
-                        : Math.Max(a.Y, b.Y);
-                    secCompanionAnchors.Add((horizontal, axis, spanMin, spanMax));
-                }
 
                 foreach (ObjectId id in ms)
                 {
@@ -1496,16 +1454,6 @@ namespace AtsBackgroundBuilder
                     var spanMax = horizontal
                         ? Math.Max(a.X, b.X)
                         : Math.Max(a.Y, b.Y);
-                    // Keep range-edge 20.12 -> L-SEC reapply scoped to vertical edge corridors only.
-                    // Horizontal road-allowance rows near range edges must not be promoted by this rule.
-                    var promoteRangeEdgeTwentyToSec =
-                        vertical &&
-                        IsRangeEdgeCandidate(a, b) &&
-                        string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase);
-                    if (isGenerated && !promoteRangeEdgeTwentyToSec)
-                    {
-                        continue;
-                    }
 
                     var matchesAnchor = false;
                     foreach (var anchor in secAnchorSet)
@@ -1530,35 +1478,18 @@ namespace AtsBackgroundBuilder
                         break;
                     }
 
-                    var hasSecCompanion = false;
                     if (!matchesAnchor)
                     {
-                        for (var i = 0; i < secCompanionAnchors.Count; i++)
-                        {
-                            var companion = secCompanionAnchors[i];
-                            if (companion.Horizontal != horizontal)
-                            {
-                                continue;
-                            }
-
-                            var axisDelta = Math.Abs(companion.Axis - axis);
-                            if (Math.Abs(axisDelta - RoadAllowanceSecWidthMeters) > companionAxisTol)
-                            {
-                                continue;
-                            }
-
-                            if (!HasSpanOverlap(companion.SpanMin, companion.SpanMax, spanMin, spanMax, companionMinOverlap))
-                            {
-                                continue;
-                            }
-
-                            hasSecCompanion = true;
-                            break;
-                        }
+                        continue;
                     }
 
-                    if ((!matchesAnchor && !hasSecCompanion && !promoteRangeEdgeTwentyToSec) ||
-                        string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                    if (isGenerated &&
+                        !IsRangeEdgeCandidate(a, b))
+                    {
+                        continue;
+                    }
+
+                    if (string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
@@ -1584,15 +1515,14 @@ namespace AtsBackgroundBuilder
                     adjusted++;
                     if (matchesAnchor)
                     {
-                        adjustedByAnchor++;
-                    }
-                    else if (promoteRangeEdgeTwentyToSec)
-                    {
-                        adjustedByRangeEdgeTwenty++;
-                    }
-                    else if (hasSecCompanion)
-                    {
-                        adjustedByCompanion++;
+                        if (isGenerated)
+                        {
+                            adjustedByGeneratedAnchor++;
+                        }
+                        else
+                        {
+                            adjustedByAnchor++;
+                        }
                     }
                 }
 
@@ -1600,7 +1530,7 @@ namespace AtsBackgroundBuilder
                 if (adjusted > 0)
                 {
                     logger?.WriteLine(
-                        $"Cleanup: reapplied original range-edge L-SEC classification to {adjusted} segment(s) after deterministic relayer (anchor={adjustedByAnchor}, rangeEdge2012={adjustedByRangeEdgeTwenty}, companion20.11={adjustedByCompanion}).");
+                        $"Cleanup: reapplied original range-edge L-SEC classification to {adjusted} segment(s) after deterministic relayer (anchor={adjustedByAnchor}, generatedAnchor={adjustedByGeneratedAnchor}).");
                 }
             }
         }

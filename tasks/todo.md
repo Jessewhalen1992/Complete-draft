@@ -1,3 +1,121 @@
+# Follow-up (64-3-6 Top Vertical Hard Stop, 2026-03-26)
+
+- [x] Reproduce the `64-3-6` vertical overshoot from `406073.455,6050001.730 -> 406075.509,6050101.134` and identify the emitted layer plus the intended hard-stop target at `406073.871,6050021.834`.
+- [x] Trace the shared endpoint-enforcement path that should clamp this northbound section/road-allowance line to the nearby hard-row endpoint instead of extending to the next segment north.
+- [x] Implement the smallest shared fix, avoiding township-specific fallbacks, and rerun build/tests plus the AutoCAD/DXF verification.
+
+## Review (64-3-6 Top Vertical Hard Stop, 2026-03-26)
+
+- Root cause: the reported line was the live `L-USEC-0` vertical `406073.455116,6050001.729900 -> 406075.509360,6050101.133613`, and the correct stop `406073.870587,6050021.834292` was the east endpoint of a short `L-SEC` hard-boundary row. The shared no-crossing terminator pass was still too strict in two ways: it only treated same-band terminators as valid for `0/20` sources, and its segment intersection helper rejected endpoint hits when floating-point math produced a parameter like `1.0000000000009763` instead of exactly `1.0`.
+- Fix: in `src/AtsBackgroundBuilder/Core/Plugin.cs`, broadened the `0/20` terminator rule so `0/20` lines can stop on any non-`30.18` section-type terminator endpoint, and hardened the three local `TryIntersectSegments(...)` helpers with a small segment-parameter epsilon plus `[0,1]` clamping. This keeps the rule generic and lets endpoint-based hard stops survive exact-endpoint floating-point noise instead of forcing township-specific fallback logic.
+- Verification:
+  - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/twp64-3-6-top-ra-v4"` passed.
+  - `dotnet build "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/twp64-3-6-top-ra-v4-tests"` passed.
+  - `dotnet "artifacts/verify-build/twp64-3-6-top-ra-v4-tests/AtsBackgroundBuilder.DecisionTests.dll"` passed.
+  - `scripts/atsbuild_harness.ps1` with `data/twp64-3-6-top-ra-spec.json` and `data/twp64-3-6-top-ra-review.json` passed in `data/twp64-3-6-top-ra-run-rerun6/artifacts/review-report.json`.
+  - The exact reported vertical now emits as `L-USEC-0` `406073.870587,6050021.834292 -> 406075.509360,6050101.133613`, matching the user target within review tolerance.
+  - The fresh run log in `data/twp64-3-6-top-ra-run-rerun6/artifacts/AtsBackgroundBuilder.run.log` now records `no-crossing enforcement adjusted 0/20=5 ... [terminator=5]` and later `0/20=11 ... [terminator=11]`, confirming the shared terminator rule now catches these hard-stop endpoint cases.
+
+# Follow-up (64-3-6 Top Road-Allowance Layer Misclassification, 2026-03-26)
+
+- [x] Reproduce the `64-3-6` top road-allowance layer misclassification from the user-supplied segment and identify the emitted layer in the latest run output.
+- [x] Trace the shared top-edge road-allowance classification/reapply path that decides whether these north-edge segments stay `L-SEC` or get relabeled to another `L-USEC*` layer.
+- [x] Implement the smallest shared fix, avoiding township-specific fallbacks, so top road-allowance segments that match the original section-edge authority remain `L-SEC`.
+- [x] Build, run decision tests, and run a focused AutoCAD/DXF verification for the exact `64-3-6` top-edge case.
+- [x] Reproduce the new `64-3-6` vertical overshoot `406073.455,6050001.730 -> 406075.509,6050101.134` and identify the exact emitted layer plus intended hard stop at `406073.871,6050021.834`.
+- [x] Trace the shared north-end endpoint-enforcement path that should stop this line on the correct top hard row instead of extending through it.
+- [x] Implement the smallest shared endpoint fix, then rebuild and rerun the focused `64-3-6` AutoCAD/DXF checks.
+
+## Review (64-3-6 Top Road-Allowance Layer Misclassification, 2026-03-26)
+
+- Root cause: the shared baseline township normalizer in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Normalization.cs` already handles top-township rows (`township % 4 == 0`, sections `31..36`), but its candidate filter excluded `L-USEC3018`. In the reproduced `64-3-6` output, the exact bad top road-allowance segment `406104.027,6050021.238 -> 406897.098,6050005.556` was still on `L-USEC3018`, so the baseline-hint pass never evaluated it and the later deterministic relayer left it there. The same pattern also hit the adjacent top segment `407730.373,6049989.078 -> 408523.453,6049973.380`.
+- Fix: widened the local seam candidate filter in `NormalizeBottomTownshipBoundaryLayers(...)` so the explicit top/bottom baseline-hint pass can promote `L-USEC3018` rows to `L-SEC` when the geometry proves they are the surveyed baseline row. This is still a shared geometric rule, not a township-specific fallback. I also renamed the pass logs from `bottom-township` to `baseline-township` to match what the code actually does.
+- Verification:
+  - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/twp64-3-6-top-ra"` passed.
+  - `dotnet build "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/twp64-3-6-top-ra-tests"` passed.
+  - `dotnet "artifacts/verify-build/twp64-3-6-top-ra-tests/AtsBackgroundBuilder.DecisionTests.dll"` passed.
+  - `scripts/atsbuild_harness.ps1` with `data/twp64-3-6-top-ra-spec.json` and `data/twp64-3-6-top-ra-review.json` passed in `data/twp64-3-6-top-ra-run-rerun3/artifacts/review-report.json`.
+  - The exact reported segments now emit on `L-SEC` in the DXF review:
+    - `406093.977,6050021.436 -> 406897.098,6050005.556` matched the user target within the configured endpoint tolerance and passed as `L-SEC`.
+    - `407720.323,6049989.277 -> 408523.453,6049973.380` likewise passed as `L-SEC`.
+  - The fresh run log in `data/twp64-3-6-top-ra-run-rerun3/artifacts/AtsBackgroundBuilder.run.log` records `normalized 32 baseline-township seam segment(s)` and `baseline-township rule forced 32 baseline-township seam segment(s) to L-SEC`, confirming the shared top/bottom baseline pass now catches these rows.
+
+# Follow-up (63-12-5 Correction-Line Endpoints + 76-11-6 RA Layer Classification, final, 2026-03-26)
+
+- [x] Reproduce the new `63-12-5` short `L-SEC` and `L-USEC2012` correction-line endpoints from the user-supplied coordinates and map them to emitted ATS entities/layers.
+- [x] Identify the `76-11-6` late road-allowance relayer path that was still synthesizing `L-SEC` output without original range-edge anchors.
+- [x] Implement the smallest shared fix so the range-edge `L-SEC` reapply restores only true original anchor-backed classification, while keeping the verified `63-12-5` correction-line endpoint fix intact.
+- [x] Build, run decision tests, rerun the exact `63-12-5` AutoCAD review, and rerun the focused `76-11-6` township build/DXF comparison.
+
+## Review (63-12-5 Correction-Line Endpoints + 76-11-6 RA Layer Classification, final, 2026-03-26)
+
+- Root cause: the `63-12-5` correction-line miss was already fixed by the earlier shared correction-zero companion targeting change, but `76-11-6` still had a late cleanup relayer problem. `ReapplyOriginalRangeEdgeSecRoadAllowanceLayers(...)` was designed to restore original range-edge `L-SEC` classification after deterministic relayer cleanup, yet the pass still had synthetic fallback logic that could promote live `L-USEC*` rows to `L-SEC` even when no original range-edge `L-SEC` anchors had been captured for the township. That made the final cleanup non-authoritative and produced wrong layer output in `76-11-6`.
+- Fix: in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Normalization.cs`, reduced `ReapplyOriginalRangeEdgeSecRoadAllowanceLayers(...)` to true anchor-backed reapply only. The pass now exits when the original anchor snapshot is empty, and it no longer synthesizes new `L-SEC` reclassifications from companion geometry or the old range-edge `2012 -> SEC` shortcut. Generated segments are only eligible when they actually match an original captured anchor corridor.
+- Verification:
+  - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/final-63-76"` passed.
+  - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+  - `scripts/atsbuild_harness.ps1` with `data/twp63-12-5-correctionline-spec.json` and `data/twp63-12-5-correctionline-followup-review.json` passed in `data/twp63-12-5-correctionline-followup-run-main-rerun4/artifacts/review-report.json`, with `L-USEC-0` endpoint `579391.979706,6030280.202022` and `L-USEC2012` endpoint `579412.086401,6030280.566849`.
+  - `scripts/atsbuild_harness.ps1` with `data/twp76-11-6-layer-spec.json` completed in `data/twp76-11-6-layer-run-main-rerun4`, and `data/twp76-11-6-layer-run-main-rerun4/artifacts/AtsBackgroundBuilder.run.log` now records `skipped range-edge L-SEC reapply because no original range-edge L-SEC anchors were captured`.
+  - Old-vs-new `76-11-6` DXF comparison shows the late wrong relabels are gone: `L-SEC` counts dropped from `H/V = 38/32` to `27/28`, while `L-USEC-0` rose from `43/92` to `54/94`. Example corrected relabels include `L-SEC -> L-USEC-0` at `339013.556,6158725.693 -> 339016.091,6158795.545` and `339391.223,6168499.860 -> 339471.123,6168497.020`.
+
+# Follow-up (63-12-5 Correction-Line Endpoints + 76-11-6 RA Layer Classification, 2026-03-26)
+
+- [x] Reproduce the new `63-12-5` section/`L-USEC2012` endpoint misses from the user-supplied coordinates and map them to the exact emitted ATS entities/layers.
+- [x] Trace the shared `76-11-6` road-allowance misclassification to the final emitted layer-classification path instead of the earlier normalization logs.
+- [x] Implement the smallest shared fix without section-specific fallbacks.
+- [x] Build, run decision tests, and rerun focused AutoCAD harness/DXF comparisons for the exact `63-12-5` checks and the `76-11-6` classification case.
+
+## Review (63-12-5 Correction-Line Endpoints + 76-11-6 RA Layer Classification, 2026-03-26)
+
+- Root cause: `63-12-5` was already fixed by the earlier correction-zero companion/offset work, but `76-11-6` still had a live final-DXF layer regression. The real culprit was not the earlier bottom-township normalization logs; it was the later `ReapplyOriginalRangeEdgeSecRoadAllowanceLayers(...)` pass in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Normalization.cs`. In the `76-11-6` run, the log shows `snapshot captured 0 original range-edge L-SEC anchor(s)` and then immediately `reapplied original range-edge L-SEC classification to 20 segment(s)`, which means the pass was fabricating new `L-SEC` range-edge relabels even though there were no original `L-SEC` anchors to restore.
+- Fix: guard `ReapplyOriginalRangeEdgeSecRoadAllowanceLayers(...)` so it exits when no original range-edge `L-SEC` anchors were captured. That keeps the pass aligned with its actual contract, lets the deterministic section-edge relayer remain authoritative, and avoids another heuristic overwrite after final classification.
+- Verification:
+  - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/final-63-76-fix"` passed.
+  - `dotnet build "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/final-63-76-tests"` passed.
+  - `dotnet "artifacts/verify-build/final-63-76-tests/AtsBackgroundBuilder.DecisionTests.dll"` passed.
+  - `scripts/atsbuild_harness.ps1` with `data/twp63-12-5-correctionline-spec.json` and `data/twp63-12-5-correctionline-followup-review.json` passed in `data/twp63-12-5-correctionline-followup-run-main-rerun3/artifacts/review-report.json`, with the emitted endpoints still at `579391.979706, 6030280.202022` on `L-USEC-0` and `579412.086401, 6030280.566849` on `L-USEC2012`.
+  - `scripts/atsbuild_harness.ps1` with `data/twp76-11-6-layer-spec.json` completed in `data/twp76-11-6-layer-run-main-rerun3`. The fresh run log now records `skipped range-edge L-SEC reapply because no original range-edge L-SEC anchors were captured` twice instead of relabeling 20 segments after the deterministic relayer.
+  - Comparing `data/twp76-11-6-layer-run-rerun1/artifacts/output.dxf` to `data/twp76-11-6-layer-run-main-rerun3/artifacts/output.dxf` shows the final DXF no longer force-promotes the affected range-edge rows back to `L-SEC`. Representative changes include `L-SEC -> L-USEC-0` at `339013.556,6158725.693 -> 339016.091,6158795.545`, `339016.826,6158815.641 -> 339046.187,6159619.580`, and the matching east-edge/horizontal band relabels around `6168498.440` through `6168872.927`.
+
+# Follow-up (Correction-Line Section Building Regressions: 59-18-5 and 63-12-5, 2026-03-26)
+
+- [x] Reproduce the `59-18-5` and `63-12-5` misses from the user-supplied coordinates and map them to the exact emitted ATS entities/layers.
+- [x] Trace the shared correction-line section-building path that leaves the `59-18-5` `L-USEC-2012` endpoint short and the `63-12-5` line un-offset.
+- [x] Implement the smallest shared fix, not a section-specific fallback, for both correction-line section-building failures.
+- [x] Build, run decision tests, and run focused AutoCAD harness/DXF comparisons for both exact user cases.
+
+## Review (Correction-Line Section Building Regressions: 59-18-5 and 63-12-5, 2026-03-26)
+
+- Root cause: there were two related but not identical correction-line section-building misses. For `59-18-5`, the shared correction-zero companion projection was still allowed to prefer a faraway parallel `L-USEC-C-0` trend because it ranked infinite-line intersections by raw shift alone; that left the `L-USEC2012` endpoint at `519551.434, 5990794.880` instead of the local correction-row hit. For `63-12-5`, the local correction-zero row was already present at `582636.216, 6030344.187`, but the later vertical target adjustment on `L-SEC` was being blocked by the strict north/south direction guard that had been tightened for the `L-USEC2012` case, so the section line stayed at the un-offset endpoint `582636.307, 6030339.169`.
+- Fix: in `src/AtsBackgroundBuilder/Core/CorrectionZeroCompanionProjection.cs`, changed companion-row selection to prefer the locally relevant finite correction-row trend by ranking candidates on finite-segment proximity plus exact inset fit before the old along-direction tie-break. In `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs`, kept the stricter direction guard for `L-USEC*` targets but allowed a narrow bypass for local `L-SEC` correction-inset moves (`<= 6.02m`), which restores the proper `L-SEC` endpoint snap to the already selected local `L-USEC-C-0` row without reopening the `59-18-5` regression.
+- Verification:
+  - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "out/corrfix-plugin"` passed.
+  - `dotnet build "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release -p:NuGetAudit=false -o "out/corrfix-tests"` passed.
+  - `dotnet out/corrfix-tests/AtsBackgroundBuilder.DecisionTests.dll` passed.
+  - `scripts/atsbuild_harness.ps1` with `data/twp59-18-5-correctionline-spec.json` and `data/twp59-18-5-correctionline-review.json` passed in `data/twp59-18-5-correctionline-run-rerun5/artifacts/review-report.json`, with the emitted `L-USEC2012` endpoint at `519551.434986, 5990794.710737`.
+  - `scripts/atsbuild_harness.ps1` with `data/twp63-12-5-correctionline-spec.json` and the corrected `data/twp63-12-5-correctionline-review.json` passed in `data/twp63-12-5-correctionline-run-rerun4/artifacts/review-report.json`, with the emitted `L-SEC` endpoint at `582636.215955, 6030344.187046`.
+
+# Follow-up (Dispositions-Only Run Erased Existing Section Fabric, 2026-03-26)
+
+- [x] Identify the exact ATSBUILD run/log that matches the user's dispositions-only report and confirm which DLL timestamp it loaded.
+- [x] Trace the cleanup path that ran after label placement and prove whether it erased section/quarter geometry in the current build.
+- [x] Record whether this was a stale-build issue or a current cleanup-policy bug, plus the next fix direction.
+- [x] Implement the cleanup fix so dispositions-only runs preserve preexisting `L-QUATER` section fabric while still cleaning up this run's temporary quarter-view output.
+- [x] Rebuild and run the decision tests to confirm the patch compiles cleanly and does not regress the existing ATS logic paths.
+
+## Review (Dispositions-Only Run Erased Existing Section Fabric, 2026-03-26)
+
+- Root cause: this was not an old build. The reported run loaded `build\net8.0-windows\AtsBackgroundBuilder.dll`, and the log records that exact assembly at `2026-03-25 12:06:21 PM`. The user-visible destructive path was the `1/4 definition quarter view` cleanup: `CleanupAfterBuild(...)` erased every `L-QUATER` entity inside the requested section windows, without distinguishing preexisting quarter-view fabric from quarter-view generated during the current run. In the same run, cleanup also removed the temporary generated ATS helper/section IDs because `CleanupPlan.Create(...)` maps `!input.IncludeAtsFabric` to `EraseQuarterHelpers`, `EraseSectionOutlines`, `EraseContextSectionPieces`, and `EraseSectionLabels`.
+- Evidence: `build\net8.0-windows\AtsBackgroundBuilder.log` shows `ATSBUILD assembly: C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\build\net8.0-windows\AtsBackgroundBuilder.dll` at line `26394`, then the cleanup erasures at lines `26997`-`27002`. The source in `src/AtsBackgroundBuilder\Diagnostics\Plugin.Diagnostics.CleanupDiagnostics.cs` previously erased quarter view by layer+window rather than by generated ID set, which is why prior `L-QUATER` entities were vulnerable during a dispositions-only run.
+- Fix: snapshot any preexisting `L-QUATER` entity IDs in the requested cleanup windows before ATS draws the new run, carry those IDs in `SectionDrawResult`, and have `CleanupAfterBuild(...)` skip those preserved IDs when erasing quarter-view output. This keeps the current run's temporary quarter-view removable while leaving the user's earlier quarter-view/section fabric intact.
+- Follow-up fix: the first patch protected preexisting `L-QUATER`, but the user then reported that existing magenta correction-line fabric was still being deleted. The remaining issue was restore timing: with `ATS Fabric` off, `FinalizeRoadAllowanceCleanup(...)` restored stashed existing section/correction entities before `ApplyCorrectionLinePostBuildRules(...)` and the late correction cleanup passes, so those generated-geometry passes could still prune or relayer the restored existing correction rows. The fix now delays restoring stashed existing section-building geometry until after the generated correction-line cleanup is complete whenever `ATS Fabric` is off.
+- Final cleanup gap: even after preserving/restoring existing geometry correctly, ATS-fabric-off runs were still leaving behind the current run's generated road-allowance/correction-line entities because `CleanupAfterBuild(...)` never received or erased the `GeneratedRoadAllowanceIds` set. The fix now carries those generated IDs through `SectionDrawResult` and erases them during final cleanup whenever `ATS Fabric` is off, so the run preserves old magenta correction lines but does not leave new temporary correction-line output behind.
+- Late-created correction-row gap: the user still reported leftover `L-USEC-C-0` lines after the previous patch because some correction rows were being created or relayered after the original `GeneratedRoadAllowanceIds` list was formed. The fix now rescans the live `L-USEC*`/`L-USEC-C*` layers inside the requested isolation windows just before restored geometry comes back, adds any remaining generated road-allowance/correction entities to the cleanup ID set, and then lets `CleanupAfterBuild(...)` erase them.
+- Verification:
+  - `dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false` passed.
+  - `dotnet run --project src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-restore -p:NuGetAudit=false` passed.
+  - I did not rerun the exact AutoCAD UI repro, because the problematic run came from the live ATSBUILD dialog and there is no saved workbook/artifact set for that exact dispositions-only scenario in the repo.
+
 # Follow-up (Section 18 Regular RA Midpoints After Rule-Matrix, 2026-03-19)
 
 - [x] Reproduce the two new section 18 SW `TWENTY/SEC` misses from the user-supplied coordinates and map them to the exact emitted `L-SECTION-LSD` entities.
@@ -6948,3 +7066,115 @@ Regression follow-up:
 - Root cause: even after producing a simplified review export, the active WLS standardizer and source lookup workbook still carried the older species/finding-type model internally. That left the code, source workbook, and review workbook out of sync with the user’s actual requirement, which is a direct “this becomes this” mapping model.
 - Fix: simplified `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs` to treat keyword/regex/custom matches as direct standardized-description mappings only, removed the species/finding-type pair validation/reverse-lookup path, shrank `PromptResult`, `RecognitionRule`, `RecognitionMatch`, `CustomMapping`, and `StandardizedFinding` to description-focused data, and removed the now-dead `wls_program/src/WildlifeSweeps/FindingOtherValueHelper.cs`. Updated `wls_program/src/WildlifeSweeps/FindingsStandardizationHelper.cs` to the smaller prompt contract. Rewrote the lookup workbooks at `wls_program/wildlife_parsing_codex_lookup.xlsx`, `wls_program/wildlife_parsing_codex_lookup_backup.xlsx`, `wls_program/src/WildlifeSweeps/wildlife_parsing_codex_lookup.xlsx`, and `wls_program/docs/wildlife_parsing_codex_lookup.xlsx` to use only `RecognitionKeywords`, `RecognitionRegex`, and `Skips`, with direct-mapping columns (`Priority`, trigger text/pattern, `StandardDescription`, `Notes`). Regenerated `output/spreadsheet/wls_finding_name_mapping_simplified.xlsx` to remove species/finding-type columns as well.
 - Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors. Verified the source, backup, debug-output, and simplified export workbooks with `openpyxl`; each now has the expected direct-mapping sheet structure and no `SpeciesFindingTypes` sheet.
+
+## 2026-03-24 - WLS findings statement updater
+- [x] Inspect the title-block UI/update path, summary-table structure, and test harness approach for a deterministic findings statement feature.
+- [x] Implement the statement builder plus a new `Upd. Finding Statement` title-block submenu button that reads a selected table and updates the page-1 placeholder text in blue.
+- [x] Add and run at least 3 sample tests for the statement builder, verify the WLS build, and record the review.
+
+### Review
+- Root cause: WLS had no deterministic findings-paragraph builder and no page-1 updater for the yellow placeholder text. The existing title-block service only replaced numbered `1.` through `7.` tokens in blue/green text, while the findings summary table flattened the usable inputs down to one finding-description column plus row ordering/background cues.
+- Fix: added `wls_program/src/WildlifeSweeps/WildlifeFindingsStatementBuilder.cs` as a pure deterministic narrative engine with explicit `FindingRow`, `WildlifeFeatureFlags`, grouping helpers, narrative-label helpers, and Oxford-comma joining. Extended `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` with a new selected-table workflow that prompts for the findings table, asks the four key-feature yes/no flags, derives `FindingRow` objects from the table, resolves the findings page number from the table layout, and replaces the exact yellow page-1 placeholder text `This Statement Must be written based on findings` in blue. Updated `wls_program/src/WildlifeSweeps/Ui/PaletteControl.cs` to add the new `Upd. Finding Statement` button inside the title-block submenu and wire it to the new service path with status/tooltip updates.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors. Added `wls_program/src/WildlifeSweeps.DecisionTests/WildlifeSweeps.DecisionTests.csproj` plus three deterministic sample tests, and `dotnet run --project C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps.DecisionTests\WildlifeSweeps.DecisionTests.csproj -c Debug` passed.
+
+## 2026-03-24 - WLS lookup alias additions
+- [x] Inspect the current WLS lookup workbook structure and locate the source workbook plus mirror copies.
+- [x] Add the requested direct mappings to the recognition sheet(s) and sync the workbook copies.
+- [x] Verify the workbook entries are present and record the result.
+
+### Review
+- Scope: the WLS direct-mapping lookup workbook still uses `RecognitionKeywords` as the primary alias table, mirrored across the source workbook, backup workbook, plugin copy, and docs copy.
+- Fix: added two exact keyword aliases to `RecognitionKeywords` in `wls_program/wildlife_parsing_codex_lookup.xlsx` and mirrored the same rows into `wls_program/wildlife_parsing_codex_lookup_backup.xlsx`, `wls_program/src/WildlifeSweeps/wildlife_parsing_codex_lookup.xlsx`, and `wls_program/docs/wildlife_parsing_codex_lookup.xlsx`: `live rabbit -> Rabbit Sighting` and `wood pecker feeding cavity -> Pileated Woodpecker Feeding Cavity`. Both were added at priority `1` so they stay ahead of broader generic rules.
+- Verification: reopened each workbook with `openpyxl` and confirmed the new rows are present at rows `283` and `284` in `RecognitionKeywords` with the expected descriptions and notes.
+
+## 2026-03-24 - WLS moose alias additions
+- [x] Check the current WLS lookup workbook for existing Moose alias rows that could conflict or need updating.
+- [x] Add or update the requested direct mappings across the source workbook and mirrored copies.
+- [x] Verify the new workbook rows and record the result in the task log.
+
+### Review
+- Scope: the WLS lookup already had several Moose-specific scat/track/browse aliases plus broader regex rules, but it did not contain an exact `moose poop` alias or a bare `moose` alias.
+- Fix: added two exact keyword aliases to `RecognitionKeywords` in `wls_program/wildlife_parsing_codex_lookup.xlsx` and mirrored the same rows into `wls_program/wildlife_parsing_codex_lookup_backup.xlsx`, `wls_program/src/WildlifeSweeps/wildlife_parsing_codex_lookup.xlsx`, and `wls_program/docs/wildlife_parsing_codex_lookup.xlsx`: `moose poop -> Moose Scat` and `moose -> Moose Sighting`. Both were added at priority `1` so they override the broader Moose regex rules cleanly.
+- Verification: reopened each workbook with `openpyxl` and confirmed the new rows are present at rows `285` and `286` in `RecognitionKeywords` with the expected descriptions and notes.
+
+## 2026-03-24 - WLS normalized species lookup fallback
+- [x] Inspect the existing findings lookup workbook/code path and decide the narrowest schema/API for normalized-value species metadata with prompt fallback.
+- [x] Implement workbook-backed species resolution in the `Upd. Finding Statement` flow, including prompt-on-miss and automatic workbook update.
+- [x] Verify build behavior, update task/docs/lessons, and record what remains blocked on exact page-1 table text.
+
+### Review
+- Root cause: the new findings-statement flow was still deriving species only from a local suffix heuristic, which does not satisfy the user’s requirement that species assignment be keyed by normalized finding values and learned automatically when a value is missing from the workbook.
+- Fix: extended `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs` with workbook-backed normalized-description species metadata loading, lookup, and mirror-sync upsert support through a new `FindingSpecies` sheet. Updated `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` so `Upd. Finding Statement` now resolves each row’s species from workbook metadata first, prompts with a species selection dialog only when a normalized finding description is not mapped yet, and writes the chosen species back into the lookup workbook for future runs. Added `wls_program/src/WildlifeSweeps/Ui/SpeciesSelectionDialog.cs` for the one-time species picker. Seeded the new `FindingSpecies` sheet into `wls_program/wildlife_parsing_codex_lookup.xlsx`, `wls_program/wildlife_parsing_codex_lookup_backup.xlsx`, `wls_program/src/WildlifeSweeps/wildlife_parsing_codex_lookup.xlsx`, and `wls_program/docs/wildlife_parsing_codex_lookup.xlsx`, while leaving generic or ambiguous labels blank so they still prompt.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors. `dotnet run --project C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps.DecisionTests\WildlifeSweeps.DecisionTests.csproj -c Debug` passed. Reopened the source workbook and confirmed the new `FindingSpecies` sheet exists with seeded rows such as `Moose Scat -> Moose`, `Moose Sighting -> Moose`, `Pileated Woodpecker Feeding Cavity -> Pileated Woodpecker`, while ambiguous rows like `Rabbit Sighting`, `Woodpecker Cavity Tree`, and `Animal Remains (Species Unconfirmed)` are intentionally left blank to trigger the prompt.
+- Remaining blocker: the two new page-1 findings tables are still waiting on the exact header/row text from the screenshots so they can be generated accurately under the same button.
+
+## 2026-03-24 - WLS wildlife group normalization
+- [x] Inspect the current workbook-backed species metadata flow and identify every place that still assumes specific species values.
+- [x] Change the prompt, stored lookup values, and seeded workbook data so findings resolve only to `AMPHIBIANS`, `BIRDS`, `MAMMALS`, or `REPTILES`.
+- [x] Rebuild WLS, verify the workbook/group values, and record the correction.
+
+### Review
+- Root cause: the first pass of the lookup-backed prompt flow still treated findings metadata as specific species values, so the runtime picker offered entries like `Moose`, `Snowshoe Hare`, and `Pileated Woodpecker` instead of the four wildlife groups the user actually needs for the page-1 findings table.
+- Fix: updated `wls_program/src/WildlifeSweeps/FindingsDescriptionStandardizer.cs` so the workbook metadata layer now resolves and persists normalized finding descriptions to wildlife groups only, using the allowed values `AMPHIBIANS`, `BIRDS`, `MAMMALS`, and `REPTILES`. Updated `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` so `Upd. Finding Statement` prompts for a wildlife group instead of a species when a normalized finding is missing from the workbook, while still keeping the narrative statement builder on the original parsed finding wording. Updated `wls_program/src/WildlifeSweeps/Ui/SpeciesSelectionDialog.cs` into a group-only picker UI. Normalized the `FindingSpecies` workbook sheet across all mirrored copies so column B is now `WildlifeGroup` and existing seeded rows were converted to group values, with ambiguous rows intentionally left blank to trigger the prompt.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors. `dotnet run --project C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps.DecisionTests\WildlifeSweeps.DecisionTests.csproj -c Debug` passed. Reopened the source workbook and confirmed `FindingSpecies` now has header `StandardDescription / WildlifeGroup / Notes`, with rows such as `Rabbit Sighting -> MAMMALS`, `Moose Scat -> MAMMALS`, `Pileated Woodpecker Feeding Cavity -> BIRDS`, and ambiguous rows like `Animal Remains (Species Unconfirmed)` still blank.
+
+## 2026-03-24 - WLS findings statement partial replacement and group-status follow-up
+- [x] Inspect the current page-1 findings placeholder replacement, narrative phrasing, and wildlife-group table status path.
+- [x] Replace only the yellow placeholder segment, improve mixed sign/sighting wording, and output wildlife-group `SIGHTING`/`SIGN` with `SIGHTING` priority.
+- [x] Build WLS, run the deterministic statement tests, and record the verification plus lesson from the correction.
+
+### Review
+- Root cause: the first `Upd. Finding Statement` pass reused the same whole-entity replacement pattern as the simpler numbered title-block tokens. That was too blunt for the page-1 findings prompt because the editable yellow sentence can live inside a larger `MText` object, so `mtext.Contents = statement` wiped surrounding text. At the same time, the deterministic builder still collapsed mixed sign/sighting rows for one species into `species sign and observations`, which read awkwardly in narrative form, and the page-1 wildlife-group status table had not been generated yet.
+- Fix: updated `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` so the page-1 findings updater now preserves surrounding `MText` content and replaces only the visible placeholder span with a scoped blue `MText` run. Added visible-text parsing for formatted `MText`, substring replacement for `DBText`/attributes, and a new page-1 wildlife-group table rebuild at `(-445.662, 752.205)` that outputs `N/A`, `SIGN`, or `SIGHTING` for `AMPHIBIANS`, `BIRDS`, `MAMMALS`, and `REPTILES`, with `SIGHTING` taking priority whenever any row in that group is a sighting/audible/visual observation. Extended the request model so the selected findings table already carries those aggregated group statuses through the same button flow.
+- Wording follow-up: updated `wls_program/src/WildlifeSweeps/WildlifeFindingsStatementBuilder.cs` so mixed sign/incidental species now collapse to `species sign with incidental observations` instead of `species sign and observations`, and added a deterministic regression case in `wls_program/src/WildlifeSweeps.DecisionTests/Program.cs` for that exact narrative shape.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug` passed with `0` warnings and `0` errors. `dotnet run --project C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps.DecisionTests\WildlifeSweeps.DecisionTests.csproj -c Debug` passed.
+
+## 2026-03-25 - WLS findings table merged first-row fix
+- [x] Locate the WLS findings-table builder and confirm why the first data row is rendering as a merged/header-style row.
+- [x] Patch the findings table setup so row 1 is a normal unmerged data row without regressing the rest of the table layout.
+- [x] Build WLS, verify the fix, and record the correction plus lesson.
+
+### Review
+- Root cause: the numbered findings table is built in `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs`, not in the title-block service. Its shared table style already suppresses title/header rows, but the live `Table` instance itself never explicitly suppressed them, so AutoCAD still treated row `0` like a title row and merged the first finding across the table.
+- Fix: updated `CreateTable(...)` in `wls_program/src/WildlifeSweeps/CompleteFromPhotosService.cs` to explicitly set `table.IsTitleSuppressed = true` and `table.IsHeaderSuppressed = true` on the created table before sizing/populating rows. That keeps the first numbered finding as a normal five-column data row while leaving the rest of the table layout unchanged.
+- Verification: the normal debug output build was blocked because `acad.exe` was locking `wls_program/src/WildlifeSweeps/bin/Debug/net8.0-windows/WildlifeSweeps.dll`. Verified the fix with `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug -o C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\build\verify-findings-table-row-fix`, which passed with `0` warnings and `0` errors.
+
+## 2026-03-25 - WLS wildlife-group table layer crash
+- [x] Inspect the `Upd. Finding Statement` wildlife-group table path and confirm the cause of the `eKeyNotFound` crash.
+- [x] Patch the table builder so the target layer always exists before assignment, without changing the table content flow.
+- [x] Build WLS, verify the fix, and record the correction plus lesson.
+
+### Review
+- Root cause: the new page-1 wildlife-group table in `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` assigned `Layer = "WLS-WILDLIFE-GROUPS"` directly during table creation, but unlike the existing Environmental Conditions flow it never ensured that layer existed first. In drawings that did not already contain that layer, AutoCAD threw `eKeyNotFound` from `Entity.Layer`.
+- Fix: updated `BuildWildlifeGroupStatusTable(...)` in `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` to call `PhotoLayoutHelper.EnsureLayer(db, WildlifeGroupStatusLayerName, tr)` before constructing the table, reusing the same layer-creation helper already used elsewhere in WLS.
+- Verification: verified the fix with `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug -o C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\build\verify-wildlife-group-layer-fix`, which passed with `0` warnings and `0` errors.
+
+## 2026-03-25 - WLS findings statement bold/style and wording polish
+- [x] Inspect the inserted page-1 findings statement style path and the current narrative-collapse wording to confirm the narrowest safe fixes.
+- [x] Make the inserted findings statement render non-bold and improve the collapsed species wording so it reads naturally.
+- [x] Verify the affected build/test paths and record the correction plus lesson.
+
+### Review
+- Root cause: the blue page-1 findings replacement was already stripping underline/overline with an inline `MText` run, but it still inherited bold font styling from the original highlighted placeholder because the replacement did not override the font weight. Separately, the builder’s collapsed labels still used noun phrases like `moose sign` and `moose sign with incidental observations`, which read stiffly in a narrative sentence.
+- Fix: updated `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` so the inserted `MText` run now emits a non-bold font override based on the current text style, and DBText/attribute replacements also swap to the non-bold derived text style when they are used. Updated `wls_program/src/WildlifeSweeps/WildlifeFindingsStatementBuilder.cs` so collapsed sign labels now read as `signs of {species}`, incidental-only collapse reads `incidental observations of {species}`, and mixed sign/incidental collapse reads `signs and incidental observations of {species}`.
+- Verification: `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug -o C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\build\verify-finding-text-style-wording-fix` passed with `0` warnings and `0` errors. `dotnet run --project C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps.DecisionTests\WildlifeSweeps.DecisionTests.csproj -c Debug` passed.
+
+## 2026-03-25 - WLS wildlife-group table header color correction
+- [x] Inspect the wildlife-group summary table header styling against the established title-block heading convention.
+- [x] Update the generated wildlife-group table so its header uses the same ACI 14 heading color instead of the red value color.
+- [x] Verify the WLS build result and record the current debug-DLL lock state.
+
+### Review
+- Root cause: the generated page-1 wildlife-group status table in `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` reused the red emphasis color from the Environmental Conditions date/value row, not the established title-block heading color convention.
+- Fix: updated `WildlifeGroupStatusHeaderColor` in `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` to reuse `EnvironmentalConditionsHeadingColor`, so the wildlife-group table header now renders in the same ACI `14` heading color as the other title-block headings.
+- Verification: the normal debug output build was blocked because `acad.exe` was still locking `wls_program/src/WildlifeSweeps/bin/Debug/net8.0-windows/WildlifeSweeps.dll`. Verified the code fix with `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug -o C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\build\verify-wildlife-group-header-color-fix`, which passed with `0` warnings and `0` errors.
+
+## 2026-03-25 - WLS missing key-wildlife-features table
+- [x] Inspect the `Upd. Finding Statement` flow to confirm whether the key-wildlife-features page-1 table is generated anywhere.
+- [x] Add the missing page-1 key-wildlife-features table rebuild using the existing occupied-nest/dens/hibernacula/mineral-lick yes/no prompts.
+- [x] Build WLS and record the verification result.
+
+### Review
+- Root cause: `Upd. Finding Statement` in `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` already prompted for `WildlifeFeatureFlags`, but after updating the narrative paragraph it only rebuilt the wildlife-group status table. The separate page-1 `KEY WILDLIFE FEATURES IDENTIFIED` table was never created from those flags, so the prompt answers had no table output.
+- Fix: extended `TitleBlockControlService.cs` with a dedicated key-wildlife-features table builder/remover path at anchor `(-447.107, 593.275)`, using a merged ACI `14` heading row, four data rows (`OCCUPIED NEST`, `OCCUPIED DENS`, `HIBERNACULA`, `MINERAL LICKS`), and `YES`/`NO` values driven directly by `WildlifeFeatureFlags`. The same `Upd. Finding Statement` flow now removes prior generated copies and rebuilds this table alongside the wildlife-group status table on each run.
+- Verification: the normal debug output build was blocked because `acad.exe` was still locking `wls_program/src/WildlifeSweeps/bin/Debug/net8.0-windows/WildlifeSweeps.dll`. Verified the fix with `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug -o C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\build\verify-key-wildlife-features-table-fix`, which passed with `0` warnings and `0` errors.

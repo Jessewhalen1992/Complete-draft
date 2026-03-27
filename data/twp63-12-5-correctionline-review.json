@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "type": "point_match",
+      "layer": "L-SEC",
+      "point_kind": "endpoint",
+      "tolerance": 0.05,
+      "point": [
+        582636.216,
+        6030344.187
+      ]
+    }
+  ]
+}

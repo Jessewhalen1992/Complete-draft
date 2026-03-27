@@ -9,6 +9,7 @@ namespace AtsBackgroundBuilder.Core
             bool eraseQuarterDefinitionHelperLines,
             bool eraseQuarterBoxes,
             bool eraseQuarterHelpers,
+            bool eraseGeneratedRoadAllowanceEntities,
             bool eraseSectionOutlines,
             bool eraseContextSectionPieces,
             bool eraseSectionLabels,
@@ -18,6 +19,7 @@ namespace AtsBackgroundBuilder.Core
             EraseQuarterDefinitionHelperLines = eraseQuarterDefinitionHelperLines;
             EraseQuarterBoxes = eraseQuarterBoxes;
             EraseQuarterHelpers = eraseQuarterHelpers;
+            EraseGeneratedRoadAllowanceEntities = eraseGeneratedRoadAllowanceEntities;
             EraseSectionOutlines = eraseSectionOutlines;
             EraseContextSectionPieces = eraseContextSectionPieces;
             EraseSectionLabels = eraseSectionLabels;
@@ -28,6 +30,7 @@ namespace AtsBackgroundBuilder.Core
         public bool EraseQuarterDefinitionHelperLines { get; }
         public bool EraseQuarterBoxes { get; }
         public bool EraseQuarterHelpers { get; }
+        public bool EraseGeneratedRoadAllowanceEntities { get; }
         public bool EraseSectionOutlines { get; }
         public bool EraseContextSectionPieces { get; }
         public bool EraseSectionLabels { get; }
@@ -46,6 +49,7 @@ namespace AtsBackgroundBuilder.Core
                 eraseQuarterDefinitionHelperLines: !quarterVisibility.KeepQuarterHelperLinework,
                 eraseQuarterBoxes: true,
                 eraseQuarterHelpers: eraseAtsFabricGeometry,
+                eraseGeneratedRoadAllowanceEntities: eraseAtsFabricGeometry,
                 eraseSectionOutlines: eraseAtsFabricGeometry,
                 eraseContextSectionPieces: eraseAtsFabricGeometry,
                 eraseSectionLabels: eraseAtsFabricGeometry,

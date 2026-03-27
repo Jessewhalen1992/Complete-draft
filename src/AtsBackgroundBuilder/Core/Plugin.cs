@@ -47,6 +47,7 @@ namespace AtsBackgroundBuilder
         // then restore and run shortest-wins overlap cleanup.
         private const double BuildIsolationBufferMeters = 2200.0;
         private const double PostRestoreOverlapCleanupExpansionMeters = 120.0;
+        private const double QuarterDefinitionCleanupWindowPaddingMeters = 80.0;
         // Heavy road-allowance tracing is off by default; enable with ATSBUILD_RA_DIAG=1 when needed.
         private static readonly bool EnableRoadAllowanceDiagnostics =
             string.Equals(Environment.GetEnvironmentVariable("ATSBUILD_RA_DIAG"), "1", StringComparison.OrdinalIgnoreCase);
@@ -2211,6 +2212,13 @@ namespace AtsBackgroundBuilder
                 requestedOutlinesByKeyId[keyId] = outline;
             }
 
+            var requestedQuarterCleanupWindows = BuildBufferedWindowsFromSectionOutlines(
+                requestedOutlinesByKeyId.Values,
+                QuarterDefinitionCleanupWindowPaddingMeters);
+            var preexistingQuarterViewEntityIds = CollectEntityIdsOnLayerWithinWindows(
+                database,
+                requestedQuarterCleanupWindows,
+                LayerQuarterView);
             var requestedIsolationWindows = BuildBufferedWindowsFromSectionOutlines(requestedOutlinesByKeyId.Values, BuildIsolationBufferMeters);
             var stashedNearbySectionEntities = StashSectionBuildingGeometryNearWindows(database, requestedIsolationWindows, logger);
             logger.WriteLine($"TIMING DrawSectionsFromRequests: inference completed in {timer.ElapsedMilliseconds} ms");
@@ -2396,6 +2404,8 @@ namespace AtsBackgroundBuilder
                 sectionIds.ToList(),
                 contextSectionIds.ToList(),
                 sectionLabelIds.ToList(),
+                roadAllowanceCleanupContext.GeneratedRoadAllowanceIds.ToList(),
+                preexistingQuarterViewEntityIds,
                 sectionNumberById,
                 true);
         }
@@ -4148,6 +4158,73 @@ namespace AtsBackgroundBuilder
             return MergeOverlappingClipWindows(windows);
         }
 
+        private static List<ObjectId> CollectEntityIdsOnLayerWithinWindows(
+            Database database,
+            IReadOnlyList<Extents3d> windows,
+            string layerName)
+        {
+            var ids = new List<ObjectId>();
+            if (database == null || windows == null || windows.Count == 0 || string.IsNullOrWhiteSpace(layerName))
+            {
+                return ids;
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity entity) || entity.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(entity.Layer, layerName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    Extents3d entityExtents;
+                    try
+                    {
+                        entityExtents = entity.GeometricExtents;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    var inScope = false;
+                    for (var i = 0; i < windows.Count; i++)
+                    {
+                        if (DoExtentsOverlap(entityExtents, windows[i], 0.01))
+                        {
+                            inScope = true;
+                            break;
+                        }
+                    }
+
+                    if (inScope)
+                    {
+                        ids.Add(id);
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            return ids;
+        }
+
+        private static bool DoExtentsOverlap(Extents3d a, Extents3d b, double tolerance)
+        {
+            return a.MinPoint.X <= (b.MaxPoint.X + tolerance) &&
+                   a.MaxPoint.X >= (b.MinPoint.X - tolerance) &&
+                   a.MinPoint.Y <= (b.MaxPoint.Y + tolerance) &&
+                   a.MaxPoint.Y >= (b.MinPoint.Y - tolerance);
+        }
+
         private static List<Extents3d> ExpandClipWindows(IReadOnlyList<Extents3d> windows, double expansionMeters)
         {
             var expanded = new List<Extents3d>();
@@ -5335,6 +5412,7 @@ namespace AtsBackgroundBuilder
                 const double targetOnSegmentTolRelaxed = 1.50;
                 const double apparentEndpointGapTol = 24.0;
                 const double outerBoundaryTol = 0.40;
+                const double maxWindowBoundaryCorrectionInsetMove = CorrectionLinePostInsetMeters + 1.0;
                 var scannedEndpoints = 0;
                 var skippedOnOuterBoundary = 0;
                 var alreadyConnected = 0;
@@ -5521,6 +5599,41 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
+                bool TryProjectWindowBoundaryCorrectionCompanion(
+                    (ObjectId Id, Point2d A, Point2d B, bool Horizontal, bool Vertical, bool MovableSource, bool IsBaseUsecTarget, string Layer) source,
+                    Point2d endpoint,
+                    Point2d other,
+                    out Point2d target)
+                {
+                    target = endpoint;
+                    if (correctionZeroSegments.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    if (!CorrectionZeroCompanionProjection.TryProjectCompanionTarget(
+                            new LineDistancePoint(endpoint.X, endpoint.Y),
+                            new LineDistancePoint(other.X, other.Y),
+                            new LineDistancePoint(endpoint.X, endpoint.Y),
+                            correctionZeroSegments
+                                .Where(seg => (source.Vertical && seg.Horizontal) || (source.Horizontal && seg.Vertical))
+                                .Select(seg => (
+                                    new LineDistancePoint(seg.A.X, seg.A.Y),
+                                    new LineDistancePoint(seg.B.X, seg.B.Y)))
+                                .ToList(),
+                            CorrectionLinePostInsetMeters,
+                            insetToleranceMeters: 1.0,
+                            minExtendMeters: minExtend,
+                            maxExtendMeters: maxExtend,
+                            out var correctionTarget))
+                    {
+                        return false;
+                    }
+
+                    target = new Point2d(correctionTarget.X, correctionTarget.Y);
+                    return endpoint.GetDistanceTo(target) <= maxWindowBoundaryCorrectionInsetMove;
+                }
+
                 int SignWithTol(double value, double tol)
                 {
                     if (value > tol)
@@ -5678,7 +5791,10 @@ namespace AtsBackgroundBuilder
                     bool IsCapTerminatorLayer(string layer)
                     {
                         return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
-                               string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase);
+                               string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
                     }
 
                     bool TryCandidate(Point2d touchingEndpoint, Point2d otherEndpoint)
@@ -5782,12 +5898,6 @@ namespace AtsBackgroundBuilder
                         var endpoint = endpointIndex == 0 ? source.A : source.B;
                         var other = endpointIndex == 0 ? source.B : source.A;
 
-                        if (IsPointOnAnyWindowBoundary(endpoint, outerBoundaryTol))
-                        {
-                            skippedOnOuterBoundary++;
-                            continue;
-                        }
-
                         var touchState = GetEndpointTouchState(endpoint, source.Id, source.Layer);
                         if (touchState.TouchesSameBand)
                         {
@@ -5812,6 +5922,24 @@ namespace AtsBackgroundBuilder
                         var found = false;
                         var bestScore = double.MaxValue;
                         var bestTarget = endpoint;
+                        var boundaryCorrectionCompanionPreferred = false;
+                        var rejectedBySide = 0;
+
+                        if (IsPointOnAnyWindowBoundary(endpoint, outerBoundaryTol))
+                        {
+                            if (TryProjectWindowBoundaryCorrectionCompanion(source, endpoint, other, out var boundaryTarget))
+                            {
+                                found = true;
+                                bestTarget = boundaryTarget;
+                                bestScore = endpoint.GetDistanceTo(boundaryTarget);
+                                boundaryCorrectionCompanionPreferred = true;
+                            }
+                            else
+                            {
+                                skippedOnOuterBoundary++;
+                                continue;
+                            }
+                        }
 
                         bool TrySelectBestTarget(
                             bool enforceSideRule,
@@ -5934,13 +6062,14 @@ namespace AtsBackgroundBuilder
                             return localFound;
                         }
 
-                        if (!TrySelectBestTarget(
+                        if (!boundaryCorrectionCompanionPreferred &&
+                            !TrySelectBestTarget(
                                 enforceSideRule: true,
                                 allowBaseUsecTarget: false,
                                 targetTol: targetOnSegmentTol,
                                 allowApparent: false,
                                 allowCrossLayer: false,
-                                out var rejectedBySide))
+                                out rejectedBySide))
                         {
                             sideRejected += rejectedBySide;
                             // Fallback: if side-of-road inference is ambiguous for this endpoint,
@@ -5999,7 +6128,7 @@ namespace AtsBackgroundBuilder
                                 apparentFallbackUsed++;
                             }
                         }
-                        else
+                        else if (!boundaryCorrectionCompanionPreferred)
                         {
                             sideRejected += rejectedBySide;
                         }
@@ -6010,8 +6139,12 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var preferredCorrectionZeroCompanion = false;
-                        if (correctionZeroSegments.Count > 0 &&
+                        var preferredCorrectionZeroCompanion = boundaryCorrectionCompanionPreferred;
+                        if (boundaryCorrectionCompanionPreferred)
+                        {
+                            correctionZeroCompanionPreferred++;
+                        }
+                        else if (correctionZeroSegments.Count > 0 &&
                             CorrectionZeroCompanionProjection.TryProjectCompanionTarget(
                                 new LineDistancePoint(endpoint.X, endpoint.Y),
                                 new LineDistancePoint(other.X, other.Y),
@@ -6354,11 +6487,14 @@ namespace AtsBackgroundBuilder
                 var diff = b0 - a0;
                 tA = Cross2d(diff, db) / denom;
                 tB = Cross2d(diff, da) / denom;
-                if (tA < 0.0 || tA > 1.0 || tB < 0.0 || tB > 1.0)
+                const double segmentParamTol = 1e-9;
+                if (tA < -segmentParamTol || tA > (1.0 + segmentParamTol) || tB < -segmentParamTol || tB > (1.0 + segmentParamTol))
                 {
                     return false;
                 }
 
+                tA = Math.Max(0.0, Math.Min(1.0, tA));
+                tB = Math.Max(0.0, Math.Min(1.0, tB));
                 intersection = a0 + (da * tA);
                 return true;
             }
@@ -6549,9 +6685,9 @@ namespace AtsBackgroundBuilder
                             // 0/20 intersections; only trim when another line endpoint terminates on source.
                             var enforceByCrossing = sourceIsThirty && sourceInterior && targetInterior;
                             var enforceByTerminator = false;
-                            var targetIsTerminatorForSource = sourceIsZeroTwenty
-                                ? string.Equals(target.Layer, source.Layer, StringComparison.OrdinalIgnoreCase)
-                                : (IsSectionTypeLayer(target.Layer) && !IsThirtyLayer(target.Layer));
+                            var targetIsTerminatorForSource =
+                                IsSectionTypeLayer(target.Layer) &&
+                                !IsThirtyLayer(target.Layer);
                             if (!enforceByCrossing && sourceInterior && targetEndpointTouch && targetIsTerminatorForSource)
                             {
                                 var dToA = p.GetDistanceTo(target.A);
@@ -6709,11 +6845,14 @@ namespace AtsBackgroundBuilder
                 var diff = b0 - a0;
                 tA = Cross2d(diff, db) / denom;
                 tB = Cross2d(diff, da) / denom;
-                if (tA < 0.0 || tA > 1.0 || tB < 0.0 || tB > 1.0)
+                const double segmentParamTol = 1e-9;
+                if (tA < -segmentParamTol || tA > (1.0 + segmentParamTol) || tB < -segmentParamTol || tB > (1.0 + segmentParamTol))
                 {
                     return false;
                 }
 
+                tA = Math.Max(0.0, Math.Min(1.0, tA));
+                tB = Math.Max(0.0, Math.Min(1.0, tB));
                 intersection = a0 + (da * tA);
                 return true;
             }
@@ -7014,11 +7153,14 @@ namespace AtsBackgroundBuilder
                 var diff = b0 - a0;
                 tA = Cross2d(diff, db) / denom;
                 tB = Cross2d(diff, da) / denom;
-                if (tA < 0.0 || tA > 1.0 || tB < 0.0 || tB > 1.0)
+                const double segmentParamTol = 1e-9;
+                if (tA < -segmentParamTol || tA > (1.0 + segmentParamTol) || tB < -segmentParamTol || tB > (1.0 + segmentParamTol))
                 {
                     return false;
                 }
 
+                tA = Math.Max(0.0, Math.Min(1.0, tA));
+                tB = Math.Max(0.0, Math.Min(1.0, tB));
                 intersection = a0 + (da * tA);
                 return true;
             }
@@ -7788,6 +7930,8 @@ namespace AtsBackgroundBuilder
             List<ObjectId> sectionPolylineIds,
             List<ObjectId> contextSectionPolylineIds,
             List<ObjectId> sectionLabelEntityIds,
+            List<ObjectId> generatedRoadAllowanceEntityIds,
+            List<ObjectId> preexistingQuarterViewEntityIds,
             Dictionary<ObjectId, int> sectionNumberByPolylineId,
             bool generatedFromIndex)
         {
@@ -7798,6 +7942,8 @@ namespace AtsBackgroundBuilder
             SectionPolylineIds = sectionPolylineIds ?? new List<ObjectId>();
             ContextSectionPolylineIds = contextSectionPolylineIds ?? new List<ObjectId>();
             SectionLabelEntityIds = sectionLabelEntityIds ?? new List<ObjectId>();
+            GeneratedRoadAllowanceEntityIds = generatedRoadAllowanceEntityIds ?? new List<ObjectId>();
+            PreexistingQuarterViewEntityIds = preexistingQuarterViewEntityIds ?? new List<ObjectId>();
             SectionNumberByPolylineId = sectionNumberByPolylineId ?? new Dictionary<ObjectId, int>();
             GeneratedFromIndex = generatedFromIndex;
         }
@@ -7808,6 +7954,8 @@ namespace AtsBackgroundBuilder
         public List<ObjectId> SectionPolylineIds { get; }
         public List<ObjectId> ContextSectionPolylineIds { get; }
         public List<ObjectId> SectionLabelEntityIds { get; }
+        public List<ObjectId> GeneratedRoadAllowanceEntityIds { get; }
+        public List<ObjectId> PreexistingQuarterViewEntityIds { get; }
         public Dictionary<ObjectId, int> SectionNumberByPolylineId { get; }
         public bool GeneratedFromIndex { get; }
     }
