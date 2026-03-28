@@ -36,12 +36,18 @@ namespace AtsBackgroundBuilder
                 return string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase);
             }
 
+            bool IsUsec2012Layer(string layer)
+            {
+                return string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase);
+            }
+
             bool IsHardBoundaryLayer(string layer) =>
                 IsHardBoundaryLayerForEndpointEnforcement(layer, includeSecAliases: false);
 
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                var hardBoundarySegments = new List<(ObjectId Id, Point2d A, Point2d B)>();
+                var hardBoundarySegments = new List<(ObjectId Id, Point2d A, Point2d B, string Layer)>();
                 var secSourceIds = new List<ObjectId>();
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
@@ -65,7 +71,7 @@ namespace AtsBackgroundBuilder
                     var layer = ent.Layer ?? string.Empty;
                     if (IsHardBoundaryLayer(layer))
                     {
-                        hardBoundarySegments.Add((id, a, b));
+                        hardBoundarySegments.Add((id, a, b, layer));
                     }
 
                     if (IsSecSourceLayer(layer))
@@ -88,6 +94,7 @@ namespace AtsBackgroundBuilder
                 const double endpointAxisTol = 0.80;
                 const double outerBoundaryTol = 0.40;
                 const double maxWindowBoundaryInsetMove = CorrectionLinePostInsetMeters + 1.0;
+                const double maxWindowBoundaryUsec2012Move = RoadAllowanceSecWidthMeters + 1.0;
 
                 var scannedEndpoints = 0;
                 var alreadyOnHard = 0;
@@ -97,16 +104,34 @@ namespace AtsBackgroundBuilder
                 var adjustedLines = 0;
                 var fallbackEndpointUsed = 0;
 
-                bool IsEndpointOnHardBoundary(Point2d endpoint, ObjectId sourceId) =>
-                    IsEndpointOnBoundarySegmentsForEndpointEnforcement(
-                        endpoint,
-                        sourceId,
-                        hardBoundarySegments,
-                        endpointTouchTol);
+                bool IsEndpointOnHardBoundary(Point2d endpoint, ObjectId sourceId)
+                {
+                    for (var i = 0; i < hardBoundarySegments.Count; i++)
+                    {
+                        var seg = hardBoundarySegments[i];
+                        if (seg.Id == sourceId)
+                        {
+                            continue;
+                        }
 
-                bool TryFindExtensionTarget(Point2d endpoint, Point2d other, ObjectId sourceId, out Point2d target)
+                        if (DistancePointToSegment(endpoint, seg.A, seg.B) <= endpointTouchTol)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool TryFindExtensionTarget(
+                    Point2d endpoint,
+                    Point2d other,
+                    ObjectId sourceId,
+                    out Point2d target,
+                    out bool allowWindowBoundaryUsec2012Move)
                 {
                     target = endpoint;
+                    allowWindowBoundaryUsec2012Move = false;
                     var outward = endpoint - other;
                     var outwardLen = outward.Length;
                     if (outwardLen <= 1e-6)
@@ -117,8 +142,9 @@ namespace AtsBackgroundBuilder
                     var outwardDir = outward / outwardLen;
                     var found = false;
                     var usedFallback = false;
+                    var usedUsec2012Target = false;
                     var bestT = double.MaxValue;
-                    void ConsiderCandidate(double t, bool isFallback)
+                    void ConsiderCandidate(double t, bool isFallback, bool isUsec2012Target)
                     {
                         if (t <= minExtend || t > maxExtend)
                         {
@@ -142,6 +168,7 @@ namespace AtsBackgroundBuilder
 
                         found = true;
                         usedFallback = isFallback;
+                        usedUsec2012Target = isUsec2012Target;
                         bestT = t;
                     }
 
@@ -158,7 +185,7 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        ConsiderCandidate(t, isFallback: false);
+                        ConsiderCandidate(t, isFallback: false, isUsec2012Target: IsUsec2012Layer(seg.Layer));
                     }
 
                     // Include near-collinear endpoint candidates so "apparent intersection"
@@ -180,7 +207,7 @@ namespace AtsBackgroundBuilder
                             }
 
                             var t = (candidate - endpoint).DotProduct(outwardDir);
-                            ConsiderCandidate(t, isFallback: true);
+                            ConsiderCandidate(t, isFallback: true, isUsec2012Target: IsUsec2012Layer(seg.Layer));
                         }
                     }
 
@@ -192,6 +219,11 @@ namespace AtsBackgroundBuilder
                     if (usedFallback)
                     {
                         fallbackEndpointUsed++;
+                    }
+
+                    if (usedUsec2012Target)
+                    {
+                        allowWindowBoundaryUsec2012Move = true;
                     }
 
                     target = endpoint + (outwardDir * bestT);
@@ -222,9 +254,17 @@ namespace AtsBackgroundBuilder
                     {
                         alreadyOnHard++;
                     }
-                    else if (TryFindExtensionTarget(p0, p1, sourceId, out var snappedStart))
+                    else if (TryFindExtensionTarget(
+                                 p0,
+                                 p1,
+                                 sourceId,
+                                 out var snappedStart,
+                                 out var startAllowsUsec2012BoundaryMove))
                     {
-                        if (p0OnWindowBoundary && p0.GetDistanceTo(snappedStart) > maxWindowBoundaryInsetMove)
+                        var maxBoundaryMove = startAllowsUsec2012BoundaryMove
+                            ? maxWindowBoundaryUsec2012Move
+                            : maxWindowBoundaryInsetMove;
+                        if (p0OnWindowBoundary && p0.GetDistanceTo(snappedStart) > maxBoundaryMove)
                         {
                             boundarySkipped++;
                         }
@@ -249,9 +289,17 @@ namespace AtsBackgroundBuilder
                     {
                         alreadyOnHard++;
                     }
-                    else if (TryFindExtensionTarget(p1, p0, sourceId, out var snappedEnd))
+                    else if (TryFindExtensionTarget(
+                                 p1,
+                                 p0,
+                                 sourceId,
+                                 out var snappedEnd,
+                                 out var endAllowsUsec2012BoundaryMove))
                     {
-                        if (p1OnWindowBoundary && p1.GetDistanceTo(snappedEnd) > maxWindowBoundaryInsetMove)
+                        var maxBoundaryMove = endAllowsUsec2012BoundaryMove
+                            ? maxWindowBoundaryUsec2012Move
+                            : maxWindowBoundaryInsetMove;
+                        if (p1OnWindowBoundary && p1.GetDistanceTo(snappedEnd) > maxBoundaryMove)
                         {
                             boundarySkipped++;
                         }
@@ -870,10 +918,43 @@ namespace AtsBackgroundBuilder
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var boundarySegments = new List<(Point2d A, Point2d B)>();
+                var boundaryEndpointClusters = new List<(Point2d Point, int IncidentCount)>();
                 var correctionBoundarySegments = new List<(Point2d A, Point2d B)>();
                 var qsecLineIds = new List<ObjectId>();
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                const double boundaryJunctionClusterTol = 0.90;
+
+                void AddBoundaryEndpointCluster(Point2d point)
+                {
+                    var bestIndex = -1;
+                    var bestDistance = double.MaxValue;
+                    for (var ci = 0; ci < boundaryEndpointClusters.Count; ci++)
+                    {
+                        var distance = boundaryEndpointClusters[ci].Point.GetDistanceTo(point);
+                        if (distance > boundaryJunctionClusterTol || distance >= bestDistance)
+                        {
+                            continue;
+                        }
+
+                        bestIndex = ci;
+                        bestDistance = distance;
+                    }
+
+                    if (bestIndex < 0)
+                    {
+                        boundaryEndpointClusters.Add((point, 1));
+                        return;
+                    }
+
+                    var existing = boundaryEndpointClusters[bestIndex];
+                    var nextCount = existing.IncidentCount + 1;
+                    var nextPoint = new Point2d(
+                        ((existing.Point.X * existing.IncidentCount) + point.X) / nextCount,
+                        ((existing.Point.Y * existing.IncidentCount) + point.Y) / nextCount);
+                    boundaryEndpointClusters[bestIndex] = (nextPoint, nextCount);
+                }
+
                 foreach (ObjectId id in ms)
                 {
                     if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) || ent.IsErased)
@@ -895,6 +976,8 @@ namespace AtsBackgroundBuilder
                     if (IsSectionBoundaryLayer(layer))
                     {
                         boundarySegments.Add((a, b));
+                        AddBoundaryEndpointCluster(a);
+                        AddBoundaryEndpointCluster(b);
                         if (string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
                         {
                             correctionBoundarySegments.Add((a, b));
@@ -929,6 +1012,7 @@ namespace AtsBackgroundBuilder
                 var noTarget = 0;
                 var adjustedEndpoints = 0;
                 var adjustedLines = 0;
+                var junctionSnapAdjustedEndpoints = 0;
 
                 bool IsEndpointOnValidBoundary(Point2d endpoint)
                 {
@@ -946,6 +1030,70 @@ namespace AtsBackgroundBuilder
 
                 bool IsEndpointNearCorrectionBoundary(Point2d endpoint) =>
                     IsEndpointNearBoundarySegmentsForEndpointEnforcement(endpoint, correctionBoundarySegments, correctionAdjTol);
+
+                bool TryFindBoundaryJunctionSnapTarget(Point2d endpoint, Point2d other, out Point2d target)
+                {
+                    target = endpoint;
+                    var outward = endpoint - other;
+                    var outwardLen = outward.Length;
+                    if (outwardLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var outwardDir = outward / outwardLen;
+                    const double junctionAxisTol = 1.25;
+                    var found = false;
+                    var bestAbsT = double.MaxValue;
+                    var bestDegree = 0;
+                    for (var ci = 0; ci < boundaryEndpointClusters.Count; ci++)
+                    {
+                        var cluster = boundaryEndpointClusters[ci];
+                        if (cluster.IncidentCount < 2)
+                        {
+                            continue;
+                        }
+
+                        var candidate = cluster.Point;
+                        if (endpoint.GetDistanceTo(candidate) <= endpointTouchTol)
+                        {
+                            return false;
+                        }
+
+                        if (DistancePointToInfiniteLine(candidate, endpoint, endpoint + outwardDir) > junctionAxisTol)
+                        {
+                            continue;
+                        }
+
+                        var t = (candidate - endpoint).DotProduct(outwardDir);
+                        var absT = Math.Abs(t);
+                        if (absT <= minMove || absT > maxMove)
+                        {
+                            continue;
+                        }
+
+                        if (t < 0.0 && (outwardLen + t) < minRemainingLength)
+                        {
+                            continue;
+                        }
+
+                        var better =
+                            !found ||
+                            absT < (bestAbsT - 1e-6) ||
+                            (Math.Abs(absT - bestAbsT) <= 1e-6 && cluster.IncidentCount > bestDegree);
+                        if (!better)
+                        {
+                            continue;
+                        }
+
+                        found = true;
+                        bestAbsT = absT;
+                        bestDegree = cluster.IncidentCount;
+                        target = candidate;
+                    }
+
+                    return found;
+                }
 
                 bool TryIntersectInfiniteLineWithBoundedSegmentExtension(
                     Point2d linePoint,
@@ -1221,7 +1369,16 @@ namespace AtsBackgroundBuilder
                     {
                         if (p0.GetDistanceTo(snappedStart) <= endpointTouchTol)
                         {
-                            alreadyOnBoundary++;
+                            if (TryFindBoundaryJunctionSnapTarget(p0, p1, out var junctionStart))
+                            {
+                                moveStart = true;
+                                targetStart = junctionStart;
+                                junctionSnapAdjustedEndpoints++;
+                            }
+                            else
+                            {
+                                alreadyOnBoundary++;
+                            }
                         }
                         else
                         {
@@ -1231,13 +1388,31 @@ namespace AtsBackgroundBuilder
                     }
                     else if (!p0CorrectionAdjacent && IsEndpointOnValidBoundary(p0))
                     {
-                        alreadyOnBoundary++;
+                        if (TryFindBoundaryJunctionSnapTarget(p0, p1, out var junctionStart))
+                        {
+                            moveStart = true;
+                            targetStart = junctionStart;
+                            junctionSnapAdjustedEndpoints++;
+                        }
+                        else
+                        {
+                            alreadyOnBoundary++;
+                        }
                     }
                     else if (TryFindSnapTarget(p0, p1, out snappedStart))
                     {
                         if (p0.GetDistanceTo(snappedStart) <= endpointTouchTol)
                         {
-                            alreadyOnBoundary++;
+                            if (TryFindBoundaryJunctionSnapTarget(p0, p1, out var junctionStart))
+                            {
+                                moveStart = true;
+                                targetStart = junctionStart;
+                                junctionSnapAdjustedEndpoints++;
+                            }
+                            else
+                            {
+                                alreadyOnBoundary++;
+                            }
                         }
                         else
                         {
@@ -1263,7 +1438,16 @@ namespace AtsBackgroundBuilder
                     {
                         if (p1.GetDistanceTo(snappedEnd) <= endpointTouchTol)
                         {
-                            alreadyOnBoundary++;
+                            if (TryFindBoundaryJunctionSnapTarget(p1, p0, out var junctionEnd))
+                            {
+                                moveEnd = true;
+                                targetEnd = junctionEnd;
+                                junctionSnapAdjustedEndpoints++;
+                            }
+                            else
+                            {
+                                alreadyOnBoundary++;
+                            }
                         }
                         else
                         {
@@ -1273,13 +1457,31 @@ namespace AtsBackgroundBuilder
                     }
                     else if (!p1CorrectionAdjacent && IsEndpointOnValidBoundary(p1))
                     {
-                        alreadyOnBoundary++;
+                        if (TryFindBoundaryJunctionSnapTarget(p1, p0, out var junctionEnd))
+                        {
+                            moveEnd = true;
+                            targetEnd = junctionEnd;
+                            junctionSnapAdjustedEndpoints++;
+                        }
+                        else
+                        {
+                            alreadyOnBoundary++;
+                        }
                     }
                     else if (TryFindSnapTarget(p1, p0, out snappedEnd))
                     {
                         if (p1.GetDistanceTo(snappedEnd) <= endpointTouchTol)
                         {
-                            alreadyOnBoundary++;
+                            if (TryFindBoundaryJunctionSnapTarget(p1, p0, out var junctionEnd))
+                            {
+                                moveEnd = true;
+                                targetEnd = junctionEnd;
+                                junctionSnapAdjustedEndpoints++;
+                            }
+                            else
+                            {
+                                alreadyOnBoundary++;
+                            }
                         }
                         else
                         {
@@ -1322,7 +1524,7 @@ namespace AtsBackgroundBuilder
 
                 tr.Commit();
                 logger?.WriteLine(
-                    $"Cleanup: 1/4 endpoint-on-section rule scanned={scannedEndpoints}, alreadyOnBoundary={alreadyOnBoundary}, windowBoundarySkipped={boundarySkipped}, noTarget={noTarget}, adjustedEndpoints={adjustedEndpoints}, adjustedLines={adjustedLines}.");
+                    $"Cleanup: 1/4 endpoint-on-section rule scanned={scannedEndpoints}, alreadyOnBoundary={alreadyOnBoundary}, junctionSnapAdjustedEndpoints={junctionSnapAdjustedEndpoints}, windowBoundarySkipped={boundarySkipped}, noTarget={noTarget}, adjustedEndpoints={adjustedEndpoints}, adjustedLines={adjustedLines}.");
             }
         }
 
@@ -3568,6 +3770,18 @@ namespace AtsBackgroundBuilder
                             target = targetPoint;
                             found = true;
                         }
+                    }
+
+                    if (found &&
+                        preserveOnPrimaryBoundary &&
+                        preferredKinds.Count == 1 &&
+                        string.Equals(preferredKinds[0], "SEC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Survey SEC-target fallback should preserve an endpoint that already lands on
+                        // the authoritative surveyed section boundary instead of walking to a farther
+                        // parallel SEC row.
+                        target = endpoint;
+                        return true;
                     }
 
                     if (found)

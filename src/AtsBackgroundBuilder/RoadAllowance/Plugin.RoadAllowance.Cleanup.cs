@@ -4762,10 +4762,106 @@ namespace AtsBackgroundBuilder
 
                     if (overlap >= 0.0)
                     {
-                        return false;
+                        return overlap <= 0.10;
                     }
 
                     return -overlap <= maxGap;
+                }
+
+                static double MinEndpointDistance(Point2d a0, Point2d a1, Point2d b0, Point2d b1)
+                {
+                    return Math.Min(
+                        Math.Min(a0.GetDistanceTo(b0), a0.GetDistanceTo(b1)),
+                        Math.Min(a1.GetDistanceTo(b0), a1.GetDistanceTo(b1)));
+                }
+
+                static double AverageBucketAxis(
+                    IReadOnlyList<int> members,
+                    IReadOnlyList<(ObjectId Id, bool IsUsecLayer, bool IsGenerated, bool IsHorizontal, bool IsBlindSouthBoundary, Point2d A, Point2d B, double Axis, double SpanMin, double SpanMax)> segments)
+                {
+                    if (members == null || members.Count == 0)
+                    {
+                        return 0.0;
+                    }
+
+                    var sum = 0.0;
+                    for (var i = 0; i < members.Count; i++)
+                    {
+                        sum += segments[members[i]].Axis;
+                    }
+
+                    return sum / members.Count;
+                }
+
+                bool TryGetBucketLineMatchScore(
+                    int segmentIndex,
+                    List<int> bucketMembers,
+                    out double score)
+                {
+                    score = double.MaxValue;
+                    if (bucketMembers == null || bucketMembers.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    var segment = roadSegments[segmentIndex];
+                    var segmentDir = segment.B - segment.A;
+                    var segmentLen = segmentDir.Length;
+                    if (segmentLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    const double rowDirectionDotTolerance = 0.995;
+                    const double rowCollinearTolerance = 1.25;
+                    const double rowEndpointTouchTolerance = 6.0;
+                    var segmentMid = Midpoint(segment.A, segment.B);
+                    var found = false;
+                    for (var i = 0; i < bucketMembers.Count; i++)
+                    {
+                        var other = roadSegments[bucketMembers[i]];
+                        var otherDir = other.B - other.A;
+                        var otherLen = otherDir.Length;
+                        if (otherLen <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        var absDot = Math.Abs(segmentDir.DotProduct(otherDir) / (segmentLen * otherLen));
+                        if (absDot < rowDirectionDotTolerance)
+                        {
+                            continue;
+                        }
+
+                        if (!HasSpanContact(
+                                segment.SpanMin,
+                                segment.SpanMax,
+                                other.SpanMin,
+                                other.SpanMax,
+                                overlapTolerance,
+                                spanTouchTolerance) &&
+                            MinEndpointDistance(segment.A, segment.B, other.A, other.B) > rowEndpointTouchTolerance)
+                        {
+                            continue;
+                        }
+
+                        var otherMid = Midpoint(other.A, other.B);
+                        var collinearGap = Math.Max(
+                            DistancePointToInfiniteLine(segmentMid, other.A, other.B),
+                            DistancePointToInfiniteLine(otherMid, segment.A, segment.B));
+                        if (collinearGap > rowCollinearTolerance)
+                        {
+                            continue;
+                        }
+
+                        if (!found || collinearGap < score)
+                        {
+                            found = true;
+                            score = collinearGap;
+                        }
+                    }
+
+                    return found;
                 }
 
                 var normalizedToZero = 0;
@@ -4848,18 +4944,44 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var last = buckets[buckets.Count - 1];
-                        if (Math.Abs(axis - last.Axis) <= bucketTolerance)
+                        var bestBucketIndex = -1;
+                        var bestBucketScore = double.MaxValue;
+                        for (var bi = 0; bi < buckets.Count; bi++)
                         {
-                            last.Members.Add(idx);
-                            last = ((last.Axis * (last.Members.Count - 1) + axis) / last.Members.Count, last.Members);
-                            buckets[buckets.Count - 1] = last;
+                            var bucket = buckets[bi];
+                            var axisGap = Math.Abs(axis - bucket.Axis);
+                            var hasAxisMatch = axisGap <= bucketTolerance;
+                            var hasLineMatch = TryGetBucketLineMatchScore(idx, bucket.Members, out var lineMatchScore);
+                            if (!hasAxisMatch && !hasLineMatch)
+                            {
+                                continue;
+                            }
+
+                            var bucketScore = hasLineMatch
+                                ? (-10.0 + lineMatchScore)
+                                : axisGap;
+                            if (bucketScore >= bestBucketScore)
+                            {
+                                continue;
+                            }
+
+                            bestBucketScore = bucketScore;
+                            bestBucketIndex = bi;
+                        }
+
+                        if (bestBucketIndex >= 0)
+                        {
+                            var bucket = buckets[bestBucketIndex];
+                            bucket.Members.Add(idx);
+                            buckets[bestBucketIndex] = (AverageBucketAxis(bucket.Members, roadSegments), bucket.Members);
                         }
                         else
                         {
                             buckets.Add((axis, new List<int> { idx }));
                         }
                     }
+
+                    buckets.Sort((left, right) => left.Axis.CompareTo(right.Axis));
 
                     var bucketCount = buckets.Count;
                     if (!componentHasGenerated && bucketCount < 2)
@@ -7250,14 +7372,34 @@ namespace AtsBackgroundBuilder
 
                 if (overlap >= 0.0)
                 {
-                    return false;
+                    return overlap <= 0.10;
                 }
 
                 return -overlap <= maxGap;
             }
 
+            static bool IsRoadAllowanceConsistencyLayer(string layer)
+            {
+                if (string.IsNullOrWhiteSpace(layer))
+                {
+                    return false;
+                }
+
+                return IsUsecLayer(layer) ||
+                       string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
+            }
+
             static string CanonicalUsecLayer(string layer)
             {
+                if (string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "L-SEC";
+                }
+
                 if (string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
                 {
                     return LayerUsecZero;
@@ -7284,6 +7426,11 @@ namespace AtsBackgroundBuilder
 
             static int LayerPriority(string layer)
             {
+                if (string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                {
+                    return 5;
+                }
+
                 if (string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase))
                 {
                     return 4;
@@ -7345,7 +7492,7 @@ namespace AtsBackgroundBuilder
                     blindSouthBoundarySegments.Add((sw, se, boundaryIsHorizontal));
                 }
 
-                var segments = new List<(ObjectId Id, bool Horizontal, double Axis, double SpanMin, double SpanMax, string Layer)>();
+                var segments = new List<(ObjectId Id, bool Horizontal, Point2d A, Point2d B, double Axis, double SpanMin, double SpanMax, string Layer)>();
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
                 foreach (ObjectId id in ms)
@@ -7355,7 +7502,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!IsUsecLayer(ent.Layer))
+                    if (!IsRoadAllowanceConsistencyLayer(ent.Layer))
                     {
                         continue;
                     }
@@ -7387,7 +7534,7 @@ namespace AtsBackgroundBuilder
                     var spanMax = horizontal
                         ? Math.Max(a.X, b.X)
                         : Math.Max(a.Y, b.Y);
-                    segments.Add((id, horizontal, axis, spanMin, spanMax, ent.Layer ?? string.Empty));
+                    segments.Add((id, horizontal, a, b, axis, spanMin, spanMax, ent.Layer ?? string.Empty));
                 }
 
                 if (segments.Count == 0)
@@ -7401,6 +7548,215 @@ namespace AtsBackgroundBuilder
                 const double axisTol = 0.9;
                 const double overlapTol = 4.0;
                 const double gapTol = 3.0;
+
+                static double MinEndpointDistance(Point2d a0, Point2d a1, Point2d b0, Point2d b1)
+                {
+                    return Math.Min(
+                        Math.Min(a0.GetDistanceTo(b0), a0.GetDistanceTo(b1)),
+                        Math.Min(a1.GetDistanceTo(b0), a1.GetDistanceTo(b1)));
+                }
+
+                bool TryGetLineMatchScore(int segmentIndex, List<int> groupMembers, out double score)
+                {
+                    score = double.MaxValue;
+                    if (groupMembers == null || groupMembers.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    var segment = segments[segmentIndex];
+                    var segmentDir = segment.B - segment.A;
+                    var segmentLen = segmentDir.Length;
+                    if (segmentLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    const double rowDirectionDotTolerance = 0.995;
+                    const double rowCollinearTolerance = 1.25;
+                    const double rowEndpointTouchTolerance = 6.0;
+                    var segmentMid = Midpoint(segment.A, segment.B);
+                    var found = false;
+                    for (var i = 0; i < groupMembers.Count; i++)
+                    {
+                        var other = segments[groupMembers[i]];
+                        var otherDir = other.B - other.A;
+                        var otherLen = otherDir.Length;
+                        if (otherLen <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        var absDot = Math.Abs(segmentDir.DotProduct(otherDir) / (segmentLen * otherLen));
+                        if (absDot < rowDirectionDotTolerance)
+                        {
+                            continue;
+                        }
+
+                        var hasDirectSpanContact = HasSpanContact(
+                            segment.SpanMin,
+                            segment.SpanMax,
+                            other.SpanMin,
+                            other.SpanMax,
+                            overlapTol,
+                            gapTol);
+                        if (!hasDirectSpanContact &&
+                            MinEndpointDistance(segment.A, segment.B, other.A, other.B) > rowEndpointTouchTolerance)
+                        {
+                            var leftIndex = segmentIndex;
+                            var rightIndex = groupMembers[i];
+                            if (segments[leftIndex].SpanMin > segments[rightIndex].SpanMin)
+                            {
+                                leftIndex = groupMembers[i];
+                                rightIndex = segmentIndex;
+                            }
+
+                            if (!HasSectionBoundaryGapBridge(leftIndex, rightIndex, segment.Horizontal))
+                            {
+                                continue;
+                            }
+                        }
+
+                        var otherMid = Midpoint(other.A, other.B);
+                        var collinearGap = Math.Max(
+                            DistancePointToInfiniteLine(segmentMid, other.A, other.B),
+                            DistancePointToInfiniteLine(otherMid, segment.A, segment.B));
+                        if (collinearGap > rowCollinearTolerance)
+                        {
+                            continue;
+                        }
+
+                        if (!found || collinearGap < score)
+                        {
+                            found = true;
+                            score = collinearGap;
+                        }
+                    }
+
+                    return found;
+                }
+
+                static bool IsRoadAllowanceBridgeAnchorLayer(string layer)
+                {
+                    var canonical = CanonicalUsecLayer(layer);
+                    return !string.IsNullOrWhiteSpace(canonical) &&
+                           !string.Equals(canonical, LayerUsecBase, StringComparison.OrdinalIgnoreCase);
+                }
+
+                static Point2d GetLowSpanEndpoint(
+                    (ObjectId Id, bool Horizontal, Point2d A, Point2d B, double Axis, double SpanMin, double SpanMax, string Layer) segment)
+                {
+                    if (segment.Horizontal)
+                    {
+                        return segment.A.X <= segment.B.X ? segment.A : segment.B;
+                    }
+
+                    return segment.A.Y <= segment.B.Y ? segment.A : segment.B;
+                }
+
+                static Point2d GetHighSpanEndpoint(
+                    (ObjectId Id, bool Horizontal, Point2d A, Point2d B, double Axis, double SpanMin, double SpanMax, string Layer) segment)
+                {
+                    if (segment.Horizontal)
+                    {
+                        return segment.A.X >= segment.B.X ? segment.A : segment.B;
+                    }
+
+                    return segment.A.Y >= segment.B.Y ? segment.A : segment.B;
+                }
+
+                bool HasSectionBoundaryGapBridge(int leftIndex, int rightIndex, bool horizontal)
+                {
+                    var left = segments[leftIndex];
+                    var right = segments[rightIndex];
+                    if (left.Horizontal != horizontal || right.Horizontal != horizontal)
+                    {
+                        return false;
+                    }
+
+                    var leftDir = left.B - left.A;
+                    var rightDir = right.B - right.A;
+                    var leftLen = leftDir.Length;
+                    var rightLen = rightDir.Length;
+                    if (leftLen <= 1e-6 || rightLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    const double bridgeDirectionDotMin = 0.995;
+                    const double bridgeCollinearTol = 1.25;
+                    const double bridgeEndpointTol = 0.90;
+                    const double bridgeGapTol = 4.0;
+                    var absDot = Math.Abs(leftDir.DotProduct(rightDir) / (leftLen * rightLen));
+                    if (absDot < bridgeDirectionDotMin)
+                    {
+                        return false;
+                    }
+
+                    var leftMid = Midpoint(left.A, left.B);
+                    var rightMid = Midpoint(right.A, right.B);
+                    var collinearGap = Math.Max(
+                        DistancePointToInfiniteLine(leftMid, right.A, right.B),
+                        DistancePointToInfiniteLine(rightMid, left.A, left.B));
+                    if (collinearGap > bridgeCollinearTol)
+                    {
+                        return false;
+                    }
+
+                    var gap = right.SpanMin - left.SpanMax;
+                    if (gap < 0.0)
+                    {
+                        gap = left.SpanMin - right.SpanMax;
+                    }
+
+                    if (gap < 1.0 || Math.Abs(gap - RoadAllowanceUsecWidthMeters) > bridgeGapTol)
+                    {
+                        return false;
+                    }
+
+                    var leftFacingEndpoint = gap >= 0.0
+                        ? GetHighSpanEndpoint(left)
+                        : GetLowSpanEndpoint(left);
+                    var rightFacingEndpoint = gap >= 0.0
+                        ? GetLowSpanEndpoint(right)
+                        : GetHighSpanEndpoint(right);
+
+                    var leftHasAnchorTouch = false;
+                    var rightHasAnchorTouch = false;
+                    for (var i = 0; i < segments.Count; i++)
+                    {
+                        if (i == leftIndex || i == rightIndex)
+                        {
+                            continue;
+                        }
+
+                        var connector = segments[i];
+                        if (connector.Horizontal == horizontal ||
+                            !IsRoadAllowanceBridgeAnchorLayer(connector.Layer))
+                        {
+                            continue;
+                        }
+
+                        if (!leftHasAnchorTouch &&
+                            DistancePointToSegment(leftFacingEndpoint, connector.A, connector.B) <= bridgeEndpointTol)
+                        {
+                            leftHasAnchorTouch = true;
+                        }
+
+                        if (!rightHasAnchorTouch &&
+                            DistancePointToSegment(rightFacingEndpoint, connector.A, connector.B) <= bridgeEndpointTol)
+                        {
+                            rightHasAnchorTouch = true;
+                        }
+
+                        if (leftHasAnchorTouch && rightHasAnchorTouch)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
 
                 void ProcessOrientation(bool horizontal)
                 {
@@ -7424,11 +7780,35 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var lastGroup = axisGroups[axisGroups.Count - 1];
-                        var refAxis = segments[lastGroup[lastGroup.Count - 1]].Axis;
-                        if (Math.Abs(segments[idx].Axis - refAxis) <= axisTol)
+                        var bestGroupIndex = -1;
+                        var bestGroupScore = double.MaxValue;
+                        for (var gi = 0; gi < axisGroups.Count; gi++)
                         {
-                            lastGroup.Add(idx);
+                            var group = axisGroups[gi];
+                            var refAxis = segments[group[group.Count - 1]].Axis;
+                            var axisGap = Math.Abs(segments[idx].Axis - refAxis);
+                            var hasAxisMatch = axisGap <= axisTol;
+                            var hasLineMatch = TryGetLineMatchScore(idx, group, out var lineMatchScore);
+                            if (!hasAxisMatch && !hasLineMatch)
+                            {
+                                continue;
+                            }
+
+                            var groupScore = hasLineMatch
+                                ? (-10.0 + lineMatchScore)
+                                : axisGap;
+                            if (groupScore >= bestGroupScore)
+                            {
+                                continue;
+                            }
+
+                            bestGroupScore = groupScore;
+                            bestGroupIndex = gi;
+                        }
+
+                        if (bestGroupIndex >= 0)
+                        {
+                            axisGroups[bestGroupIndex].Add(idx);
                         }
                         else
                         {
@@ -7469,7 +7849,22 @@ namespace AtsBackgroundBuilder
 
                                     var a = segments[group[cur]];
                                     var b = segments[group[other]];
-                                    if (!HasSpanContact(a.SpanMin, a.SpanMax, b.SpanMin, b.SpanMax, overlapTol, gapTol))
+                                    var hasDirectSpanContact = HasSpanContact(a.SpanMin, a.SpanMax, b.SpanMin, b.SpanMax, overlapTol, gapTol);
+                                    var hasSectionBoundaryGapBridge = false;
+                                    if (!hasDirectSpanContact)
+                                    {
+                                        var leftIndex = group[cur];
+                                        var rightIndex = group[other];
+                                        if (segments[leftIndex].SpanMin > segments[rightIndex].SpanMin)
+                                        {
+                                            leftIndex = group[other];
+                                            rightIndex = group[cur];
+                                        }
+
+                                        hasSectionBoundaryGapBridge = HasSectionBoundaryGapBridge(leftIndex, rightIndex, horizontal);
+                                    }
+
+                                    if (!hasDirectSpanContact && !hasSectionBoundaryGapBridge)
                                     {
                                         continue;
                                     }

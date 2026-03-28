@@ -1,0 +1,100 @@
+{
+  "checks": [
+    {
+      "type": "point_match",
+      "layer": "L-SECTION-LSD",
+      "point_kind": "endpoint",
+      "tolerance": 0.2,
+      "point": [
+        585549.901,
+        5952661.480
+      ]
+    },
+    {
+      "type": "point_match",
+      "layers": [
+        "L-QSEC",
+        "L-SEC"
+      ],
+      "point_kind": "endpoint",
+      "tolerance": 0.2,
+      "point": [
+        588394.243,
+        5952713.003
+      ]
+    },
+    {
+      "type": "point_match",
+      "layers": [
+        "L-QSEC",
+        "L-SEC"
+      ],
+      "point_kind": "endpoint",
+      "tolerance": 0.2,
+      "point": [
+        591006.561,
+        5944677.112
+      ]
+    },
+    {
+      "type": "point_match",
+      "layers": [
+        "L-SEC"
+      ],
+      "point_kind": "endpoint",
+      "tolerance": 0.2,
+      "point": [
+        590862.289,
+        5951150.462
+      ]
+    },
+    {
+      "type": "point_match",
+      "layers": [
+        "L-SEC"
+      ],
+      "point_kind": "endpoint",
+      "tolerance": 0.2,
+      "point": [
+        586028.068,
+        5951069.999
+      ]
+    },
+    {
+      "type": "point_match",
+      "layers": [
+        "L-SEC"
+      ],
+      "point_kind": "endpoint",
+      "tolerance": 0.2,
+      "point": [
+        589360.122,
+        5946258.226
+      ]
+    },
+    {
+      "type": "point_match",
+      "layers": [
+        "L-SEC"
+      ],
+      "point_kind": "endpoint",
+      "tolerance": 0.2,
+      "point": [
+        587573.623,
+        5952698.477
+      ]
+    },
+    {
+      "type": "point_match",
+      "layers": [
+        "DAB_APPL"
+      ],
+      "point_kind": "endpoint",
+      "tolerance": 0.2,
+      "point": [
+        586028.068,
+        5951069.999
+      ]
+    }
+  ]
+}

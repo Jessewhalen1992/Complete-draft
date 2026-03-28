@@ -7178,3 +7178,123 @@ Regression follow-up:
 - Root cause: `Upd. Finding Statement` in `wls_program/src/WildlifeSweeps/TitleBlockControlService.cs` already prompted for `WildlifeFeatureFlags`, but after updating the narrative paragraph it only rebuilt the wildlife-group status table. The separate page-1 `KEY WILDLIFE FEATURES IDENTIFIED` table was never created from those flags, so the prompt answers had no table output.
 - Fix: extended `TitleBlockControlService.cs` with a dedicated key-wildlife-features table builder/remover path at anchor `(-447.107, 593.275)`, using a merged ACI `14` heading row, four data rows (`OCCUPIED NEST`, `OCCUPIED DENS`, `HIBERNACULA`, `MINERAL LICKS`), and `YES`/`NO` values driven directly by `WildlifeFeatureFlags`. The same `Upd. Finding Statement` flow now removes prior generated copies and rebuilds this table alongside the wildlife-group status table on each run.
 - Verification: the normal debug output build was blocked because `acad.exe` was still locking `wls_program/src/WildlifeSweeps/bin/Debug/net8.0-windows/WildlifeSweeps.dll`. Verified the fix with `dotnet build C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Debug -o C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\build\verify-key-wildlife-features-table-fix`, which passed with `0` warnings and `0` errors.
+
+## 2026-03-27 - Git sync
+- [x] Review project lessons and current git worktree state before syncing.
+- [x] Confirm the tracked branch and remote configuration.
+- [x] Fetch all remotes and fast-forward the checked-out branch.
+- [x] Verify final git status and record the result.
+
+### Review
+- Fetched all remotes from origin and discovered main was behind origin/main by 13 commits.
+- Fast-forwarded main from 494b38f to 40dba71 (Enhance WLS findings statement workflows).
+- Upstream also changed tasks/todo.md, so I temporarily stashed the local planning note to avoid a pull conflict before the fast-forward.
+- Current git status matches origin/main on the tracked branch; only the task-note update above and the pre-existing local untracked artifact directories/files remain in the worktree.
+
+## 2026-03-27 - Repo release build
+- [x] Confirm the ATS and WLS build entrypoints.
+- [x] Build src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln in Release.
+- [x] Build wls_program/src/WildlifeSweeps/WildlifeSweeps.sln in Release.
+- [x] Record the build results.
+
+### Review
+- ATS release build succeeded for src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln. Output: src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll.
+- ATS reported two CS0219 warnings for unused axisTol variables in RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs:1750 and RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs:685.
+- WLS release build succeeded for wls_program/src/WildlifeSweeps/WildlifeSweeps.sln with 0 warnings and 0 errors. Output: wls_program/src/WildlifeSweeps/bin/Release/net8.0-windows/WildlifeSweeps.dll.
+
+## 2026-03-27 - ATS 59-12-5 and 54-12-5 geometry corrections
+- [x] Review the new geometry bug report, current lessons, and repo state.
+- [ ] Locate the exact AutoCAD harness inputs/results for 59-12-5 and 54-12-5 and capture the current failure evidence.
+- [ ] Trace the road-allowance classification, LSD endpoint, and quarter-definition landing logic that owns these coordinates.
+- [ ] Implement a general logic fix instead of township-specific fallback behavior.
+- [ ] Run ATS build/tests and rerun the AutoCAD harness for the affected cases.
+- [ ] Record the verified results and any follow-up risk.
+- [x] reviewed bug report/current lessons/repo state
+- [x] locate harness inputs/results for 59-12-5 and 54-12-5 repros
+- [x] trace RA / LSD / quarter geometry ownership logic
+- [x] implement general ATS fixes without township-specific fallback
+- [x] run ATS build, decision tests, and FullAutoCAD repro harnesses
+- [x] record verification results
+
+Review:
+- ATS fix 1: preserve surveyed SEC endpoints when SEC-only station fallback already lands on the authoritative boundary; this fixed the 54-12-5 sec 33 LSD endpoint drifting to the next parallel surveyed row.
+- ATS fix 2: treat shared-endpoint skew seams as continuous rows during road-allowance band consistency, and let collinear mixed SEC/USEC rows normalize together; this fixed the 59-12-5 top seam segment that remained on L-USEC3018.
+- Build: dotnet build src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln -c Release succeeded (same 2 pre-existing unused-variable warnings).
+- Decision tests: dotnet test src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build exited 0.
+- FullAutoCAD 59-12-5 review passed in data/twp59-12-5-top-ra-run-rerun3/artifacts/review-report.json; segment 579094.379,6001152.867 -> 579900.263,6001167.606 is now L-SEC.
+- FullAutoCAD 54-12-5 review passed in data/twp54-12-5-geometry-run-rerun2/artifacts/review-report.json; verified 585549.901,5952661.480 on L-SECTION-LSD, 588394.243,5952713.003 present, and 591006.561,5944677.112 present.## 2026-03-27 - ATS follow-up north seam and quarter-definition corrections
+- [x] record follow-up repro details from user
+- [ ] inspect remaining north seam misclassifications near 579930.420,6001168.144
+- [ ] inspect remaining 1/4-definition misses near 590862.289,5951150.462
+- [ ] implement shared logic fix
+- [ ] rebuild and rerun FullAutoCAD harness
+- [ ] record verification- [x] Reproduced remaining north seam misclassification at 579930.420,6001168.144 and confirmed the right-hand row was split across a 30.16 m section-boundary gap.
+- [x] Widened collinear mixed-layer grouping to bridge standard 30.16 m section-break seams when both facing endpoints are anchored by classified opposite-orientation road-allowance connectors.
+- [x] Preserved SEC endpoints already anchored on classified road-allowance bridge connectors so the SEC hard-boundary pass does not re-snap valid seam endpoints onto the wrong vertical.
+- [x] Rebuilt ATS Release and reran FullAutoCAD verification for twp59-12-5 and twp54-12-5.
+
+Review 2026-03-27:
+- ATS build passed: C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll
+- twp59-12-5 review passed in C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\twp59-12-5-top-ra-run-rerun6\artifacts\review-report.json
+  Verified L-SEC segments at 579094.379,6001152.867 -> 579900.263,6001167.606; 579930.420,6001168.144 -> 580726.156,6001182.357; and 580726.156,6001182.357 -> 581531.905,6001196.703.
+- twp54-12-5 review passed in C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\twp54-12-5-geometry-run-rerun3\artifacts\review-report.json
+  Verified final DXF point matches at 585549.901,5952661.480; 588394.243,5952713.003; 591006.561,5944677.112; and 590862.289,5951150.462.
+- Remaining build warnings are unchanged unused axisTol locals in Plugin.RoadAllowance.CorrectionLinePostProcessing.cs and Plugin.RoadAllowance.EndpointEnforcement.cs.## 2026-03-27 - ATS follow-up slanted L-SEC quarter-definition landing
+- [ ] Reproduce the slanted L-SEC 1/4-definition miss around 585999.114,5951069.661 / 586036.287,5951070.218 versus 586028.068,5951069.999.
+- [ ] Trace the quarter-definition target logic for slanted section lines and identify why the landing stays on the wrong sloped SEC edge.
+- [ ] Implement a general slanted-section fix without township-specific fallback.
+- [ ] Rebuild ATS and rerun full AutoCAD verification with an explicit guard for the corrected 1/4-definition landing.
+- [x] Inspected the current twp54-12-5 slanted section geometry: the verified harness output already contains the shared L-SEC point 586028.068,5951069.999, so the exact screenshot coordinates did not reproduce from the local stored runs.
+- [x] Added a general quarter-line junction snap so L-QSEC endpoints that already touch a slanted section boundary can still promote to a nearby shared boundary junction when that is the better landing.
+- [x] Added an explicit slanted-point review guard at 586028.068,5951069.999 and reran full AutoCAD verification.
+
+Review 2026-03-27 (slanted L-SEC follow-up):
+- ATS build passed: C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll
+- twp54-12-5 review passed in C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\twp54-12-5-geometry-run-rerun4\artifacts\review-report.json
+  Verified the new guard point at 586028.068,5951069.999 plus the prior geometry guards.
+- twp59-12-5 regression review passed in C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\twp59-12-5-top-ra-run-rerun7\artifacts\review-report.json
+- Local gap: the exact screenshot coordinates 585999.114,5951069.661 and 586036.287,5951070.218 do not appear in the stored harness outputs, so the new junction-snap rule is preventative here and still needs the specific user DWG/run to prove against the reported miss.- [ ] Clarified repro: NE.NE of 28-54-12-5 and SE.SE of 33-54-12-5 should both land at 586028.068,5951069.999.- [x] Map the named legal corners (NE.NE sec 28 / SE.SE sec 33) back to the quarter-view east-corner generator and add a shared endpoint-node snap for slanted east-side quarter corners.
+- [x] Rebuild ATS, rerun 54-12-5 Full AutoCAD with an explicit DAB_APPL guard at 586028.068,5951069.999, and rerun 59-12-5 as regression.
+
+Review 2026-03-27 (slanted east-corner endpoint snap):
+- Root cause: quarter-view east-side corners were not symmetric with the stronger west/blind paths. Ordinary NE corners and SE corners could keep a strict/apparent slanted intersection even when a real hard endpoint node already existed at the shared SEC junction.
+- Fix: added a general east-corner endpoint-cluster snap in src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs and applied it to non-correction NE corners plus non-correction SE corners, so slanted east-side quarter corners prefer the shared endpoint node when horizontal and vertical endpoint evidence exists.
+- Build: dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal passed with the same 2 pre-existing unused xisTol warnings.
+- Decision tests: dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build passed.
+- FullAutoCAD 54-12-5 review passed in C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\twp54-12-5-geometry-run-rerun5\artifacts\review-report.json, including the shared point 586028.068,5951069.999 on both L-SEC and DAB_APPL.
+- FullAutoCAD 59-12-5 regression review passed in C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\twp59-12-5-top-ra-run-rerun8\artifacts\review-report.json.## 2026-03-27 - ATS follow-up surveyed RA quarter-definition regression and 59-12-5 northern seam
+- [ ] Reproduce the new surveyed-section quarter-definition misses from the latest Full AutoCAD output, including 589359.772,5946278.332 vs 589360.122,5946258.226, 587593.733,5952698.833 vs 587573.623,5952698.477, and 588413.423,5952713.884 vs 588394.243,5952713.003.
+- [ ] Reproduce the 59-12-5 northern seam miss where L-SEC lands at 579930.420,6001168.144 instead of tying into the existing L-USEC-2012 end near 579920.370,6001167.954.
+- [ ] Fix the root causes without township-specific fallback and keep running Full AutoCAD verification until the exact coordinates pass again.
+- [ ] Confirm whether disposition import is already disabled in the harness path and keep the verification path as lean as possible.
+
+## 2026-03-27 - ATS surveyed RA helper-line endpoint reconciliation
+- [x] Reproduce the surveyed 54-12-5 quarter-definition misses with exact review guards, including the stricter segment check at 588394.243,5952713.003 -> 587573.623,5952698.477.
+- [x] Reproduce the 59-12-5 north road-allowance seam miss where the visible L-SEC helper stayed at 579930.420,6001168.144 instead of tying into the live L-USEC-2012 seam endpoint at 579920.370,6001167.954.
+- [x] Fix the shared late-stage helper-line root cause without township-specific fallback.
+- [x] Rebuild ATS, rerun FullAutoCAD until both exact geometry reviews pass, and rerun decision tests.
+- [x] Record whether disposition import is already out of the harness path.
+
+Review 2026-03-27 (late L-SEC helper endpoint reconciliation):
+- Root cause: the quarter-view solver was already resolving the correct surveyed/slanted corners, but a later-visible L-SEC helper path still preserved raw section-box endpoints. In 54-12-5 that left the stale segment 588394.243,5952713.003 -> 587593.733,5952698.833 in the DXF; in 59-12-5 the northern seam helper stayed at 579930.420,6001168.144 instead of snapping onto the live L-USEC-2012 seam endpoint.
+- Fix 1: expanded the final L-SEC endpoint-on-hard pass so authoritative nearby fabric endpoints can override a raw bridge-anchor preserve when the better live target is already present.
+- Fix 2: added a final L-SEC helper snap alongside quarter-view rebuild, driven only by protected quarter-derived corners plus live hard road-allowance endpoints (`L-USEC-0`, `L-USEC-20`, `L-USEC-2012`, correction-zero), so stale L-SEC raw corner clusters cannot self-certify.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing unused `axisTol` warnings.
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- FullAutoCAD 54-12-5 review passed in `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\twp54-12-5-geometry-run-rerun15\artifacts\review-report.json`, including the exact L-SEC segment `588394.243,5952713.003 -> 587573.623,5952698.477` and the earlier guarded quarter-definition points.
+- FullAutoCAD 59-12-5 review passed in `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\twp59-12-5-top-ra-run-rerun10\artifacts\review-report.json`, including the corrected northern seam segment `579920.370,6001167.954 -> 580726.156,6001182.357`.
+- Harness note: disposition import was already effectively out of this verification path; the ATS workbook-driven FullAutoCAD repros ran with no imported XML disposition files, so no extra disablement was required.
+
+## 2026-03-27 - ATS correction after L-SEC movement regression report
+- [x] Re-open the just-verified change set after the user reported that broad L-SEC movement made the fabric worse and caused crossings over road allowances.
+- [x] Remove the broad late L-SEC helper-line mover and restore the default behavior that visible L-SEC fabric stays where it already belongs.
+- [x] Keep only the narrow exception that allows L-SEC to extend to a live `L-USEC-2012` seam hit when needed.
+- [x] Rebuild ATS, rerun the affected FullAutoCAD cases, and rerun decision tests.
+
+Review 2026-03-27 (user-corrected L-SEC constraint):
+- User clarification: visible `L-SEC` lines generally should not move. The only acceptable exception here is the rare case where an `L-SEC` endpoint needs to extend to hit a live `L-USEC-2012` seam.
+- Fix: removed the broad quarter-view-stage `L-SEC` helper snap and rolled the endpoint behavior back to the earlier hard-boundary pass, then narrowed the only added exception so a window-edge `L-SEC` can overrun the normal inset guard only when the target seam is specifically `L-USEC-2012`.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing unused `axisTol` warnings.
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- FullAutoCAD 59-12-5 review passed in `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\twp59-12-5-top-ra-run-rerun11\artifacts\review-report.json`, preserving the intended narrow `L-USEC-2012` seam extension at `579920.370,6001167.954 -> 580726.156,6001182.357`.
+- FullAutoCAD 54-12-5 review passed in `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\twp54-12-5-geometry-run-rerun17\artifacts\review-report.json` after replacing the bad visible-`L-SEC` proxy with the actual shared endpoint guard at `587573.623,5952698.477`.

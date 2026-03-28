@@ -552,8 +552,10 @@ namespace AtsBackgroundBuilder
                 foreach (var frame in frames)
                 {
                     var emitQuarterVerify = (frame.SectionNumber >= 1 && frame.SectionNumber <= 6) ||
-                                            frame.SectionNumber == 12 ||
                                             frame.SectionNumber == 11 ||
+                                            frame.SectionNumber == 12 ||
+                                            frame.SectionNumber == 34 ||
+                                            frame.SectionNumber == 35 ||
                                             frame.SectionNumber == 36;
                     var dividerLineA = frame.BottomAnchor;
                     var dividerLineB = frame.TopAnchor;
@@ -1226,7 +1228,9 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
-                    var nwSnapPreferredU = westAtMidU;
+                    var nwSnapPreferredU = (!hasNorthBoundarySegment && isBlindNonCorrectionSouth)
+                        ? (westAtMidU - RoadAllowanceSecWidthMeters)
+                        : westAtMidU;
                     var nwSnapCurrentLocal = new Point2d(westAtNorthU, northAtWestV);
                     var hasRawNorthWestIntersection = false;
                     if (isBlindNonCorrectionSouth &&
@@ -1656,6 +1660,30 @@ namespace AtsBackgroundBuilder
                                 southEastLockedByApparentIntersection,
                                 ref southAtEastU,
                                 ref southAtEastV);
+
+                            if (!isCorrectionSouthBoundary &&
+                                TryResolveSouthEastCornerFromEndpointCornerClusters(
+                                    frame,
+                                    boundarySegments,
+                                    hardBoundaryCornerClusters,
+                                    new Point2d(southAtEastU, southAtEastV),
+                                    requireEndpointNode: true,
+                                    out var southEndpointLocal,
+                                    out var southEndpointPriority,
+                                    out var southEndpointMove,
+                                    out var southEndpointDistance))
+                            {
+                                southAtEastU = southEndpointLocal.X;
+                                southAtEastV = southEndpointLocal.Y;
+                                southEastLockedByApparentIntersection = true;
+                                if (emitQuarterVerify)
+                                {
+                                    logger?.WriteLine(
+                                        $"VERIFY-QTR-SE-SE-ENDPT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                        $"u={southAtEastU:0.###} v={southAtEastV:0.###} priority={southEndpointPriority} move={southEndpointMove:0.###} " +
+                                        $"endpointDist={southEndpointDistance:0.###}");
+                                }
+                            }
                         }
 
                         if (hasNorthBoundarySegment)
@@ -1688,6 +1716,30 @@ namespace AtsBackgroundBuilder
                                 {
                                     logger?.WriteLine(
                                         $"VERIFY-QTR-NE-NE-STRICT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: found=False eastSource={eastSource} northSource={northSource}");
+                                }
+
+                                if (!isBlindNonCorrectionSouth &&
+                                    TryResolveNorthEastCornerFromEndpointCornerClusters(
+                                        frame,
+                                        boundarySegments,
+                                        hardBoundaryCornerClusters,
+                                        new Point2d(northAtEastU, northAtEastV),
+                                        requireEndpointNode: true,
+                                        out var endpointClusterLocal,
+                                        out var endpointClusterPriority,
+                                        out var endpointClusterMove,
+                                        out var endpointClusterDistance))
+                                {
+                                    northAtEastU = endpointClusterLocal.X;
+                                    northAtEastV = endpointClusterLocal.Y;
+                                    northEastLockedByApparentIntersection = true;
+                                    if (emitQuarterVerify)
+                                    {
+                                        logger?.WriteLine(
+                                            $"VERIFY-QTR-NE-NE-ENDPT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                            $"u={northAtEastU:0.###} v={northAtEastV:0.###} priority={endpointClusterPriority} move={endpointClusterMove:0.###} " +
+                                            $"endpointDist={endpointClusterDistance:0.###} correctionAdjoining=False");
+                                    }
                                 }
                             }
                             else
@@ -2814,6 +2866,55 @@ namespace AtsBackgroundBuilder
             out double resolvedMove,
             out double resolvedEndpointDistance)
         {
+            return TryResolveEastCornerFromEndpointCornerClusters(
+                frame,
+                segments,
+                cornerClusters,
+                currentLocal,
+                northBand: true,
+                requireEndpointNode,
+                out resolvedLocal,
+                out resolvedPriority,
+                out resolvedMove,
+                out resolvedEndpointDistance);
+        }
+
+        private static bool TryResolveSouthEastCornerFromEndpointCornerClusters(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> segments,
+            IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
+            Point2d currentLocal,
+            bool requireEndpointNode,
+            out Point2d resolvedLocal,
+            out int resolvedPriority,
+            out double resolvedMove,
+            out double resolvedEndpointDistance)
+        {
+            return TryResolveEastCornerFromEndpointCornerClusters(
+                frame,
+                segments,
+                cornerClusters,
+                currentLocal,
+                northBand: false,
+                requireEndpointNode,
+                out resolvedLocal,
+                out resolvedPriority,
+                out resolvedMove,
+                out resolvedEndpointDistance);
+        }
+
+        private static bool TryResolveEastCornerFromEndpointCornerClusters(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> segments,
+            IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
+            Point2d currentLocal,
+            bool northBand,
+            bool requireEndpointNode,
+            out Point2d resolvedLocal,
+            out int resolvedPriority,
+            out double resolvedMove,
+            out double resolvedEndpointDistance)
+        {
             resolvedLocal = currentLocal;
             resolvedPriority = int.MaxValue;
             resolvedMove = double.MaxValue;
@@ -2823,7 +2924,9 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            const double maxMove = 140.0;
+            // East-corner endpoint promotion is only meant to catch nearby shared slanted junctions.
+            // Larger snaps tend to jump an entire surveyed road-allowance width onto the wrong node.
+            const double maxMove = 12.0;
             const double endpointTol = 0.55;
             var found = false;
             var bestScore = double.MaxValue;
@@ -2841,7 +2944,9 @@ namespace AtsBackgroundBuilder
                 }
 
                 if (u < (frame.MidU - 30.0) || u > (frame.EastEdgeU + 140.0) ||
-                    v < (frame.MidV - 30.0) || v > (frame.NorthEdgeV + 140.0))
+                    (northBand
+                        ? (v < (frame.MidV - 30.0) || v > (frame.NorthEdgeV + 140.0))
+                        : (v < (frame.SouthEdgeV - 140.0) || v > (frame.MidV + 30.0))))
                 {
                     continue;
                 }
@@ -2865,9 +2970,11 @@ namespace AtsBackgroundBuilder
                 }
 
                 var eastInset = frame.EastEdgeU - u;
-                var northInset = frame.NorthEdgeV - v;
+                var sideInset = northBand
+                    ? frame.NorthEdgeV - v
+                    : v - frame.SouthEdgeV;
                 var insetTarget = RoadAllowanceSecWidthMeters;
-                var insetScore = Math.Abs(eastInset - insetTarget) + Math.Abs(northInset - insetTarget);
+                var insetScore = Math.Abs(eastInset - insetTarget) + Math.Abs(sideInset - insetTarget);
                 var endpointPenalty = hasEndpointNode ? endpointDistance * 8.0 : 120.0;
                 var score =
                     (cluster.Priority * 80.0) +
