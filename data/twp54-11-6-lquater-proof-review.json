@@ -1,0 +1,30 @@
+{
+  "checks": [
+    {
+      "type": "segment_match",
+      "layer": "L-QUATER",
+      "endpoint_tolerance": 0.2,
+      "a": [
+        334773.095,
+        5945911.548
+      ],
+      "b": [
+        334744.16,
+        5945087.548
+      ]
+    },
+    {
+      "type": "segment_match",
+      "layer": "L-QUATER",
+      "endpoint_tolerance": 0.2,
+      "a": [
+        326652.145,
+        5946202.652
+      ],
+      "b": [
+        326621.794,
+        5945378.67
+      ]
+    }
+  ]
+}

@@ -24,6 +24,32 @@
       ]
     },
     {
+      "type": "segment_match",
+      "layer": "L-QUATER",
+      "endpoint_tolerance": 0.2,
+      "a": [
+        587573.623,
+        5952698.477
+      ],
+      "b": [
+        588394.243,
+        5952713.003
+      ]
+    },
+    {
+      "type": "segment_match",
+      "layer": "L-QUATER",
+      "endpoint_tolerance": 0.2,
+      "a": [
+        588394.243,
+        5952713.003
+      ],
+      "b": [
+        589194.148,
+        5952728.097
+      ]
+    },
+    {
       "type": "point_match",
       "layers": [
         "L-QSEC",
@@ -82,6 +108,44 @@
       "point": [
         587573.623,
         5952698.477
+      ]
+    },
+    {
+      "type": "point_match",
+      "layers": [
+        "L-QUATER"
+      ],
+      "point_kind": "endpoint",
+      "tolerance": 0.2,
+      "point": [
+        586028.068,
+        5951069.999
+      ]
+    },
+    {
+      "type": "segment_match",
+      "layer": "L-QUATER",
+      "endpoint_tolerance": 0.2,
+      "a": [
+        581204.567,
+        5946928.582
+      ],
+      "b": [
+        581220.404,
+        5946106.821
+      ]
+    },
+    {
+      "type": "segment_match",
+      "layer": "L-QUATER",
+      "endpoint_tolerance": 0.2,
+      "a": [
+        581266.901,
+        5943694.223
+      ],
+      "b": [
+        581282.777,
+        5942870.514
       ]
     },
     {

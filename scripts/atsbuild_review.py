@@ -250,6 +250,8 @@ def run_segment_match(entities, check):
 
     best = None
     for entity in entities:
+        if entity.get("layer") != expected_layer:
+            continue
         direct = distance(entity["a"], expected_a) + distance(entity["b"], expected_b)
         reverse = distance(entity["a"], expected_b) + distance(entity["b"], expected_a)
         delta = min(direct, reverse)
@@ -262,7 +264,6 @@ def run_segment_match(entities, check):
     passed = (
         best is not None
         and best["delta"] <= endpoint_tolerance
-        and best["entity"]["layer"] == expected_layer
     )
     return {
         "type": "segment_match",

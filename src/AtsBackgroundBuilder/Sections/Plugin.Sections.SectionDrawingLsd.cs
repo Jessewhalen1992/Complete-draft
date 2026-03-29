@@ -547,8 +547,10 @@ namespace AtsBackgroundBuilder
 
                 var drawn = 0;
                 var protectedSouthMidCorners = new List<Point2d>();
+                var protectedNorthMidCorners = new List<Point2d>();
                 var protectedWestBoundaryCorners = new List<Point2d>();
                 var protectedEastBoundaryCorners = new List<Point2d>();
+                var quarterBoxInfos = new List<(ObjectId BoxId, QuarterViewSectionFrame Frame, QuarterSelection Quarter)>();
                 foreach (var frame in frames)
                 {
                     var emitQuarterVerify = (frame.SectionNumber >= 1 && frame.SectionNumber <= 6) ||
@@ -1090,6 +1092,39 @@ namespace AtsBackgroundBuilder
                         northAtMidV = ClampQuarterNorthBoundaryVToLimit(northMidV, northBoundaryLimitV);
                     }
 
+                    if (!hasNorthBoundarySegment &&
+                        !dividerSegmentId.IsNull &&
+                        dividerLineA.GetDistanceTo(dividerLineB) > 1e-6)
+                    {
+                        var divRelA = dividerLineA - frame.Origin;
+                        var divRelB = dividerLineB - frame.Origin;
+                        if (!TryConvertQuarterWorldToLocal(frame, dividerLineA, out var divAu, out var divAv) ||
+                            !TryConvertQuarterWorldToLocal(frame, dividerLineB, out var divBu, out var divBv))
+                        {
+                            divAu = divRelA.DotProduct(frame.EastUnit);
+                            divAv = divRelA.DotProduct(frame.NorthUnit);
+                            divBu = divRelB.DotProduct(frame.EastUnit);
+                            divBv = divRelB.DotProduct(frame.NorthUnit);
+                        }
+
+                        var divLocalA = new Point2d(divAu, divAv);
+                        var divLocalB = new Point2d(divBu, divBv);
+                        var dividerNorthEndpoint = divLocalA.Y >= divLocalB.Y ? divLocalA : divLocalB;
+                        var currentNorthMid = new Point2d(northAtMidU, northAtMidV);
+                        var northMidMove = currentNorthMid.GetDistanceTo(dividerNorthEndpoint);
+                        const double maxDividerNorthMidMove = 30.0;
+                        if (dividerNorthEndpoint.Y >= (centerV + minQuarterSpan) &&
+                            dividerNorthEndpoint.Y <= (frame.NorthEdgeV + dividerIntersectionDriftTolerance) &&
+                            northMidMove <= maxDividerNorthMidMove)
+                        {
+                            northAtMidU = dividerNorthEndpoint.X;
+                            northAtMidV = ClampQuarterNorthBoundaryVToLimit(dividerNorthEndpoint.Y, northBoundaryLimitV);
+                            logger?.WriteLine(
+                                $"VERIFY-QTR-NORTHMID-DIVEND sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                $"u={northAtMidU:0.###} v={northAtMidV:0.###} move={northMidMove:0.###} dividerSource={dividerSource}");
+                        }
+                    }
+
                     if (IsOutsideRange(
                             westAtMidV,
                             frame.SouthEdgeV - dividerIntersectionDriftTolerance,
@@ -1282,9 +1317,13 @@ namespace AtsBackgroundBuilder
                             frame,
                             hardBoundaryCornerClusters,
                             nwSnapPreferredU,
+                            westExpectedOffset,
+                            RoadAllowanceSecWidthMeters,
                             northBand: true,
                             new Point2d(westAtNorthU, northAtWestV),
                             maxMove: hasRawNorthWestIntersection ? 5.0 : 90.0,
+                            boundarySegments,
+                            requireEndpointNode: false,
                             out var snappedWestNorthLocal,
                             out var snappedWestNorthPriority))
                     {
@@ -1310,14 +1349,18 @@ namespace AtsBackgroundBuilder
                             frame,
                             hardBoundaryCornerClusters,
                             westAtMidU,
+                            westExpectedOffset,
+                            Math.Max(southFallbackOffset, RoadAllowanceSecWidthMeters),
                             northBand: false,
                             new Point2d(westAtSouthU, southAtWestV),
-                            maxMove: 5.0,
+                            maxMove: 35.0,
+                            boundarySegments,
+                            requireEndpointNode: true,
                             out var snappedWestSouthLocal,
                             out var snappedWestSouthPriority))
                     {
                         var southSnapMove = new Point2d(westAtSouthU, southAtWestV).GetDistanceTo(snappedWestSouthLocal);
-                        if (snappedWestSouthPriority <= 0 && southSnapMove <= 5.0)
+                        if (snappedWestSouthPriority <= 0 && southSnapMove <= 35.0)
                         {
                             westAtSouthU = snappedWestSouthLocal.X;
                             southAtWestV = snappedWestSouthLocal.Y;
@@ -1328,6 +1371,44 @@ namespace AtsBackgroundBuilder
                                     $"VERIFY-QTR-SW-SW-SNAP sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
                                     $"u={westAtSouthU:0.###} v={southAtWestV:0.###} priority={snappedWestSouthPriority} move={southSnapMove:0.###}");
                             }
+                        }
+                    }
+
+                    if (!isCorrectionSouthBoundary)
+                    {
+                        var sharedWestSouthSource = string.Empty;
+                        if (TryResolveWestCornerFromProtectedBoundaryCorners(
+                                frame,
+                                protectedEastBoundaryCorners,
+                                northBand: false,
+                                new Point2d(westAtSouthU, southAtWestV),
+                                out var sharedWestSouthLocal,
+                                out var sharedWestSouthMove))
+                        {
+                            sharedWestSouthSource = "east";
+                            westAtSouthU = sharedWestSouthLocal.X;
+                            southAtWestV = sharedWestSouthLocal.Y;
+                            southWestLockedByApparentIntersection = true;
+                        }
+                        else if (TryResolveWestCornerFromProtectedBoundaryCorners(
+                                     frame,
+                                     protectedWestBoundaryCorners,
+                                     northBand: false,
+                                     new Point2d(westAtSouthU, southAtWestV),
+                                     out sharedWestSouthLocal,
+                                     out sharedWestSouthMove))
+                        {
+                            sharedWestSouthSource = "west";
+                            westAtSouthU = sharedWestSouthLocal.X;
+                            southAtWestV = sharedWestSouthLocal.Y;
+                            southWestLockedByApparentIntersection = true;
+                        }
+
+                        if (southWestLockedByApparentIntersection && emitQuarterVerify && !string.IsNullOrEmpty(sharedWestSouthSource))
+                        {
+                            logger?.WriteLine(
+                                $"VERIFY-QTR-SW-SW-SHARED sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                $"u={westAtSouthU:0.###} v={southAtWestV:0.###} move={sharedWestSouthMove:0.###} source={sharedWestSouthSource}");
                         }
                     }
 
@@ -1905,6 +1986,8 @@ namespace AtsBackgroundBuilder
                                         northBand: true,
                                         new Point2d(northAtEastU, northAtEastV),
                                         maxMove: hasRawNorthEastIntersection ? 65.0 : 85.0,
+                                        boundarySegments,
+                                        requireEndpointNode: false,
                                         out var snappedEastNorthLocal,
                                         out var snappedEastNorthPriority))
                                 {
@@ -1926,6 +2009,33 @@ namespace AtsBackgroundBuilder
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    if (!hasNorthBoundarySegment &&
+                        hasEastBoundarySegment &&
+                        TryResolveEastBandCornerFromHardBoundaries(
+                            frame,
+                            hardBoundaryCornerClusters,
+                            northAtEastU,
+                            northBand: true,
+                            new Point2d(northAtEastU, northAtEastV),
+                            maxMove: 35.0,
+                            boundarySegments,
+                            requireEndpointNode: true,
+                            out var snappedFallbackEastNorthLocal,
+                            out var snappedFallbackEastNorthPriority))
+                    {
+                        var northEastSnapMove =
+                            new Point2d(northAtEastU, northAtEastV).GetDistanceTo(snappedFallbackEastNorthLocal);
+                        northAtEastU = snappedFallbackEastNorthLocal.X;
+                        northAtEastV = snappedFallbackEastNorthLocal.Y;
+                        northEastLockedByApparentIntersection = true;
+                        if (emitQuarterVerify)
+                        {
+                            logger?.WriteLine(
+                                $"VERIFY-QTR-NE-NE-SNAP sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                $"u={northAtEastU:0.###} v={northAtEastV:0.###} priority={snappedFallbackEastNorthPriority} move={northEastSnapMove:0.###}");
                         }
                     }
 
@@ -1954,6 +2064,7 @@ namespace AtsBackgroundBuilder
                     var northMid = QuarterViewLocalToWorld(frame, northAtMidU, northAtMidV);
                     var eastMid = QuarterViewLocalToWorld(frame, eastAtMidU, eastAtMidV);
                     protectedSouthMidCorners.Add(swSe);
+                    protectedNorthMidCorners.Add(northMid);
                     var nwW = QuarterViewLocalToWorld(frame, westAtNorthU, westNorthV);
                     logger?.WriteLine(
                         $"Quarter view SW coords sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
@@ -1995,40 +2106,60 @@ namespace AtsBackgroundBuilder
                         modelSpace,
                         transaction,
                         frame,
+                        out var swBoxId,
                         new Point2d(westAtMidU, westAtMidV),
                         new Point2d(centerU, centerV),
                         new Point2d(southAtMidU, southAtMidV),
                         new Point2d(westAtSouthU, westSouthV));
+                    if (!swBoxId.IsNull)
+                    {
+                        quarterBoxInfos.Add((swBoxId, frame, QuarterSelection.SouthWest));
+                    }
 
                     // SE: south RA only.
                     drawn += DrawQuarterViewPolygonFromLocal(
                         modelSpace,
                         transaction,
                         frame,
+                        out var seBoxId,
                         new Point2d(centerU, centerV),
                         new Point2d(eastAtMidU, eastAtMidV),
                         new Point2d(southAtEastU, eastSouthV),
                         new Point2d(southAtMidU, southAtMidV));
+                    if (!seBoxId.IsNull)
+                    {
+                        quarterBoxInfos.Add((seBoxId, frame, QuarterSelection.SouthEast));
+                    }
 
                     // NW: west RA only.
                     drawn += DrawQuarterViewPolygonFromLocal(
                         modelSpace,
                         transaction,
                         frame,
+                        out var nwBoxId,
                         new Point2d(westAtNorthU, westNorthV),
                         new Point2d(northAtMidU, northAtMidV),
                         new Point2d(centerU, centerV),
                         new Point2d(westAtMidU, westAtMidV));
+                    if (!nwBoxId.IsNull)
+                    {
+                        quarterBoxInfos.Add((nwBoxId, frame, QuarterSelection.NorthWest));
+                    }
 
                     // NE: east-side apparent boundary + north boundary.
                     drawn += DrawQuarterViewPolygonFromLocal(
                         modelSpace,
                         transaction,
                         frame,
+                        out var neBoxId,
                         new Point2d(northAtMidU, northAtMidV),
                         new Point2d(northAtEastU, eastNorthV),
                         new Point2d(eastAtMidU, eastAtMidV),
                         new Point2d(centerU, centerV));
+                    if (!neBoxId.IsNull)
+                    {
+                        quarterBoxInfos.Add((neBoxId, frame, QuarterSelection.NorthEast));
+                    }
 
                     logger?.WriteLine(
                         $"Quarter view section {frame.SectionId.Handle}: west={westSource} ({westAtMidU:0.###}), east={eastSource} ({eastAtMidU:0.###}), south={southSource} ({southAtMidV:0.###}), north={northSource} ({northAtMidV:0.###}).");
@@ -2041,9 +2172,95 @@ namespace AtsBackgroundBuilder
                         protectedEastBoundaryCorners.Add(seSe);
                     }
 
-                    if (hasEastBoundarySegment && hasNorthBoundarySegment)
+                    if (hasEastBoundarySegment &&
+                        (hasNorthBoundarySegment || northEastLockedByApparentIntersection))
                     {
                         protectedEastBoundaryCorners.Add(neNe);
+                    }
+                }
+
+                var reconciledWestSharedVertices = 0;
+                var reconciledWestSharedBoxes = 0;
+                foreach (var quarterBoxInfo in quarterBoxInfos)
+                {
+                    var quarter = quarterBoxInfo.Quarter;
+                    if (quarter != QuarterSelection.SouthWest &&
+                        quarter != QuarterSelection.NorthWest)
+                    {
+                        continue;
+                    }
+
+                    if (quarterBoxInfo.BoxId.IsNull ||
+                        !(transaction.GetObject(quarterBoxInfo.BoxId, OpenMode.ForRead, false) is Polyline quarterBox) ||
+                        quarterBox.IsErased ||
+                        !quarterBox.Closed)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        quarterBox.UpgradeOpen();
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    var cornerIndex = quarter == QuarterSelection.NorthWest ? 0 : 3;
+                    if (quarterBox.NumberOfVertices <= cornerIndex)
+                    {
+                        continue;
+                    }
+
+                    var cornerWorld = quarterBox.GetPoint2dAt(cornerIndex);
+                    if (!TryConvertQuarterWorldToLocal(quarterBoxInfo.Frame, cornerWorld, out var cornerU, out var cornerV))
+                    {
+                        continue;
+                    }
+
+                    var currentLocal = new Point2d(cornerU, cornerV);
+                    var northBand = quarter == QuarterSelection.NorthWest;
+                    var sharedSource = string.Empty;
+                    if (TryResolveWestCornerFromProtectedBoundaryCorners(
+                            quarterBoxInfo.Frame,
+                            protectedEastBoundaryCorners,
+                            northBand,
+                            currentLocal,
+                            out var sharedLocal,
+                            out var sharedMove))
+                    {
+                        sharedSource = "east";
+                        var sharedWorld = QuarterViewLocalToWorld(quarterBoxInfo.Frame, sharedLocal.X, sharedLocal.Y);
+                        if (cornerWorld.GetDistanceTo(sharedWorld) > 0.01)
+                        {
+                            quarterBox.SetPointAt(cornerIndex, sharedWorld);
+                            reconciledWestSharedVertices++;
+                            reconciledWestSharedBoxes++;
+                            logger?.WriteLine(
+                                $"VERIFY-QTR-WEST-SHARED-POST sec={quarterBoxInfo.Frame.SectionNumber} handle={quarterBoxInfo.Frame.SectionId.Handle}: " +
+                                $"quarter={quarter} source={sharedSource} move={sharedMove:0.###}");
+                        }
+                    }
+                    else if (TryResolveWestCornerFromProtectedBoundaryCorners(
+                                 quarterBoxInfo.Frame,
+                                 protectedWestBoundaryCorners,
+                                 northBand,
+                                 currentLocal,
+                                 out sharedLocal,
+                                 out sharedMove))
+                    {
+                        sharedSource = "west";
+                        var sharedWorld = QuarterViewLocalToWorld(quarterBoxInfo.Frame, sharedLocal.X, sharedLocal.Y);
+                        if (cornerWorld.GetDistanceTo(sharedWorld) > 0.01)
+                        {
+                            quarterBox.SetPointAt(cornerIndex, sharedWorld);
+                            reconciledWestSharedVertices++;
+                            reconciledWestSharedBoxes++;
+                            logger?.WriteLine(
+                                $"VERIFY-QTR-WEST-SHARED-POST sec={quarterBoxInfo.Frame.SectionNumber} handle={quarterBoxInfo.Frame.SectionId.Handle}: " +
+                                $"quarter={quarter} source={sharedSource} move={sharedMove:0.###}");
+                        }
                     }
                 }
 
@@ -2092,6 +2309,7 @@ namespace AtsBackgroundBuilder
                         var vertex = box.GetPoint2dAt(vi);
                         if (TryGetProtectedQuarterCorner(
                                 protectedSouthMidCorners,
+                                protectedNorthMidCorners,
                                 protectedWestBoundaryCorners,
                                 protectedEastBoundaryCorners,
                                 vertex,
@@ -2131,6 +2349,7 @@ namespace AtsBackgroundBuilder
                 }
 
                 logger?.WriteLine($"Quarter view: refreshed {drawn} quarter box(es) across {frames.Count} section(s); erased {erased} stale box(es).");
+                logger?.WriteLine($"Quarter view: shared-corner reconciliation adjusted {reconciledWestSharedVertices} west-boundary corner(s) across {reconciledWestSharedBoxes} quarter box(es).");
                 logger?.WriteLine($"Quarter view: endpoint snap adjusted {snappedVertices} vertex/vertices across {snappedBoxes} quarter box(es).");
                 transaction.Commit();
             }
@@ -2536,9 +2755,13 @@ namespace AtsBackgroundBuilder
             QuarterViewSectionFrame frame,
             IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
             double preferredWestU,
+            double expectedWestInset,
+            double expectedSideInset,
             bool northBand,
             Point2d currentLocal,
             double maxMove,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> segments,
+            bool requireEndpointNode,
             out Point2d resolvedLocal,
             out int resolvedPriority)
         {
@@ -2552,6 +2775,15 @@ namespace AtsBackgroundBuilder
             const double westWindowPadding = 20.0;
             const double verticalBandPadding = 20.0;
             const double maxWestGap = 70.0;
+            const double endpointTol = 0.55;
+            const double maxAllowedInsetRegression = 2.0;
+            var currentInsetScore = ComputeQuarterWestCornerInsetScore(
+                frame,
+                northBand,
+                currentLocal.X,
+                currentLocal.Y,
+                expectedWestInset,
+                expectedSideInset);
             var found = false;
             var bestScore = double.MaxValue;
             for (var i = 0; i < cornerClusters.Count; i++)
@@ -2602,12 +2834,49 @@ namespace AtsBackgroundBuilder
                     continue;
                 }
 
-                var score =
-                    (cluster.Priority * 100.0) +
-                    (westGap * 4.0) +
-                    (edgeGap * 3.0) +
-                    (move * 0.5) -
-                    Math.Min(cluster.Count, 6);
+                var endpointDistance = double.MaxValue;
+                var hasEndpointNode = segments != null &&
+                                      segments.Count > 0 &&
+                                      HasQuarterViewEndpointHorizontalAndVerticalEvidence(
+                                          frame,
+                                          segments,
+                                          cluster.Rep,
+                                          endpointTol,
+                                          out endpointDistance);
+                if (requireEndpointNode && !hasEndpointNode)
+                {
+                    continue;
+                }
+
+                double score;
+                if (requireEndpointNode)
+                {
+                    var insetScore = ComputeQuarterWestCornerInsetScore(
+                        frame,
+                        northBand,
+                        u,
+                        v,
+                        expectedWestInset,
+                        expectedSideInset);
+                    if (insetScore > currentInsetScore + maxAllowedInsetRegression)
+                    {
+                        continue;
+                    }
+                    score =
+                        (cluster.Priority * 80.0) +
+                        (endpointDistance * 8.0) +
+                        (insetScore * 2.0) +
+                        (move * 0.5);
+                }
+                else
+                {
+                    score =
+                        (cluster.Priority * 100.0) +
+                        (westGap * 4.0) +
+                        (edgeGap * 3.0) +
+                        (move * 0.5) -
+                        Math.Min(cluster.Count, 6);
+                }
                 if (!found || score < bestScore)
                 {
                     found = true;
@@ -2620,6 +2889,21 @@ namespace AtsBackgroundBuilder
             return found;
         }
 
+        private static double ComputeQuarterWestCornerInsetScore(
+            QuarterViewSectionFrame frame,
+            bool northBand,
+            double u,
+            double v,
+            double expectedWestInset,
+            double expectedSideInset)
+        {
+            var westInset = frame.WestEdgeU - u;
+            var sideInset = northBand
+                ? frame.NorthEdgeV - v
+                : frame.SouthEdgeV - v;
+            return Math.Abs(westInset - expectedWestInset) + Math.Abs(sideInset - expectedSideInset);
+        }
+
         private static bool TryResolveEastBandCornerFromHardBoundaries(
             QuarterViewSectionFrame frame,
             IReadOnlyList<(Point2d Rep, int Count, bool HasHorizontal, bool HasVertical, int Priority)> cornerClusters,
@@ -2627,6 +2911,8 @@ namespace AtsBackgroundBuilder
             bool northBand,
             Point2d currentLocal,
             double maxMove,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> segments,
+            bool requireEndpointNode,
             out Point2d resolvedLocal,
             out int resolvedPriority)
         {
@@ -2640,6 +2926,7 @@ namespace AtsBackgroundBuilder
             const double eastWindowPadding = 20.0;
             const double verticalBandPadding = 20.0;
             const double maxEastGap = 120.0;
+            const double endpointTol = 0.55;
             var found = false;
             var bestScore = double.MaxValue;
             for (var i = 0; i < cornerClusters.Count; i++)
@@ -2690,18 +2977,124 @@ namespace AtsBackgroundBuilder
                     continue;
                 }
 
-                var score =
-                    (cluster.Priority * 100.0) +
-                    (eastGap * 4.0) +
-                    (edgeGap * 3.0) +
-                    (move * 0.5) -
-                    Math.Min(cluster.Count, 6);
+                var endpointDistance = double.MaxValue;
+                var hasEndpointNode = segments != null &&
+                                      segments.Count > 0 &&
+                                      HasQuarterViewEndpointHorizontalAndVerticalEvidence(
+                                          frame,
+                                          segments,
+                                          cluster.Rep,
+                                          endpointTol,
+                                          out endpointDistance);
+                if (requireEndpointNode && !hasEndpointNode)
+                {
+                    continue;
+                }
+
+                double score;
+                if (requireEndpointNode)
+                {
+                    var eastInset = frame.EastEdgeU - u;
+                    var sideInset = northBand
+                        ? frame.NorthEdgeV - v
+                        : frame.SouthEdgeV - v;
+                    var insetTarget = RoadAllowanceSecWidthMeters;
+                    var insetScore = Math.Abs(eastInset - insetTarget) + Math.Abs(sideInset - insetTarget);
+                    score =
+                        (cluster.Priority * 80.0) +
+                        (endpointDistance * 8.0) +
+                        (insetScore * 2.0) +
+                        (move * 0.5);
+                }
+                else
+                {
+                    score =
+                        (cluster.Priority * 100.0) +
+                        (eastGap * 4.0) +
+                        (edgeGap * 3.0) +
+                        (move * 0.5) -
+                        Math.Min(cluster.Count, 6);
+                }
                 if (!found || score < bestScore)
                 {
                     found = true;
                     bestScore = score;
                     resolvedLocal = new Point2d(u, v);
                     resolvedPriority = cluster.Priority;
+                }
+            }
+
+            return found;
+        }
+
+        private static bool TryResolveWestCornerFromProtectedBoundaryCorners(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<Point2d> protectedBoundaryCorners,
+            bool northBand,
+            Point2d currentLocal,
+            out Point2d resolvedLocal,
+            out double resolvedMove)
+        {
+            resolvedLocal = currentLocal;
+            resolvedMove = double.MaxValue;
+            if (protectedBoundaryCorners == null || protectedBoundaryCorners.Count == 0)
+            {
+                return false;
+            }
+
+            const double maxMove = 40.0;
+            const double westWindowPadding = 60.0;
+            const double verticalBandPadding = 40.0;
+            var found = false;
+            var bestScore = double.MaxValue;
+            for (var i = 0; i < protectedBoundaryCorners.Count; i++)
+            {
+                var candidateWorld = protectedBoundaryCorners[i];
+                if (!TryConvertQuarterWorldToLocal(frame, candidateWorld, out var u, out var v))
+                {
+                    continue;
+                }
+
+                if (u < (frame.WestEdgeU - verticalBandPadding) || u > (frame.MidU + westWindowPadding))
+                {
+                    continue;
+                }
+
+                if (northBand)
+                {
+                    if (v < (frame.MidV - verticalBandPadding) || v > (frame.NorthEdgeV + verticalBandPadding))
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    if (v < (frame.SouthEdgeV - verticalBandPadding) || v > (frame.MidV + verticalBandPadding))
+                    {
+                        continue;
+                    }
+                }
+
+                var candidateLocal = new Point2d(u, v);
+                var move = candidateLocal.GetDistanceTo(currentLocal);
+                if (move <= 1e-3 || move > maxMove)
+                {
+                    continue;
+                }
+
+                var westInset = frame.WestEdgeU - u;
+                var sideInset = northBand
+                    ? frame.NorthEdgeV - v
+                    : frame.SouthEdgeV - v;
+                var insetTarget = RoadAllowanceSecWidthMeters;
+                var insetScore = Math.Abs(westInset - insetTarget) + Math.Abs(sideInset - insetTarget);
+                var score = (insetScore * 2.0) + (move * 0.5);
+                if (!found || score < bestScore)
+                {
+                    found = true;
+                    bestScore = score;
+                    resolvedLocal = candidateLocal;
+                    resolvedMove = move;
                 }
             }
 
@@ -2972,7 +3365,7 @@ namespace AtsBackgroundBuilder
                 var eastInset = frame.EastEdgeU - u;
                 var sideInset = northBand
                     ? frame.NorthEdgeV - v
-                    : v - frame.SouthEdgeV;
+                    : frame.SouthEdgeV - v;
                 var insetTarget = RoadAllowanceSecWidthMeters;
                 var insetScore = Math.Abs(eastInset - insetTarget) + Math.Abs(sideInset - insetTarget);
                 var endpointPenalty = hasEndpointNode ? endpointDistance * 8.0 : 120.0;
@@ -4438,6 +4831,7 @@ namespace AtsBackgroundBuilder
 
         private static bool TryGetProtectedQuarterCorner(
             IReadOnlyList<Point2d> protectedSouthMidCorners,
+            IReadOnlyList<Point2d> protectedNorthMidCorners,
             IReadOnlyList<Point2d> protectedWestBoundaryCorners,
             IReadOnlyList<Point2d> protectedEastBoundaryCorners,
             Point2d point,
@@ -4445,6 +4839,7 @@ namespace AtsBackgroundBuilder
         {
             corner = default;
             if (protectedSouthMidCorners.Count == 0 &&
+                protectedNorthMidCorners.Count == 0 &&
                 protectedWestBoundaryCorners.Count == 0 &&
                 protectedEastBoundaryCorners.Count == 0)
             {
@@ -4453,6 +4848,7 @@ namespace AtsBackgroundBuilder
 
             const double tolerance = 0.05;
             return TryFindQuarterCornerWithinTolerance(protectedSouthMidCorners, point, tolerance, out corner) ||
+                   TryFindQuarterCornerWithinTolerance(protectedNorthMidCorners, point, tolerance, out corner) ||
                    TryFindQuarterCornerWithinTolerance(protectedWestBoundaryCorners, point, tolerance, out corner) ||
                    TryFindQuarterCornerWithinTolerance(protectedEastBoundaryCorners, point, tolerance, out corner);
         }
@@ -7206,8 +7602,10 @@ namespace AtsBackgroundBuilder
             BlockTableRecord modelSpace,
             Transaction transaction,
             QuarterViewSectionFrame frame,
+            out ObjectId polyId,
             params Point2d[] localPoints)
         {
+            polyId = ObjectId.Null;
             if (modelSpace == null || transaction == null)
             {
                 return 0;
@@ -7268,7 +7666,22 @@ namespace AtsBackgroundBuilder
             }
             modelSpace.AppendEntity(poly);
             transaction.AddNewlyCreatedDBObject(poly, true);
+            polyId = poly.ObjectId;
             return 1;
+        }
+
+        private static int DrawQuarterViewPolygonFromLocal(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            QuarterViewSectionFrame frame,
+            params Point2d[] localPoints)
+        {
+            return DrawQuarterViewPolygonFromLocal(
+                modelSpace,
+                transaction,
+                frame,
+                out _,
+                localPoints);
         }
 
         private static void EnsureSecTypeLayers(

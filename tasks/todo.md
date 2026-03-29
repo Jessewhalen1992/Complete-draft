@@ -7298,3 +7298,122 @@ Review 2026-03-27 (user-corrected L-SEC constraint):
 - Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
 - FullAutoCAD 59-12-5 review passed in `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\twp59-12-5-top-ra-run-rerun11\artifacts\review-report.json`, preserving the intended narrow `L-USEC-2012` seam extension at `579920.370,6001167.954 -> 580726.156,6001182.357`.
 - FullAutoCAD 54-12-5 review passed in `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\twp54-12-5-geometry-run-rerun17\artifacts\review-report.json` after replacing the bad visible-`L-SEC` proxy with the actual shared endpoint guard at `587573.623,5952698.477`.
+
+## 2026-03-27 - Repo release build rerun
+- [x] Review project lessons and current build entrypoints.
+- [x] Build `src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln` in Release.
+- [x] Build `wls_program/src/WildlifeSweeps/WildlifeSweeps.sln` in Release.
+- [x] Record the build results.
+
+Review 2026-03-27 (repo release build rerun):
+- ATS release build passed: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release /m:1 -v:minimal`.
+- ATS output: `C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll`.
+- ATS decision-test project also built as part of the solution: `C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\src\AtsBackgroundBuilder.DecisionTests\bin\Release\net8.0\AtsBackgroundBuilder.DecisionTests.dll`.
+- ATS reported the same two pre-existing CS0219 warnings for unused `axisTol` locals in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs:1750` and `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs:733`.
+- WLS release build passed: `dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release /m:1 -v:minimal`.
+- WLS output: `C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\src\WildlifeSweeps\bin\Release\net8.0-windows\WildlifeSweeps.dll`.
+- WLS finished with `0` warnings and `0` errors.
+
+## 2026-03-27 - ATS 54-12-5 L-QUATER endpoint follow-up
+- [x] Review the recent 54-12-5 quarter-definition lessons and prior verification notes.
+- [x] Reproduce the exact bad `L-QUATER` endpoints landing at `588413.423,5952713.884` instead of `588394.243,5952713.003`.
+- [x] Trace the shared quarter-view target-selection path that is still allowing the stale endpoint cluster to win.
+- [x] Implement a general ATS fix without section-specific fallback behavior.
+- [x] Rerun focused AutoCAD verification for the exact 54-12-5 drawing once the local DWG/harness inputs are available in this workspace.
+
+Review 2026-03-27 (ATS 54-12-5 L-QUATER endpoint follow-up):
+- Root cause: the bad point was not coming from late `L-SEC` helper movement this time. In the sec 35 quarter-view path inside `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`, the shared north-mid `L-QUATER` corner only snapped to the divider when a north boundary segment had been resolved. In the reproduced runtime log, sec 35 was on `northSource=fallback-north`, so `northAtMidU` stayed on the synthetic `centerU` fallback even though the live `L-QSEC` divider already had the correct north endpoint at `588394.243,5952713.003`. Because that north-mid point was also not part of the protected quarter-corner set, the two quarter boxes sharing it could finish on the stale shifted point the user reported.
+- Fix: when quarter view has a live `L-QSEC` divider but no resolved north boundary segment, the code now prefers the divider's north endpoint as the shared north-mid authority when it is the better local fit. The final `L-QUATER` box post-snap also now protects north-mid shared corners the same way it already protects south-mid and east/west boundary corners, so the two quarter boxes cannot drift together onto a stale endpoint cluster afterward.
+- Review guard: updated `data/twp54-12-5-geometry-review.json` so future focused harness runs must match the two `L-QUATER` north-edge segments `587573.623,5952698.477 -> 588394.243,5952713.003` and `588394.243,5952713.003 -> 589216.464,5952731.171`, not just the old `L-SEC`/`L-QSEC` point check.
+- Verification completed locally:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing CS0219 `axisTol` warnings.
+- `dotnet .\src\AtsBackgroundBuilder.DecisionTests\bin\Release\net8.0\AtsBackgroundBuilder.DecisionTests.dll` passed.
+- `Get-Content data\twp54-12-5-geometry-review.json | ConvertFrom-Json` passed, confirming the tightened review config is valid JSON.
+- AutoCAD proof update 2026-03-28:
+- FullAutoCAD rerun now works locally from `C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0` using `scripts\atsbuild_harness.ps1` plus the local shell DWG `data\quarter-correctionline-run\accore-isolate\Local\Template\Generic 24in x 36in Title Block.dwg`.
+- The first real FullAutoCAD proof in `data\twp54-12-5-geometry-run-proof-autocad\artifacts\review-report.json` reproduced the issue cleanly: with default XLS batch cleanup, `L-QUATER` was erased before DXF review and the tightened segment guards only found the stale `L-SEC` segments.
+- Root-cause follow-up: the north-mid fix was already working, but the sec 35 NE `L-QUATER` corner was still being moved in the final snap pass because east-side quarter corners were only protected when an explicit north boundary segment existed. That let a fallback-north corner drift onto a nearby stale hard endpoint.
+- Final fix: keep the computed east-side NE quarter corner in the protected-corner set whenever an east boundary segment has been resolved, matching the existing west-side protection behavior and preventing the late snap pass from overriding the intended corner.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed again with the same two pre-existing CS0219 `axisTol` warnings.
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- FullAutoCAD proof with quarter view preserved (`ATSBUILD_QUATERVIEW=1`) now matches the exact reported `L-QUATER` north-edge segments in `data\twp54-12-5-geometry-run-proof-autocad-qv-rerun2\artifacts\review-report.json`.
+- Focused proof review for this bug passes in `data\twp54-12-5-geometry-run-proof-autocad-qv-rerun2\artifacts\lquater-proof-review.json` using `data\twp54-12-5-lquater-proof-review.json`.
+- Remaining unrelated gap: the broader `data\twp54-12-5-geometry-review.json` still contains a legacy `DAB_APPL` endpoint guard at `586028.068,5951069.999` that fails in this harness template even though the quarter-line proof now passes.
+
+## 2026-03-28 - ATS 54-12-5 follow-up shared quarter-corner corrections
+- [x] Reproduce the remaining user-reported quarter-corner misses for `SW.SW 34-54-12-5` and `NE.NE 35-54-12-5` from the latest FullAutoCAD proof artifacts.
+- [x] Trace the shared quarter-corner resolution path and identify why those corners still choose the wrong hard node.
+- [x] Implement a general fix without section-specific fallback behavior.
+- [x] Rebuild ATS and rerun focused FullAutoCAD proof with explicit guards for the corrected `SW.SW 34` and `NE.NE 35` endpoints.
+
+Review 2026-03-28 (shared quarter-corner corrections):
+- User correction: the right legal targets were `SW.SW 34 -> 586028.068,5951069.999` and `NE.NE 35 -> 589194.148,5952728.097`; my earlier focused proof had the `NE.NE 35` target wrong.
+- Root cause 1: `SW.SW 34` was still resolving from the raw west/south section-box geometry even though the adjacent section had already produced the correct inset east-side quarter corner on the shared boundary. The old hard-boundary-only west-band snap could not see that prior quarter-derived owner.
+- Root cause 2: `NE.NE 35` was in the `northSource=fallback-north` path, and the east-band hard-node scorer still preferred the outer east endpoint when it scored against the raw east boundary location instead of the legal quarter inset target.
+- Fix 1: added a general west-corner handoff that can reuse a previously resolved neighboring east quarter corner on the same shared section boundary when that yields the correct quarter inset.
+- Fix 2: changed the endpoint-evidence east/west band snap scoring to prefer the legal quarter inset target instead of the raw outer boundary position, added a fallback north-band east snap for no-north-segment cases, and only protect the east NE quarter corner after that stronger resolution actually wins.
+- Fix 3: corrected `scripts/atsbuild_review.py` so `segment_match` filters by the expected layer before choosing the best candidate; overlapping `L-SEC`/`L-QUATER` segments were causing false review failures.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing CS0219 `axisTol` warnings.
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- FullAutoCAD proof with quarter view preserved passed in `data\twp54-12-5-geometry-run-proof-autocad-qv-rerun5\artifacts\lquater-proof-review.json`, verifying `SW.SW 34`, the shared north-mid at `588394.243,5952713.003`, `NW.NW 35 -> 587573.623,5952698.477`, and `NE.NE 35 -> 589194.148,5952728.097`.
+- The updated broad review in `data\twp54-12-5-geometry-run-proof-autocad-qv-rerun5\artifacts\geometry-review-after-followup.json` now only fails the legacy `DAB_APPL` endpoint guard; the quarter-corner geometry checks all pass.
+
+## 2026-03-28 - ATS follow-up southwest-corner regression after shared-corner fix
+- [x] Reproduce the new reported southwest-corner regression around `581240.123,5946127.244` vs `581220.404,5946106.821` in the latest AutoCAD proof output.
+- [x] Identify why the new shared southwest-corner handoff is catching a corner that should stay on its original owner.
+- [x] Tighten the general southwest-corner rule without undoing the verified `SW.SW 34` / `NE.NE 35` fixes.
+- [x] Rebuild ATS and rerun focused AutoCAD proof so the original corrected corners and this new southwest example all pass together.
+
+Review 2026-03-28 (southwest-corner regression after shared-corner fix):
+- Root cause: the first shared-corner generalization only searched `protectedEastBoundaryCorners`, which is enough when the corrected `SW.SW` corner is owned by the west-adjoining section on the same row, but not when the corrected owner is the section directly south. The bad `L-QUATER` west edge `581204.567,5946928.582 -> 581240.123,5946127.244` needed to inherit the previously resolved west-side corner at `581220.404,5946106.821` from the lower adjoining section, not an east-side protected corner.
+- Fix: generalized the shared southwest-corner reuse path in `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs` to try protected east-side owners first and then protected west-side owners, preserving the verified `SW.SW 34` behavior while allowing north/south shared-boundary handoff for cases like this one. Quarter verify logs now record whether the shared corner came from an `east` or `west` protected owner.
+- Proof guard: tightened `data/twp54-12-5-lquater-proof-review.json` and `data/twp54-12-5-geometry-review.json` with the unique `L-QUATER` west-edge segment `581204.567,5946928.582 -> 581220.404,5946106.821`. Using the shared boundary edge alone would have been a false pass because the neighboring quarter box already emitted that segment.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing CS0219 `axisTol` warnings.
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- FullAutoCAD proof with quarter view preserved passed in `data\twp54-12-5-geometry-run-proof-autocad-qv-rerun7\artifacts\lquater-proof-review.json`, verifying the new west-edge segment plus the earlier `SW.SW 34`, shared north-mid, `NW.NW 35`, and `NE.NE 35` guards together.
+- The broader `data\twp54-12-5-geometry-run-proof-autocad-qv-rerun7\artifacts\review-report.json` still only fails the pre-existing legacy `DAB_APPL` point guard at `586028.068,5951069.999`; the quarter-corner geometry checks now all pass.
+
+## 2026-03-29 - ATS sec 6 southwest quarter-corner follow-up
+- [x] Reproduce the new `581302.492,5942891.067` vs `581282.777,5942870.514` southwest-corner miss from the latest quarter-view AutoCAD proof.
+- [x] Trace which southwest-corner snap path is still dragging that corner onto the wrong hard node.
+- [x] Tighten the general southwest-corner logic without undoing the previously verified shared-corner fixes.
+- [x] Rebuild ATS and rerun the quarter-view AutoCAD proof with an explicit guard for this sec 6 corner and the earlier quarter-corner fixes.
+
+Review 2026-03-29 (sec 6 southwest quarter-corner follow-up):
+- Root cause: the south-band inset scorer in the quarter-corner fallback helpers was still using the wrong sign for south-side distance (`v - SouthEdgeV`) while the construction logic and diagnostics treat south inset as outward distance from the south edge (`SouthEdgeV - v`). That made the legal sec 6 southwest inset corner look worse than a near-edge hard endpoint, so late fallback snaps could still pull `SW.SW` onto `581302.492,5942891.067` or `581282.389,5942890.619`.
+- Fix: corrected the south-band inset sign in the west hard-boundary fallback, the shared protected-corner scorer, and the matching east-side south-band scorer inside `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`. This keeps fallback scoring aligned with the same quarter-inset target the primary geometry logic uses, instead of favoring stale endpoint nodes near the section edge.
+- Proof guard: tightened `data/twp54-12-5-lquater-proof-review.json` and `data/twp54-12-5-geometry-review.json` with the unique sec 6 `L-QUATER` west-edge segment `581266.901,5943694.223 -> 581282.777,5942870.514`, so the proof checks the actual quarter box edge rather than a shared point that could already exist on another entity.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing CS0219 `axisTol` warnings.
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- FullAutoCAD proof with quarter view preserved passed in `data\twp54-12-5-geometry-run-proof-autocad-qv-rerun10\artifacts\lquater-proof-review.json`, verifying the new sec 6 west-edge segment plus the earlier `SW.SW 34`, shared north-mid, `NW.NW 35`, and `NE.NE 35` guards together.
+- The broader `data\twp54-12-5-geometry-run-proof-autocad-qv-rerun10\artifacts\review-report.json` still only fails the pre-existing legacy `DAB_APPL` point guard at `586028.068,5951069.999`; the quarter-corner geometry checks now all pass, including the `L-QUATER` sec 6 edge landing at `581282.777,5942870.514`.
+
+## 2026-03-29 - ATS 54-11-6 southwest quarter-corner follow-up
+- [x] Reproduce the reported `SW.SW 1-54-11-6` miss from `334744.867,5945107.646` to `334744.160,5945087.548` in a focused proof run.
+- [x] Trace which southwest-corner snap or shared-corner path is still pulling that corner off the correct shared owner.
+- [x] Tighten the general southwest-corner logic without adding a township- or section-specific exception.
+- [x] Rebuild ATS and rerun focused AutoCAD proof for `54-11-6` until the unique `L-QUATER` west-edge guard passes.
+
+Review 2026-03-29 (ATS 54-11-6 southwest quarter-corner follow-up):
+- Root cause: `SW.SW 1` was another shared-owner order problem. The sec 1 west/south corner was being drawn and hard-snapped before sec 2 later produced the correct shared `SE.SE` corner at `334744.160,5945087.548`, so the existing "reuse a prior protected corner" logic never had a chance to repair sec 1 in the same frame pass. The trace showed sec 1 locking to `334744.867,5945107.646` while sec 2 later emitted the right owner on the same shared boundary.
+- Fix: added a post-draw west-boundary shared-corner reconciliation pass in `src/AtsBackgroundBuilder/Sections/Plugin.Sections.SectionDrawingLsd.cs`. After all quarter boxes are drawn and the full protected-corner sets exist, the pass revisits west-side `SW`/`NW` quarter-box corners and reapplies the existing protected-corner scoring with full neighboring context. This keeps the fix general and removes the remaining section-order blind spot without adding a township-specific rule.
+- Proof guard: added `data/twp54-11-6-geometry-spec.json` and the focused proof config `data/twp54-11-6-lquater-proof-review.json`, using the unique `L-QUATER` west-edge segment `334773.095,5945911.548 -> 334744.160,5945087.548` so the proof checks the actual sec 1 quarter box edge instead of the shared point alone.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing CS0219 `axisTol` warnings.
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- FullAutoCAD proof with quarter view preserved passed in `data\twp54-11-6-geometry-run-proof-autocad-qv-rerun2\artifacts\lquater-proof-review.json`, verifying the sec 1 `L-QUATER` west edge now lands at `334744.160,5945087.548`.
+- Regression check: reran the earlier `54-12-5` focused quarter-corner proof in `data\twp54-12-5-geometry-run-proof-autocad-qv-rerun11\artifacts\lquater-proof-review.json`; all previously guarded `L-QUATER` corners still pass with the new post-draw reconciliation enabled.
+
+## 2026-03-29 - ATS 54-11-6 southwest quarter-corner sec 6 follow-up
+- [x] Reproduce the reported `SW.SW 6-54-11-6` miss from `326622.533,5945398.767` to `326621.794,5945378.670` in the focused AutoCAD proof.
+- [x] Trace why the southwest hard-boundary snap is replacing the correct 30 m south inset with a shallower endpoint candidate.
+- [x] Tighten the general quarter-corner inset scoring so hard-boundary snaps use the resolved ownership offsets instead of a fixed SEC-width target.
+- [x] Rebuild ATS and rerun the `54-11-6` proof plus the prior `54-12-5` regression proof until all guarded `L-QUATER` edges pass together.
+
+Review 2026-03-29 (ATS 54-11-6 southwest quarter-corner sec 6 follow-up):
+- Root cause: the west hard-boundary snap helper was still scoring `SW.SW` west-band candidates against a fixed SEC-width inset target, even after quarter-view ownership had already resolved both the west and south boundaries to USEC-width for sec 6. That made the correct apparent corner at roughly `30 m / 30 m` inset score worse than a nearby hard endpoint at roughly `30 m / 10 m`, so the late snap pulled `SW.SW 6` north from `326621.794,5945378.670` to `326622.533,5945398.767`.
+- Fix: threaded the resolved ownership offsets into `TryResolveWestBandCornerFromHardBoundaries` and compared both the current corner and candidate corners against those live west/south inset targets instead of hard-coding `RoadAllowanceSecWidthMeters`. This keeps the fix general for surveyed quarter corners that legitimately resolve to USEC-width on the west and south sides.
+- Proof guard: extended `data/twp54-11-6-lquater-proof-review.json` with the unique sec 6 `L-QUATER` west-edge segment `326652.145,5946202.652 -> 326621.794,5945378.670` while retaining the earlier sec 1 guard.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing CS0219 `axisTol` warnings.
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- FullAutoCAD proof with quarter view preserved passed in `data\twp54-11-6-geometry-run-proof-autocad-qv-rerun3\artifacts\review-report.json`, verifying both the earlier sec 1 west-edge guard and the new sec 6 west-edge guard together.
+- Regression check: reran the earlier `54-12-5` focused quarter-corner proof in `data\twp54-12-5-geometry-run-proof-autocad-qv-rerun12\artifacts\review-report.json`; all previously guarded `L-QUATER` corners still pass.
