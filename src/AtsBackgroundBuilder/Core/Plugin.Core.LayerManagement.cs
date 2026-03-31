@@ -115,5 +115,75 @@ namespace AtsBackgroundBuilder
             layer.IsOff = isOff;
             layer.IsPlottable = isPlottable;
         }
+
+        private static bool IsFinalUsecOutputVariantLayer(string? layerName)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+            {
+                return false;
+            }
+
+            return string.Equals(layerName, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layerName, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layerName, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layerName, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layerName, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void NormalizeFinalUsecOutputLayers(Database database, Logger? logger)
+        {
+            if (database == null)
+            {
+                return;
+            }
+
+            using var transaction = database.TransactionManager.StartTransaction();
+            EnsureLayerWithColor(database, transaction, LayerUsecBase, ResolveUsecLayerColorIndex(LayerUsecBase));
+
+            var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+            var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+            var relayeredZero = 0;
+            var relayeredTwenty = 0;
+            var relayeredThirty = 0;
+
+            foreach (ObjectId id in modelSpace)
+            {
+                if (!(transaction.GetObject(id, OpenMode.ForRead, false) is Entity entity) ||
+                    entity.IsErased ||
+                    entity is not Curve)
+                {
+                    continue;
+                }
+
+                var sourceLayer = entity.Layer ?? string.Empty;
+                if (!IsFinalUsecOutputVariantLayer(sourceLayer))
+                {
+                    continue;
+                }
+
+                var writable = (Entity)transaction.GetObject(id, OpenMode.ForWrite, false);
+                writable.Layer = LayerUsecBase;
+
+                if (string.Equals(sourceLayer, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
+                {
+                    relayeredZero++;
+                }
+                else if (string.Equals(sourceLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(sourceLayer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase))
+                {
+                    relayeredTwenty++;
+                }
+                else
+                {
+                    relayeredThirty++;
+                }
+            }
+
+            transaction.Commit();
+            logger?.WriteLine(
+                $"Cleanup: final build relayer converted {relayeredZero + relayeredTwenty + relayeredThirty} L-USEC variant curve(s) to {LayerUsecBase} " +
+                $"(0={relayeredZero}, 20.12={relayeredTwenty}, 30.18={relayeredThirty}).");
+        }
     }
 }

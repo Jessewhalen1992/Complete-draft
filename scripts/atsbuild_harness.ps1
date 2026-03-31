@@ -237,7 +237,12 @@ function Initialize-FullAutoCadLauncherWorkspace {
 
     New-Directory -Path $launcherRunDirectory | Out-Null
 
-    $launcherDwgPath = Join-Path $launcherRunDirectory "input.dwg"
+    $drawingExtension = [System.IO.Path]::GetExtension($ResolvedDwgPath)
+    if ([string]::IsNullOrWhiteSpace($drawingExtension)) {
+        $drawingExtension = ".dwg"
+    }
+
+    $launcherDwgPath = Join-Path $launcherRunDirectory ("input" + $drawingExtension)
     $workbookExtension = [System.IO.Path]::GetExtension($ResolvedWorkbookPath)
     if ([string]::IsNullOrWhiteSpace($workbookExtension)) {
         $workbookExtension = ".xlsx"
@@ -446,7 +451,11 @@ $pluginRunLogPath = Join-Path $artifactDirectory "AtsBackgroundBuilder.run.log"
 $pluginFullLogCopyPath = Join-Path $artifactDirectory "AtsBackgroundBuilder.full.log"
 $reviewReportPath = Join-Path $artifactDirectory "review-report.json"
 $reviewStdOutPath = Join-Path $artifactDirectory "review.stdout.log"
-$workingDwgPath = Join-Path $workingDirectory ([System.IO.Path]::GetFileNameWithoutExtension($resolvedDwgPath) + ".working.dwg")
+$sourceDrawingExtension = [System.IO.Path]::GetExtension($resolvedDwgPath)
+if ([string]::IsNullOrWhiteSpace($sourceDrawingExtension)) {
+    $sourceDrawingExtension = ".dwg"
+}
+$workingDwgPath = Join-Path $workingDirectory ([System.IO.Path]::GetFileNameWithoutExtension($resolvedDwgPath) + ".working" + $sourceDrawingExtension)
 $dxfPath = Join-Path $artifactDirectory "output.dxf"
 $launcherWorkspace = $null
 $runnerResult = $null

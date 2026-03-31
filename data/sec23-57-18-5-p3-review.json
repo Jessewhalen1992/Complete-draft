@@ -1,0 +1,20 @@
+{
+  "checks": [
+    {
+      "type": "path_window_guard",
+      "layer": "T-WATER-P3",
+      "windows": [
+        [
+          527599.7611841717,
+          5976152.128719368,
+          529434.455109188,
+          5977969.508003739
+        ]
+      ],
+      "required_xdata_app": "ATSBUILD_P3",
+      "required_xdata_string": "IMPORTED",
+      "tolerance": 0.05,
+      "require_endpoint_inside": true
+    }
+  ]
+}

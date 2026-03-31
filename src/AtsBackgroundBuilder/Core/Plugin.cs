@@ -454,6 +454,8 @@ namespace AtsBackgroundBuilder
             SectionDrawResult sectionDrawResult,
             Action<string> setExitStage)
         {
+            var requestedWorkAreaScopeIds = BuildRequestedWorkAreaScopeIds(database, sectionDrawResult, logger);
+
             if (executionPlan.ShouldImportP3Shapefiles)
             {
                 setExitStage("p3_import");
@@ -461,14 +463,14 @@ namespace AtsBackgroundBuilder
                     database,
                     editor,
                     logger,
-                    sectionDrawResult.SectionPolylineIds);
+                    requestedWorkAreaScopeIds);
                 editor.WriteMessage($"\nP3 import: imported {p3Summary.ImportedEntities}, filtered {p3Summary.FilteredEntities}, failures {p3Summary.ImportFailures}.");
                 logger.WriteLine($"P3 import summary: imported={p3Summary.ImportedEntities}, filtered={p3Summary.FilteredEntities}, failures={p3Summary.ImportFailures}");
             }
 
             var shouldGenerateDispositionLabels = executionPlan.ShouldGenerateDispositionLabels;
             var dispositionImportScopeIds = executionPlan.ShouldBuildDispositionImportScope
-                ? BuildDispositionImportScopeIds(database, sectionDrawResult, logger)
+                ? requestedWorkAreaScopeIds
                 : new List<ObjectId>();
 
             if (executionPlan.ShouldImportCompassMapping)
@@ -478,7 +480,7 @@ namespace AtsBackgroundBuilder
                     database,
                     editor,
                     logger,
-                    sectionDrawResult.SectionPolylineIds,
+                    requestedWorkAreaScopeIds,
                     input.Zone);
                 editor.WriteMessage($"\nCompass Mapping import: imported {compassSummary.ImportedEntities}, filtered {compassSummary.FilteredEntities}, failures {compassSummary.ImportFailures}.");
                 logger.WriteLine($"Compass Mapping import summary: imported={compassSummary.ImportedEntities}, filtered={compassSummary.FilteredEntities}, failures={compassSummary.ImportFailures}");
@@ -491,7 +493,7 @@ namespace AtsBackgroundBuilder
                     database,
                     editor,
                     logger,
-                    sectionDrawResult.SectionPolylineIds);
+                    requestedWorkAreaScopeIds);
                 editor.WriteMessage($"\nCrown Reservations import: imported {crownSummary.ImportedEntities}, filtered {crownSummary.FilteredEntities}, failures {crownSummary.ImportFailures}.");
                 logger.WriteLine($"Crown Reservations import summary: imported={crownSummary.ImportedEntities}, filtered={crownSummary.FilteredEntities}, failures={crownSummary.ImportFailures}");
             }
@@ -1535,10 +1537,6 @@ namespace AtsBackgroundBuilder
             PersistLastAtsBuildPlotWindow(database, sectionDrawResult, importedDispositionPolylines, logger);
             setExitStage("cleanup");
             CleanupAfterBuild(database, sectionDrawResult, importedDispositionPolylines, input, logger);
-            if (EnableCadGeoJsonExport)
-            {
-                TryExportCadDiagnosticGeoJson(database, input.SectionRequests, dllFolder, logger);
-            }
 
             if (executionPlan.ShouldRunSurfaceImpact)
             {
@@ -1548,6 +1546,17 @@ namespace AtsBackgroundBuilder
 
             setExitStage("aligned_dimension_text_finalize");
             LabelPlacer.AlignRenderedAlignedDimensionTextsToLeaders(database, logger);
+
+            // Final output-only normalization: keep the full 0/20/30 subtype logic during build,
+            // then collapse visible USEC result linework to the base layer after all logic is done.
+            setExitStage("final_usec_output_relayer");
+            NormalizeFinalUsecOutputLayers(database, logger);
+
+            if (EnableCadGeoJsonExport)
+            {
+                setExitStage("final_geojson_export");
+                TryExportCadDiagnosticGeoJson(database, input.SectionRequests, dllFolder, logger);
+            }
 
             setExitStage("summary");
             EmitBuildSummary(editor, logger, result);
@@ -1588,7 +1597,7 @@ namespace AtsBackgroundBuilder
             public Dictionary<string, HashSet<string>> ExistingDispNumsByQuarter { get; }
         }
 
-        private static List<ObjectId> BuildDispositionImportScopeIds(
+        private static List<ObjectId> BuildRequestedWorkAreaScopeIds(
             Database database,
             SectionDrawResult sectionDrawResult,
             Logger logger)
@@ -1600,10 +1609,16 @@ namespace AtsBackgroundBuilder
 
             if (requestedQuarterIds.Count == 0)
             {
-                return sectionDrawResult?.SectionPolylineIds?
+                var sectionScopeIds = sectionDrawResult?.SectionPolylineIds?
                     .Where(id => !id.IsNull && !id.IsErased)
                     .Distinct()
                     .ToList() ?? new List<ObjectId>();
+                if (sectionScopeIds.Count > 0)
+                {
+                    logger.WriteLine($"Requested work area scope: no quarter polygons requested; using {sectionScopeIds.Count} section polygon(s).");
+                }
+
+                return sectionScopeIds;
             }
 
             var quarterViewScopeIds = ResolveQuarterViewScopeIdsForRequestedQuarters(
@@ -1613,11 +1628,11 @@ namespace AtsBackgroundBuilder
 
             if (quarterViewScopeIds.Count > 0)
             {
-                logger.WriteLine($"Disposition import scope: using {quarterViewScopeIds.Count} L-QUATER polygon(s) matched to requested quarter(s).");
+                logger.WriteLine($"Requested work area scope: using {quarterViewScopeIds.Count} L-QUATER polygon(s) matched to requested quarter(s).");
                 return quarterViewScopeIds;
             }
 
-            logger.WriteLine("Disposition import scope: no matching L-QUATER polygons found; falling back to requested L-QSEC-BOX quarter polygons.");
+            logger.WriteLine("Requested work area scope: no matching L-QUATER polygons found; falling back to requested L-QSEC-BOX quarter polygons.");
             return requestedQuarterIds;
         }
 
@@ -8221,6 +8236,8 @@ namespace AtsBackgroundBuilder
                    message.StartsWith("ATSBUILD stage:", StringComparison.OrdinalIgnoreCase) ||
                    message.StartsWith("ATSBUILD assembly:", StringComparison.OrdinalIgnoreCase) ||
                    message.StartsWith("ATSBUILD summary", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("P3 import ", StringComparison.OrdinalIgnoreCase) ||
+                   message.StartsWith("P3 importer ", StringComparison.OrdinalIgnoreCase) ||
                    message.StartsWith("LSD-ENDPT", StringComparison.OrdinalIgnoreCase) ||
                    message.StartsWith("PLSR stage:", StringComparison.OrdinalIgnoreCase) ||
                    message.StartsWith("PLSR precheck:", StringComparison.OrdinalIgnoreCase) ||

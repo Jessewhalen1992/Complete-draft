@@ -43,6 +43,57 @@ def is_vertical(a, b):
     return abs(b[1] - a[1]) > abs(b[0] - a[0])
 
 
+def point_in_window(point, window, tolerance=0.0):
+    x, y = point
+    min_x, min_y, max_x, max_y = window
+    return (
+        x >= (min_x - tolerance)
+        and x <= (max_x + tolerance)
+        and y >= (min_y - tolerance)
+        and y <= (max_y + tolerance)
+    )
+
+
+def point_in_windows(point, windows, tolerance=0.0):
+    return any(point_in_window(point, window, tolerance) for window in windows)
+
+
+def try_clip_segment_to_window(a, b, window):
+    min_x, min_y, max_x, max_y = window
+    ax, ay = a
+    bx, by = b
+    dx = bx - ax
+    dy = by - ay
+    p = (-dx, dx, -dy, dy)
+    q = (ax - min_x, max_x - ax, ay - min_y, max_y - ay)
+    u1 = 0.0
+    u2 = 1.0
+    for pi, qi in zip(p, q):
+        if abs(pi) <= 1e-12:
+            if qi < 0.0:
+                return None
+            continue
+        t = qi / pi
+        if pi < 0.0:
+            if t > u2:
+                return None
+            if t > u1:
+                u1 = t
+        else:
+            if t < u1:
+                return None
+            if t < u2:
+                u2 = t
+    return (
+        (ax + (u1 * dx), ay + (u1 * dy)),
+        (ax + (u2 * dx), ay + (u2 * dy)),
+    )
+
+
+def segment_touches_windows(a, b, windows):
+    return any(try_clip_segment_to_window(a, b, window) is not None for window in windows)
+
+
 def parse_entities(dxf_path):
     with open(dxf_path, "r", encoding="utf-8", errors="ignore") as handle:
         raw_lines = [line.rstrip("\r\n") for line in handle]
@@ -116,6 +167,127 @@ def parse_entities(dxf_path):
                     "mid": midpoint(segment[0], segment[1]),
                 }
             )
+
+    return entities
+
+
+def parse_path_entities(dxf_path):
+    with open(dxf_path, "r", encoding="utf-8", errors="ignore") as handle:
+        raw_lines = [line.rstrip("\r\n") for line in handle]
+
+    pairs = []
+    for index in range(0, len(raw_lines) - 1, 2):
+        pairs.append((raw_lines[index].strip(), raw_lines[index + 1]))
+
+    entities = []
+    in_entities = False
+    index = 0
+    while index < len(pairs):
+        code, value = pairs[index]
+        if code == "0" and value == "SECTION":
+            index += 1
+            if index < len(pairs) and pairs[index][0] == "2":
+                in_entities = pairs[index][1].strip().upper() == "ENTITIES"
+            index += 1
+            continue
+        if code == "0" and value == "ENDSEC":
+            in_entities = False
+            index += 1
+            continue
+        if not in_entities or code != "0":
+            index += 1
+            continue
+
+        entity_type = value.strip().upper()
+        index += 1
+
+        if entity_type == "POLYLINE":
+            data = {}
+            while index < len(pairs):
+                next_code, next_value = pairs[index]
+                if next_code == "0":
+                    break
+                data[next_code.strip()] = next_value.strip()
+                index += 1
+
+            layer = data.get("8", "").strip()
+            flags = int(parse_float(data.get("70", "0"), 0.0))
+            vertices = []
+            while index < len(pairs):
+                next_code, next_value = pairs[index]
+                if next_code == "0" and next_value.strip().upper() == "VERTEX":
+                    index += 1
+                    x = None
+                    y = None
+                    while index < len(pairs):
+                        vertex_code, vertex_value = pairs[index]
+                        if vertex_code == "0":
+                            break
+                        key = vertex_code.strip()
+                        if key == "10":
+                            x = parse_float(vertex_value)
+                        elif key == "20":
+                            y = parse_float(vertex_value)
+                        index += 1
+                    if x is not None and y is not None:
+                        vertices.append((x, y))
+                    continue
+                if next_code == "0" and next_value.strip().upper() == "SEQEND":
+                    index += 1
+                    break
+                index += 1
+
+            if len(vertices) >= 2:
+                entities.append(
+                    {
+                        "type": entity_type,
+                        "layer": layer,
+                        "closed": bool(flags & 1),
+                        "points": vertices,
+                        "xdata_apps": data.get("1001", []),
+                        "xdata_strings": data.get("1000", []),
+                    }
+                )
+            continue
+
+        data = {}
+        while index < len(pairs):
+            next_code, next_value = pairs[index]
+            if next_code == "0":
+                break
+            data.setdefault(next_code.strip(), []).append(next_value.strip())
+            index += 1
+
+        layer = (data.get("8") or [""])[0].strip()
+        if entity_type == "LINE":
+            points = [
+                (parse_float((data.get("10") or ["0"])[0]), parse_float((data.get("20") or ["0"])[0])),
+                (parse_float((data.get("11") or ["0"])[0]), parse_float((data.get("21") or ["0"])[0])),
+            ]
+            entities.append(
+                {
+                    "type": entity_type,
+                    "layer": layer,
+                    "closed": False,
+                    "points": points,
+                    "xdata_apps": data.get("1001", []),
+                    "xdata_strings": data.get("1000", []),
+                }
+            )
+        elif entity_type == "LWPOLYLINE":
+            xs = [parse_float(value) for value in data.get("10", [])]
+            ys = [parse_float(value) for value in data.get("20", [])]
+            if len(xs) >= 2 and len(xs) == len(ys):
+                entities.append(
+                    {
+                        "type": entity_type,
+                        "layer": layer,
+                        "closed": bool(int(parse_float((data.get("70") or ["0"])[0], 0.0)) & 1),
+                        "points": list(zip(xs, ys)),
+                        "xdata_apps": data.get("1001", []),
+                        "xdata_strings": data.get("1000", []),
+                    }
+                )
 
     return entities
 
@@ -277,7 +449,83 @@ def run_segment_match(entities, check):
     }
 
 
-def run_checks(entities, config):
+def run_path_window_guard(path_entities, check):
+    layers = set(check.get("layers", [check.get("layer", "T-WATER-P3")]))
+    windows = [tuple(window) for window in check.get("windows", [])]
+    tolerance = float(check.get("tolerance", 0.05))
+    require_endpoint_inside = bool(check.get("require_endpoint_inside", True))
+    required_xdata_app = check.get("required_xdata_app")
+    required_xdata_string = check.get("required_xdata_string")
+
+    if not windows:
+        return {"type": "path_window_guard", "passed": False, "error": "No windows configured."}
+
+    failures = []
+    checked = 0
+    for entity in path_entities:
+        if entity.get("layer") not in layers:
+            continue
+        if required_xdata_app and required_xdata_app not in entity.get("xdata_apps", []):
+            continue
+        if required_xdata_string and required_xdata_string not in entity.get("xdata_strings", []):
+            continue
+
+        points = entity.get("points") or []
+        if len(points) < 2:
+            continue
+
+        checked += 1
+        closed = bool(entity.get("closed", False))
+        path_points = list(points)
+        if closed:
+            path_points = path_points + [path_points[0]]
+
+        any_inside = any(point_in_windows(point, windows, tolerance) for point in points)
+        any_touch = any(
+            segment_touches_windows(path_points[index], path_points[index + 1], windows)
+            for index in range(len(path_points) - 1)
+        )
+        any_outside_vertex = any(not point_in_windows(point, windows, tolerance) for point in points)
+        if not any_touch and not any_inside:
+            failures.append(
+                {
+                    "entity": entity,
+                    "reason": "entity_outside_window",
+                }
+            )
+            continue
+
+        if not any_outside_vertex:
+            continue
+
+        if closed:
+            failures.append(
+                {
+                    "entity": entity,
+                    "reason": "closed_entity_extends_outside_window",
+                }
+            )
+            continue
+
+        if require_endpoint_inside and not (
+            point_in_windows(points[0], windows, tolerance) or point_in_windows(points[-1], windows, tolerance)
+        ):
+            failures.append(
+                {
+                    "entity": entity,
+                    "reason": "open_entity_outside_window_without_endpoint_inside",
+                }
+            )
+
+    return {
+        "type": "path_window_guard",
+        "checked": checked,
+        "failures": failures,
+        "passed": not failures,
+    }
+
+
+def run_checks(entities, path_entities, config):
     results = []
     for check in config.get("checks", []):
         check_type = check.get("type")
@@ -287,6 +535,8 @@ def run_checks(entities, config):
             results.append(run_point_match(entities, check))
         elif check_type == "segment_match":
             results.append(run_segment_match(entities, check))
+        elif check_type == "path_window_guard":
+            results.append(run_path_window_guard(path_entities, check))
         else:
             results.append({"type": check_type or "unknown", "passed": False, "error": "Unsupported check type."})
     return results
@@ -303,7 +553,8 @@ def main():
     dxf_path = os.path.abspath(args.dxf)
     config = load_config(args.config, args.default_blind_midpoints)
     entities = parse_entities(dxf_path)
-    results = run_checks(entities, config)
+    path_entities = parse_path_entities(dxf_path)
+    results = run_checks(entities, path_entities, config)
     passed = all(result.get("passed", False) for result in results) if results else True
 
     report = {
