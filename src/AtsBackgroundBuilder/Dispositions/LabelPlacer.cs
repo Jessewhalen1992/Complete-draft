@@ -632,6 +632,7 @@ namespace AtsBackgroundBuilder.Dispositions
 
                         var placed = false;
                         var bestFallback = candidates[candidates.Count - 1];
+                        var bestFallbackIndex = candidates.Count - 1;
                         var bestFallbackScore = double.MaxValue;
                         var scoreTextHeight = ResolveLabelTextHeight(0.0);
 
@@ -688,6 +689,7 @@ namespace AtsBackgroundBuilder.Dispositions
                             {
                                 bestFallbackScore = fallbackScore;
                                 bestFallback = pt;
+                                bestFallbackIndex = candidateIndex;
                             }
 
                             if (overlapArea > 0.0 || lineworkOverlapCount > 0)
@@ -696,6 +698,9 @@ namespace AtsBackgroundBuilder.Dispositions
                             }
 
                             var creationTarget = isWidthAligned ? request.MeasurementTarget : request.LeaderTarget;
+                            var requestedDimLineOffset = isWidthAligned && dimCandidates != null && candidateIndex < dimCandidates.Count
+                                ? dimCandidates[candidateIndex].DimLineOffset
+                                : (double?)null;
                             var created = CreateLabelEntity(
                                 transaction,
                                 modelSpace,
@@ -707,6 +712,7 @@ namespace AtsBackgroundBuilder.Dispositions
                                 request.Disposition,
                                 request.LabelText,
                                 request.TextColorIndex,
+                                requestedDimLineOffset,
                                 collisionIndex);
                             if (created == null)
                             {
@@ -727,6 +733,9 @@ namespace AtsBackgroundBuilder.Dispositions
                         if (!placed && _config.PlaceWhenOverlapFails && candidates.Count > 0)
                         {
                             var creationTarget = isWidthAligned ? request.MeasurementTarget : request.LeaderTarget;
+                            var requestedDimLineOffset = isWidthAligned && dimCandidates != null && bestFallbackIndex < dimCandidates.Count
+                                ? dimCandidates[bestFallbackIndex].DimLineOffset
+                                : (double?)null;
                             var forced = CreateLabelEntity(
                                 transaction,
                                 modelSpace,
@@ -738,6 +747,7 @@ namespace AtsBackgroundBuilder.Dispositions
                                 request.Disposition,
                                 request.LabelText,
                                 request.TextColorIndex,
+                                requestedDimLineOffset,
                                 collisionIndex,
                                 allowOverlap: true);
                             if (forced != null)
@@ -784,6 +794,7 @@ namespace AtsBackgroundBuilder.Dispositions
             DispositionInfo disposition,
             string labelText,
             int textColorIndex,
+            double? requestedDimLineOffset,
             LabelCollisionIndex? collisions,
             bool allowOverlap = false)
         {
@@ -803,29 +814,12 @@ namespace AtsBackgroundBuilder.Dispositions
                     labelText,
                     disposition.TextLayerName,
                     resolvedTextColorIndex,
+                    requestedDimLineOffset,
                     collisions,
                     allowOverlap);
                 if (dimension != null)
                 {
                     return dimension;
-                }
-
-                if (_config.EnableLeaders)
-                {
-                    var leaderFallback = CreateLeader(
-                        tr,
-                        modelSpace,
-                        target,
-                        labelPoint,
-                        labelText,
-                        disposition.TextLayerName,
-                        resolvedTextColorIndex,
-                        collisions,
-                        allowOverlap);
-                    if (leaderFallback != null)
-                    {
-                        return leaderFallback;
-                    }
                 }
 
                 return CreateLabel(
@@ -875,6 +869,7 @@ namespace AtsBackgroundBuilder.Dispositions
             string labelText,
             string layerName,
             int colorIndex,
+            double? requestedDimLineOffset,
             LabelCollisionIndex? collisions,
             bool allowOverlap = false)
         {
@@ -920,15 +915,19 @@ namespace AtsBackgroundBuilder.Dispositions
 
             var textHeight = ResolveLabelTextHeight(0.0);
             var dimText = ConvertLabelTextForDimension(labelText);
-            var textPoint = labelPoint;
-            var textSignedOffset = (labelPoint - mid).DotProduct(normal);
+            var dimLineOffset = ResolveWidthAlignedDimensionLineOffset(
+                widthSource,
+                mid,
+                normal,
+                textHeight,
+                requestedDimLineOffset ?? 0.0);
+            var placement = WidthAlignedDimensionPlacementPolicy.Resolve(
+                new WidthDimensionPoint(a2d.X, a2d.Y),
+                new WidthDimensionPoint(b2d.X, b2d.Y),
+                new WidthDimensionPoint(labelPoint.X, labelPoint.Y),
+                dimLineOffset);
+            var textPoint = new Point2d(placement.TextPoint.X, placement.TextPoint.Y);
             if (!GeometryUtils.IsPointInsidePolyline(quarterPolyline, textPoint))
-            {
-                return null;
-            }
-
-            var measuredLineGap = Math.Max(textHeight * 0.9, 2.0);
-            if (!HasDimensionTextClearanceFromMeasuredLine(widthSource, textPoint, dimText, textHeight, measuredLineGap, spanUnit))
             {
                 return null;
             }
@@ -953,22 +952,9 @@ namespace AtsBackgroundBuilder.Dispositions
                 }
             }
 
-            var dimLineOffset = textSignedOffset;
-            if (TryGetSignedRangeAcrossDisposition(widthSource, mid, normal, out var minS, out var maxS))
-            {
-                var edgeGap = Math.Max(textHeight * 0.75, 2.0);
-                dimLineOffset = textSignedOffset >= 0.0
-                    ? maxS + edgeGap
-                    : minS - edgeGap;
-            }
-            var projectedDimAlong = ClampDimensionLineAlongOffset(
-                (textPoint - mid).DotProduct(spanUnit),
-                span.Length,
-                Math.Max(textHeight * 0.25, 1.0));
-
             var dimLinePoint = new Point3d(
-                mid.X + spanUnit.X * projectedDimAlong + normal.X * dimLineOffset,
-                mid.Y + spanUnit.Y * projectedDimAlong + normal.Y * dimLineOffset,
+                placement.DimLinePoint.X,
+                placement.DimLinePoint.Y,
                 0.0);
             var dimension = new AlignedDimension(p1, p2, dimLinePoint, dimText, ObjectId.Null)
             {
@@ -991,25 +977,47 @@ namespace AtsBackgroundBuilder.Dispositions
 
             modelSpace.AppendEntity(dimension);
             tr.AddNewlyCreatedDBObject(dimension, true);
+            TrySetDimensionTextMovementMode(dimension, 0);
 
             try
             {
                 dimension.TextPosition = new Point3d(textPoint.X, textPoint.Y, 0.0);
                 TrySetUsingDefaultTextPosition(dimension, false);
-                TryProjectAlignedDimensionLinePointUnderText(dimension);
             }
             catch
             {
                 // Leave native placement if explicit text override is unavailable on this build.
             }
 
-            TrySetDimensionTextMovementMode(dimension, 0);
             TryRecomputeAlignedDimensionBlock(dimension);
             TryNormalizeAlignedDimensionTextOrientation(dimension);
 
             collisions?.Add(textBox);
             return dimension;
         }
+
+        private static double ResolveWidthAlignedDimensionLineOffset(
+            Polyline widthSource,
+            Point2d origin,
+            Vector2d normal,
+            double textHeight,
+            double requestedDimLineOffset)
+        {
+            if (normal.Length <= 1e-9)
+            {
+                return 0.0;
+            }
+
+            var limitedRequestedOffset = 0.0;
+            if (Math.Abs(requestedDimLineOffset) > 1e-6)
+            {
+                var maxPreferredOffset = Math.Max(0.25, Math.Min(textHeight * 0.25, 1.0));
+                limitedRequestedOffset = Math.Max(-maxPreferredOffset, Math.Min(maxPreferredOffset, requestedDimLineOffset));
+            }
+
+            return ClampSignedOffsetInsideDisposition(widthSource, origin, normal, limitedRequestedOffset, 0.0);
+        }
+
         private static double ClampSignedOffsetInsideDisposition(
             Polyline disposition,
             Point2d origin,
@@ -1513,22 +1521,21 @@ namespace AtsBackgroundBuilder.Dispositions
                     dimText,
                     textHeight,
                     pad);
-                var textSignedOffset = requested.DotProduct(normal);
 
                 if (TryGetAlignedDimensionLinePoint(dimension, out var currentDimLinePoint))
                 {
                     var dimRequest = new Point2d(currentDimLinePoint.X, currentDimLinePoint.Y) - mid;
                     var dimOffset = dimRequest.DotProduct(normal);
                     var clampedDimLinePoint = new Point3d(
-                        mid.X + spanUnit.X * textAlong + normal.X * dimOffset,
-                        mid.Y + spanUnit.Y * textAlong + normal.Y * dimOffset,
+                        mid.X + normal.X * dimOffset,
+                        mid.Y + normal.Y * dimOffset,
                         0.0);
                     TrySetAlignedDimensionLinePoint(dimension, clampedDimLinePoint);
                 }
 
                 var clampedTextPoint = new Point3d(
-                    mid.X + spanUnit.X * textAlong + normal.X * textSignedOffset,
-                    mid.Y + spanUnit.Y * textAlong + normal.Y * textSignedOffset,
+                    mid.X + spanUnit.X * textAlong,
+                    mid.Y + spanUnit.Y * textAlong,
                     0.0);
                 dimension.TextPosition = clampedTextPoint;
                 TrySetUsingDefaultTextPosition(dimension, false);
@@ -1738,7 +1745,7 @@ namespace AtsBackgroundBuilder.Dispositions
                     var modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                     var inspected = 0;
                     var movementAdjusted = 0;
-                    var jogTightened = 0;
+                    var placementNormalized = 0;
                     var rotationAdjusted = 0;
 
                     foreach (ObjectId entityId in modelSpace)
@@ -1754,12 +1761,11 @@ namespace AtsBackgroundBuilder.Dispositions
                             movementAdjusted++;
                         }
 
-                        if (TryTightenOverlongAlignedDimensionJog(tr, dimension))
+                        if (TryNormalizeWidthAlignedDimensionPlacement(tr, dimension))
                         {
-                            jogTightened++;
+                            placementNormalized++;
                         }
 
-                        TryProjectAlignedDimensionLinePointUnderText(dimension);
                         if (TryNormalizeAlignedDimensionTextOrientation(dimension))
                         {
                             rotationAdjusted++;
@@ -1768,8 +1774,8 @@ namespace AtsBackgroundBuilder.Dispositions
 
                     tr.Commit();
                     logger?.WriteLine(
-                        $"Aligned dimension finalize pass: inspected={inspected}, movementAdjusted={movementAdjusted}, helperLinesAdded=0, jogTightened={jogTightened}, rotationAdjusted={rotationAdjusted}.");
-                    return movementAdjusted + jogTightened + rotationAdjusted;
+                        $"Aligned dimension finalize pass: inspected={inspected}, movementAdjusted={movementAdjusted}, helperLinesAdded=0, placementNormalized={placementNormalized}, rotationAdjusted={rotationAdjusted}.");
+                    return movementAdjusted + placementNormalized + rotationAdjusted;
                 }
             }
             catch (System.Exception ex)
@@ -1779,7 +1785,7 @@ namespace AtsBackgroundBuilder.Dispositions
             }
         }
 
-        private static bool TryTightenOverlongAlignedDimensionJog(
+        private static bool TryNormalizeWidthAlignedDimensionPlacement(
             Transaction tr,
             AlignedDimension dimension)
         {
@@ -1805,57 +1811,45 @@ namespace AtsBackgroundBuilder.Dispositions
                 var mid = new Point2d((a.X + b.X) * 0.5, (a.Y + b.Y) * 0.5);
 
                 var textHeight = ResolveDimensionTextHeight(dimension);
-                var maxRenderedLineLength = Math.Max(textHeight * 3.0, spanLength * 2.0);
-                var maxAllowedAlong = Math.Max(textHeight * 5.0, spanLength * 4.0);
-                var adjusted = false;
+                var dimText = dimension.DimensionText ?? string.Empty;
+                var pad = textHeight * 0.35;
+                var requested = textPoint - mid;
+                var requestedAlong = requested.DotProduct(spanUnit);
+                var requestedNormal = requested.DotProduct(normal);
+                var normalizedAlong = ClampDimensionTextAlongOffset(
+                    requestedAlong,
+                    spanLength,
+                    dimText,
+                    textHeight,
+                    pad);
+                var changed = Math.Abs(normalizedAlong - requestedAlong) > 1e-6 ||
+                              Math.Abs(requestedNormal) > 1e-6;
 
-                for (var attempt = 0; attempt < 6; attempt++)
+                if (TryGetAlignedDimensionLinePoint(dimension, out var currentDimLinePoint))
                 {
-                    TryRecomputeAlignedDimensionBlock(dimension);
-                    if (!TryGetRenderedAlignedDimensionMaxLineLength(tr, dimension, out var currentMaxLineLength))
-                    {
-                        break;
-                    }
-
-                    if (!TryGetDimensionTextPoint(dimension, out textPoint))
-                    {
-                        break;
-                    }
-
-                    var requested = textPoint - mid;
-                    var textAlong = requested.DotProduct(spanUnit);
-                    var textNormal = requested.DotProduct(normal);
-                    if (currentMaxLineLength <= maxRenderedLineLength && Math.Abs(textAlong) <= maxAllowedAlong)
-                    {
-                        break;
-                    }
-
-                    if (Math.Abs(textAlong) <= spanLength * 1.5)
-                    {
-                        break;
-                    }
-
-                    var tightenedAlong = textAlong * 0.6;
-                    if (Math.Abs(tightenedAlong - textAlong) < 0.25)
-                    {
-                        break;
-                    }
-
-                    dimension.TextPosition = new Point3d(
-                        mid.X + spanUnit.X * tightenedAlong + normal.X * textNormal,
-                        mid.Y + spanUnit.Y * tightenedAlong + normal.Y * textNormal,
+                    var dimRequest = new Point2d(currentDimLinePoint.X, currentDimLinePoint.Y) - mid;
+                    var dimOffset = dimRequest.DotProduct(normal);
+                    var normalizedDimLinePoint = new Point3d(
+                        mid.X + normal.X * dimOffset,
+                        mid.Y + normal.Y * dimOffset,
                         0.0);
-                    TrySetUsingDefaultTextPosition(dimension, false);
-                    dimension.RecordGraphicsModified(true);
-                    adjusted = true;
+                    changed |= currentDimLinePoint.DistanceTo(normalizedDimLinePoint) > 1e-6;
+                    TrySetAlignedDimensionLinePoint(dimension, normalizedDimLinePoint);
                 }
 
-                if (adjusted)
+                if (!changed)
                 {
-                    TryRecomputeAlignedDimensionBlock(dimension);
+                    return false;
                 }
 
-                return adjusted;
+                dimension.TextPosition = new Point3d(
+                    mid.X + spanUnit.X * normalizedAlong,
+                    mid.Y + spanUnit.Y * normalizedAlong,
+                    0.0);
+                TrySetUsingDefaultTextPosition(dimension, false);
+                TryRecomputeAlignedDimensionBlock(dimension);
+                dimension.RecordGraphicsModified(true);
+                return true;
             }
             catch
             {
@@ -2180,7 +2174,22 @@ namespace AtsBackgroundBuilder.Dispositions
             var maxAlong = Math.Max(0.0, (spanLength * 0.5) - halfTextAlong - edgeMargin);
             if (maxAlong <= 1e-6)
             {
-                return 0.0;
+                var preferredOutsideAlong = WidthAlignedDimensionPlacementPolicy.GetPreferredOutsideAlongOffset(
+                    spanLength,
+                    halfTextAlong,
+                    edgeMargin);
+                if (preferredOutsideAlong <= 1e-6)
+                {
+                    return 0.0;
+                }
+
+                var sign = requestedAlong < 0.0 ? -1.0 : 1.0;
+                if (Math.Abs(requestedAlong) > preferredOutsideAlong)
+                {
+                    return requestedAlong;
+                }
+
+                return sign * preferredOutsideAlong;
             }
 
             if (requestedAlong > maxAlong)
@@ -2501,69 +2510,25 @@ namespace AtsBackgroundBuilder.Dispositions
             }
 
             var textHeight = ResolveLabelTextHeight(0.0);
-            if (!TryGetSignedRangeAcrossDisposition(widthSource, mid, normal, out var minS, out var maxS))
-            {
-                yield break;
-            }
-
-            double preferredSign = Math.Sign((seedPoint - mid).DotProduct(normal));
-            if (preferredSign == 0.0)
-            {
-                preferredSign = 1.0;
-            }
-
             var dimText = ConvertLabelTextForDimension(labelText);
-            var measuredLineGap = Math.Max(textHeight * 0.9, 2.0);
-            var outsideCenterClearance =
-                EstimateDimensionTextNormalHalfExtent(dimText, textHeight, textHeight * 0.35, spanUnit) + measuredLineGap;
-            var insideCenterClearance =
-                EstimateDimensionTextNormalHalfExtent(dimText, textHeight, textHeight * 0.35, spanUnit) + Math.Max(textHeight * 0.35, 1.0);
-            var laneStep = Math.Max(textHeight * 1.5, 4.0);
             var spanLength = a2d.GetDistanceTo(b2d);
-            var alongStep = Math.Max(spanLength * 0.15, textHeight * 2.0);
-            var preferredAlong = ClampDimensionTextAlongOffset(
-                (seedPoint - mid).DotProduct(spanUnit),
+            var pad = textHeight * 0.35;
+            var edgeMargin = Math.Max(textHeight * 0.25, 1.0);
+            var halfTextAlong = EstimateDimensionTextAlongHalfExtent(dimText, textHeight, pad, spanUnit);
+            var alongStep = Math.Max(spanLength * 0.25, textHeight);
+            var preferredAlong = (seedPoint - mid).DotProduct(spanUnit);
+            var preferredOutsideAlong = WidthAlignedDimensionPlacementPolicy.GetPreferredOutsideAlongOffset(
                 spanLength,
-                dimText,
-                textHeight,
-                textHeight * 0.35);
-            var alongOffsets = new[]
-            {
-                0.0,
+                halfTextAlong,
+                edgeMargin);
+            var alongOffsets = WidthAlignedDimensionPlacementPolicy.BuildSameLineAlongOffsets(
+                spanLength,
+                preferredAlong,
+                halfTextAlong,
+                edgeMargin,
                 alongStep,
-                -alongStep,
-                alongStep * 2.0,
-                -alongStep * 2.0,
-                alongStep * 3.0,
-                -alongStep * 3.0,
-                alongStep * 4.0,
-                -alongStep * 4.0,
-                alongStep * 5.0,
-                -alongStep * 5.0,
-                alongStep * 6.0,
-                -alongStep * 6.0,
-                alongStep * 7.0,
-                -alongStep * 7.0
-            };
-
-            IEnumerable<double> BuildOffsets(double edge, double sign)
-            {
-                yield return edge + sign * outsideCenterClearance;
-                yield return edge + sign * (outsideCenterClearance + laneStep);
-                yield return edge + sign * (outsideCenterClearance + laneStep * 2.0);
-                yield return edge + sign * (outsideCenterClearance + laneStep * 3.0);
-                yield return edge + sign * (outsideCenterClearance + laneStep * 4.0);
-                yield return edge + sign * (outsideCenterClearance + laneStep * 5.0);
-                yield return edge - sign * insideCenterClearance;
-                yield return edge - sign * (insideCenterClearance + laneStep);
-                yield return edge - sign * (insideCenterClearance + laneStep * 2.0);
-                yield return 0.0;
-            }
-
-            var normalOffsets = (preferredSign >= 0.0
-                ? BuildOffsets(maxS, +1.0).Concat(BuildOffsets(minS, -1.0))
-                : BuildOffsets(minS, -1.0).Concat(BuildOffsets(maxS, +1.0)))
-                .ToList();
+                expansionCount: 7);
+            var normalOffsets = new[] { 0.0 };
 
             var ranked = new List<DimensionTextCandidate>();
 
@@ -2591,17 +2556,12 @@ namespace AtsBackgroundBuilder.Dispositions
                         continue;
                     }
 
-                    if (!HasDimensionTextClearanceFromMeasuredLine(widthSource, textPoint, dimText, textHeight, measuredLineGap, spanUnit))
-                    {
-                        continue;
-                    }
-
                     var textBox = EstimateDimensionTextBox(
                         textPoint,
                         dimText,
                         textHeight,
                         spanUnit,
-                        textHeight * 0.35);
+                        pad);
 
                     var overlapArea = collisions?.OverlapArea(textBox) ?? 0.0;
                     var crowdedness = collisions?.CountNearby(textBox, textHeight * 3.0) ?? 0;
@@ -2609,23 +2569,34 @@ namespace AtsBackgroundBuilder.Dispositions
                         textBox.ToExtents3d(),
                         allDispositions,
                         currentDisposition);
-                    var insideDisposition = GeometryUtils.IsPointInsidePolyline(widthSource, textPoint);
-                    var alongDrift = Math.Abs(along - preferredAlong);
-                    var midpointDrift = Math.Abs(along);
-                    var textDistance = textPoint.GetDistanceTo(mid);
-                    var longLeaderThreshold = Math.Max(textHeight * 5.0, spanLength * 3.0);
-                    var longLeaderPenalty = Math.Max(0.0, textDistance - longLeaderThreshold);
+                    var sameLinePenalty = Math.Abs(normalOffset) > 1e-6 ? 1000000000.0 : 0.0;
+                    var outsideAlong = Math.Abs(along);
+                    var betweenArrowOverflow = Math.Abs(along) < (spanLength * 0.5)
+                        ? Math.Max(0.0, halfTextAlong + edgeMargin - ((spanLength * 0.5) - Math.Abs(along)))
+                        : 0.0;
+                    var outsideGap = EstimateOutsideDimensionTextGap(along, spanLength, halfTextAlong);
+                    var widthMatchPenalty = outsideGap > 0.0
+                        ? Math.Abs(outsideGap - spanLength) * 5000.0
+                        : 0.0;
+                    var farOutsidePenalty = outsideGap > 0.0
+                        ? Math.Max(0.0, outsideGap - (spanLength * 1.25)) * 15000.0
+                        : 0.0;
+                    var preferredOutsidePenalty = outsideGap > 0.0
+                        ? Math.Abs(outsideAlong - preferredOutsideAlong) * 5000.0
+                        : 0.0;
+                    var alongShift = Math.Abs(along - preferredAlong);
                     var score =
+                        sameLinePenalty +
                         overlapArea * 1000000.0 +
                         lineworkOverlap * 10000.0 +
                         crowdedness * 500.0 +
-                        (insideDisposition ? textHeight * 8.0 : 0.0) +
-                        (alongDrift * 4.0) +
-                        (midpointDrift * 0.5) +
-                        (textDistance * 1.5) +
-                        (longLeaderPenalty * 10.0);
+                        (betweenArrowOverflow * 100000.0) +
+                        widthMatchPenalty +
+                        preferredOutsidePenalty +
+                        farOutsidePenalty +
+                        alongShift;
 
-                    ranked.Add(new DimensionTextCandidate(textPoint, normalOffset, score));
+                    ranked.Add(new DimensionTextCandidate(textPoint, 0.0, score));
                 }
             }
 
@@ -2713,6 +2684,21 @@ namespace AtsBackgroundBuilder.Dispositions
                 yield return item.pt;
             }
         }
+
+        private static double EstimateOutsideDimensionTextGap(
+            double along,
+            double spanLength,
+            double halfTextAlong)
+        {
+            if (spanLength <= 1e-6)
+            {
+                return 0.0;
+            }
+
+            var gap = Math.Abs(along) - (spanLength * 0.5) - Math.Max(0.0, halfTextAlong);
+            return gap > 0.0 ? gap : 0.0;
+        }
+
         private static double DistanceToPolyline(Polyline polyline, Point3d p3d)
         {
             try

@@ -135,6 +135,7 @@ internal static class Program
         TestPlsrQuarterPointBuilderBuildsExtentCenterCandidate();
         TestPlsrQuarterTouchResolverReturnsAllTouchedQuarterKeys();
         TestPlsrQuarterTouchResolverPrefersHigherScoreForPrimaryQuarter();
+        TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside();
         TestDispositionLabelColorPolicyForcesGreenForVariableWidthLabels();
         TestDispositionLabelColorPolicyPreservesRequestedColorForNonVariableLabels();
 
@@ -1768,6 +1769,44 @@ internal static class Program
 
         AssertEqual(3, resolution.TouchedQuarterKeys.Count, nameof(TestPlsrQuarterTouchResolverPrefersHigherScoreForPrimaryQuarter));
         AssertEqual("5|19|57|12|SW", resolution.PrimaryQuarterKey, nameof(TestPlsrQuarterTouchResolverPrefersHigherScoreForPrimaryQuarter));
+    }
+
+    private static void TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside()
+    {
+        var longMultilineWidthLabel = "OWNER\\P10.00 m width required\\PLong multiline review text";
+        var textHalfAlong = WidthAlignedDimensionPlacementPolicy.EstimateTextHalfAlong(
+            longMultilineWidthLabel,
+            textHeight: 2.5,
+            pad: 0.875);
+        var preferredOutsideAlong = WidthAlignedDimensionPlacementPolicy.GetPreferredOutsideAlongOffset(
+            spanLength: 10.0,
+            halfTextAlong: textHalfAlong,
+            edgeMargin: 1.0);
+        var alongOffsets = WidthAlignedDimensionPlacementPolicy.BuildSameLineAlongOffsets(
+            spanLength: 10.0,
+            preferredAlong: 0.0,
+            halfTextAlong: textHalfAlong,
+            edgeMargin: 1.0,
+            step: 5.0,
+            expansionCount: 3);
+        var placement = WidthAlignedDimensionPlacementPolicy.Resolve(
+            new WidthDimensionPoint(0.0, 0.0),
+            new WidthDimensionPoint(10.0, 0.0),
+            new WidthDimensionPoint(5.0 + alongOffsets[0], 6.0),
+            dimLineOffset: 0.0);
+
+        AssertEqual(3, longMultilineWidthLabel.Split(new[] { "\\P" }, StringSplitOptions.None).Length, nameof(TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside));
+        AssertEqual(true, Math.Abs(alongOffsets[0]) > 5.0, nameof(TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside));
+        AssertClose(preferredOutsideAlong, Math.Abs(alongOffsets[0]), 0.001, nameof(TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside));
+        AssertEqual(true, placement.TextOutsideArrowSpan, nameof(TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside));
+        AssertClose(5.0 + alongOffsets[0], placement.TextPoint.X, 0.001, nameof(TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside));
+        AssertClose(0.0, placement.TextPoint.Y, 0.001, nameof(TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside));
+        AssertClose(alongOffsets[0], placement.TextAlong, 0.001, nameof(TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside));
+        AssertClose(10.0, Math.Abs(placement.TextAlong) - 5.0 - textHalfAlong, 0.001, nameof(TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside));
+        AssertClose(0.0, placement.DimLineAlong, 0.001, nameof(TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside));
+        AssertClose(0.0, placement.DimLineOffset, 0.001, nameof(TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside));
+        AssertClose(5.0, placement.DimLinePoint.X, 0.001, nameof(TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside));
+        AssertClose(0.0, placement.DimLinePoint.Y, 0.001, nameof(TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside));
     }
 
     private static void TestDispositionLabelColorPolicyForcesGreenForVariableWidthLabels()

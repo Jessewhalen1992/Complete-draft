@@ -1,3 +1,16 @@
+# Follow-up (Disposition Label Placement Review Export, 2026-03-31)
+
+- [x] Review `tasks/lessons.md` and locate the disposition-label code paths that control placement, reuse, and PLSR interaction.
+- [x] Identify the primary placement engine plus the upstream config/orchestration code that decides when it runs.
+- [x] Generate a consolidated `.txt` review file with the relevant source and line-numbered excerpts for placement logic.
+- [x] Verify the review file contains the key placement paths and document the outcome.
+
+## Review (Disposition Label Placement Review Export, 2026-03-31)
+
+- Generated `output/disposition-label-placement-review.txt` with line-numbered source for the main placement engine `src/AtsBackgroundBuilder/Dispositions/LabelPlacer.cs`, plus supporting config/orchestration excerpts from `src/AtsBackgroundBuilder/Core/BuildExecutionPlan.cs`, `src/AtsBackgroundBuilder/Core/Config.cs`, `src/AtsBackgroundBuilder/Core/DispositionLabelColorPolicy.cs`, `src/AtsBackgroundBuilder/Core/Plugin.cs`, `src/AtsBackgroundBuilder/Dispositions/Plugin.Dispositions.LabelingPlsr.cs`, and targeted tests in `src/AtsBackgroundBuilder.DecisionTests/Program.cs`.
+- Verified the export exists at `output/disposition-label-placement-review.txt`, is non-empty (`264034` bytes / `5328` lines), and includes the key sections for the placement call site, the full `LabelPlacer` implementation, and the PLSR existing-label scan / missing-label recreation paths.
+- Placement summary for quick review: `BuildExecutionPlan.ShouldPlaceLabelsBeforePlsr` gates the pre-PLSR run, `Plugin.ExecutePostQuarterPipeline(...)` invokes `LabelPlacer.PlaceLabels(...)`, `ProcessDispositionPolylines(...)` decides whether a disposition becomes width/aligned-dimension, leader, or plain-text label, and `LabelPlacer` ranks candidate points by collision overlap, disposition linework overlap, nearby-label density, and distance from the search target before optionally forcing the best fallback when overlap-free placement fails.
+
 # Follow-up (64-3-6 Top Vertical Hard Stop, 2026-03-26)
 
 - [x] Reproduce the `64-3-6` vertical overshoot from `406073.455,6050001.730 -> 406075.509,6050101.134` and identify the emitted layer plus the intended hard-stop target at `406073.871,6050021.834`.
@@ -7417,3 +7430,216 @@ Review 2026-03-29 (ATS 54-11-6 southwest quarter-corner sec 6 follow-up):
 - Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
 - FullAutoCAD proof with quarter view preserved passed in `data\twp54-11-6-geometry-run-proof-autocad-qv-rerun3\artifacts\review-report.json`, verifying both the earlier sec 1 west-edge guard and the new sec 6 west-edge guard together.
 - Regression check: reran the earlier `54-12-5` focused quarter-corner proof in `data\twp54-12-5-geometry-run-proof-autocad-qv-rerun12\artifacts\review-report.json`; all previously guarded `L-QUATER` corners still pass.
+## 2026-03-31 - Repo release build
+- [x] Review current repo state before building.
+- [x] Build ATS release solution.
+- [x] Build WLS release solution.
+- [x] Record outputs and warnings.
+
+Review 2026-03-31:
+- ATS release build passed: `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+- ATS warnings are unchanged: `Plugin.RoadAllowance.CorrectionLinePostProcessing.cs:1750` and `Plugin.RoadAllowance.EndpointEnforcement.cs:733` both report unused `axisTol` locals (`CS0219`).
+- WLS release build passed: `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\wls_program\src\WildlifeSweeps\bin\Release\net8.0-windows\WildlifeSweeps.dll`
+- WLS finished with `0` warnings and `0` errors.
+
+## 2026-03-31 - ATS final L-USEC output relayer
+- [x] Inspect the ATS post-build pipeline and find the true last drawing-mutation stage.
+- [x] Add a final output-only relayer so `L-USEC-0`, `L-USEC-2012` / `L-USEC2012`, and `L-USEC-3018` / `L-USEC3018` linework becomes `L-USEC` after all build logic is complete.
+- [x] Move any final diagnostic export that should reflect the completed drawing so it runs after the relayer.
+- [x] Rebuild ATS and record the verified result plus the new standing rule.
+
+Review 2026-03-31 (final L-USEC output relayer):
+- Hook point: added the relayer in the tail of `ExecutePostQuarterPipeline` after cleanup, optional surface-impact work, and aligned-dimension text finalization, so it is the last drawing-mutation step before completion.
+- Behavior: model-space curve entities on `L-USEC-0`, `L-USEC-2012` / `L-USEC2012`, and `L-USEC-3018` / `L-USEC3018` now relayer to `L-USEC` in one final output-only pass. This does not change build-time logic; the subtype layers stay available until all geometry decisions are done.
+- Output/export ordering: moved optional CAD GeoJSON export to run after the final relayer so diagnostics reflect the completed drawing state.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed. Output: `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- Remaining warnings are unchanged `CS0219` unused `axisTol` locals in `RoadAllowance\Plugin.RoadAllowance.CorrectionLinePostProcessing.cs:1750` and `RoadAllowance\Plugin.RoadAllowance.EndpointEnforcement.cs:733`.
+
+## 2026-03-31 - ATS P3 hydro import outside requested work area
+- [x] Inspect the P3 shapefile import/location-window path and identify why hydro entities can survive outside the requested quarter work area.
+- [x] Implement a minimal fix so P3 output is clipped/filtered to the real requested work area instead of a broader section envelope.
+- [x] Rebuild ATS and record the verification result plus the new lesson.
+
+Review 2026-03-31 (P3 hydro work-area scope):
+- Root cause: the P3, Compass Mapping, and Crown Reservation imports were all being windowed against `sectionDrawResult.SectionPolylineIds`, so quarter-only builds still gave those shape imports a full-section work area.
+- Fix: resolved the requested build scope once up front using the existing quarter-aware scope helper and reused that same scope for P3, Compass Mapping, Crown Reservations, and disposition imports. P3’s import helper was also renamed internally from section extents to requested work area extents so the location-window and post-import filter stay aligned with the real scope.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed. Output: `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- Remaining warnings are unchanged `CS0219` unused `axisTol` locals in `RoadAllowance\Plugin.RoadAllowance.CorrectionLinePostProcessing.cs:1750` and `RoadAllowance\Plugin.RoadAllowance.EndpointEnforcement.cs:733`.
+- Verification note: I did not run a fresh AutoCAD screenshot repro here, so this closes the obvious scope bug in code and compile/test verification, but the next real P3 build is the proof for your exact hydro feature.
+
+Follow-up 2026-03-31 (corrected P3 diagnosis after user report):
+- User correction: the stray hydro feature is not merely a scope-id issue; the surviving linework is tens of kilometres long, which means a feature is brushing the build area and then remaining whole.
+- Corrected fix: added a true post-import clip/replace path for P3 geometry. Closed imported boundaries are intersected against the requested work-area windows, and open imported lines/polylines are clipped segment-by-segment to those windows and rebuilt from the clipped runs. That prevents a long hydro feature from surviving intact just because one small portion overlaps the requested area.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed again. Output remains `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed again.
+- Remaining proof gap: I still have not run a fresh AutoCAD repro of your screenshot in this turn, so the next P3-enabled build is the proof for the exact hydro line you showed.
+
+Follow-up 2026-03-31 (P3 clipping performance correction):
+- User correction: the full clip/replace pass made P3 builds run too long, so that tradeoff is not acceptable.
+- Performance fix: added a fast scope-overlap classifier and now only run the expensive clip/replace path for partial-overlap P3 entities. Features fully outside the requested work area are erased immediately, and features fully inside it stay on the cheap keep/relabel path. Open hydro lines also bypass the polygon-clipping path and go straight to line clipping only when they truly overrun the work area.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed again. Output remains `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed again.
+- Remaining proof gap: I still have not run a fresh AutoCAD P3 repro of the slow case in this turn, so the next real P3 build is the proof for both runtime and the exact stray hydro line.
+
+## 2026-03-31 - ATS live P3 slowdown investigation
+- [x] Inspect the current live ATS log and determine the last confirmed stage reached by the hanging/slow run.
+- [x] Add finer-grained P3 progress logging so the next live run shows whether time is being spent in importer initialization, location-window setup, raw import, or post-import filtering.
+- [x] Tighten the P3 post-import path so obviously out-of-scope hydro does not pay polygon-conversion cost before rejection.
+- [x] Rebuild ATS and record the updated diagnosis and verification notes.
+
+Review 2026-03-31 (live P3 slowdown investigation):
+- Live log diagnosis: the fresh build log at `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\build\net8.0-windows\AtsBackgroundBuilder.log` stops at `ATSBUILD stage: p3_import`. The logger does flush stage markers immediately, so the last confirmed stage reached by the slow run was P3 import.
+- Session evidence: fresh Map 3D session logs show `C:\Users\Jesse 2025\Desktop\01467-24-PLA-R0.dwg` opened at about `11:10 AM`, but there was no matching fatal AutoCAD error detail in the Map error logs and the DWG itself was not saved later. That means the old log could not distinguish whether time was being spent inside `importer.Init` / `SetLocationWindowAndOptions` / `importer.Import` or our own post-import filtering.
+- Logging fix: added per-file P3 progress markers around model-space pre-scan, importer init, location-window apply, input-layer enablement, raw import, post-import scan, and post-process completion in `src/AtsBackgroundBuilder\Core\Plugin.Core.ImportWindowing.cs`, so the next live run will identify the exact substep and timing.
+- Performance fix: moved scope-overlap classification ahead of polygon conversion so entities that are obviously outside the requested work area are erased before any polygon explode/convert cost is paid. Partial-overlap clipping still runs when needed, but we no longer convert clearly out-of-scope hydro just to throw it away afterward.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed. Output: `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- Remaining proof gap: I have not rerun the live AutoCAD P3 build in this turn, so the next actual run is still needed to prove both the improved runtime and the exact substep timing in the updated log.
+
+Follow-up 2026-03-31 (user-corrected P3 rollback toward baseline):
+- User correction: even the reduced partial-overlap clipping path is still too slow in practice, so the extra geometry surgery is not worth it for this workflow.
+- Simplification: removed the expensive P3 clip/replace path entirely and rolled the hot path back toward the old keep-or-erase behavior, while preserving the better requested-quarter scope selection and the cheap early out-of-scope rejection before polygon conversion. In other words, P3 now keeps the quarter-aware scope and the fast reject, but no longer rebuilds imported geometry to trim partial overlaps.
+- Logging: the new `P3 import ...` and `P3 importer ...` diagnostics now flush immediately so future slow runs will actually show which P3 substep is consuming time instead of stopping visibly at the coarse `p3_import` stage.
+- Verification: the new source DLL compiled successfully to `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll` at `2026-03-31 11:36:55 AM`, but the normal build copy into `build\net8.0-windows` failed because the currently running AutoCAD session (`acad.exe` PID `45824`) is still locking `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\build\net8.0-windows\AtsBackgroundBuilder.dll`.
+- Current state: the live AutoCAD run is still using the older slower DLL. The lightweight rollback is ready in the source output, but it cannot be deployed to the standard build folder until that AutoCAD session exits and releases the file lock.
+
+Follow-up 2026-03-31 (rebuild after AutoCAD closed):
+- After the user closed AutoCAD, `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` completed successfully and the shared build output was updated.
+- `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- Active deployed ATS DLL: `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\build\net8.0-windows\AtsBackgroundBuilder.dll`
+
+Follow-up 2026-03-31 (fresh P3 log proved bbox false positives):
+- Fresh log proof: the requested P3 location window is correct and tightly scoped to the quarter work area (`X[527599.761...,529434.455...] Y[5976152.128...,5977969.508...]`), so the bad hydro is not coming from the wrong quarter scope.
+- Fresh log proof: Map 3D still imported `88599` polygon entities and `328942` arc entities inside that location-window request, but the cheap extents filter only kept `2` polygons and `7` arcs. The screenshot false positives are therefore surviving because their bounding boxes overlap the requested window even though the actual geometry does not touch it.
+- Fix: keep the fast quarter-aware scope and cheap extents filter, then add one narrow actual-touch confirmation only for `Partial` survivors. Open paths now have to clip at least one segment to the requested window, and closed boundaries now have to intersect or contain the requested window before they are kept. This removes the far-away bbox survivors without reintroducing the slow geometry rebuild path.
+- Verification: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing `axisTol` warnings. `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+
+Follow-up 2026-03-31 (live run proved closed-boundary touch check is still too expensive):
+- Live log proof: the current run reaches `P3 importer import complete` for `BF_Hydro_Polygon.shp` in about `66459 ms`, reaches `P3 import post-scan complete` with `newIds=88732`, and then stalls inside post-process before the `post-process complete` line. That means the new slowdown is in polygon post-filtering, not in raw Map import.
+- Root cause: the earlier actual-touch confirmation was being applied to closed hydro polygons as well as open hydro arcs. For `88732` polygon candidates that is too expensive, and it defeats the goal of staying close to baseline runtime.
+- Narrow rollback: reserve actual-touch validation only for open hydro paths (`Line` and non-closed `Polyline`), which are the class that produced the far-away river survivors. Closed boundaries fall back to the fast extents-based keep/erase path again.
+- Verification note: while the live AutoCAD session is still running, I verified the source change with `dotnet msbuild .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release /p:Platform=x64 /v:minimal`. The source output compiled with the same two pre-existing `axisTol` warnings, but the standard deployed `build\net8.0-windows` DLL cannot be updated until AutoCAD releases its lock.
+
+Follow-up 2026-03-31 (deployed open-path-only rollback):
+- After AutoCAD closed, `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` succeeded and updated the shared deployed DLL.
+- `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- Active deployed ATS DLL: `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\build\net8.0-windows\AtsBackgroundBuilder.dll` (`2026-03-31 11:55:50 AM`)
+
+Follow-up 2026-03-31 (trim surviving open hydro instead of keeping whole line):
+- User report: after restoring performance, the large far-away hydro shapes still survived because the long river path genuinely touched the requested window somewhere and was therefore kept whole.
+- Final narrow fix: for `Partial` open-path hydro survivors only, keep the fast touch validation but then replace the original entity with clipped-in-window polyline pieces. Closed polygons still stay on the fast path; only the surviving open river lines get trimmed.
+- Verification: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing `axisTol` warnings, and `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- Active deployed ATS DLL: `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\build\net8.0-windows\AtsBackgroundBuilder.dll` (`2026-03-31 12:05:56 PM`)
+
+## 2026-03-31 - ATS P3 section 23-57-18-5 outside-linework verification
+- [x] Create a dedicated AutoCAD harness repro for section `23-57-18-5` using `C:\Users\Jesse 2025\Desktop\01467-24-PLA-R0.dwg`.
+- [x] Add a repeatable DXF review for stray new `T-WATER-P3` linework outside the requested 100m work-area buffer while preserving legitimate existing P3 entities.
+- [x] Inspect the failing AutoCAD output to identify why far-away `BF_SLNET_arc.shp` geometry still survives.
+- [x] Implement the minimal P3 import/filter fix, rebuild, rerun the AutoCAD harness, and prove the stray outside linework is gone.
+- [x] Record the verified result and any new user-correction lesson.
+
+Review 2026-03-31 (section 23-57-18-5 P3 outside-linework verification):
+- Repro harness: added `data\sec23-57-18-5-p3-spec.json` and `data\sec23-57-18-5-p3-review.json`, then ran the Full AutoCAD harness against `C:\Users\Jesse 2025\Desktop\01467-24-PLA-R0.dwg`.
+- Root cause 1: the bad far-away hydro was the `BF_Hydro_Polygon.shp` survivors, not the small `BF_SLNET_arc.shp` lines. Two huge converted closed hydro polylines were surviving because partial-overlap classification happened before polygon conversion, so the later closed-boundary clip/filter never saw the converted geometry’s true extents.
+- Root cause 2: preserving existing `T-WATER-P3` means the build cannot clear the whole layer or review all layer content. The correct boundary is “new ATS-imported P3” versus pre-existing drawing content.
+- Fix: recompute overlap kind after polygon conversion, clip/filter partial closed hydro boundaries the same way as other path entities, and tag ATS-imported P3 entities with invisible `ATSBUILD_P3` XData so reruns clear only prior ATS-imported P3 in the requested scope.
+- Fix: the DXF review script now has a `path_window_guard` check and the section-23 review config scopes that check to ATS-tagged `T-WATER-P3` only, so preserved legacy P3 outside the build area does not count as a failure.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing unused `axisTol` warnings.
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- FullAutoCAD verification: `data\sec23-57-18-5-p3-run-rerun2\artifacts\review-report.json` passed (`checked=11`, `failures=0`). The final DXF contains `85` total `T-WATER-P3` polylines, but only `11` are ATS-tagged new imports and all `11` satisfy the 100m-buffer rule.
+- P3 log proof: `BF_Hydro_Polygon.shp` now reports `kept=0, filtered=88599, converted=2`; `BF_SLNET_arc.shp` reports `kept=11, filtered=328935`; and only `10` prior tagged in-scope `T-WATER-P3` entities were cleared before reimport instead of wiping all existing P3 layer content.
+
+## 2026-03-31 - ATS P3 section 23 north-half rerun gap
+- [x] Create a repeatable south-half then north-half AutoCAD repro for section `23-57-18-5` starting from `C:\Users\Jesse 2025\Desktop\01467-24-PLA-R0.dwg`.
+- [x] Confirm whether the second north-half run erases part of an existing ATS-imported south-half P3 path when it overlaps the cleanup scope.
+- [x] Implement the minimal cleanup/import fix so adjacent half-section reruns preserve continuity without reviving far-away P3 survivors.
+- [ ] Rebuild ATS, rerun the sequential AutoCAD verification, and prove the section-23 hydro stays continuous across the half boundary.
+- [x] Record the current result and the new P3 cleanup lesson.
+
+Review 2026-03-31 (section 23 north-half rerun gap):
+- Repro setup: added `data\sec23-57-18-5-p3-southhalf-spec.json` and `data\sec23-57-18-5-p3-northhalf-spec.json`, reran the south-half FullAutoCAD harness, then generated a chained saved intermediate from the south-half `output.dxf` by converting it to `C:\AtsHarness\convert-20260331-23\converted.dwg`.
+- Root cause: scoped cleanup of prior ATS-tagged `T-WATER-P3` erased any partial-overlap open path wholesale. On section `23-57-18-5`, the north-half import window overlaps the top of two south-half ATS river paths, so the second rerun could delete the whole south entity and leave a visible gap just below the north-half boundary.
+- Fix: `ClearLayerEntities` in `src\AtsBackgroundBuilder\Core\Plugin.Core.ImportWindowing.cs` now preserves outside-of-scope pieces for partial ATS-tagged open paths instead of erasing the entire entity. The new helper path is `TryReplaceOpenPathEntityWithOutsideScopePieces`, backed by `ClipOpenPathOutsideScopeWindows`.
+- Harness improvement: `scripts\atsbuild_harness.ps1` now preserves the source drawing extension in the launcher workspace, which is needed for chained verification using DXF intermediates.
+- Local proof on real geometry: running the section-23 south-half tagged `T-WATER-P3` paths through the new outside-scope clipping logic shows the two overlapping south-half seam paths now survive as clipped outside pieces ending exactly on the north-half window boundary at `Y=5976956.299536862`, instead of being deleted wholesale.
+- Example preserved seam pieces from the real south-half output:
+- `528632.028980109,5976848.202725275 -> 528541.4002204019,5976956.299536862`
+- `529134.9652333478,5976923.632821075 -> 529094.1622980316,5976956.299536862`
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing `axisTol` warnings.
+- Decision tests: `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- Full chained AutoCAD proof gap: the south-half rerun completed successfully, but repeated north-half reruns on the chained intermediate were interrupted by machine instability. Before the reboot, `managedmapapi.dll` threw an unhandled exception immediately after `sections_built`; after the reboot, the PC crashed again during the same chained verification attempt. Because of that host instability, I do not yet have a completed final north-after-south DXF to mark the end-to-end AutoCAD proof as finished.
+
+Follow-up 2026-03-31 (user-directed P3 no-trim simplification):
+- User correction: the desired behavior is no longer “trim P3 to the 100m buffer.” Instead, P3 objects should be kept whole whenever they touch the 100m buffer, and only objects that do not touch the buffer should be filtered out.
+- Simplification: removed the partial-overlap clip/replace path for new P3 imports and removed the partial outside-scope preservation path for scoped ATS-tagged cleanup. The current behavior is now:
+- partial new open-path P3 survives whole if it actually touches the requested buffer, otherwise it is filtered out;
+- partial existing ATS-tagged P3 that overlaps the current rerun scope is erased whole so the touching object can be reimported whole by the current pass;
+- no P3 object is clipped to the 100m buffer anymore.
+- Files updated: `src\AtsBackgroundBuilder\Core\Plugin.Core.ImportWindowing.cs`
+- Verification: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing `axisTol` warnings, and `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- Remaining proof gap: I did not rerun the chained AutoCAD north-after-south case after this simplification because the machine had just crashed repeatedly during the previous verification attempts. The next stable AutoCAD run is still needed for end-to-end proof of the revised no-trim behavior.
+
+Follow-up 2026-03-31 (user-corrected restore of P3 partial trimming):
+- User correction: the no-trim simplification reintroduced the original failure mode where huge hydro features survive far outside the area of interest, because the import window is not a true geometry clip and touching whole-object keep is too permissive for long P3 paths.
+- Corrected fix: restored the post-import partial path clip/replace behavior for new P3 imports and restored the scoped cleanup behavior that preserves outside-of-scope pieces for partial ATS-tagged reruns. This returns to the earlier seam-safe + outside-linework-safe behavior.
+- Files updated: `src\AtsBackgroundBuilder\Core\Plugin.Core.ImportWindowing.cs`
+- Verification: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same two pre-existing `axisTol` warnings, and `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+
+Follow-up 2026-03-31 (user-corrected no-trim endpoint-anchor rule):
+- User correction: clipping is still the wrong contract. P3 should stay whole, but the new import should not keep a full object outside the work area unless it has a real endpoint inside the requested 100 m buffer.
+- Root cause: the earlier no-trim whole-object rule was still too permissive. A long hydro path could survive whole if any part of it touched the import window, even when both endpoints were far outside the requested area.
+- Fix: `src\AtsBackgroundBuilder\Core\Plugin.Core.ImportWindowing.cs` now uses `ShouldKeepWholePartialP3Entity(...)` for partial P3 imports and the same endpoint-anchor rule during scoped cleanup of ATS-tagged `T-WATER-P3`.
+- Final rule:
+- partial open P3 path: keep whole only if at least one endpoint is inside the requested 100 m window;
+- partial closed P3 boundary: do not keep whole;
+- fully-inside entities still stay on the cheap keep path;
+- no clipping/rebuild is used for this behavior.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed. Remaining warnings are only the two pre-existing unused `axisTol` locals.
+- `dotnet test .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed.
+- FullAutoCAD repro passed with `scripts\atsbuild_harness.ps1 -Runner FullAutoCAD -DwgPath C:\Users\Jesse 2025\Desktop\01467-24-PLA-R0.dwg -SpecPath data\sec23-57-18-5-p3-spec.json -ReviewConfigPath data\sec23-57-18-5-p3-review.json -OutputDir data\sec23-57-18-5-p3-run-rerun3`
+- `data\sec23-57-18-5-p3-run-rerun3\artifacts\review-report.json` passed with `checked=6`, `failures=0`, `passed=true`.
+- P3 log proof from `data\sec23-57-18-5-p3-run-rerun3\artifacts\AtsBackgroundBuilder.run.log`:
+- `BF_Hydro_Polygon.shp`: `kept=0`, `filtered=88599`
+- `BF_SLNET_arc.shp`: `kept=6`, `filtered=328936`
+- The batch completed with `ATSBUILD_XLS_BATCH exit stage: completed (ok)`.
+
+## 2026-03-31 - Width aligned dimensions keep measured span attached
+- [x] Review the current aligned-dimension placement flow in `LabelPlacer.cs`, including candidate selection, creation, and finalize behavior.
+- [x] Update width-required aligned dimensions so moved text can sit outside the arrow span while the arrowheads and dimension line stay on the measured cross-section.
+- [x] Preserve `DimensionTextCandidate.DimLineOffset` through selection and creation so text placement and measured-span placement are controlled independently.
+- [x] Add a focused regression test for a narrow `10.00 m` multiline width label with text outside the arrow span and the dimension line still on the measured segment.
+- [x] Build/run the relevant tests and record the review outcome here.
+
+Review 2026-03-31 (width aligned dimensions keep measured span attached):
+- Root cause: the width-label aligned-dimension workflow was still treating moved text as the authority for the dimension geometry. `CreateAlignedDimensionLabel(...)` derived `dimLineOffset` from the text lane (`maxS + edgeGap` / `minS - edgeGap`), then projected `DimLinePoint` along the span under the text. The finalize pass reinforced that by forcing text movement mode `0` and calling `TryProjectAlignedDimensionLinePointUnderText(...)`, which could drag the measured geometry off the sampled cross-section whenever text moved outside the arrows.
+- Fix: `src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs` now keeps width-label `DimLinePoint` on the measured span instead of solving collisions by moving the aligned-dimension geometry. Width candidates preserve a separate `DimLineOffset`, creation/fallback now pass that value through explicitly, width labels default that offset to `0.0`, and creation/finalize both use text-movement mode `1` so outside text gets a native jog/leader while the measured cross-section stays attached. Forced-overlap creation also no longer rejects the aligned dimension just because the text must overlap the measured linework.
+- Test coverage: added `src\AtsBackgroundBuilder\Core\WidthAlignedDimensionPlacementPolicy.cs` plus the decision test `TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside()` in `src\AtsBackgroundBuilder.DecisionTests\Program.cs`. The test models a narrow `10.00 m` span with long multiline text positioned outside the arrows and asserts that the text stays outside while the dimension line point remains on the measured segment midpoint with zero offset.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed. Warnings were unchanged except for one existing nullable warning in `Plugin.Core.ImportWindowing.cs` that predates this change.
+- Decision tests: `dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed (`Decision tests passed.`).
+- Remaining proof gap: I did not run a live AutoCAD visual harness in this turn, so the automated proof here is the new geometry regression test plus successful compile/test coverage rather than a fresh rendered DXF screenshot.
+
+Follow-up 2026-03-31 (user-corrected same-line aligned dimensions):
+- User correction: the desired width-label behavior is not leader/jog style. Text may sit outside the arrows, but it must stay on the same aligned dimension line with `DIMTMOVE/TextMovement = 0`, while the arrowheads remain on the measured cross-section and no leader/jog/vertical extension is created.
+- Corrected fix: `src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs` now searches width-label candidates along the span axis only (`normalOffsets = { 0.0 }`), strongly penalizes any between-arrow overflow instead of moving text off the dim line, projects the chosen `labelPoint` back onto the span axis before assigning `TextPosition`, keeps `dimLineOffset = 0.0` on the measured cross-section, restores movement mode `0`, skips the leader-style `TryProjectAlignedDimensionLinePointUnderText(...)` path, and removes `MLeader` fallback for width-required aligned dimensions.
+- Corrected regression coverage: `src\AtsBackgroundBuilder\Core\WidthAlignedDimensionPlacementPolicy.cs` now models same-line side placement, and `TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside()` in `src\AtsBackgroundBuilder.DecisionTests\Program.cs` now verifies that a narrow `10.00 m` multiline width label chooses an outside-along-span position, projects the text back onto the dim line, keeps the dimension line point on the measured cross-section midpoint, and produces no normal-offset text geometry.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed after a one-line unrelated compile unblock in `src\AtsBackgroundBuilder\Core\Plugin.Core.ImportWindowing.cs` (`scopeExtents ?? Array.Empty<Extents2d>()` -> `scopeExtents`), with remaining warnings limited to the pre-existing nullable warning in that file and the two pre-existing `axisTol` warnings.
+- Decision tests: `dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed (`Decision tests passed.`).
+- Remaining proof gap: I still did not run a fresh live AutoCAD visual harness in this turn, so the automated proof is the corrected same-line regression test plus successful compile/test coverage rather than a rendered DXF screenshot.
+
+## 2026-03-31 - Width aligned dimensions keep outside placement matched to measured span
+- [x] Inspect the remaining same-line width-label edge case in the outside candidate ranking and finalize pass.
+- [x] Refine placement only so outside same-line text prefers the measured-span-matched continuation distance without changing the label type or movement mode.
+- [x] Extend the focused regression test to lock the outside continuation to the measured span width.
+- [x] Rebuild and rerun the decision tests, then record the outcome here.
+
+Review 2026-03-31 (width aligned dimensions keep outside placement matched to measured span):
+- User correction: the latest same-line fix looked much better, but some narrow width labels still looked visually detached because the continuation from the arrowheads to the outside text did not consistently track the measured segment width.
+- Root cause: the outside candidate generator still seeded “just clear the arrows” positions before the width-matched continuation distance, and the finalize pass `TryTightenOverlongAlignedDimensionJog(...)` could pull outside same-line text back toward the arrows after creation. That late tightening was changing placement even though the aligned-dimension object type and movement mode were already correct.
+- Fix: `src\AtsBackgroundBuilder\Core\WidthAlignedDimensionPlacementPolicy.cs` now exposes the preferred outside-along offset where the arrowhead-to-text continuation matches the measured span width and seeds that position first during same-line candidate generation. `src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs` now scores outside candidates much more strongly around that preferred width-matched position, and the finalize pass now normalizes width aligned dimensions back onto the same dimension line instead of tightening them inward.
+- Regression coverage: `TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside()` in `src\AtsBackgroundBuilder.DecisionTests\Program.cs` now also asserts that the primary outside candidate lands at the preferred width-matched offset and that the gap from the nearest arrowhead to the text equals the `10.00 m` measured span.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same pre-existing nullable warning in `Plugin.Core.ImportWindowing.cs` and the same two pre-existing `axisTol` warnings.
+- Decision tests: `dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed (`Decision tests passed.`).
+- Remaining proof gap: I still did not run a fresh live AutoCAD visual harness in this turn, so the proof here is build + regression coverage rather than a new rendered drawing screenshot.

@@ -37,5 +37,6 @@
     <Compile Include="..\AtsBackgroundBuilder\Core\OrdinaryUsecTieInAnchorLayerClassifier.cs" Link="OrdinaryUsecTieInAnchorLayerClassifier.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\SurveySecRoadAllowanceSecTargetPolicy.cs" Link="SurveySecRoadAllowanceSecTargetPolicy.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\SegmentStationProjection.cs" Link="SegmentStationProjection.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\WidthAlignedDimensionPlacementPolicy.cs" Link="WidthAlignedDimensionPlacementPolicy.cs" />
   </ItemGroup>
 </Project>
