@@ -28,6 +28,8 @@ namespace AtsBackgroundBuilder
 
     internal static class SegmentStationProjection
     {
+        private const double StationDeltaTolerance = 1e-9;
+
         public static bool TryResolvePointAtStation(
             ProjectedStationPoint segmentStart,
             ProjectedStationPoint segmentEnd,
@@ -40,38 +42,50 @@ namespace AtsBackgroundBuilder
 
             var aStation = Project(segmentStart, axisUnit);
             var bStation = Project(segmentEnd, axisUnit);
-            var minStation = Math.Min(aStation, bStation) - stationTolerance;
-            var maxStation = Math.Max(aStation, bStation) + stationTolerance;
-            if (station < minStation || station > maxStation)
+            if (!BoundaryStationSpanPolicy.IsWithinSegmentSpan(station, aStation, bStation, stationTolerance))
             {
                 return false;
             }
 
             var stationDelta = bStation - aStation;
-            if (Math.Abs(stationDelta) <= 1e-9)
+            if (Math.Abs(stationDelta) <= StationDeltaTolerance)
             {
                 return false;
             }
 
-            var t = (station - aStation) / stationDelta;
-            if (t < 0.0)
-            {
-                t = 0.0;
-            }
-            else if (t > 1.0)
-            {
-                t = 1.0;
-            }
-
-            point = new ProjectedStationPoint(
-                segmentStart.X + ((segmentEnd.X - segmentStart.X) * t),
-                segmentStart.Y + ((segmentEnd.Y - segmentStart.Y) * t));
+            var t = Clamp01((station - aStation) / stationDelta);
+            point = Interpolate(segmentStart, segmentEnd, t);
             return true;
         }
 
         private static double Project(ProjectedStationPoint point, ProjectedStationVector axisUnit)
         {
             return (point.X * axisUnit.X) + (point.Y * axisUnit.Y);
+        }
+
+        private static double Clamp01(double value)
+        {
+            if (value < 0.0)
+            {
+                return 0.0;
+            }
+
+            if (value > 1.0)
+            {
+                return 1.0;
+            }
+
+            return value;
+        }
+
+        private static ProjectedStationPoint Interpolate(
+            ProjectedStationPoint start,
+            ProjectedStationPoint end,
+            double t)
+        {
+            return new ProjectedStationPoint(
+                start.X + ((end.X - start.X) * t),
+                start.Y + ((end.Y - start.Y) * t));
         }
     }
 }

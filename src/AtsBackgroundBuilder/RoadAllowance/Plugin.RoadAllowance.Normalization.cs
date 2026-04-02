@@ -1223,13 +1223,13 @@ namespace AtsBackgroundBuilder
             }
         }
 
-        private static List<(bool Horizontal, double Axis, double SpanMin, double SpanMax)> SnapshotOriginalRangeEdgeSecRoadAllowanceAnchors(
+        private static List<RangeEdgeAnchor> SnapshotOriginalRangeEdgeSecRoadAllowanceAnchors(
             Database database,
             IEnumerable<ObjectId> requestedQuarterIds,
             IReadOnlyCollection<ObjectId> generatedRoadAllowanceIds,
             Logger? logger)
         {
-            var anchors = new List<(bool Horizontal, double Axis, double SpanMin, double SpanMax)>();
+            var anchors = new List<RangeEdgeAnchor>();
             if (database == null || requestedQuarterIds == null)
             {
                 return anchors;
@@ -1304,16 +1304,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    var axis = horizontal
-                        ? 0.5 * (a.Y + b.Y)
-                        : 0.5 * (a.X + b.X);
-                    var spanMin = horizontal
-                        ? Math.Min(a.X, b.X)
-                        : Math.Min(a.Y, b.Y);
-                    var spanMax = horizontal
-                        ? Math.Max(a.X, b.X)
-                        : Math.Max(a.Y, b.Y);
-                    anchors.Add((horizontal, axis, spanMin, spanMax));
+                    anchors.Add(RangeEdgeAnchor.FromSegment(a, b, horizontal));
                 }
 
                 tr.Commit();
@@ -1328,7 +1319,7 @@ namespace AtsBackgroundBuilder
             Database database,
             IEnumerable<ObjectId> requestedQuarterIds,
             IReadOnlyCollection<ObjectId> generatedRoadAllowanceIds,
-            IReadOnlyCollection<(bool Horizontal, double Axis, double SpanMin, double SpanMax)> originalRangeEdgeSecAnchors,
+            IReadOnlyCollection<RangeEdgeAnchor> originalRangeEdgeSecAnchors,
             Logger? logger)
         {
             if (database == null || requestedQuarterIds == null)
@@ -1350,7 +1341,7 @@ namespace AtsBackgroundBuilder
             var generatedSet = generatedRoadAllowanceIds == null
                 ? new HashSet<ObjectId>()
                 : new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
-            var secAnchorSet = originalRangeEdgeSecAnchors ?? Array.Empty<(bool Horizontal, double Axis, double SpanMin, double SpanMax)>();
+            var secAnchorSet = originalRangeEdgeSecAnchors ?? Array.Empty<RangeEdgeAnchor>();
             if (secAnchorSet.Count == 0)
             {
                 logger?.WriteLine("Cleanup: skipped range-edge L-SEC reapply because no original range-edge L-SEC anchors were captured.");
@@ -1361,27 +1352,6 @@ namespace AtsBackgroundBuilder
             var clipMaxX = clipWindows.Max(w => w.MaxPoint.X);
 
             bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForNormalization(a, b, clipWindows);
-
-            static bool HasSpanOverlap(double aMin, double aMax, double bMin, double bMax, double minOverlap)
-            {
-                var overlap = Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
-                return overlap >= minOverlap;
-            }
-
-            static double IntervalGap(double aMin, double aMax, double bMin, double bMax)
-            {
-                if (aMax < bMin)
-                {
-                    return bMin - aMax;
-                }
-
-                if (bMax < aMin)
-                {
-                    return aMin - bMax;
-                }
-
-                return 0.0;
-            }
 
             bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) =>
                 TryReadOpenSegmentForNormalization(ent, requireTwoVertexPolyline: false, requireCollinearWhenMultiVertex: false, out a, out b);
@@ -1445,37 +1415,16 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    var axis = horizontal
-                        ? 0.5 * (a.Y + b.Y)
-                        : 0.5 * (a.X + b.X);
-                    var spanMin = horizontal
-                        ? Math.Min(a.X, b.X)
-                        : Math.Min(a.Y, b.Y);
-                    var spanMax = horizontal
-                        ? Math.Max(a.X, b.X)
-                        : Math.Max(a.Y, b.Y);
+                    var liveAnchor = RangeEdgeAnchor.FromSegment(a, b, horizontal);
 
                     var matchesAnchor = false;
                     foreach (var anchor in secAnchorSet)
                     {
-                        if (anchor.Horizontal != horizontal)
+                        matchesAnchor = anchor.Matches(liveAnchor, axisTolerance, minSpanOverlap, maxSpanGap);
+                        if (matchesAnchor)
                         {
-                            continue;
+                            break;
                         }
-
-                        if (Math.Abs(anchor.Axis - axis) > axisTolerance)
-                        {
-                            continue;
-                        }
-
-                        if (!HasSpanOverlap(anchor.SpanMin, anchor.SpanMax, spanMin, spanMax, minSpanOverlap) &&
-                            IntervalGap(anchor.SpanMin, anchor.SpanMax, spanMin, spanMax) > maxSpanGap)
-                        {
-                            continue;
-                        }
-
-                        matchesAnchor = true;
-                        break;
                     }
 
                     if (!matchesAnchor)

@@ -33,6 +33,8 @@ namespace AtsBackgroundBuilder
         private const string LayerUsecCorrection = "L-USEC-C";
         private const string LayerUsecCorrectionZero = "L-USEC-C-0";
         private const string LayerQuarterView = "L-QUATER";
+        private const string PreserveFinalUsecVariantLayersEnvVar = "ATSBUILD_PRESERVE_FINAL_USEC_VARIANT_LAYERS";
+        private const string DisableFinalUsecOutputRelayerEnvVar = "ATSBUILD_DISABLE_FINAL_USEC_OUTPUT_RELAYER";
         private const short QuarterViewLayerColorIndex = 30; // orange
         private const double RoadAllowanceUsecWidthMeters = SectionRules.RoadAllowanceUsecWidthMeters;
         private const double RoadAllowanceSecWidthMeters = SectionRules.RoadAllowanceSecWidthMeters;
@@ -57,6 +59,9 @@ namespace AtsBackgroundBuilder
         // Range-edge relayer cleanup is WIP and remains off unless explicitly enabled.
         private static readonly bool EnableRangeEdgeRelayer =
             IsAffirmativeToggle(Environment.GetEnvironmentVariable("ATSBUILD_ENABLE_RANGE_EDGE_RELAYER"));
+        private static readonly bool PreserveFinalUsecVariantLayers =
+            IsAffirmativeToggle(Environment.GetEnvironmentVariable(PreserveFinalUsecVariantLayersEnvVar)) ||
+            IsAffirmativeToggle(Environment.GetEnvironmentVariable(DisableFinalUsecOutputRelayerEnvVar));
         // Export final CAD diagnostic layers (L-SEC/L-USEC/L-QSEC/L-SECTION-LSD) as GeoJSON for py viewer parity.
         private static readonly bool EnableCadGeoJsonExport =
             string.Equals(Environment.GetEnvironmentVariable("ATSBUILD_EXPORT_GEOJSON"), "1", StringComparison.OrdinalIgnoreCase);
@@ -88,6 +93,16 @@ namespace AtsBackgroundBuilder
                    string.Equals(normalized, "yes", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(normalized, "on", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(normalized, "y", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string DescribeFinalUsecOutputRelayerEnvironment()
+        {
+            var preserveRaw = Environment.GetEnvironmentVariable(PreserveFinalUsecVariantLayersEnvVar);
+            var disableRaw = Environment.GetEnvironmentVariable(DisableFinalUsecOutputRelayerEnvVar);
+            return
+                $"final USEC output relayer env: {PreserveFinalUsecVariantLayersEnvVar}={(string.IsNullOrWhiteSpace(preserveRaw) ? "<unset>" : preserveRaw)}, " +
+                $"{DisableFinalUsecOutputRelayerEnvVar}={(string.IsNullOrWhiteSpace(disableRaw) ? "<unset>" : disableRaw)} " +
+                $"(resolved {(PreserveFinalUsecVariantLayers ? "PRESERVE_VARIANTS" : "COLLAPSE_TO_L-USEC")}).";
         }
 
         public void Initialize()
@@ -242,6 +257,7 @@ namespace AtsBackgroundBuilder
             var rangeEdgeRelayerEnv = Environment.GetEnvironmentVariable("ATSBUILD_ENABLE_RANGE_EDGE_RELAYER");
             logger.WriteLine(
                 $"ATSBUILD range-edge relayer env: {(string.IsNullOrWhiteSpace(rangeEdgeRelayerEnv) ? "<unset>" : rangeEdgeRelayerEnv)} (resolved {(EnableRangeEdgeRelayer ? "ON" : "OFF")}).");
+            logger.WriteLine("ATSBUILD " + DescribeFinalUsecOutputRelayerEnvironment());
             ClearBufferedDefpointsWindowsBeforeBuild(database, logger);
             var exitStage = "startup";
             void SetExitStage(string stage)

@@ -7,12 +7,8 @@ namespace AtsBackgroundBuilder.Core
             bool endTouchesCorrectionChain,
             bool hasParallelInsetCompanion)
         {
-            if (!hasParallelInsetCompanion)
-            {
-                return true;
-            }
-
-            return startTouchesCorrectionChain && endTouchesCorrectionChain;
+            return !hasParallelInsetCompanion ||
+                   (startTouchesCorrectionChain && endTouchesCorrectionChain);
         }
     }
 }

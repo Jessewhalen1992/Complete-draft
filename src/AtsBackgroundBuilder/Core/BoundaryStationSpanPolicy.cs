@@ -6,9 +6,28 @@ namespace AtsBackgroundBuilder
     {
         public static bool IsWithinSegmentSpan(double station, double stationA, double stationB, double pad)
         {
-            var minStation = Math.Min(stationA, stationB) - pad;
-            var maxStation = Math.Max(stationA, stationB) + pad;
-            return station >= minStation && station <= maxStation;
+            var bounds = BuildInclusiveBounds(stationA, stationB, pad);
+            return station >= bounds.Min && station <= bounds.Max;
+        }
+
+        private static InclusiveBounds BuildInclusiveBounds(double valueA, double valueB, double pad)
+        {
+            return new InclusiveBounds(
+                Math.Min(valueA, valueB) - pad,
+                Math.Max(valueA, valueB) + pad);
+        }
+
+        private readonly struct InclusiveBounds
+        {
+            public InclusiveBounds(double min, double max)
+            {
+                Min = min;
+                Max = max;
+            }
+
+            public double Min { get; }
+
+            public double Max { get; }
         }
     }
 }

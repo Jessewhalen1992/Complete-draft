@@ -18,6 +18,8 @@
     <Compile Include="..\AtsBackgroundBuilder\Core\PlsrMissingLabelCandidateSelector.cs" Link="PlsrMissingLabelCandidateSelector.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\PlsrMissingLabelSuppressionPolicy.cs" Link="PlsrMissingLabelSuppressionPolicy.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\PlsrQuarterPointMatcher.cs" Link="PlsrQuarterPointMatcher.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\QuarterLabelFallbackPolicy.cs" Link="QuarterLabelFallbackPolicy.cs" />
+    <Compile Include="..\AtsBackgroundBuilder\Core\QuarterFallbackCandidateSelector.cs" Link="QuarterFallbackCandidateSelector.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\DispositionLabelColorPolicy.cs" Link="DispositionLabelColorPolicy.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\SectionRequestParser.cs" Link="SectionRequestParser.cs" />
     <Compile Include="..\AtsBackgroundBuilder\Core\PlsrSummaryComposer.cs" Link="PlsrSummaryComposer.cs" />

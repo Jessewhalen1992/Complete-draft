@@ -3839,6 +3839,107 @@ namespace AtsBackgroundBuilder
                         targetHorizontalCompanionCache);
                 }
 
+                bool IsTargetPassEligible(int pass, bool targetHasTwentyCompanion, bool targetHasThirtyCompanion)
+                {
+                    if (pass == 0)
+                    {
+                        return targetHasTwentyCompanion;
+                    }
+
+                    return !targetHasTwentyCompanion && !targetHasThirtyCompanion;
+                }
+
+                double ComputeInwardTargetScore(
+                    int pass,
+                    double t,
+                    bool targetHasTwentyCompanion,
+                    bool generated)
+                {
+                    var score =
+                        (pass * 1000.0) +
+                        0.65 * Math.Min(
+                            Math.Abs(t - stepTargetPrimary),
+                            Math.Abs(t - stepTargetSecondary)) +
+                        0.35 * t;
+                    if (targetHasTwentyCompanion)
+                    {
+                        score -= 0.08;
+                    }
+
+                    if (generated)
+                    {
+                        score -= 0.03;
+                    }
+
+                    return score;
+                }
+
+                bool ShouldPreferInwardTarget(bool found, double score, double t, double bestScore, double bestT)
+                {
+                    return !found ||
+                           score < (bestScore - 1e-9) ||
+                           (Math.Abs(score - bestScore) <= 1e-9 && t < bestT);
+                }
+
+                bool TryFindBestAxisTarget(
+                    int outerIndex,
+                    double outerAxis,
+                    double inwardSign,
+                    int roadCount,
+                    Func<int, bool> hasTargetCompanion,
+                    Func<int, bool> hasOuterCompanion,
+                    Func<int, (double Axis, bool Generated)> getTargetInfo,
+                    out double bestAxis,
+                    out double bestScore,
+                    out double bestT)
+                {
+                    bestAxis = double.NaN;
+                    bestScore = double.MaxValue;
+                    bestT = double.MaxValue;
+                    var found = false;
+                    for (var pass = 0; pass <= 1; pass++)
+                    {
+                        for (var ti = 0; ti < roadCount; ti++)
+                        {
+                            if (ti == outerIndex)
+                            {
+                                continue;
+                            }
+
+                            var targetHasTwentyCompanion = hasTargetCompanion(ti);
+                            var targetHasThirtyCompanion = hasOuterCompanion(ti);
+                            if (!IsTargetPassEligible(pass, targetHasTwentyCompanion, targetHasThirtyCompanion))
+                            {
+                                continue;
+                            }
+
+                            var (targetAxis, generated) = getTargetInfo(ti);
+                            var t = (targetAxis - outerAxis) * inwardSign;
+                            if (t < stepMin || t > stepMax)
+                            {
+                                continue;
+                            }
+
+                            var score = ComputeInwardTargetScore(
+                                pass,
+                                t,
+                                targetHasTwentyCompanion,
+                                generated);
+                            if (!ShouldPreferInwardTarget(found, score, t, bestScore, bestT))
+                            {
+                                continue;
+                            }
+
+                            found = true;
+                            bestAxis = targetAxis;
+                            bestScore = score;
+                            bestT = t;
+                        }
+                    }
+
+                    return found;
+                }
+
                 bool TryFindBestTarget(
                     Point2d endpoint,
                     Vector2d inwardDir,
@@ -3877,73 +3978,145 @@ namespace AtsBackgroundBuilder
 
                         var outerAxisX = AxisX(outer);
                         var inwardSign = Math.Sign(inwardDir.X);
-                        for (var pass = 0; pass <= 1; pass++)
+                        if (!TryFindBestAxisTarget(
+                                oi,
+                                outerAxisX,
+                                inwardSign,
+                                verticalRoads.Count,
+                                HasTargetCompanion,
+                                HasOuterCompanion,
+                                ti =>
+                                {
+                                    var targetSeg = verticalRoads[ti];
+                                    return (AxisX(targetSeg), targetSeg.Generated);
+                                },
+                                out var targetAxisX,
+                                out var candidateScore,
+                                out var candidateT))
                         {
-                            for (var ti = 0; ti < verticalRoads.Count; ti++)
-                            {
-                                if (ti == oi)
-                                {
-                                    continue;
-                                }
+                            continue;
+                        }
 
-                                var targetHasTwentyCompanion = HasTargetCompanion(ti);
-                                var targetHasThirtyCompanion = HasOuterCompanion(ti);
-                                if (pass == 0 && !targetHasTwentyCompanion)
-                                {
-                                    continue;
-                                }
-
-                                if (pass == 1)
-                                {
-                                    if (targetHasTwentyCompanion)
-                                    {
-                                        continue;
-                                    }
-
-                                    if (targetHasThirtyCompanion)
-                                    {
-                                        continue;
-                                    }
-                                }
-
-                                var targetSeg = verticalRoads[ti];
-                                var targetAxisX = AxisX(targetSeg);
-                                var t = (targetAxisX - outerAxisX) * inwardSign;
-                                if (t < stepMin || t > stepMax)
-                                {
-                                    continue;
-                                }
-
-                                var score =
-                                    (pass * 1000.0) +
-                                    0.65 * Math.Min(
-                                        Math.Abs(t - stepTargetPrimary),
-                                        Math.Abs(t - stepTargetSecondary)) +
-                                    0.35 * t;
-                                if (targetHasTwentyCompanion)
-                                {
-                                    score -= 0.08;
-                                }
-
-                                if (targetSeg.Generated)
-                                {
-                                    score -= 0.03;
-                                }
-
-                                if (!found ||
-                                    score < (bestScore - 1e-9) ||
-                                    (Math.Abs(score - bestScore) <= 1e-9 && t < bestT))
-                                {
-                                    found = true;
-                                    bestScore = score;
-                                    bestT = t;
-                                    bestTarget = new Point2d(targetAxisX, endpoint.Y);
-                                }
-                            }
+                        if (ShouldPreferInwardTarget(found, candidateScore, candidateT, bestScore, bestT))
+                        {
+                            found = true;
+                            bestScore = candidateScore;
+                            bestT = candidateT;
+                            bestTarget = new Point2d(targetAxisX, endpoint.Y);
                         }
                     }
 
                     return found;
+                }
+
+                bool TryFindBestHorizontalMove(
+                    Point2d p0,
+                    Point2d p1,
+                    out int moveEndpointIndex,
+                    out Point2d moveTarget)
+                {
+                    moveEndpointIndex = -1;
+                    moveTarget = default;
+                    var moveFound = false;
+                    var moveScore = double.MaxValue;
+                    var moveT = double.MaxValue;
+                    for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                    {
+                        scanned++;
+                        var endpoint = endpointIndex == 0 ? p0 : p1;
+                        var other = endpointIndex == 0 ? p1 : p0;
+                        // West-only correction rule for horizontal SEC/LSD segments.
+                        if (endpoint.X > (other.X + 1e-6))
+                        {
+                            continue;
+                        }
+
+                        var inward = other - endpoint;
+                        if (inward.Length <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        var inwardDir = inward / inward.Length;
+                        var foundTarget = TryFindBestTarget(
+                            endpoint,
+                            inwardDir,
+                            out var bestEndpointTarget,
+                            out var bestEndpointScore,
+                            out var bestEndpointT,
+                            out var endpointTouchedOuter,
+                            out var endpointTouchedOuterThirtyEighteen);
+                        if (endpointTouchedOuter)
+                        {
+                            touchingOuter++;
+                        }
+
+                        if (endpointTouchedOuterThirtyEighteen)
+                        {
+                            touchingOuterThirtyEighteen++;
+                        }
+
+                        if (!foundTarget)
+                        {
+                            continue;
+                        }
+
+                        candidates++;
+                        if (!moveFound ||
+                            bestEndpointScore < (moveScore - 1e-9) ||
+                            (Math.Abs(bestEndpointScore - moveScore) <= 1e-9 && bestEndpointT < moveT))
+                        {
+                            moveFound = true;
+                            moveEndpointIndex = endpointIndex;
+                            moveTarget = bestEndpointTarget;
+                            moveScore = bestEndpointScore;
+                            moveT = bestEndpointT;
+                        }
+                    }
+
+                    return moveFound;
+                }
+
+                bool TryApplyHorizontalMove(
+                    Entity writable,
+                    Point2d p0,
+                    Point2d p1,
+                    int moveEndpointIndex,
+                    Point2d moveTarget,
+                    double? maxMove = null)
+                {
+                    if (moveEndpointIndex < 0)
+                    {
+                        return false;
+                    }
+
+                    if (maxMove.HasValue)
+                    {
+                        var moveLength = moveEndpointIndex == 0
+                            ? p0.GetDistanceTo(moveTarget)
+                            : p1.GetDistanceTo(moveTarget);
+                        if (moveLength <= endpointMoveTol || moveLength > maxMove.Value)
+                        {
+                            return false;
+                        }
+                    }
+
+                    return TryMoveEndpointByIndex(writable, moveEndpointIndex, moveTarget, endpointMoveTol);
+                }
+
+                bool TryApplyBestHorizontalMove(Entity writable, double? maxMove = null)
+                {
+                    if (!TryReadOpenSegmentForCleanup(writable, out var p0, out var p1) || !IsHorizontalLikeForCleanup(p0, p1))
+                    {
+                        return false;
+                    }
+
+                    if (!TryFindBestHorizontalMove(p0, p1, out var moveEndpointIndex, out var moveTarget) || moveEndpointIndex < 0)
+                    {
+                        return false;
+                    }
+
+                    return TryApplyHorizontalMove(writable, p0, p1, moveEndpointIndex, moveTarget, maxMove);
                 }
 
                 bool TryFindBestVerticalLsdTarget(
@@ -3981,69 +4154,31 @@ namespace AtsBackgroundBuilder
                         }
 
                         var outerAxisY = AxisY(outer);
-                        for (var pass = 0; pass <= 1; pass++)
+                        if (!TryFindBestAxisTarget(
+                                oi,
+                                outerAxisY,
+                                inwardSign,
+                                horizontalRoads.Count,
+                                HasTargetHorizontalCompanion,
+                                HasOuterHorizontalCompanion,
+                                ti =>
+                                {
+                                    var targetSeg = horizontalRoads[ti];
+                                    return (AxisY(targetSeg), targetSeg.Generated);
+                                },
+                                out var targetAxisY,
+                                out var candidateScore,
+                                out var candidateT))
                         {
-                            for (var ti = 0; ti < horizontalRoads.Count; ti++)
-                            {
-                                if (ti == oi)
-                                {
-                                    continue;
-                                }
+                            continue;
+                        }
 
-                                var targetHasTwentyCompanion = HasTargetHorizontalCompanion(ti);
-                                var targetHasThirtyCompanion = HasOuterHorizontalCompanion(ti);
-                                if (pass == 0 && !targetHasTwentyCompanion)
-                                {
-                                    continue;
-                                }
-
-                                if (pass == 1)
-                                {
-                                    if (targetHasTwentyCompanion)
-                                    {
-                                        continue;
-                                    }
-
-                                    if (targetHasThirtyCompanion)
-                                    {
-                                        continue;
-                                    }
-                                }
-
-                                var targetSeg = horizontalRoads[ti];
-                                var targetAxisY = AxisY(targetSeg);
-                                var t = (targetAxisY - outerAxisY) * inwardSign;
-                                if (t < stepMin || t > stepMax)
-                                {
-                                    continue;
-                                }
-
-                                var score =
-                                    (pass * 1000.0) +
-                                    0.65 * Math.Min(
-                                        Math.Abs(t - stepTargetPrimary),
-                                        Math.Abs(t - stepTargetSecondary)) +
-                                    0.35 * t;
-                                if (targetHasTwentyCompanion)
-                                {
-                                    score -= 0.08;
-                                }
-
-                                if (targetSeg.Generated)
-                                {
-                                    score -= 0.03;
-                                }
-
-                                if (!found ||
-                                    score < (bestScore - 1e-9) ||
-                                    (Math.Abs(score - bestScore) <= 1e-9 && t < bestT))
-                                {
-                                    found = true;
-                                    bestScore = score;
-                                    bestT = t;
-                                    bestTarget = new Point2d(southEndpoint.X, targetAxisY);
-                                }
-                            }
+                        if (ShouldPreferInwardTarget(found, candidateScore, candidateT, bestScore, bestT))
+                        {
+                            found = true;
+                            bestScore = candidateScore;
+                            bestT = candidateT;
+                            bestTarget = new Point2d(southEndpoint.X, targetAxisY);
                         }
                     }
 
@@ -4057,80 +4192,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegmentForCleanup(writable, out var p0, out var p1) || !IsHorizontalLikeForCleanup(p0, p1))
-                    {
-                        continue;
-                    }
-
-                    var moveFound = false;
-                    var moveEndpointIndex = -1;
-                    var moveTarget = default(Point2d);
-                    var moveScore = double.MaxValue;
-                    var moveT = double.MaxValue;
-                    for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
-                    {
-                        scanned++;
-                        var endpoint = endpointIndex == 0 ? p0 : p1;
-                        var other = endpointIndex == 0 ? p1 : p0;
-                        // SW rule: only adjust the west end of horizontal lines.
-                        // Prevents accidentally pulling the SE endpoint westward.
-                        if (endpoint.X > (other.X + 1e-6))
-                        {
-                            continue;
-                        }
-                        var inward = other - endpoint;
-                        if (inward.Length <= 1e-6)
-                        {
-                            continue;
-                        }
-
-                        var inwardDir = inward / inward.Length;
-                        Point2d bestEndpointTarget;
-                        double bestScore;
-                        double bestT;
-                        bool endpointTouchedOuter;
-                        bool endpointTouchedOuterThirtyEighteen;
-                        var foundTarget = TryFindBestTarget(
-                            endpoint,
-                            inwardDir,
-                            out bestEndpointTarget,
-                            out bestScore,
-                            out bestT,
-                            out endpointTouchedOuter,
-                            out endpointTouchedOuterThirtyEighteen);
-                        if (endpointTouchedOuter)
-                        {
-                            touchingOuter++;
-                        }
-                        if (endpointTouchedOuterThirtyEighteen)
-                        {
-                            touchingOuterThirtyEighteen++;
-                        }
-
-                        if (!foundTarget)
-                        {
-                            continue;
-                        }
-
-                        candidates++;
-                        if (!moveFound ||
-                            bestScore < (moveScore - 1e-9) ||
-                            (Math.Abs(bestScore - moveScore) <= 1e-9 && bestT < moveT))
-                        {
-                            moveFound = true;
-                            moveEndpointIndex = endpointIndex;
-                            moveTarget = bestEndpointTarget;
-                            moveScore = bestScore;
-                            moveT = bestT;
-                        }
-                    }
-
-                    if (!moveFound || moveEndpointIndex < 0)
-                    {
-                        continue;
-                    }
-
-                    if (!TryMoveEndpointByIndex(writable, moveEndpointIndex, moveTarget, endpointMoveTol))
+                    if (!TryApplyBestHorizontalMove(writable))
                     {
                         continue;
                     }
@@ -4147,87 +4209,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenSegmentForCleanup(writableLsd, out var l0, out var l1) || !IsHorizontalLikeForCleanup(l0, l1))
-                    {
-                        continue;
-                    }
-
-                    var moveFound = false;
-                    var moveEndpointIndex = -1;
-                    var moveTarget = default(Point2d);
-                    var moveScore = double.MaxValue;
-                    var moveT = double.MaxValue;
-                    for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
-                    {
-                        scanned++;
-                        var endpoint = endpointIndex == 0 ? l0 : l1;
-                        var other = endpointIndex == 0 ? l1 : l0;
-                        // Keep LSD horizontal correction on the west endpoint only.
-                        if (endpoint.X > (other.X + 1e-6))
-                        {
-                            continue;
-                        }
-                        var inward = other - endpoint;
-                        if (inward.Length <= 1e-6)
-                        {
-                            continue;
-                        }
-
-                        var inwardDir = inward / inward.Length;
-                        Point2d bestEndpointTarget;
-                        double bestScore;
-                        double bestT;
-                        bool endpointTouchedOuter;
-                        bool endpointTouchedOuterThirtyEighteen;
-                        var foundTarget = TryFindBestTarget(
-                            endpoint,
-                            inwardDir,
-                            out bestEndpointTarget,
-                            out bestScore,
-                            out bestT,
-                            out endpointTouchedOuter,
-                            out endpointTouchedOuterThirtyEighteen);
-                        if (endpointTouchedOuter)
-                        {
-                            touchingOuter++;
-                        }
-                        if (endpointTouchedOuterThirtyEighteen)
-                        {
-                            touchingOuterThirtyEighteen++;
-                        }
-
-                        if (!foundTarget)
-                        {
-                            continue;
-                        }
-
-                        candidates++;
-                        if (!moveFound ||
-                            bestScore < (moveScore - 1e-9) ||
-                            (Math.Abs(bestScore - moveScore) <= 1e-9 && bestT < moveT))
-                        {
-                            moveFound = true;
-                            moveEndpointIndex = endpointIndex;
-                            moveTarget = bestEndpointTarget;
-                            moveScore = bestScore;
-                            moveT = bestT;
-                        }
-                    }
-
-                    if (!moveFound || moveEndpointIndex < 0)
-                    {
-                        continue;
-                    }
-
-                    var moveLength = moveEndpointIndex == 0
-                        ? l0.GetDistanceTo(moveTarget)
-                        : l1.GetDistanceTo(moveTarget);
-                    if (moveLength <= endpointMoveTol || moveLength > lsdMaxMove)
-                    {
-                        continue;
-                    }
-
-                    if (!TryMoveEndpointByIndex(writableLsd, moveEndpointIndex, moveTarget, endpointMoveTol))
+                    if (!TryApplyBestHorizontalMove(writableLsd, maxMove: lsdMaxMove))
                     {
                         continue;
                     }
@@ -5277,53 +5259,118 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
-                    var componentGhostMembers = new HashSet<int>();
-                    if (bucketCount > 0)
+                    HashSet<int> CollectComponentGhostMembers()
                     {
+                        var ghostMembers = new HashSet<int>();
+                        bool IsOrdinaryOuterBandTargetLayer(string? layer) =>
+                            string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase);
+
+                        if (bucketCount == 0)
+                        {
+                            return ghostMembers;
+                        }
+
                         var componentCorrectionZeroCandidates = roadSegments[component[0]].IsHorizontal
                             ? correctionZeroHorizontalSegments
                             : correctionZeroVerticalSegments;
-                        if (componentCorrectionZeroCandidates.Count > 0)
+                        if (componentCorrectionZeroCandidates.Count == 0)
                         {
-                            var candidateMembers = new List<int>();
-                            var candidateSegments = new List<(LineDistancePoint A, LineDistancePoint B)>();
-                            for (var b = 0; b < bucketCount; b++)
+                            return ghostMembers;
+                        }
+
+                        var ghostCandidates = new List<(int Id, LineDistancePoint A, LineDistancePoint B)>();
+                        void AddGhostCandidate(int member)
+                        {
+                            var seg = roadSegments[member];
+                            ghostCandidates.Add((
+                                member,
+                                new LineDistancePoint(seg.A.X, seg.A.Y),
+                                new LineDistancePoint(seg.B.X, seg.B.Y)));
+                        }
+
+                        for (var b = 0; b < bucketCount; b++)
+                        {
+                            var targetLayer = bucketLayers[b];
+                            if (!IsOrdinaryOuterBandTargetLayer(targetLayer))
                             {
-                                var targetLayer = bucketLayers[b];
-                                var targetIsOrdinaryOuterBand =
-                                    string.Equals(targetLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                                    string.Equals(targetLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase);
-                                if (!targetIsOrdinaryOuterBand)
+                                continue;
+                            }
+
+                            var members = buckets[b].Members;
+                            for (var mi = 0; mi < members.Count; mi++)
+                            {
+                                var member = members[mi];
+                                var seg = roadSegments[member];
+                                if (seg.IsGenerated)
                                 {
                                     continue;
                                 }
 
-                                var members = buckets[b].Members;
-                                for (var mi = 0; mi < members.Count; mi++)
-                                {
-                                    var member = members[mi];
-                                    var seg = roadSegments[member];
-                                    if (seg.IsGenerated)
-                                    {
-                                        continue;
-                                    }
-
-                                    candidateMembers.Add(member);
-                                    candidateSegments.Add((
-                                        new LineDistancePoint(seg.A.X, seg.A.Y),
-                                        new LineDistancePoint(seg.B.X, seg.B.Y)));
-                                }
-                            }
-
-                            var ghostCandidateIndices = CorrectionInsetGhostRowClassifier.FindGhostChainIndices(
-                                candidateSegments,
-                                componentCorrectionZeroCandidates,
-                                CorrectionLinePostInsetMeters);
-                            foreach (var ghostCandidateIndex in ghostCandidateIndices)
-                            {
-                                componentGhostMembers.Add(candidateMembers[ghostCandidateIndex]);
+                                AddGhostCandidate(member);
                             }
                         }
+
+                        var ghostCandidateMembers = CorrectionInsetGhostRowClassifier.FindGhostChainIds(
+                            ghostCandidates,
+                            componentCorrectionZeroCandidates,
+                            CorrectionLinePostInsetMeters);
+                        foreach (var ghostCandidateMember in ghostCandidateMembers)
+                        {
+                            ghostMembers.Add(ghostCandidateMember);
+                        }
+
+                        return ghostMembers;
+                    }
+
+                    var componentGhostMembers = CollectComponentGhostMembers();
+
+                    void ApplyThreeBandTargetLayer(Entity writable, string targetLayer)
+                    {
+                        var colorIndex = ResolveUsecLayerColorIndex(targetLayer);
+                        EnsureLayerWithColor(database, tr, targetLayer, colorIndex);
+                        writable.Layer = targetLayer;
+                        writable.ColorIndex = 256;
+
+                        if (string.Equals(targetLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase))
+                        {
+                            normalizedToThirty++;
+                        }
+                        else if (string.Equals(targetLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase))
+                        {
+                            normalizedToTwenty++;
+                        }
+                        else
+                        {
+                            normalizedToZero++;
+                        }
+                    }
+
+                    void NormalizeThreeBandMember(int member, string targetLayer)
+                    {
+                        var seg = roadSegments[member];
+                        if ((seg.IsBlindSouthBoundary && seg.IsHorizontal) ||
+                            !(tr.GetObject(seg.Id, OpenMode.ForWrite, false) is Entity writable) ||
+                            writable.IsErased)
+                        {
+                            return;
+                        }
+
+                        if (componentGhostMembers.Contains(member))
+                        {
+                            writable.Erase();
+                            ghostInsetRowsErased++;
+                            return;
+                        }
+
+                        var existingLayer = writable.Layer ?? string.Empty;
+                        if (string.Equals(existingLayer, targetLayer, StringComparison.OrdinalIgnoreCase))
+                        {
+                            unchanged++;
+                            return;
+                        }
+
+                        ApplyThreeBandTargetLayer(writable, targetLayer);
                     }
 
                     for (var b = 0; b < bucketCount; b++)
@@ -5332,45 +5379,7 @@ namespace AtsBackgroundBuilder
                         var members = buckets[b].Members;
                         foreach (var member in members)
                         {
-                            var seg = roadSegments[member];
-                            if ((seg.IsBlindSouthBoundary && seg.IsHorizontal) ||
-                                !(tr.GetObject(seg.Id, OpenMode.ForWrite, false) is Entity writable) ||
-                                writable.IsErased)
-                            {
-                                continue;
-                            }
-
-                            if (componentGhostMembers.Contains(member))
-                            {
-                                writable.Erase();
-                                ghostInsetRowsErased++;
-                                continue;
-                            }
-
-                            var existingLayer = writable.Layer ?? string.Empty;
-                            if (string.Equals(existingLayer, targetLayer, StringComparison.OrdinalIgnoreCase))
-                            {
-                                unchanged++;
-                                continue;
-                            }
-
-                            var colorIndex = ResolveUsecLayerColorIndex(targetLayer);
-                            EnsureLayerWithColor(database, tr, targetLayer, colorIndex);
-                            writable.Layer = targetLayer;
-                            writable.ColorIndex = 256;
-
-                            if (string.Equals(targetLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase))
-                            {
-                                normalizedToThirty++;
-                            }
-                            else if (string.Equals(targetLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase))
-                            {
-                                normalizedToTwenty++;
-                            }
-                            else
-                            {
-                                normalizedToZero++;
-                            }
+                            NormalizeThreeBandMember(member, targetLayer);
                         }
                     }
                 }
@@ -6898,55 +6907,79 @@ namespace AtsBackgroundBuilder
 
                     var useOwnerVotes = ownerVotes.Count > 0;
                     var selectedVotes = useOwnerVotes ? ownerVotes : fallbackVotes;
+                    var existingCanonicalLayerForFallback = CanonicalUsecLayer(seg.Layer);
+                    var hasParallelZeroCompanionForFallback = HasParallelZeroCompanionAtTwentyOffset(si);
+                    var hasParallelTwentyCompanionForFallback = HasParallelTwentyCompanionAtTwentyOffset(si);
+                    var targetLayer = string.Empty;
                     if (selectedVotes.Count == 0)
                     {
-                        unresolved++;
-                        continue;
-                    }
-
-                    if (useOwnerVotes)
-                    {
-                        ownerResolved++;
+                        // If section-owner voting cannot classify the segment, preserve the same
+                        // geometric invariant used later for voted rows: a same-orientation zero
+                        // companion at 20.11 m means this segment is the middle row, not the 30.16 row.
+                        if (!string.Equals(existingCanonicalLayerForFallback, LayerUsecZero, StringComparison.OrdinalIgnoreCase) &&
+                            hasParallelZeroCompanionForFallback)
+                        {
+                            targetLayer = LayerUsecTwenty;
+                        }
+                        else if (string.Equals(existingCanonicalLayerForFallback, LayerUsecZero, StringComparison.OrdinalIgnoreCase) &&
+                                 hasParallelTwentyCompanionForFallback)
+                        {
+                            targetLayer = LayerUsecZero;
+                        }
+                        else
+                        {
+                            unresolved++;
+                            continue;
+                        }
                     }
                     else
                     {
-                        fallbackResolved++;
+                        if (useOwnerVotes)
+                        {
+                            ownerResolved++;
+                        }
+                        else
+                        {
+                            fallbackResolved++;
+                        }
+
+                        targetLayer = selectedVotes
+                            .OrderByDescending(v => v.Value.Count)
+                            .ThenByDescending(v => v.Value.Weight)
+                            .ThenBy(v => v.Value.BestDistance)
+                            .ThenBy(v => LayerTieRank(v.Key))
+                            .Select(v => v.Key)
+                            .FirstOrDefault();
+                        if (string.IsNullOrWhiteSpace(targetLayer))
+                        {
+                            unresolved++;
+                            continue;
+                        }
                     }
 
-                    var targetLayer = selectedVotes
-                        .OrderByDescending(v => v.Value.Count)
-                        .ThenByDescending(v => v.Value.Weight)
-                        .ThenBy(v => v.Value.BestDistance)
-                        .ThenBy(v => LayerTieRank(v.Key))
-                        .Select(v => v.Key)
-                        .FirstOrDefault();
-                    if (string.IsNullOrWhiteSpace(targetLayer))
-                    {
-                        unresolved++;
-                        continue;
-                    }
-
-                    var existingCanonicalLayer = CanonicalUsecLayer(seg.Layer);
-                    var traceTargetSegment = IsTargetLayerTraceSegment(seg.A, seg.B);
+                    var existingCanonicalLayer = existingCanonicalLayerForFallback;
                     var existingIsThirty = string.Equals(existingCanonicalLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase);
                     var existingIsBlindBase = string.Equals(existingCanonicalLayer, LayerUsecBase, StringComparison.OrdinalIgnoreCase);
+                    var hasParallelZeroCompanion = hasParallelZeroCompanionForFallback;
+                    var hasParallelTwentyCompanion = hasParallelTwentyCompanionForFallback;
+
                     if (string.Equals(existingCanonicalLayer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) &&
                         string.Equals(targetLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) &&
-                        HasParallelZeroCompanionAtTwentyOffset(si))
+                        hasParallelZeroCompanion)
                     {
                         targetLayer = LayerUsecTwenty;
                         preservedTwentyByZeroCompanion++;
                     }
                     else if (string.Equals(existingCanonicalLayer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) &&
                              string.Equals(targetLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) &&
-                             HasParallelTwentyCompanionAtTwentyOffset(si))
+                             hasParallelTwentyCompanion)
                     {
                         targetLayer = LayerUsecZero;
                         preservedTwentyByZeroCompanion++;
                     }
                     else if (string.Equals(targetLayer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) &&
                              !string.Equals(existingCanonicalLayer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) &&
-                             HasParallelZeroCompanionAtTwentyOffset(si))
+                             hasParallelZeroCompanion)
                     {
                         // Geometric invariant:
                         // a segment with a same-orientation zero companion at 20.12m cannot be
@@ -7115,12 +7148,6 @@ namespace AtsBackgroundBuilder
                         {
                             demotedBlindThirtyBySectionSide++;
                         }
-                    }
-
-                    if (traceTargetSegment && logger != null)
-                    {
-                        logger.WriteLine(
-                            $"TRACE-RELAYER id={seg.Id.Handle} existing={existingCanonicalLayer} selected={targetLayer} shortStub={shortHorizontalBlindStub} zA={touchesZeroA} zB={touchesZeroB} tA={touchesTwentyA} tB={touchesTwentyB} thA={touchesThirtyA} thB={touchesThirtyB} demoteZ={demoteThirtyByZeroAnchor} demote20={demoteThirtyByTwentyAnchor} demoteRange={demoteThirtyByRangeEdge} demoteSide={demoteThirtyBySectionSide}.");
                     }
 
                     if (!(tr.GetObject(seg.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)

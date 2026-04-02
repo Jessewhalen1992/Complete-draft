@@ -2,6 +2,8 @@ namespace AtsBackgroundBuilder.Core
 {
     internal static class CorrectionBoundaryTrendSampling
     {
+        private const double HorizontalTolerance = 1e-6;
+
         public static bool TryBuildBoundarySampleAcrossXSpan(
             LineDistancePoint boundaryAnchor,
             LineDistancePoint leftAnchor,
@@ -18,18 +20,41 @@ namespace AtsBackgroundBuilder.Core
                 return false;
             }
 
-            var dx = rightAnchor.X - leftAnchor.X;
-            var dy = rightAnchor.Y - leftAnchor.Y;
-            if (System.Math.Abs(dx) <= 1e-6)
+            if (!TryBuildTrendLine(boundaryAnchor, leftAnchor, rightAnchor, out var slope, out var intercept))
             {
                 return false;
             }
 
-            var slope = dy / dx;
-            var intercept = boundaryAnchor.Y - (slope * boundaryAnchor.X);
-            sampleA = new LineDistancePoint(minX, (slope * minX) + intercept);
-            sampleB = new LineDistancePoint(maxX, (slope * maxX) + intercept);
+            sampleA = CreateTrendSample(minX, slope, intercept);
+            sampleB = CreateTrendSample(maxX, slope, intercept);
             return true;
+        }
+
+        private static bool TryBuildTrendLine(
+            LineDistancePoint boundaryAnchor,
+            LineDistancePoint leftAnchor,
+            LineDistancePoint rightAnchor,
+            out double slope,
+            out double intercept)
+        {
+            slope = 0.0;
+            intercept = 0.0;
+
+            var dx = rightAnchor.X - leftAnchor.X;
+            if (System.Math.Abs(dx) <= HorizontalTolerance)
+            {
+                return false;
+            }
+
+            var dy = rightAnchor.Y - leftAnchor.Y;
+            slope = dy / dx;
+            intercept = boundaryAnchor.Y - (slope * boundaryAnchor.X);
+            return true;
+        }
+
+        private static LineDistancePoint CreateTrendSample(double x, double slope, double intercept)
+        {
+            return new LineDistancePoint(x, (slope * x) + intercept);
         }
     }
 }

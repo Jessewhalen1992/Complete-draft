@@ -4,6 +4,13 @@ namespace AtsBackgroundBuilder
 {
     internal static class CorrectionSouthBoundaryPreference
     {
+        private const double ComparisonTolerance = 1e-6;
+        private const double HardBoundaryCoverageFraction = 0.70;
+        private const double ShortCompanionThresholdMeters = 120.0;
+        private const double ShortCompanionCoverageFloorMeters = 20.0;
+        private const double ShortCompanionCoverageFraction = 0.45;
+        private const double LongCompanionCoverageFraction = 0.60;
+
         public static bool IsCloserToInsetThanHardBoundary(
             double outwardDistanceFromSection,
             double correctionInsetMeters,
@@ -18,7 +25,7 @@ namespace AtsBackgroundBuilder
             double dividerGapMeters,
             double maxAllowedGapMeters)
         {
-            return dividerGapMeters <= maxAllowedGapMeters + 1e-6;
+            return IsAtOrBelow(dividerGapMeters, maxAllowedGapMeters);
         }
 
         public static bool IsPlausibleInsetOffset(
@@ -30,7 +37,7 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            return outwardDistanceFromSection + 1e-6 >= (correctionInsetMeters * 0.5);
+            return IsAtOrAbove(outwardDistanceFromSection, correctionInsetMeters * 0.5);
         }
 
         public static bool IsHardBoundaryCoverageAcceptable(
@@ -42,7 +49,7 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            return projectedOverlapMeters + 1e-6 >= (frameSpanMeters * 0.70);
+            return IsAtOrAbove(projectedOverlapMeters, frameSpanMeters * HardBoundaryCoverageFraction);
         }
 
         public static bool IsCompanionCoverageAcceptable(
@@ -54,10 +61,7 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            var minCoverage = sourceLengthMeters <= 120.0
-                ? Math.Max(20.0, sourceLengthMeters * 0.45)
-                : sourceLengthMeters * 0.60;
-            return projectedOverlapMeters + 1e-6 >= minCoverage;
+            return IsAtOrAbove(projectedOverlapMeters, ResolveMinimumCompanionCoverage(sourceLengthMeters));
         }
 
         public static bool IsSameSideInsetCompanionCandidate(
@@ -73,7 +77,7 @@ namespace AtsBackgroundBuilder
 
             var outerDistance = Math.Abs(outerSignedOffset);
             var candidateDistance = Math.Abs(candidateSignedOffset);
-            if (outerDistance <= 1e-6 || candidateDistance <= 1e-6)
+            if (outerDistance <= ComparisonTolerance || candidateDistance <= ComparisonTolerance)
             {
                 return false;
             }
@@ -83,12 +87,29 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            if (candidateDistance + 1e-6 >= outerDistance)
+            if (IsAtOrAbove(candidateDistance, outerDistance))
             {
                 return false;
             }
 
-            return Math.Abs((outerDistance - candidateDistance) - expectedInsetMeters) <= toleranceMeters + 1e-6;
+            return Math.Abs((outerDistance - candidateDistance) - expectedInsetMeters) <= toleranceMeters + ComparisonTolerance;
+        }
+
+        private static double ResolveMinimumCompanionCoverage(double sourceLengthMeters)
+        {
+            return sourceLengthMeters <= ShortCompanionThresholdMeters
+                ? Math.Max(ShortCompanionCoverageFloorMeters, sourceLengthMeters * ShortCompanionCoverageFraction)
+                : sourceLengthMeters * LongCompanionCoverageFraction;
+        }
+
+        private static bool IsAtOrAbove(double value, double threshold)
+        {
+            return value + ComparisonTolerance >= threshold;
+        }
+
+        private static bool IsAtOrBelow(double value, double threshold)
+        {
+            return value <= threshold + ComparisonTolerance;
         }
     }
 }

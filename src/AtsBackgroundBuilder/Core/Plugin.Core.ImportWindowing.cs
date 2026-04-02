@@ -376,9 +376,7 @@ namespace AtsBackgroundBuilder
                 return summary;
             }
 
-            var scopeWindows = scopeExtents != null
-                ? BuildScopeWindows(scopeExtents)
-                : new List<Extents3d>();
+            var scopeWindows = BuildScopeWindows(scopeExtents);
             ClearLayerEntities(
                 database,
                 outputLayer,
@@ -424,7 +422,7 @@ namespace AtsBackgroundBuilder
                     logger?.WriteLine($"P3 importer init complete: file={fileName}.");
                     TrySetImporterLocationWindow(
                         importer,
-                        scopeExtents != null ? new List<Extents2d>(scopeExtents) : new List<Extents2d>(),
+                        new List<Extents2d>(scopeExtents),
                         logger);
                     var enabledInputLayers = 0;
                     foreach (InputLayer layer in importer)
@@ -667,9 +665,8 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            var scopeWindows = scopeExtents != null
-                ? BuildScopeWindows(scopeExtents)
-                : new List<Extents3d>();
+            var scopeWindows = BuildScopeWindows(scopeExtents);
+            var hasScopeExtents = scopeExtents is { Count: > 0 };
             var erased = 0;
             using (var tr = database.TransactionManager.StartTransaction())
             {
@@ -689,8 +686,7 @@ namespace AtsBackgroundBuilder
                     }
 
                     var overlapKind = ScopeOverlapKind.FullyInside;
-                    if (scopeExtents != null &&
-                        scopeExtents.Count > 0)
+                    if (hasScopeExtents)
                     {
                         overlapKind = ClassifyEntityScopeOverlap(ent, scopeExtents);
                         if (overlapKind == ScopeOverlapKind.None)
@@ -731,7 +727,7 @@ namespace AtsBackgroundBuilder
 
             if (erased > 0)
             {
-                if (scopeExtents != null && scopeExtents.Count > 0)
+                if (hasScopeExtents)
                 {
                     logger?.WriteLine($"Cleared {erased} existing tagged entity/ies from layer '{layerName}' inside requested import scope before import.");
                 }
@@ -1777,7 +1773,7 @@ namespace AtsBackgroundBuilder
             return extents;
         }
 
-        private static List<Extents3d> BuildScopeWindows(IReadOnlyList<Extents2d> scopeExtents)
+        private static List<Extents3d> BuildScopeWindows(IReadOnlyList<Extents2d>? scopeExtents)
         {
             var windows = new List<Extents3d>();
             if (scopeExtents == null)
@@ -1803,7 +1799,7 @@ namespace AtsBackgroundBuilder
             FullyInside,
         }
 
-        private static ScopeOverlapKind ClassifyEntityScopeOverlap(Entity ent, IReadOnlyList<Extents2d> scopeExtents)
+        private static ScopeOverlapKind ClassifyEntityScopeOverlap(Entity ent, IReadOnlyList<Extents2d>? scopeExtents)
         {
             if (ent == null || scopeExtents == null || scopeExtents.Count == 0)
             {

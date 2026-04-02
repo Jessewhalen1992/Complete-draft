@@ -74,6 +74,7 @@ namespace AtsBackgroundBuilder.Core
         public static List<PlsrQuarterMatchPoint> BuildDimensionPoints(
             PlsrQuarterMatchPoint anchorPoint,
             PlsrQuarterMatchPoint? textPoint,
+            PlsrQuarterMatchPoint? dimLinePoint,
             PlsrQuarterMatchPoint? firstExtensionPoint,
             PlsrQuarterMatchPoint? secondExtensionPoint)
         {
@@ -83,6 +84,11 @@ namespace AtsBackgroundBuilder.Core
             if (textPoint.HasValue)
             {
                 AddUnique(points, textPoint.Value);
+            }
+
+            if (dimLinePoint.HasValue)
+            {
+                AddUnique(points, dimLinePoint.Value);
             }
 
             if (firstExtensionPoint.HasValue)
@@ -103,6 +109,10 @@ namespace AtsBackgroundBuilder.Core
                     (first.X + second.X) * 0.5,
                     (first.Y + second.Y) * 0.5));
             }
+
+            AddSegmentMidpoint(points, textPoint, dimLinePoint);
+            AddSegmentMidpoint(points, dimLinePoint, firstExtensionPoint);
+            AddSegmentMidpoint(points, dimLinePoint, secondExtensionPoint);
 
             return points;
         }
@@ -138,6 +148,31 @@ namespace AtsBackgroundBuilder.Core
             return points;
         }
 
+        public static List<PlsrQuarterMatchPoint> BuildLeaderPoints(
+            PlsrQuarterMatchPoint anchorPoint,
+            IEnumerable<PlsrQuarterMatchPoint>? leaderVertices)
+        {
+            var points = new List<PlsrQuarterMatchPoint>();
+            AddUnique(points, anchorPoint);
+
+            var ordered = new List<PlsrQuarterMatchPoint> { anchorPoint };
+            if (leaderVertices != null)
+            {
+                foreach (var leaderVertex in leaderVertices)
+                {
+                    AddUnique(points, leaderVertex);
+                    ordered.Add(leaderVertex);
+                }
+            }
+
+            for (var i = 1; i < ordered.Count; i++)
+            {
+                AddSegmentMidpoint(points, ordered[i - 1], ordered[i]);
+            }
+
+            return points;
+        }
+
         private static void AddUnique(List<PlsrQuarterMatchPoint> points, PlsrQuarterMatchPoint candidate)
         {
             const double epsilon = 1e-6;
@@ -152,6 +187,29 @@ namespace AtsBackgroundBuilder.Core
             }
 
             points.Add(candidate);
+        }
+
+        private static void AddSegmentMidpoint(
+            List<PlsrQuarterMatchPoint> points,
+            PlsrQuarterMatchPoint first,
+            PlsrQuarterMatchPoint second)
+        {
+            AddUnique(points, new PlsrQuarterMatchPoint(
+                (first.X + second.X) * 0.5,
+                (first.Y + second.Y) * 0.5));
+        }
+
+        private static void AddSegmentMidpoint(
+            List<PlsrQuarterMatchPoint> points,
+            PlsrQuarterMatchPoint? first,
+            PlsrQuarterMatchPoint? second)
+        {
+            if (!first.HasValue || !second.HasValue)
+            {
+                return;
+            }
+
+            AddSegmentMidpoint(points, first.Value, second.Value);
         }
     }
 

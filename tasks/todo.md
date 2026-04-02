@@ -1,3 +1,795 @@
+# Follow-up (59-19-5 Wrong Vertical Usec Span, 2026-04-02)
+
+- [x] Confirm the exact bad segment `519547.970,5991604.369 -> 519544.528,5992409.028` in the saved `59-19-5` harness outputs and identify its preserved final layer.
+- [x] Trace the late `L-USEC2012/L-USEC3018` relayer path for that span, implement the smallest safe fix, and keep the trace proof in the review notes.
+- [x] Rebuild and rerun the strongest `59-19-5` harness with preserved variant layers, then compare the exact target segment before/after.
+
+## Review (59-19-5 Wrong Vertical Usec Span, 2026-04-02)
+
+- Root cause: the exact preserved-layer segment `519547.970,5991604.369 -> 519544.528,5992409.028` was first normalized correctly, then overpromoted to `L-USEC3018` by the late consistency pass and left stale because the deterministic section-edge relayer fell through its `selectedVotes.Count == 0` unresolved branch.
+- Fix: updated `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs` so the unresolved section-edge relayer path reuses the same geometric invariant already trusted in the voted path: a non-zero row with a same-orientation `L-USEC-0` companion at the 20.11 m offset resolves to `L-USEC2012`, while the matching zero row stays `L-USEC-0`.
+- Verification:
+  - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln" -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+  - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+  - Preserved-layer AutoCAD harness rerun in `data/twp59-19-5-fix-verified` completed with `batchCompleted = true` and exported the DXF.
+  - Exact before/after DXF comparison against `data/twp59-19-5-trace5/artifacts/output.dxf` showed one intended change only: the target segment moved from `L-USEC3018` to `L-USEC2012`, with no geometry drift and no other entity/layer changes.
+
+# Follow-up (Refactor Sweep With DWG/DXF Verification, 2026-03-31)
+
+- [x] Review `tasks/lessons.md`, inspect the current dirty worktree, and locate the existing DWG/DXF harness workflow plus candidate refactor targets.
+- [x] Refactor `src/AtsBackgroundBuilder/Core/CorrectionZeroCompanionProjection.cs` for readability and score-selection clarity without changing geometry behavior.
+- [x] Verify the correction-zero refactor with targeted decision tests and the focused correction-line DWG/DXF harness review before moving on.
+- [x] Refactor the range-edge anchor normalization path to replace tuple-heavy anchor handling with a dedicated value object/helper methods.
+- [x] Verify the range-edge normalization refactor with targeted decision tests and the focused layer-classification DWG/DXF harness review before moving on.
+- [x] Capture fresh endpoint-enforcement baselines on focused hard-stop/correction-line cases before refactoring a larger orchestration file.
+- [x] Refactor the repeated endpoint-move arbitration/application plumbing in `Plugin.RoadAllowance.EndpointEnforcement.cs` without changing target-selection behavior.
+- [x] Verify the first endpoint-enforcement refactor with build/tests plus before/after DXF comparisons on the focused `twp63-12-5` and `twp64-3-6` cases.
+- [x] Continue the sweep through the exercised quarter-line and regular-boundary midpoint paths in `EndpointEnforcement.cs`, keeping each slice small enough for an immediate before/after DXF proof.
+- [x] Verify every additional `EndpointEnforcement` slice with build/tests plus chained DWG/DXF comparisons and targeted endpoint checks where the review config is stale or indirect.
+- [x] Add a review section summarizing what was refactored, what harnesses were run, and where the next real proof boundary now is.
+
+## Review (Refactor Sweep With DWG/DXF Verification, 2026-03-31)
+
+- Refactor 1: `src/AtsBackgroundBuilder/Core/CorrectionZeroCompanionProjection.cs`
+  - Replaced the inline “best segment” state machine with `TryGetOutwardUnitVector(...)`, `TryBuildCandidate(...)`, and a small `CompanionProjectionCandidate` value type so the filter/ranking rules read as explicit steps instead of one long block of local variables.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-correction-zero-plugin"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - `scripts/atsbuild_harness.ps1` with `data/twp59-18-5-correctionline-spec.json` completed in `data/refactor-correction-zero-harness`.
+    - The stock review config `data/twp59-18-5-correctionline-review.json` failed because it still expects layer `L-USEC2012`, while the current final relayer emits the verified endpoint on `L-USEC`. Running `scripts/atsbuild_review.py` against `data/refactor-correction-zero-harness/artifacts/output.dxf` with an updated point-match config passed at `519551.434986, 5990794.710737` (`delta = 0.000263`).
+
+- Refactor 2: range-edge normalization anchors
+  - Added `src/AtsBackgroundBuilder/RoadAllowance/RangeEdgeAnchor.cs` and updated the cleanup pipeline / normalization path to use that dedicated value object instead of anonymous `(Horizontal, Axis, SpanMin, SpanMax)` tuples for the captured `L-SEC` range-edge anchors.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-range-edge-plugin"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Captured a pre-change baseline harness run in `data/refactor-range-edge-baseline` using `data/twp76-11-6-layer-spec.json`, then reran the same harness after the refactor into `data/refactor-range-edge-verified`.
+    - The raw DXF file hashes differ, but a geometry-level comparison of parsed `layer + segment endpoints` (`943` entities in each run, rounded to 1e-6) matched exactly, and both run logs preserved the same range-edge messages:
+      - `snapshot captured 0 original range-edge L-SEC anchor(s) for final relayer protection`
+      - `skipped range-edge L-SEC reapply because no original range-edge L-SEC anchors were captured`
+
+- Refactor 3: `src/AtsBackgroundBuilder/Core/CorrectionInsetGhostRowClassifier.cs`
+  - Restructured the ghost-chain flow around explicit segment/candidate helpers: `TryGetRequiredOverlapGhostMatch(...)`, `TryGetOptionalOverlapGhostMatch(...)`, `TryCreateSegmentInfo(...)`, and `TryBuildInsetMatchCandidate(...)`, plus small `SegmentInfo` / `InsetMatchCandidate` value types. The queue expansion logic now reads in terms of “seed match”, “optional continuation match”, and “same inset family” rather than repeated inline geometry math.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-ghost-plugin"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Captured baseline quarter/correction-line output in `data/refactor-ghost-baseline/artifacts/output.dxf`, reran after the refactor into `data/refactor-ghost-verified/artifacts/output.dxf`, and compared parsed `layer + segment endpoints`.
+    - Geometry comparison matched exactly (`121` parsed entities in both runs, no per-segment drift).
+    - The bundled quarter review config still reports the long-known quarter-point mismatch in both baseline/current runs, so the geometry-diff check was the authoritative verification for this refactor.
+
+- Refactor 4: `src/AtsBackgroundBuilder/Core/CorrectionZeroTargetPreference.cs`
+  - Consolidated the repeated epsilon comparisons behind `ComparisonTolerance`, `IsStrictlyBetter(...)`, and `AreEquivalent(...)` so the candidate-ordering rules are easier to audit without changing the selection order.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-targetpref-plugin"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Baseline/current correction-line DXFs (`data/refactor-targetpref-baseline/artifacts/output.dxf` vs `data/refactor-targetpref-verified/artifacts/output.dxf`) matched exactly at the parsed geometry level (`990` entities in each run).
+    - The focused point review on `data/refactor-targetpref-verified/artifacts/output.dxf` still passed on the expected endpoint `519551.434986, 5990794.710737` on `L-USEC` (`delta = 0.000263`).
+
+- Refactor 5: shared station/boundary helpers
+  - Refactored `src/AtsBackgroundBuilder/Core/BoundaryStationSpanPolicy.cs`, `src/AtsBackgroundBuilder/Core/SegmentStationProjection.cs`, and `src/AtsBackgroundBuilder/Core/CorrectionBoundaryTrendSampling.cs` so inclusive span checks, clamping/interpolation, and trend-line construction are expressed as named helpers instead of open-coded local math in each method.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-stationmath-plugin"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Parsed-geometry comparisons both matched exactly:
+      - `data/refactor-targetpref-baseline/artifacts/output.dxf` vs `data/refactor-stationmath-twp59/artifacts/output.dxf` (`990` entities each)
+      - `data/refactor-ghost-baseline/artifacts/output.dxf` vs `data/refactor-stationmath-quarter/artifacts/output.dxf` (`121` entities each)
+    - The focused `twp59` point review still passed on the same `L-USEC` endpoint (`delta = 0.000263`).
+
+- Refactor 6: correction south-boundary preference rules
+  - Cleaned up `src/AtsBackgroundBuilder/Core/CorrectionSouthBoundaryPreference.cs` by centralizing tolerance/coverage constants and extracting `ResolveMinimumCompanionCoverage(...)`, `IsAtOrAbove(...)`, and `IsAtOrBelow(...)`. I also simplified `src/AtsBackgroundBuilder/Core/CorrectionOuterConsistencyPromotionPolicy.cs` to its direct boolean expression.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-southpref-plugin"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Parsed-geometry comparisons both matched exactly:
+      - `data/refactor-stationmath-twp59/artifacts/output.dxf` vs `data/refactor-southpref-twp59/artifacts/output.dxf` (`990` entities each)
+      - `data/refactor-stationmath-quarter/artifacts/output.dxf` vs `data/refactor-southpref-quarter/artifacts/output.dxf` (`121` entities each)
+    - The focused `twp59` point review still passed on the same `L-USEC` endpoint (`delta = 0.000263`).
+
+- Refactor 7: endpoint-enforcement move-plan plumbing
+  - Refactored the simplest repeated move-application pattern in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by introducing `EndpointMovePlan`, `CancelShorterEndpointMoveForMinimumLength(...)`, and `ApplyEndpointMovePlanForEndpointEnforcement(...)`. I applied that only to the three straightforward loops that already shared the same behavior: `EnforceSecLineEndpointsOnHardSectionBoundaries(...)`, `EnforceZeroTwentyEndpointsOnCorrectionZeroBoundaries(...)`, and the blind-line 11 m hard-boundary extension pass. The target-selection predicates and scoring were left untouched.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-plugin"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Captured fresh pre-change baselines in `data/refactor-endpoint-baseline-twp63` and `data/refactor-endpoint-baseline-twp64`, then reran the same harnesses after the refactor into `data/refactor-endpoint-verified-twp63` and `data/refactor-endpoint-verified-twp64`.
+    - Parsed-geometry comparisons both matched exactly:
+      - `data/refactor-endpoint-baseline-twp63/artifacts/output.dxf` vs `data/refactor-endpoint-verified-twp63/artifacts/output.dxf` (`982` entities each)
+      - `data/refactor-endpoint-baseline-twp64/artifacts/output.dxf` vs `data/refactor-endpoint-verified-twp64/artifacts/output.dxf` (`960` entities each)
+    - Relayer-aware focused checks were unchanged before/after:
+      - `twp63`: nearest emitted endpoints stayed at `579391.976308,6030280.201960` and `579412.086401,6030280.566849` with the same best-layer matches.
+      - `twp64`: the two `L-SEC` segment matches and the relayered `L-USEC` vertical hard-stop segment stayed identical after canonicalization.
+    - The bundled `twp63-12-5` / `twp64-3-6` review JSON files still expect pre-relayer `L-USEC-0` / `L-USEC2012` output in places, so those reports remain stale; the authoritative proof here is the before/after DXF geometry match plus the explicit emitted-point/segment checks above.
+
+- Refactor 8: quarter-line endpoint enforcement helpers
+  - Continued cleaning up `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` inside `EnforceQuarterLineEndpointsOnSectionBoundaries(...)`. First I reused `EndpointMovePlan` for the simple final apply tail, then extracted `TryPromoteQuarterEndpointMoveToBoundaryJunction(...)`, `TryResolveQuarterEndpointMoveTarget(...)`, and `TryResolveQuarterEndpointMove(...)` so the start/end branches now read in terms of boundary-snap versus junction-snap decisions instead of duplicated inline tests.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-quarter-endpoint-plugin"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-quarter-endpoint-plugin2"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-quarter-endpoint-plugin3"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed after each slice.
+    - Chained parsed-geometry comparisons all matched exactly (`121` entities each):
+      - `data/refactor-quarter-endpoint-baseline/artifacts/output.dxf` vs `data/refactor-quarter-endpoint-verified/artifacts/output.dxf`
+      - `data/refactor-quarter-endpoint-verified/artifacts/output.dxf` vs `data/refactor-quarter-junction-verified/artifacts/output.dxf`
+      - `data/refactor-quarter-junction-verified/artifacts/output.dxf` vs `data/refactor-quarter-helper-verified/artifacts/output.dxf`
+    - Focused endpoint checks stayed unchanged at `512231.510873,5990747.642214` and `512181.260839,5990768.724427`.
+    - The bundled quarter review config still reports the long-known stale point mismatch in both baseline/current runs, so the authoritative proof remained the exact DXF geometry diff plus the explicit endpoint checks.
+
+- Refactor 9: regular-boundary midpoint post-pass helpers
+  - Kept working inside `EnforceRegularBoundaryLsdMidpointsAfterRuleMatrix(...)` and refactored it in tiny verified slices: added `TryPlanRegularBoundaryMidpointMove(...)`, `TryApplyRegularBoundaryMidpointMove(...)`, a shared `TryFindRegularBoundaryMidpoint(...)` selector for the horizontal/vertical candidate scoring, plus local helpers to collect entity segments and route midpoint targets by layer priority. The pass now reads as collect segments -> classify midpoint targets -> plan moves -> apply moves.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-regular-midpoint-plugin"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-regular-midpoint-plugin2"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-regular-midpoint-plugin3"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-regular-midpoint-plugin4"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-regular-midpoint-plugin5"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed after each slice.
+    - The focused all-sections harness kept passing (`reviewExitCode = 0`, `batchCompleted = true`) while every chained parsed-geometry comparison matched exactly (`951` entities each):
+      - `data/refactor-regular-midpoint-baseline/artifacts/output.dxf` vs `data/refactor-regular-midpoint-verified/artifacts/output.dxf`
+      - `data/refactor-regular-midpoint-verified/artifacts/output.dxf` vs `data/refactor-regular-midpoint-verified2/artifacts/output.dxf`
+      - `data/refactor-regular-midpoint-verified2/artifacts/output.dxf` vs `data/refactor-regular-midpoint-verified3/artifacts/output.dxf`
+      - `data/refactor-regular-midpoint-verified3/artifacts/output.dxf` vs `data/refactor-regular-midpoint-verified4/artifacts/output.dxf`
+      - `data/refactor-regular-midpoint-verified4/artifacts/output.dxf` vs `data/refactor-regular-midpoint-verified5/artifacts/output.dxf`
+    - The focused `L-SECTION-LSD` endpoint checks remained unchanged at `510134.619068,5994010.554429` and `509730.201189,5994411.347931`.
+    - The post-pass summary line stayed identical in the final run: `scannedLines=288, endpointCandidates=276, alreadyAtMidpoint=124, adjustedEndpoints=152, adjustedLines=152`.
+
+- Refactor 10: blind midpoint and blind-line extension cleanup
+  - Kept going through the next exercised `EndpointEnforcement` branches. In `EnforceVerticalBlindBoundaryLsdMidpointsAfterRuleMatrix(...)` I extracted blind midpoint planning/application helpers and moved the shared line/polyline segment expansion into the file-level `CollectEntitySegmentsForEndpointEnforcement(...)` helper. In the exercised blind-line 11 m hard-boundary extender, I also extracted `PlanBlindLineHardBoundaryExtension(...)` and collapsed the `30.18` membership test onto the existing boundary-segment helper. That leaves both blind passes reading as collect targets -> plan endpoint moves -> apply moves.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-blind-midpoint-plugin1"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-blind-midpoint-plugin2"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-blind-midpoint-plugin3"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-blind-midpoint-plugin4"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-blind-midpoint-plugin5"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed after each slice.
+    - The focused all-sections harness kept passing (`reviewExitCode = 0`, `batchCompleted = true`) while every chained parsed-geometry comparison matched exactly (`951` entities each):
+      - `data/refactor-regular-midpoint-verified5/artifacts/output.dxf` vs `data/refactor-blind-midpoint-verified1/artifacts/output.dxf`
+      - `data/refactor-blind-midpoint-verified1/artifacts/output.dxf` vs `data/refactor-blind-midpoint-verified2/artifacts/output.dxf`
+      - `data/refactor-blind-midpoint-verified2/artifacts/output.dxf` vs `data/refactor-blind-midpoint-verified3/artifacts/output.dxf`
+      - `data/refactor-blind-midpoint-verified3/artifacts/output.dxf` vs `data/refactor-blind-midpoint-verified4/artifacts/output.dxf`
+      - `data/refactor-blind-midpoint-verified4/artifacts/output.dxf` vs `data/refactor-blind-midpoint-verified5/artifacts/output.dxf`
+    - The blind midpoint post-pass summary stayed identical in the final run: `scannedLines=144, blindEndpointCandidates=72, alreadyAtMidpoint=72, ambiguousLines=0, adjustedEndpoints=0, adjustedLines=0`.
+    - The exercised blind-line extension pass also stayed identical in the final run: `scannedEndpoints=84, alreadyOnHard=21, on30Only=21, windowBoundarySkipped=6, noTarget=36, adjustedEndpoints=21, adjustedLines=21`.
+
+- Refactor 11: rule-matrix structural cleanup
+  - Kept working inside the exercised `TryEnforceLsdLineEndpointsByRuleMatrix(...)` path. First I replaced the duplicated entity-segment collection/window-scoping blocks with `CollectScopedEntitySegmentsForEndpointEnforcement(...)`, then I introduced the typed `LsdQuarterContext` value object in place of the repeated anonymous quarter-context tuple carried through the rule-matrix helpers. I also extracted shared quarter-scope helpers (`GetQuarterBoundarySideExpectation(...)`, `IsPointWithinQuarterSectionScope(...)`, and the generic raw-bounds `IsPointWithinQuarterSectionBounds(...)`) so the correction-zero selectors and live-QSEC/projected-station checks stop repeating the same section-bound and boundary-side math inline.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-rulematrix-scope-plugin1"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-rulematrix-context-plugin1"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-rulematrix-corrscope-plugin1"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-rulematrix-scopehelper-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed after each slice.
+    - The focused all-sections harness kept passing (`reviewExitCode = 0`, `batchCompleted = true`) while every chained parsed-geometry comparison matched exactly (`951` entities each):
+      - `data/refactor-blind-midpoint-verified5/artifacts/output.dxf` vs `data/refactor-rulematrix-scope-verified1/artifacts/output.dxf`
+      - `data/refactor-rulematrix-scope-verified1/artifacts/output.dxf` vs `data/refactor-rulematrix-context-verified1/artifacts/output.dxf`
+      - `data/refactor-rulematrix-context-verified1/artifacts/output.dxf` vs `data/refactor-rulematrix-corrscope-verified1/artifacts/output.dxf`
+      - `data/refactor-rulematrix-corrscope-verified1/artifacts/output.dxf` vs `data/refactor-rulematrix-scopehelper-verified1/artifacts/output.dxf`
+    - The exercised rule-matrix/midpoint summaries stayed identical in the final run:
+      - `Cleanup: LSD rule-matrix pass quarters=144, lsdLines=290, matched=288, qsecAnchorOverrides=144, innerAdjusted=114, outerAdjusted=108, correctionZeroOverrides=12, noQuarter=2, noInnerTarget=0, noOuterTarget=0.`
+      - `Cleanup: regular-boundary LSD midpoint post-pass scannedLines=288, endpointCandidates=276, alreadyAtMidpoint=124, adjustedEndpoints=152, adjustedLines=152.`
+      - `Cleanup: blind-boundary LSD midpoint post-pass scannedLines=144, blindEndpointCandidates=72, alreadyAtMidpoint=72, ambiguousLines=0, adjustedEndpoints=0, adjustedLines=0.`
+
+- Refactor 12: rule-matrix selector-ladder cleanup
+  - Kept working inside the same exercised outer-target selector path instead of stopping at the previous note. First I added a second focused proof case from `data/quarter-correctionline-spec.json`, which exercises the same rule-matrix path on a smaller quarter-scale scenario. Then I extracted the preferred/fallback outer boundary-kind builders into `BuildFallbackOuterKinds(...)` and `BuildPreferredOuterKinds(...)`, and pulled the survey-`SEC` outer-target plumbing into `TryFindSecBoundaryStationTarget(...)` plus `ShouldUseSurveySecTargetForOuterEndpoint(...)`. That removes another chunk of repeated selector setup without changing the actual ranking behavior.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-rulematrix-kindlist-plugin1"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-rulematrix-surveysec-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed after each slice.
+    - The all-sections proof case stayed exact through both slices:
+      - `data/refactor-rulematrix-scopehelper-verified1/artifacts/output.dxf` vs `data/refactor-rulematrix-kindlist-twp59/artifacts/output.dxf` (`951` entities, exact canonical match)
+      - `data/refactor-rulematrix-kindlist-twp59/artifacts/output.dxf` vs `data/refactor-rulematrix-surveysec-twp59/artifacts/output.dxf` (`951` entities, exact canonical match)
+    - The new quarter-scale proof case also stayed exact through both slices:
+      - `data/refactor-ghost-verified/artifacts/output.dxf` vs `data/refactor-rulematrix-quarter-baseline/artifacts/output.dxf` (`121` entities, exact canonical match)
+      - `data/refactor-rulematrix-quarter-baseline/artifacts/output.dxf` vs `data/refactor-rulematrix-kindlist-quarter/artifacts/output.dxf` (`121` entities, exact canonical match)
+      - `data/refactor-rulematrix-kindlist-quarter/artifacts/output.dxf` vs `data/refactor-rulematrix-surveysec-quarter/artifacts/output.dxf` (`121` entities, exact canonical match)
+    - The exercised summary lines stayed unchanged in the final all-sections run:
+      - `Cleanup: LSD rule-matrix pass quarters=144, lsdLines=290, matched=288, qsecAnchorOverrides=144, innerAdjusted=114, outerAdjusted=108, correctionZeroOverrides=12, noQuarter=2, noInnerTarget=0, noOuterTarget=0.`
+      - `Cleanup: regular-boundary LSD midpoint post-pass scannedLines=288, endpointCandidates=276, alreadyAtMidpoint=124, adjustedEndpoints=152, adjustedLines=152.`
+      - `Cleanup: blind-boundary LSD midpoint post-pass scannedLines=144, blindEndpointCandidates=72, alreadyAtMidpoint=72, ambiguousLines=0, adjustedEndpoints=0, adjustedLines=0.`
+    - The new quarter-scale proof case stayed unchanged too:
+      - `Cleanup: LSD rule-matrix pass quarters=4, lsdLines=10, matched=8, qsecAnchorOverrides=4, innerAdjusted=2, outerAdjusted=4, correctionZeroOverrides=2, noQuarter=2, noInnerTarget=0, noOuterTarget=0.`
+      - `Cleanup: regular-boundary LSD midpoint post-pass scannedLines=10, endpointCandidates=6, alreadyAtMidpoint=4, adjustedEndpoints=2, adjustedLines=2.`
+      - `Cleanup: blind-boundary LSD midpoint post-pass scannedLines=6, blindEndpointCandidates=0, alreadyAtMidpoint=0, ambiguousLines=0, adjustedEndpoints=0, adjustedLines=0.`
+
+- Refactor 13: rule-matrix station-query wrappers + third proof case
+  - Extended the proof matrix with a fresh third rule-matrix-heavy harness case from `data/twp59-12-5-top-ra-spec.json`, then kept the selector cleanup focused on low-risk duplication: added named boundary-kind constants, extracted `TryFindBoundaryStationTargetInContext(...)`, and extracted `HasProjectedRoadAllowanceCandidateAtStation(...)` so the outer-target selector stops repeating the same context-bound station query plumbing inline.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-rulematrix-stationhelpers-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-rulematrix-surveysec-twp59/artifacts/output.dxf` vs `data/refactor-rulematrix-stationhelpers-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-rulematrix-quarter-baseline/artifacts/output.dxf` vs `data/refactor-rulematrix-stationhelpers-quarter2/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-rulematrix-topra-baseline/artifacts/output.dxf` vs `data/refactor-rulematrix-stationhelpers-topra/artifacts/output.dxf` (`822` entities)
+    - The three exercised summary families stayed unchanged:
+      - all-sections `twp59`: `matched=288`, `outerAdjusted=108`, regular midpoint `adjustedLines=152`, blind midpoint `adjustedLines=0`
+      - quarter-scale correction case: `matched=8`, `outerAdjusted=4`, regular midpoint `adjustedLines=2`, blind midpoint `adjustedLines=0`
+      - top-ra case: `matched=288`, `outerAdjusted=0`, regular midpoint `adjustedLines=0`
+  - Verification note:
+    - I also tried a larger helper extraction, `TryFindStationBasedOuterTarget(...)`, but the three-case proof matrix immediately caught a real regression: `outerAdjusted` dropped from `108` to `96` on `twp59`, and exact DXF diffs showed 12 correction-override LSD outers drifting to fallback-anchor targets. That helper was reverted before continuing.
+
+- Refactor 14: correction-zero target preference comparison helpers
+  - Cleaned up `src/AtsBackgroundBuilder/Core/CorrectionZeroTargetPreference.cs` by introducing the named `CorrectionZeroKind` constant plus shared tolerance-aware lexicographic comparers (`IsBetterByPrimaryThenSecondary(...)` and `IsBetterByPrimaryThenSecondaryThenTertiary(...)`). The ranking rules are unchanged, but the preference logic now reads as explicit comparison policy instead of repeated boolean chains.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrzero-pref-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-rulematrix-stationhelpers2-twp59/artifacts/output.dxf` vs `data/refactor-corrzero-pref-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-rulematrix-stationhelpers2-quarter/artifacts/output.dxf` vs `data/refactor-corrzero-pref-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-rulematrix-stationhelpers2-topra/artifacts/output.dxf` vs `data/refactor-corrzero-pref-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 15: ghost-row inset match helpers
+  - Kept working in `src/AtsBackgroundBuilder/Core/CorrectionInsetGhostRowClassifier.cs`. First I extracted `TryFindBestInsetMatchCandidate(...)` so the best-candidate scan is separated from `TryGetInsetMatchInfo(...)`, then I extracted `TryGetConnectedGhostChainMatch(...)` so the ghost-chain BFS reads as “connected + optional match + same inset family” instead of one long inline filter block.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-ghostmatch-plugin1"` passed.
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-ghostchain-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed after each slice.
+    - Exact canonical DXF comparisons all matched for both slices:
+      - `data/refactor-corrzero-pref-twp59/artifacts/output.dxf` vs `data/refactor-ghostmatch-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrzero-pref-quarter/artifacts/output.dxf` vs `data/refactor-ghostmatch-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrzero-pref-topra/artifacts/output.dxf` vs `data/refactor-ghostmatch-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 16: ghost-row candidate gating helpers
+  - Kept the cleanup in `src/AtsBackgroundBuilder/Core/CorrectionInsetGhostRowClassifier.cs` and split the remaining inline match gates in `TryBuildInsetMatchCandidate(...)` into named helpers: `HasCompatibleDirection(...)`, `HasRequiredProjectedOverlap(...)`, and `TryGetInsetError(...)`. The candidate builder now reads as direction check -> overlap gate -> inset-error checks instead of mixing those concerns inline.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-ghostcandidate-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-ghostchain-twp59/artifacts/output.dxf` vs `data/refactor-ghostcandidate-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-ghostchain-quarter/artifacts/output.dxf` vs `data/refactor-ghostcandidate-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-ghostchain-topra/artifacts/output.dxf` vs `data/refactor-ghostcandidate-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 17: generic ghost-chain id helper + call-site cleanup
+  - Added `FindGhostChainIds<TId>(...)` to `src/AtsBackgroundBuilder/Core/CorrectionInsetGhostRowClassifier.cs` so the classifier can return ghost member ids directly instead of forcing every caller to map indices back to ids manually. Then I updated both exercised call sites:
+    - `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs`
+    - `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs`
+    The duplicated “build segment list -> classify indices -> map indices back to ids/members” glue is now gone from both paths.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-ghostids-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-ghostcandidate-twp59/artifacts/output.dxf` vs `data/refactor-ghostids-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-ghostcandidate-quarter/artifacts/output.dxf` vs `data/refactor-ghostids-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-ghostcandidate-topra/artifacts/output.dxf` vs `data/refactor-ghostids-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 18: correction-line ghost-candidate collection helper
+  - Cleaned up the exercised correction-line post-pass in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by extracting `CollectHorizontalGhostCandidates()`. The method now gathers the three horizontal ghost-candidate sources through one named helper instead of repeating the same `ObjectId + LineDistancePoint` conversion logic inline.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-ghosthelper-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-ghostids-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-ghosthelper-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-ghostids-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-ghosthelper-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-ghostids-topra/artifacts/output.dxf` vs `data/refactor-corrpost-ghosthelper-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 19: cleanup-side ghost-member collection helper
+  - Cleaned up the exercised cleanup normalization path in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs` by extracting `CollectComponentGhostMembers()`. The bucket scan, generated-segment skip, and ghost-member lookup are now grouped in one named helper instead of being spread inline through the main normalization loop.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-cleanup-ghosthelper-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-ghosthelper-twp59/artifacts/output.dxf` vs `data/refactor-cleanup-ghosthelper-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-ghosthelper-quarter/artifacts/output.dxf` vs `data/refactor-cleanup-ghosthelper-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-ghosthelper-topra/artifacts/output.dxf` vs `data/refactor-cleanup-ghosthelper-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 20: correction-line ghost-row removal helper
+  - Added `RemoveGhostHorizontalRows(...)` in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` so the exercised correction-line post-pass applies one explicit set-based filter to sources, anchors, and targets instead of repeating the same three `Contains` pipelines inline.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-ghostfilter-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-cleanup-ghosthelper-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-ghostfilter-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-cleanup-ghosthelper-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-ghostfilter-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-cleanup-ghosthelper-topra/artifacts/output.dxf` vs `data/refactor-corrpost-ghostfilter-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 21: cleanup-side ghost-member local helpers
+  - Kept working in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs` and extracted two tiny local helpers inside `CollectComponentGhostMembers()`: `IsOrdinaryOuterBandTargetLayer(...)` and `AddGhostCandidate(...)`. That removes the last repeated layer-pair check and `LineDistancePoint` construction noise from the exercised cleanup ghost-member path.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-cleanup-ghostlocals-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-ghostfilter-twp59/artifacts/output.dxf` vs `data/refactor-cleanup-ghostlocals-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-ghostfilter-quarter/artifacts/output.dxf` vs `data/refactor-cleanup-ghostlocals-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-ghostfilter-topra/artifacts/output.dxf` vs `data/refactor-cleanup-ghostlocals-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 22: correction-line ghost-horizontal orchestration helper
+  - Finished one more cleanup in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by collapsing the exercised ghost-horizontal ignore block into `IgnoreGhostHorizontalRows()`, which now coordinates candidate collection, classification, removal, and ignored-count reporting in one named step.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-ghostignore-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-cleanup-ghostlocals-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-ghostignore-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-cleanup-ghostlocals-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-ghostignore-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-cleanup-ghostlocals-topra/artifacts/output.dxf` vs `data/refactor-corrpost-ghostignore-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 23: cleanup-side three-band relayer helper
+  - Kept working in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs` and extracted `ApplyThreeBandTargetLayer(...)` inside the exercised three-band normalization loop. The layer ensure, color reset, and normalized-bucket counters now live in one named helper instead of being repeated inline in the main member rewrite path.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-cleanup-applylayer-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-ghostignore-twp59/artifacts/output.dxf` vs `data/refactor-cleanup-applylayer-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-ghostignore-quarter/artifacts/output.dxf` vs `data/refactor-cleanup-applylayer-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-ghostignore-topra/artifacts/output.dxf` vs `data/refactor-cleanup-applylayer-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 24: cleanup-side member normalization helper
+  - Kept the cleanup sweep moving in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs` by extracting `NormalizeThreeBandMember(...)` from the exercised three-band normalization loop. The skip, ghost-erase, unchanged-count, and relayer steps are now described by one named helper instead of being interleaved directly inside the bucket/member loop.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-cleanup-memberhelper-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-cleanup-applylayer-twp59/artifacts/output.dxf` vs `data/refactor-cleanup-memberhelper-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-cleanup-applylayer-quarter/artifacts/output.dxf` vs `data/refactor-cleanup-memberhelper-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-cleanup-applylayer-topra/artifacts/output.dxf` vs `data/refactor-cleanup-memberhelper-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 25: correction-line tie-in segment classification helper
+  - Continued the exercised correction-line cleanup in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by extracting `AddRelevantTieInSegment(...)`. The layer relevance checks, window intersection gate, and source/target/anchor bucket routing now live in one helper instead of being spelled out inline in the model-space scan.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-classify-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-cleanup-memberhelper-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-classify-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-cleanup-memberhelper-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-classify-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-cleanup-memberhelper-topra/artifacts/output.dxf` vs `data/refactor-corrpost-classify-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 26: correction-line hard-boundary layer predicate helper
+  - Kept the exercised correction-line refactor moving in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by extracting `IsHardTieInBoundaryLayer(...)`. The shared correction/correction-zero/section-boundary layer ladder now lives in one predicate, reused by both `IsHardVerticalTieInTargetLayer(...)` and `EndpointTouchesHardAnchorLayer(...)`.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-hardlayer-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-classify-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-hardlayer-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-classify-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-hardlayer-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-classify-topra/artifacts/output.dxf` vs `data/refactor-corrpost-hardlayer-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 27: correction-line endpoint-anchor hard-layer reuse
+  - Continued the same exercised correction-line cleanup in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by reusing `EndpointTouchesHardAnchorLayer(...)` inside `GetHorizontalEndpointAnchorState(...)`. That removes the last inline hard-boundary layer ladder from the horizontal endpoint-state path and keeps the hard-anchor rule sourced from one helper.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-anchorstate-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-hardlayer-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-anchorstate-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-hardlayer-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-anchorstate-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-hardlayer-topra/artifacts/output.dxf` vs `data/refactor-corrpost-anchorstate-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 28: correction-line endpoint-target compatibility helper
+  - Finished this batch of exercised correction-line cleanup in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by extracting `IsCompatibleEndpointTargetLayer(...)` and reusing it in both endpoint-anchor state helpers. The shared “matching band or hard-anchor layer” rule is now named once instead of being duplicated across horizontal and vertical endpoint scans.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-targetcompat-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-anchorstate-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-targetcompat-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-anchorstate-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-targetcompat-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-anchorstate-topra/artifacts/output.dxf` vs `data/refactor-corrpost-targetcompat-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 29: correction-line trim-target layer eligibility helper
+  - Kept the exercised correction-line trim loop moving in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by extracting `IsEligibleTieInTrimTargetLayer(...)`. The “matching band or hard-boundary or ordinary tie-in target” gate is now described once and reused by both the horizontal and vertical trim-target scans instead of being recomputed inline.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-trimtarget-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-targetcompat-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-trimtarget-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-targetcompat-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-trimtarget-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-targetcompat-topra/artifacts/output.dxf` vs `data/refactor-corrpost-trimtarget-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 30: correction-line shared best-target search helper
+  - Kept refactoring the exercised correction-line trim path in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by extracting `TryFindBestTieInTrimTarget(...)`. The intersection, span guard, move-distance filtering, and priority ranking logic is now named once and reused by both the horizontal and vertical trim loops instead of being duplicated inline.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-besttarget-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-trimtarget-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-besttarget-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-trimtarget-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-besttarget-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-trimtarget-topra/artifacts/output.dxf` vs `data/refactor-corrpost-besttarget-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 31: correction-line shared source-trim orchestration helper
+  - Kept working in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by extracting `TryTrimTieInSource(...)`. The entity reopen, endpoint-state evaluation, boundary eligibility gate, best-target move, and source-list refresh now live in one helper instead of being duplicated across the horizontal and vertical trim loops.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-trimsource-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-besttarget-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-trimsource-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-besttarget-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-trimsource-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-besttarget-topra/artifacts/output.dxf` vs `data/refactor-corrpost-trimsource-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 32: correction-line shared endpoint-anchor state helper
+  - Continued the exercised cleanup in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by extracting `GetEndpointAnchorState(...)`. The parallel-source touch check, perpendicular target compatibility scan, and perpendicular-anchor fallback now live in one generic helper instead of two mirrored horizontal/vertical implementations.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-anchorhelper-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-trimsource-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-anchorhelper-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-trimsource-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-anchorhelper-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-trimsource-topra/artifacts/output.dxf` vs `data/refactor-corrpost-anchorhelper-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 33: correction-line shared correction-layer predicate
+  - Added file-level `IsCorrectionLayer(...)` in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` and reused it in the exercised hard-boundary predicate plus the correction-color and redundant-band scans. That removes another repeated `LayerUsecCorrection / LayerUsecCorrectionZero` ladder from multiple live paths.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-correctionlayer-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-anchorhelper-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-correctionlayer-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-anchorhelper-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-correctionlayer-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-anchorhelper-topra/artifacts/output.dxf` vs `data/refactor-corrpost-correctionlayer-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 34: correction-line dead warning cleanup
+  - Removed the unused local `axisTol` from the exercised correction-line trim pass in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs`, which makes the build output reflect real issues instead of a stale warning from this refactored path.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-axiswarn-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-correctionlayer-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-axiswarn-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-correctionlayer-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-axiswarn-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-correctionlayer-topra/artifacts/output.dxf` vs `data/refactor-corrpost-axiswarn-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 35: endpoint-enforcement dead warning cleanup
+  - Removed the unused local `axisTol` from `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs`, eliminating the last warning introduced by the refactor-heavy geometry paths and leaving only the pre-existing nullable warning in `Plugin.Core.ImportWindowing.cs`.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-axiswarn-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-axiswarn-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-axiswarn-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-axiswarn-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-axiswarn-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-axiswarn-topra/artifacts/output.dxf` vs `data/refactor-endpoint-axiswarn-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 36: import-windowing nullable overlap contract cleanup
+  - Updated `ClassifyEntityScopeOverlap(...)` in `src/AtsBackgroundBuilder/Core/Plugin.Core.ImportWindowing.cs` so its signature now correctly accepts nullable scope extents, matching the runtime guard it already had. This removes the stale nullable warning without changing behavior.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-importwindowing-nullable-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-axiswarn-twp59/artifacts/output.dxf` vs `data/refactor-importwindowing-nullable-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-axiswarn-quarter/artifacts/output.dxf` vs `data/refactor-importwindowing-nullable-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-axiswarn-topra/artifacts/output.dxf` vs `data/refactor-importwindowing-nullable-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 37: correction-line surveyed-layer helper reuse
+  - Reused `IsCorrectionSurveyedLayer(...)` in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` for the exercised vertical-hard-target gate, the correction-promotable layer test, and the SEC inset-direction bypass. That removes three more copies of the same surveyed-layer ladder.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-surveyedhelper-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-importwindowing-nullable-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-surveyedhelper-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-importwindowing-nullable-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-surveyedhelper-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-importwindowing-nullable-topra/artifacts/output.dxf` vs `data/refactor-corrpost-surveyedhelper-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 38: import-windowing shared scope-window contract cleanup
+  - Finished this batch in `src/AtsBackgroundBuilder/Core/Plugin.Core.ImportWindowing.cs` by making `BuildScopeWindows(...)` own the nullable scope-extents contract and removing the redundant caller-side `scopeExtents != null ? ... : ...` branching. The null handling now lives in one place.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-importwindowing-scopewindows-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-surveyedhelper-twp59/artifacts/output.dxf` vs `data/refactor-importwindowing-scopewindows-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-surveyedhelper-quarter/artifacts/output.dxf` vs `data/refactor-importwindowing-scopewindows-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-surveyedhelper-topra/artifacts/output.dxf` vs `data/refactor-importwindowing-scopewindows-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 39: import-windowing scoped-filter flow cleanup
+  - Kept working in `src/AtsBackgroundBuilder/Core/Plugin.Core.ImportWindowing.cs` by removing the last redundant importer location-window ternary and naming the repeated `scopeExtents` filter condition once as `hasScopeExtents` inside `ClearLayerEntities(...)`. The scoped-overlap branch and scoped log path now both use the same flag.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-importwindowing-scopeflags-plugin1"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-importwindowing-scopewindows-twp59/artifacts/output.dxf` vs `data/refactor-importwindowing-scopeflags-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-importwindowing-scopewindows-quarter/artifacts/output.dxf` vs `data/refactor-importwindowing-scopeflags-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-importwindowing-scopewindows-topra/artifacts/output.dxf` vs `data/refactor-importwindowing-scopeflags-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 40: endpoint-enforcement hard-horizontal best-target helper
+  - Returned to `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` and extracted `TryFindBestHardHorizontalTrimTarget(...)` plus `TryTrimVerticalSourceToHardHorizontal(...)` from the exercised `0/20 vertical hard-horizontal trim` path. The span check, move-distance selection, and per-source trim flow are now named helpers instead of inline control-flow blocks.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-trimsource-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-besttarget2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-trimsource2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-besttarget2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-trimsource2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-besttarget2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-trimsource2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 41: endpoint-enforcement quarter boundary scan helper
+  - Continued in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by extracting `ScanBoundarySegmentsForQuarterEndpointCandidates(...)` and reusing it in both `TryFindSnapTarget(...)` and `TryFindCorrectionAdjacentSnapTarget(...)`. The exercised quarter-line path now keeps the intersection, bounded-extension, and endpoint-fallback scan rules in one helper instead of repeating them across both selectors.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-quarterscan-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-quarterlinehelper2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-quarterscan2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-quarterlinehelper2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-quarterscan2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-quarterlinehelper2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-quarterscan2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 42: endpoint-enforcement quarter outward-direction helper
+  - Kept the same quarter-line path moving by extracting `TryGetQuarterEndpointOutwardDirection(...)` and reusing it in `TryFindBoundaryJunctionSnapTarget(...)`, `TryFindSnapTarget(...)`, and `TryFindCorrectionAdjacentSnapTarget(...)`. That removes another repeated endpoint-axis setup block without touching the target-ranking rules.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-outwarddir-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-quarterscan2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-outwarddir2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-quarterscan2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-outwarddir2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-quarterscan2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-outwarddir2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 43: endpoint-enforcement quarter move-plan helper
+  - Kept working in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by replacing the duplicated start/end quarter-endpoint resolution block with `PlanQuarterEndpointMove(...)`, and by reusing `IsEndpointOnBoundarySegmentsForEndpointEnforcement(...)` for the valid-boundary check. The quarter-line adjuster now reads as one move-plan orchestration flow instead of two mirrored endpoint branches.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-quarterplan-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-outwarddir2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-quarterplan2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-outwarddir2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-quarterplan2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-outwarddir2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-quarterplan2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 44: endpoint-enforcement LSD snap-direction helper
+  - Moved down to the exercised LSD snap path in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` and extracted `TryGetLsdEndpointSnapDirections(...)`, which now owns the shared outward-axis, orientation, and perpendicular-direction setup for `TryFindSnapTarget(...)` and `TryFindCorrectionAdjacentSnapTarget(...)`. The candidate scoring logic stayed untouched; only the repeated setup moved.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-lsddirections-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-quarterplan2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-lsddirections2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-quarterplan2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-lsddirections2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-quarterplan2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-lsddirections2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 45: endpoint-enforcement LSD orthogonal-segment helper
+  - Kept the exercised LSD endpoint path moving in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by extracting `IsBoundarySegmentOrthogonalToLsdSource(...)` and reusing it across the generic snap selector, correction-adjacent selector, and nearby hard-boundary midpoint/nearest-point fallbacks. That removes the same orientation gate from several adjacent selectors without changing any scoring or side-preference policy.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-lsdorthhelper-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-lsddirections2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-lsdorthhelper2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-lsddirections2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-lsdorthhelper2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-lsddirections2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-lsdorthhelper2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 46: endpoint-enforcement LSD setup reuse cleanup
+  - Finished this batch in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by adding `TryGetLsdSourceOrientation(...)`, reusing `TryGetLsdEndpointSnapDirections(...)` in the preferred-midpoint and nearest-hard-boundary selectors, and replacing the local correction-outer touch loop with `IsEndpointOnBoundarySegmentsForEndpointEnforcement(...)`. The LSD fallback selectors now share the same setup contract instead of each rebuilding the same orientation/direction boilerplate.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-lsdsetupreuse-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-lsdorthhelper2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-lsdsetupreuse2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-lsdorthhelper2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-lsdsetupreuse2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-lsdorthhelper2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-lsdsetupreuse2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 47: endpoint-enforcement shared hard-boundary candidate selector
+  - Kept working in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by extracting `TrySelectPreferredHardBoundaryTarget(...)` and reusing it in the exercised LSD midpoint and nearest-point fallback selectors. The preferred-vs-fallback target bookkeeping now lives in one place while each selector still owns its exact candidate gating and scoring rules.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-lsdcandidates-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-lsdsetupreuse2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-lsdcandidates2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-lsdsetupreuse2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-lsdcandidates2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-lsdsetupreuse2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-lsdcandidates2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 48: endpoint-enforcement shared thirty-boundary fallback chain
+  - Kept the exercised LSD endpoint pass moving in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by extracting `TryFindThirtyBoundaryFallbackTarget(...)` and reusing it for both start and end endpoints. The `30`-row escape chain now lives in one helper instead of two mirrored blocks, while the surrounding correction-adjacent checks and move decisions stay unchanged.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-thirtyfallback-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-lsdcandidates2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-thirtyfallback2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-lsdcandidates2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-thirtyfallback2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-lsdcandidates2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-thirtyfallback2-topra/artifacts/output.dxf` (`822` entities)
+    - Note: the `twp59` harness export reached `ATSBUILD_XLS_BATCH exit stage: completed (ok)` and wrote the DXF, but the shell call later hit a quit/save hang. I treated the exported DXF plus the exact canonical comparison as the authoritative proof for that case.
+
+- Refactor 49: endpoint-enforcement LSD endpoint-state helper
+  - Continued in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by extracting `GetLsdEndpointBoundaryState(...)` so the exercised start/end endpoint paths share the same cached `0/20/30`, correction-outer, and correction-snap-eligibility state instead of recomputing it twice inline.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-endpointstate-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-thirtyfallback2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-endpointstate2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-thirtyfallback2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-endpointstate2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-thirtyfallback2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-endpointstate2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 50: endpoint-enforcement shared snap-target chain
+  - Kept the same exercised LSD endpoint path moving by extracting `TryFindLsdEndpointSnapTarget(...)`, which now owns the shared current-hard-midpoint, correction-adjacent, `30`-row fallback, and generic snap selection chain for both endpoints. The helper only composes already-proven selectors; it does not change the selection order.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-snaptargetchain-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-endpointstate2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-snaptargetchain2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-endpointstate2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-snaptargetchain2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-endpointstate2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-snaptargetchain2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 51: endpoint-enforcement shared resolution tail
+  - Extracted `FinalizeLsdEndpointResolution(...)` in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` so the exercised start/end endpoint paths share the same “already on target”, “already on hard”, and “no target” bookkeeping instead of carrying two mirrored decision tails.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-resolutiontail-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-snaptargetchain2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-resolutiontail2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-snaptargetchain2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-resolutiontail2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-snaptargetchain2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-resolutiontail2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 52: endpoint-enforcement endpoint-resolution wrapper
+  - Finished this batch in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by extracting `ResolveLsdEndpointMove(...)`, which now wraps the exercised endpoint-state lookup, window-boundary skip, snap-target selection, and resolution-tail bookkeeping for both endpoints. This removes the last substantial start/end duplication in the main LSD endpoint pass while keeping the already-proven helper order intact.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-resolvehelper-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-resolutiontail2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-resolvehelper2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-resolutiontail2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-resolvehelper2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-resolutiontail2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-resolvehelper2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 53: endpoint-enforcement midpoint move/apply helpers
+  - Continued in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by extracting `PlanMidpointEndpointMove(...)`, `TryApplyMidpointEndpointMoves()`, and `ResetMidpointMoveTargets()`. This keeps the exercised vertical and horizontal midpoint prepasses on the same move/apply/reread/reset plumbing instead of repeating that scaffolding inline.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-midpointmoves-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-resolvehelper2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-midpointmoves2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-resolvehelper2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-midpointmoves2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-resolvehelper2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-midpointmoves2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 54: endpoint-enforcement shared midpoint-axis X resolver
+  - Kept the exercised midpoint/clamp path moving in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by extracting `TryResolveHorizontalEndpointMidpointAxisX(...)`. The helper now owns the repeated probe -> horizontal-endpoint qsec axis -> optional generic qsec axis -> midpoint-axis chain, while preserving the existing split between callers that do and do not allow the generic qsec fallback.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-midpointaxisx-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-midpointmoves2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-midpointaxisx2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-midpointmoves2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-midpointaxisx2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-midpointmoves2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-midpointaxisx2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 55: endpoint-enforcement horizontal clamp endpoint planner
+  - Continued in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by extracting `TryPlanHorizontalClampEndpointMove(...)`, which now shares the exercised start/end clamp candidate planning for the horizontal qsec-component clamp prepass, including component lookup, forced-Y handling, explicit-X resolution, and move-threshold gating.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-clampplan-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-midpointaxisx2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-clampplan2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-midpointaxisx2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-clampplan2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-midpointaxisx2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-clampplan2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 56: endpoint-enforcement qsec-component clamp move applicator
+  - Extracted `TryApplyQsecComponentClampMoves(...)` in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` so the exercised vertical and horizontal qsec-component clamp branches share the same endpoint move/apply bookkeeping instead of repeating the same midpoint-tolerance move block twice.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-clampapply-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-clampplan2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-clampapply2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-clampplan2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-clampapply2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-clampplan2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-clampapply2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 57: endpoint-enforcement final thirty-escape target helper
+  - Kept the exercised final `30.18` escape pass moving in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by extracting `TryFindThirtyEscapeTarget(...)`, which now owns the repeated preferred-midpoint / relaxed-midpoint / nearest-hard-point fallback chain for all four vertical/horizontal endpoint cases without changing side preference or reread timing.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-thirtyescape-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-clampapply2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-thirtyescape2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-clampapply2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-thirtyescape2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-clampapply2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-thirtyescape2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 58: endpoint-enforcement final thirty-escape move helper
+  - Continued in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by extracting `TryApplyThirtyEscapeMove(...)`, which now shares the exercised “find escape target, attempt move, and bump counters” block for the four vertical/horizontal final-invariant endpoint cases while leaving the near-thirty checks and reread order unchanged.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-thirtyapply-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-thirtyescape2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-thirtyapply2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-thirtyescape2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-thirtyapply2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-thirtyescape2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-thirtyapply2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 59: endpoint-enforcement main LSD move applicator
+  - Finished this batch in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.EndpointEnforcement.cs` by extracting `TryApplyLsdEndpointMove(...)`, so the exercised main LSD endpoint pass shares the paired move-attempt and decision-failure bookkeeping for start/end endpoints instead of keeping two mirrored apply blocks inline.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-endpoint-mainapply-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-thirtyapply2-twp59/artifacts/output.dxf` vs `data/refactor-endpoint-mainapply2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-thirtyapply2-quarter/artifacts/output.dxf` vs `data/refactor-endpoint-mainapply2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-thirtyapply2-topra/artifacts/output.dxf` vs `data/refactor-endpoint-mainapply2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 60: correction-line companion ensure helper
+  - Moved to the next exercised module in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` and extracted `TryEnsureCorrectionInnerCompanion(...)`. The main seam outer pass, late companion pass, and outer-axis normalization pass now share the same “find existing companion, relayer it if needed, otherwise create it” flow while each caller still owns its exact counter/sampling semantics.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-companionhelper-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-endpoint-mainapply2-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-companionhelper2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-endpoint-mainapply2-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-companionhelper2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-endpoint-mainapply2-topra/artifacts/output.dxf` vs `data/refactor-corrpost-companionhelper2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 61: cleanup horizontal move selector helper
+  - Continued in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs` by extracting `TryFindBestHorizontalMove(...)`. The exercised SEC and LSD horizontal correction loops now share the same west-end candidate scan, target ranking, and touching/candidate counter updates, while the LSD-specific move cap remains at the call site.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-cleanup-horizmove-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-companionhelper2-twp59/artifacts/output.dxf` vs `data/refactor-cleanup-horizmove2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-companionhelper2-quarter/artifacts/output.dxf` vs `data/refactor-cleanup-horizmove2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-companionhelper2-topra/artifacts/output.dxf` vs `data/refactor-cleanup-horizmove2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 62: cleanup horizontal move applicator
+  - Finished this batch in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs` by extracting `TryApplyHorizontalMove(...)`, so the exercised SEC and LSD horizontal correction loops share the selected-endpoint move application path while the optional `lsdMaxMove` cap stays explicit at the LSD caller.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-cleanup-horizapply-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-cleanup-horizmove2-twp59/artifacts/output.dxf` vs `data/refactor-cleanup-horizapply2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-cleanup-horizmove2-quarter/artifacts/output.dxf` vs `data/refactor-cleanup-horizapply2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-cleanup-horizmove2-topra/artifacts/output.dxf` vs `data/refactor-cleanup-horizapply2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 63: correction-line live horizontal segment collector
+  - Continued in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by extracting `CollectLiveHorizontalCorrectionSegments(...)`. The exercised outer-axis and inset-axis normalization passes now share the same modelspace scan for live horizontal correction segments instead of repeating the same layer/read/filter loop twice.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-livecollector-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-cleanup-horizapply2-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-livecollector2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-cleanup-horizapply2-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-livecollector2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-cleanup-horizapply2-topra/artifacts/output.dxf` vs `data/refactor-corrpost-livecollector2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 64: correction-line tracked-segment updater
+  - Kept the same exercised normalization path moving in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by extracting `UpdateTrackedCorrectionSegment(...)`. Both normalization passes now share the by-id replacement of the in-memory `segments` tracker after a relayer change instead of carrying mirrored loops inline.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-segmentupdate-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-livecollector2-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-segmentupdate2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-livecollector2-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-segmentupdate2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-livecollector2-topra/artifacts/output.dxf` vs `data/refactor-corrpost-segmentupdate2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 65: cleanup inward-target ranking helpers
+  - Returned to `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs` and extracted `IsTargetPassEligible(...)`, `ComputeInwardTargetScore(...)`, and `ShouldPreferInwardTarget(...)`. The exercised horizontal and vertical inward-target selectors now share the same pass gating, score calculation, and tie-break rules instead of carrying duplicated ranking math.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-cleanup-targetscore-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-segmentupdate2-twp59/artifacts/output.dxf` vs `data/refactor-cleanup-targetscore2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-segmentupdate2-quarter/artifacts/output.dxf` vs `data/refactor-cleanup-targetscore2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-segmentupdate2-topra/artifacts/output.dxf` vs `data/refactor-cleanup-targetscore2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 66: cleanup shared axis-target search helper
+  - Continued in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs` by extracting `TryFindBestAxisTarget(...)`. The exercised horizontal and vertical inward-target selectors now share the same pass/target scan loop and only differ in axis extraction plus endpoint reconstruction.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-cleanup-axistarget-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-cleanup-targetscore2-twp59/artifacts/output.dxf` vs `data/refactor-cleanup-axistarget2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-cleanup-targetscore2-quarter/artifacts/output.dxf` vs `data/refactor-cleanup-axistarget2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-cleanup-targetscore2-topra/artifacts/output.dxf` vs `data/refactor-cleanup-axistarget2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 67: correction-line relayer-and-track helper
+  - Finished this pass in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by extracting `TryRelayerAndTrackCorrectionSegment(...)`. The two exercised normalization passes now share the relayer-plus-tracked-segment update path instead of duplicating the same “relayer, rebuild `CorrectionSegment`, then update the in-memory tracker” sequence.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-relayertrack-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-cleanup-axistarget2-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-relayertrack2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-cleanup-axistarget2-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-relayertrack2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-cleanup-axistarget2-topra/artifacts/output.dxf` vs `data/refactor-corrpost-relayertrack2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 68: correction-line shared normalization seam filter
+  - Continued in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by extracting `TryGetNormalizationCenterDistance(...)`. The exercised outer-axis and inset-axis normalization passes now share the same seam-window/X-range/strip/center-distance gate instead of repeating that filter block inline.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-normalizefilter-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-relayertrack2-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-normalizefilter2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-relayertrack2-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-normalizefilter2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-relayertrack2-topra/artifacts/output.dxf` vs `data/refactor-corrpost-normalizefilter2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 69: cleanup shared horizontal move runner
+  - Returned to `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs` and extracted `TryApplyBestHorizontalMove(...)`. The exercised SEC and LSD horizontal cleanup loops now share the same read/validate/find/apply flow, while the LSD-specific max-move cap remains explicit at the caller.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-cleanup-horizontalrunner-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-corrpost-normalizefilter2-twp59/artifacts/output.dxf` vs `data/refactor-cleanup-horizontalrunner2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-corrpost-normalizefilter2-quarter/artifacts/output.dxf` vs `data/refactor-cleanup-horizontalrunner2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-corrpost-normalizefilter2-topra/artifacts/output.dxf` vs `data/refactor-cleanup-horizontalrunner2-topra/artifacts/output.dxf` (`822` entities)
+
+- Refactor 70: correction-line shared collectors and tracked-layer updater
+  - Finished this sweep in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` by promoting `CollectHorizontalCorrectionSegments(...)` and `UpdateTrackedCorrectionSegmentLayer(...)` to shared static helpers. The exercised normalization and redundant-band-prune paths now reuse the same horizontal correction-segment collection and by-id tracked-layer update logic instead of each carrying a private copy.
+  - Verification:
+    - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/refactor-corrpost-sharedcollectors-plugin2"` passed.
+    - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed.
+    - Exact canonical DXF comparisons all matched:
+      - `data/refactor-cleanup-horizontalrunner2-twp59/artifacts/output.dxf` vs `data/refactor-corrpost-sharedcollectors2-twp59/artifacts/output.dxf` (`951` entities)
+      - `data/refactor-cleanup-horizontalrunner2-quarter/artifacts/output.dxf` vs `data/refactor-corrpost-sharedcollectors2-quarter/artifacts/output.dxf` (`121` entities)
+      - `data/refactor-cleanup-horizontalrunner2-topra/artifacts/output.dxf` vs `data/refactor-corrpost-sharedcollectors2-topra/artifacts/output.dxf` (`822` entities)
+
+## 2026-04-02 - Remaining exercised cleanup/correction-line refactor sweep
+
+- [x] Keep harvesting the remaining worthwhile structural refactors in `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.Cleanup.cs` and `src/AtsBackgroundBuilder/RoadAllowance/Plugin.RoadAllowance.CorrectionLinePostProcessing.cs`.
+- [x] Favor narrow shared helpers that remove duplicated exercised selection/normalization plumbing without changing ranking or geometry policy.
+- [x] After each kept slice, run:
+  - `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/<slice>"`
+  - `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false`
+  - sequential AutoCAD harness proof for `twp59`, `quarter`, and `topra`, then canonical DXF compare against the previous proven baseline
+- [x] Stop only when the next remaining changes in these exercised files are no longer meaningful refactors of value or can no longer be safely proved with the current matrix.
+
 # Follow-up (Disposition Label Placement Review Export, 2026-03-31)
 
 - [x] Review `tasks/lessons.md` and locate the disposition-label code paths that control placement, reuse, and PLSR interaction.
@@ -7643,3 +8435,90 @@ Review 2026-03-31 (width aligned dimensions keep outside placement matched to me
 - Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with the same pre-existing nullable warning in `Plugin.Core.ImportWindowing.cs` and the same two pre-existing `axisTol` warnings.
 - Decision tests: `dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build` passed (`Decision tests passed.`).
 - Remaining proof gap: I still did not run a fresh live AutoCAD visual harness in this turn, so the proof here is build + regression coverage rather than a new rendered drawing screenshot.
+
+## 2026-04-02 - PLSR Ignore All should not move or change labels
+- [x] Trace the `PLSR Check` review/apply flow and identify the exact `Ignore All` handler plus any downstream label mutation paths it still triggers.
+- [x] Reproduce or reason through why labels move/change after an all-ignore decision, including whether placement cleanup/finalize still runs with zero accepted actions.
+- [x] Implement the minimal safe fix so `Ignore All` leaves existing labels untouched.
+- [x] Run targeted verification for the PLSR ignore path and document the outcome here.
+
+Review 2026-04-02 (PLSR Ignore All should not move or change labels):
+- Root cause: the review dialog correctly returned an empty accepted set after `Ignore All`, but `ApplyAcceptedPlsrActions(...)` was overriding that by force-adding every actionable `UpdateOwner` issue back into the accepted set before routing. That meant `Ignore All` still edited label text, and dimension-backed labels could visibly reflow/move when their owner line changed.
+- Fix: removed the forced owner-update override in `src\AtsBackgroundBuilder\Dispositions\Plugin.Dispositions.LabelingPlsr.cs` so the review selection is honored exactly as chosen. `Ignore All` now leaves owner-mismatch issues ignored instead of mutating labels anyway.
+- Regression coverage: added `TestPlsrApplyDecisionEngineIgnoresOwnerUpdateWhenReviewIgnoredAll()` in `src\AtsBackgroundBuilder.DecisionTests\Program.cs` to lock the expected all-ignored routing behavior.
+- Verification:
+- `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.csproj" -c Release -p:Platform=x64 -p:NuGetAudit=false -o "artifacts/verify-build/plsr-ignore-all-plugin"` passed.
+- `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed (`Decision tests passed.`).
+
+## 2026-04-02 - PLSR quarter matching should count aligned-dimension geometry inside the quarter
+- [x] Confirm whether the reported version-date row is a real mismatch or a comparison/normalization bug.
+- [x] Trace the PLSR label collector for aligned dimensions and identify why labels with text outside the quarter can still be reported missing.
+- [x] Implement the minimal safe quarter-match fix for aligned-dimension geometry without loosening unrelated label matching.
+- [x] Add focused regression coverage for an aligned-dimension case where the text is outside the quarter but the dimension leader geometry still reaches inside.
+- [x] Rebuild and rerun targeted verification, then record the outcome here.
+
+Review 2026-04-02 (PLSR quarter matching should count aligned-dimension geometry inside the quarter):
+- Version-date investigation: the selected review row is a real mismatch, not a false compare. The drawing-side disposition OD value is `VER_DATE=2005-11-16`, while the XML activity expects `2005-11-17`, so the current/expected columns differ by one calendar day.
+- Root cause: the PLSR aligned-dimension quarter matcher already considered text position, extension endpoints, the extension midpoint, and entity extents, but it did not sample the aligned dimension's actual `DimLinePoint` or the text-to-dimension leader span. That meant a width label could still be reported missing when the rendered dimension geometry crossed the quarter but the text and sampled endpoints all sat outside it.
+- Fix: `src\AtsBackgroundBuilder\Core\PlsrQuarterPointMatcher.cs` now allows aligned-dimension quarter matching to include the explicit dimension-line point plus segment midpoints between the text, dimension line, and extension endpoints. `src\AtsBackgroundBuilder\Dispositions\Plugin.Dispositions.LabelingPlsr.cs` now reads `DimLinePoint` during PLSR label collection and feeds it into that matcher.
+- Regression coverage: added `TestPlsrQuarterPointBuilderBuildsDimensionLeaderMidpointCandidate()` in `src\AtsBackgroundBuilder.DecisionTests\Program.cs` to lock the exact case where aligned-dimension text is outside the quarter while the dimension leader span still crosses inside.
+- Verification:
+- `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln" -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed (`Decision tests passed.`).
+- Remaining proof gap: I could not reconstruct the exact fresh desktop PLSR build recipe from the saved artifacts alone, so this turn's proof is the focused geometry regression plus clean build/test, not a fresh live AutoCAD replay of the same screenshot case.
+
+## 2026-04-02 - Quarter-edge dispositions should still get a forced initial label attempt
+- [x] Trace why quarter-edge PLSR misses can survive the initial label placement pass even when the disposition overlaps the quarter.
+- [x] Add a minimal fallback path so sliver overlaps still produce at least one in-quarter placement attempt based on the actual overlap geometry.
+- [x] Add focused regression coverage for the new fallback target ordering.
+- [x] Rebuild and rerun targeted verification, then record the outcome here.
+
+Review 2026-04-02 (quarter-edge dispositions should still get a forced initial label attempt):
+- Root cause: the initial label placer only forced a label after normal candidate generation had already produced at least one point. For quarter-edge sliver overlaps, the normal candidate search could return zero because the quarter clearance and in-shape text-point gates were too strict, and the fallback path then quit unless `SearchTarget` passed a full-quarter/full-disposition interior check immediately. That left some tiny but real quarter overlaps with no initial placement attempt at all, even though the PLSR review later recognized them as expected labels.
+- Fix: `src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs` now builds a small ordered fallback target list from the actual overlap geometry when normal candidate generation returns zero. The forced path now reuses `SearchTarget`, `MeasurementTarget`, `LeaderTarget`, the safe interior of the quarter/disposition intersection piece when available, and an explicit `TryFindPointInsideBoth(...)` overlap point, filtered against the quarter plus the active target corridor (`IntersectionPiece ?? Disposition`). That gives sliver overlaps a real in-quarter placement attempt instead of an immediate skip.
+- Regression coverage: added `src\AtsBackgroundBuilder\Core\QuarterFallbackCandidateSelector.cs` plus `TestQuarterFallbackCandidateSelectorKeepsValidOrder()` in `src\AtsBackgroundBuilder.DecisionTests\Program.cs` to lock the valid-first, deduped fallback ordering used by the new sliver-placement path.
+- Verification:
+- `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln" -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed (`Decision tests passed.`).
+- Remaining proof gap: the exact old `C:\AtsHarness\run-20260327-225622-74067889` replay artifacts referenced in the log are no longer present on disk, so I could not rerun that same 36-request AutoCAD case before/after in this turn. The proof here is the code-path fix plus clean build/test, with the live AutoCAD rerun still pending once the same workbook/drawing recipe is available again.
+
+## 2026-04-02 - Quarter-edge missing labels need both a placement retry and a leader-segment quarter match
+- [x] Re-trace the still-missing quarter-edge PLSR rows instead of assuming the earlier aligned-dimension-only fix covered them.
+- [x] Add a narrow quarter-only leader placement retry for real sliver overlaps that still produce zero in-shape candidates.
+- [x] Add a leader quarter-match fix so visible leader segments crossing a quarter count even when the text and endpoints sit outside.
+- [x] Rebuild, rerun decision tests, and rerun the smallest trustworthy Full AutoCAD harness around the affected quarter pattern.
+
+Review 2026-04-02 (quarter-edge missing labels need both a placement retry and a leader-segment quarter match):
+- User correction: the reported rows still were not resolving after the earlier aligned-dimension and sliver-target fixes, so the real workflow still had another quarter-edge gap.
+- Placement-side root cause: for non-width leader labels, the builder still required the text point to stay inside the disposition unless that disposition had already opted into outside placement. On tiny quarter slivers, that could leave zero in-shape candidates even though there was plenty of empty room inside the quarter for a leadered label.
+- Placement-side fix: `src\AtsBackgroundBuilder\Core\QuarterLabelFallbackPolicy.cs` and `src\AtsBackgroundBuilder\Dispositions\LabelPlacer.cs` now enable one narrow retry path: if a leader-capable, non-width disposition has a real quarter intersection piece but zero in-shape candidates, the placer retries the spiral search with the text allowed anywhere inside the quarter and expands the search budget to `320` points. The leader target still stays anchored to the real overlap geometry, so this is a quarter-only leader fallback, not a free-floating text fallback.
+- PLSR-side root cause: `GetLeaderQuarterTestPoints(...)` in `src\AtsBackgroundBuilder\Dispositions\Plugin.Dispositions.LabelingPlsr.cs` only fed the matcher the leader text point, collected leader vertices, and entity extents. If a leader segment crossed the quarter between outside endpoints, the quarter matcher could still miss it even though the visible leader line reached inside.
+- PLSR-side fix: `src\AtsBackgroundBuilder\Core\PlsrQuarterPointMatcher.cs` now exposes `BuildLeaderPoints(...)`, which includes consecutive leader-segment midpoints in addition to the text point and vertices. `src\AtsBackgroundBuilder\Dispositions\Plugin.Dispositions.LabelingPlsr.cs` now uses that helper, so a leader segment that visibly crosses a quarter can count even when its sampled endpoints stay outside.
+- Regression coverage:
+- Added `TestQuarterLabelFallbackPolicyEnablesQuarterOnlyLeaderPlacementForSlivers()` and `TestQuarterLabelFallbackPolicyKeepsNormalPlacementWhenInShapeCandidatesExist()` in `src\AtsBackgroundBuilder.DecisionTests\Program.cs`.
+- Added `TestPlsrQuarterPointBuilderBuildsLeaderSegmentMidpointCandidate()` in `src\AtsBackgroundBuilder.DecisionTests\Program.cs`.
+- Verification:
+- `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln" -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed (`Decision tests passed.`).
+- Focused live replay: `powershell -ExecutionPolicy Bypass -File "scripts/atsbuild_harness.ps1" -Runner FullAutoCAD -FullAutoCadTimeoutSeconds 900 -DwgPath "data/twp59-19-5-all-sections-source.dwg" -SpecPath "data/plsr-sliver-focus-spec.json" -OutputDir "data/plsr-sliver-focus-rerun1"` completed with `batchCompleted = true`, exported a DXF, and kept the focused two-quarter live path healthy (`Labels placed: 4`, `Overlap forced: 1`).
+- Remaining proof gap: the local `TEST` two-quarter harness does not import the exact DISP numbers from the user screenshot (`PLA170549`, `LOC791650`, `PLA111877`), and the full township-wide replay still exits during `AB_LCON.shp` import before label review. So the new code is build/test proven and live-path proven on a matching sliver-quarter pattern, but I do not yet have a faithful automated replay of those exact three review rows.
+
+## 2026-04-02 - Final L-USEC output relayer can be disabled for verification
+- [x] Trace the final output-only L-USEC relayer and add a narrow runtime switch that preserves `L-USEC-0` / `L-USEC2012` / `L-USEC3018`.
+- [x] Surface the toggle in ATSBUILD logging so a run records whether final USEC variants were preserved or collapsed.
+- [x] Rebuild and verify the toggle with matched focused AutoCAD replays before/after.
+
+Review 2026-04-02 (final L-USEC output relayer can be disabled for verification):
+- User request: keep the final layer reassignment optional so the emitted subtype layers can be inspected directly during debugging and logic verification.
+- Fix: `src\AtsBackgroundBuilder\Core\Plugin.cs` now defines two equivalent environment toggles, `ATSBUILD_PRESERVE_FINAL_USEC_VARIANT_LAYERS=1` and `ATSBUILD_DISABLE_FINAL_USEC_OUTPUT_RELAYER=1`. `src\AtsBackgroundBuilder\Core\Plugin.Core.LayerManagement.cs` now skips the final collapse pass when either toggle is enabled, preserving `L-USEC-0`, `L-USEC2012` / `L-USEC-2012`, and `L-USEC3018` / `L-USEC-3018`. `src\AtsBackgroundBuilder\Core\Plugin.Core.AtsBuildXls.cs`, `src\AtsBackgroundBuilder\Core\Plugin.Core.AtsBuildBatch.cs`, and `src\AtsBackgroundBuilder\Core\Plugin.cs` now log the resolved mode at command start.
+- Usage:
+- default behavior stays the same: no env vars set -> final visible ordinary USEC output is collapsed back to `L-USEC`.
+- debug behavior: set either `ATSBUILD_PRESERVE_FINAL_USEC_VARIANT_LAYERS=1` or `ATSBUILD_DISABLE_FINAL_USEC_OUTPUT_RELAYER=1` before running `ATSBUILD`, `ATSBUILD_XLS`, or `ATSBUILD_XLS_BATCH`.
+- Verification:
+- `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln" -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- `dotnet run --project "src/AtsBackgroundBuilder.DecisionTests/AtsBackgroundBuilder.DecisionTests.csproj" -c Release --no-restore -p:Platform=x64 -p:NuGetAudit=false` passed (`Decision tests passed.`).
+- Focused live replay with default collapse: `data\plsr-usec-relayer-default` completed with `batchCompleted = true`, and the log reported `Cleanup: final build relayer converted 102 L-USEC variant curve(s) to L-USEC (0=34, 20.12=34, 30.18=34).`
+- Focused live replay with preservation enabled: `data\plsr-usec-relayer-preserve` completed with `batchCompleted = true`, and the log reported `Cleanup: final build relayer skipped ... preserving L-USEC variant layers.`
+- DXF layer proof on the same focused spec (`data\plsr-sliver-focus-spec.json`):
+- collapsed run `data\plsr-usec-relayer-default\artifacts\output.dxf`: `L-USEC=116`, `L-USEC-C=4`, `L-USEC-C-0=4`
+- preserved run `data\plsr-usec-relayer-preserve\artifacts\output.dxf`: `L-USEC=14`, `L-USEC-0=34`, `L-USEC2012=34`, `L-USEC3018=34`, `L-USEC-C=4`, `L-USEC-C-0=4`

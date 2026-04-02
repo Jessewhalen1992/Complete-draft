@@ -1175,27 +1175,6 @@ namespace AtsBackgroundBuilder
             var effectiveAcceptedIssueIds = acceptedIssueIds != null
                 ? new HashSet<Guid>(acceptedIssueIds)
                 : new HashSet<Guid>();
-            var forcedOwnerUpdateCount = 0;
-            foreach (var issue in issues)
-            {
-                if (issue == null ||
-                    issue.ChangeType != PlsrIssueChangeType.UpdateOwner ||
-                    !issue.IsActionable)
-                {
-                    continue;
-                }
-
-                if (effectiveAcceptedIssueIds.Add(issue.Id))
-                {
-                    forcedOwnerUpdateCount++;
-                }
-            }
-
-            if (forcedOwnerUpdateCount > 0)
-            {
-                logger.WriteLine(
-                    $"PLSR owner enforcement: applying {forcedOwnerUpdateCount} owner update issue(s) from XML regardless of review selection.");
-            }
 
             var decision = PlsrApplyDecisionEngine.Route(
                 issues.Select(issue => new PlsrApplyDecisionItem
@@ -3528,6 +3507,7 @@ namespace AtsBackgroundBuilder
         private static List<PlsrQuarterMatchPoint> GetDimensionQuarterTestPoints(AlignedDimension dimension, Point2d anchorLocation)
         {
             PlsrQuarterMatchPoint? textPoint = null;
+            PlsrQuarterMatchPoint? dimLinePoint = null;
             PlsrQuarterMatchPoint? firstExtensionPoint = null;
             PlsrQuarterMatchPoint? secondExtensionPoint = null;
 
@@ -3535,6 +3515,19 @@ namespace AtsBackgroundBuilder
             {
                 var textPos = dimension.TextPosition;
                 textPoint = new PlsrQuarterMatchPoint(textPos.X, textPos.Y);
+            }
+            catch
+            {
+                // ignore
+            }
+
+            try
+            {
+                var property = dimension.GetType().GetProperty("DimLinePoint", BindingFlags.Instance | BindingFlags.Public);
+                if (property != null && property.CanRead && property.GetValue(dimension, null) is Point3d point)
+                {
+                    dimLinePoint = new PlsrQuarterMatchPoint(point.X, point.Y);
+                }
             }
             catch
             {
@@ -3556,6 +3549,7 @@ namespace AtsBackgroundBuilder
             var points = PlsrQuarterPointBuilder.BuildDimensionPoints(
                 new PlsrQuarterMatchPoint(anchorLocation.X, anchorLocation.Y),
                 textPoint,
+                dimLinePoint,
                 firstExtensionPoint,
                 secondExtensionPoint);
 
@@ -3597,14 +3591,14 @@ namespace AtsBackgroundBuilder
         }
         private static List<PlsrQuarterMatchPoint> GetLeaderQuarterTestPoints(MLeader leader, Point2d labelLocation)
         {
-            var points = new List<PlsrQuarterMatchPoint>();
-            AddQuarterTestPoint(points, new PlsrQuarterMatchPoint(labelLocation.X, labelLocation.Y));
+            var labelPoint = new PlsrQuarterMatchPoint(labelLocation.X, labelLocation.Y);
+            var leaderVertices = new List<PlsrQuarterMatchPoint>();
 
             try
             {
                 foreach (var vertex in CollectLeaderVertices(leader))
                 {
-                    AddQuarterTestPoint(points, new PlsrQuarterMatchPoint(vertex.X, vertex.Y));
+                    leaderVertices.Add(new PlsrQuarterMatchPoint(vertex.X, vertex.Y));
                 }
             }
             catch
@@ -3612,6 +3606,7 @@ namespace AtsBackgroundBuilder
                 // fall back to text location only
             }
 
+            var points = PlsrQuarterPointBuilder.BuildLeaderPoints(labelPoint, leaderVertices);
             foreach (var extentPoint in GetEntityExtentQuarterTestPoints(leader, labelLocation))
             {
                 AddQuarterTestPoint(points, extentPoint);

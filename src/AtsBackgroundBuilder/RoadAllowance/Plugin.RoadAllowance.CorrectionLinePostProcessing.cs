@@ -440,6 +440,100 @@ namespace AtsBackgroundBuilder
                             note ?? string.Empty));
                 }
 
+                (bool FoundExisting, bool RelayeredExisting, bool CreatedNew) TryEnsureCorrectionInnerCompanion(
+                    CorrectionSegment outer,
+                    IReadOnlyList<CorrectionSegment> searchSegments,
+                    Func<Point2d, double> getCenterSignedOffset,
+                    out CorrectionSegment companion)
+                {
+                    companion = default;
+                    if (TryFindCorrectionInnerCompanion(
+                        outer,
+                        searchSegments,
+                        CorrectionLinePostInsetMeters,
+                        getCenterSignedOffset,
+                        out var existingInner))
+                    {
+                        companion = existingInner;
+                        return (
+                            FoundExisting: true,
+                            RelayeredExisting: TryRelayerCorrectionSegment(tr, existingInner.Id, LayerUsecCorrectionZero),
+                            CreatedNew: false);
+                    }
+
+                    if (!TryCreateCorrectionInnerCompanion(
+                        outer,
+                        getCenterSignedOffset,
+                        CorrectionLinePostInsetMeters,
+                        segments,
+                        ms,
+                        tr,
+                        out var newId,
+                        out var newA,
+                        out var newB))
+                    {
+                        return (FoundExisting: false, RelayeredExisting: false, CreatedNew: false);
+                    }
+
+                    companion = new CorrectionSegment(newId, LayerUsecCorrectionZero, newA, newB);
+                    segments.Add(companion);
+                    return (FoundExisting: false, RelayeredExisting: false, CreatedNew: true);
+                }
+
+                List<CorrectionSegment> CollectLiveHorizontalCorrectionSegments(string layerName)
+                {
+                    return CollectHorizontalCorrectionSegments(
+                        tr,
+                        ms,
+                        layer => string.Equals(layer, layerName, StringComparison.OrdinalIgnoreCase));
+                }
+
+                void UpdateTrackedCorrectionSegment(CorrectionSegment updatedSegment)
+                {
+                    UpdateTrackedCorrectionSegmentLayer(segments, updatedSegment.Id, updatedSegment.Layer);
+                }
+
+                bool TryRelayerAndTrackCorrectionSegment(
+                    CorrectionSegment segment,
+                    string layerName,
+                    out CorrectionSegment updatedSegment)
+                {
+                    updatedSegment = default;
+                    if (!TryRelayerCorrectionSegment(tr, segment.Id, layerName))
+                    {
+                        return false;
+                    }
+
+                    updatedSegment = new CorrectionSegment(segment.Id, layerName, segment.A, segment.B);
+                    UpdateTrackedCorrectionSegment(updatedSegment);
+                    return true;
+                }
+
+                bool TryGetNormalizationCenterDistance(
+                    CorrectionSegment segment,
+                    CorrectionSeam seam,
+                    out double centerDistance)
+                {
+                    centerDistance = double.NaN;
+                    if (segment.MaxX < seam.MinX - 25.0 || segment.MinX > seam.MaxX + 25.0)
+                    {
+                        return false;
+                    }
+
+                    if (GetCorrectionHorizontalOverlap(segment, seam.MinX, seam.MaxX) < -30.0)
+                    {
+                        return false;
+                    }
+
+                    if (!seam.IntersectsExpandedStrip(segment, 14.0))
+                    {
+                        return false;
+                    }
+
+                    centerDistance = Math.Abs(seam.GetCenterSignedOffset(segment.Mid));
+                    return true;
+                }
+
                 foreach (var seam in seams)
                 {
                     logger?.WriteLine(
@@ -727,14 +821,14 @@ namespace AtsBackgroundBuilder
                     var companionNoOp = 0;
                     foreach (var outer in uniqueOuters)
                     {
-                        if (TryFindCorrectionInnerCompanion(
+                        var companionResult = TryEnsureCorrectionInnerCompanion(
                             outer,
                             horizontalCandidates,
-                            CorrectionLinePostInsetMeters,
                             point => seam.GetCenterSignedOffset(point),
-                            out var existingInner))
+                            out var companion);
+                        if (companionResult.FoundExisting)
                         {
-                            if (TryRelayerCorrectionSegment(tr, existingInner.Id, LayerUsecCorrectionZero))
+                            if (companionResult.RelayeredExisting)
                             {
                                 relayeredInner++;
                                 correctionGeometryChanged = true;
@@ -744,11 +838,11 @@ namespace AtsBackgroundBuilder
                                         string.Format(
                                             CultureInfo.InvariantCulture,
                                             "id={0} A=({1:0.###},{2:0.###}) B=({3:0.###},{4:0.###}) -> {5}",
-                                            existingInner.Id.Handle.ToString(),
-                                            existingInner.A.X,
-                                            existingInner.A.Y,
-                                            existingInner.B.X,
-                                            existingInner.B.Y,
+                                            companion.Id.Handle.ToString(),
+                                            companion.A.X,
+                                            companion.A.Y,
+                                            companion.B.X,
+                                            companion.B.Y,
                                             LayerUsecCorrectionZero));
                                 }
                             }
@@ -756,31 +850,21 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (TryCreateCorrectionInnerCompanion(
-                            outer,
-                            point => seam.GetCenterSignedOffset(point),
-                            CorrectionLinePostInsetMeters,
-                            segments,
-                            ms,
-                            tr,
-                            out var newId,
-                            out var newA,
-                            out var newB))
+                        if (companionResult.CreatedNew)
                         {
                             createdInner++;
                             correctionGeometryChanged = true;
-                            segments.Add(new CorrectionSegment(newId, LayerUsecCorrectionZero, newA, newB));
                             if (createdSamples.Count < 16)
                             {
                                 createdSamples.Add(
                                     string.Format(
                                         CultureInfo.InvariantCulture,
                                         "id={0} A=({1:0.###},{2:0.###}) B=({3:0.###},{4:0.###}) layer={5}",
-                                        newId.Handle.ToString(),
-                                        newA.X,
-                                        newA.Y,
-                                        newB.X,
-                                        newB.Y,
+                                        companion.Id.Handle.ToString(),
+                                        companion.A.X,
+                                        companion.A.Y,
+                                        companion.B.X,
+                                        companion.B.Y,
                                         LayerUsecCorrectionZero));
                             }
                         }
@@ -1093,14 +1177,14 @@ namespace AtsBackgroundBuilder
                     var candidate = lateOuterCompanionCandidates[i];
                     var outer = candidate.Outer;
                     var seam = candidate.Seam;
-                    if (TryFindCorrectionInnerCompanion(
+                    var companionResult = TryEnsureCorrectionInnerCompanion(
                         outer,
                         segments,
-                        CorrectionLinePostInsetMeters,
                         point => seam.GetCenterSignedOffset(point),
-                        out var existingInner))
+                        out var companion);
+                    if (companionResult.FoundExisting)
                     {
-                        if (TryRelayerCorrectionSegment(tr, existingInner.Id, LayerUsecCorrectionZero))
+                        if (companionResult.RelayeredExisting)
                         {
                             relayeredInner++;
                             lateCompanionRelayered++;
@@ -1111,11 +1195,11 @@ namespace AtsBackgroundBuilder
                                     string.Format(
                                         CultureInfo.InvariantCulture,
                                         "relayer id={0} A=({1:0.###},{2:0.###}) B=({3:0.###},{4:0.###}) -> {5}",
-                                        existingInner.Id.Handle.ToString(),
-                                        existingInner.A.X,
-                                        existingInner.A.Y,
-                                        existingInner.B.X,
-                                        existingInner.B.Y,
+                                        companion.Id.Handle.ToString(),
+                                        companion.A.X,
+                                        companion.A.Y,
+                                        companion.B.X,
+                                        companion.B.Y,
                                         LayerUsecCorrectionZero));
                             }
                         }
@@ -1123,32 +1207,22 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (TryCreateCorrectionInnerCompanion(
-                        outer,
-                        point => seam.GetCenterSignedOffset(point),
-                        CorrectionLinePostInsetMeters,
-                        segments,
-                        ms,
-                        tr,
-                        out var newId,
-                        out var newA,
-                        out var newB))
+                    if (companionResult.CreatedNew)
                     {
                         createdInner++;
                         lateCompanionCreated++;
                         correctionGeometryChanged = true;
-                        segments.Add(new CorrectionSegment(newId, LayerUsecCorrectionZero, newA, newB));
                         if (lateCompanionSamples.Count < 10)
                         {
                             lateCompanionSamples.Add(
                                 string.Format(
                                     CultureInfo.InvariantCulture,
                                     "create id={0} A=({1:0.###},{2:0.###}) B=({3:0.###},{4:0.###}) layer={5}",
-                                    newId.Handle.ToString(),
-                                    newA.X,
-                                    newA.Y,
-                                    newB.X,
-                                    newB.Y,
+                                    companion.Id.Handle.ToString(),
+                                    companion.A.X,
+                                    companion.A.Y,
+                                    companion.B.X,
+                                    companion.B.Y,
                                     LayerUsecCorrectionZero));
                         }
                     }
@@ -1170,38 +1244,7 @@ namespace AtsBackgroundBuilder
                 // Guardrail: a seam can accumulate both inner and outer correction-zero bands after
                 // multiple relayer/companion passes. Quarter/LSD selection must only see the inner
                 // C-0 band; any outer-axis survivor is normalized back to correction outer here.
-                var liveCorrectionZeroSegments = new List<CorrectionSegment>();
-                foreach (ObjectId id in ms)
-                {
-                    Entity? ent = null;
-                    try
-                    {
-                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
-                    }
-                    catch (Autodesk.AutoCAD.Runtime.Exception)
-                    {
-                        continue;
-                    }
-
-                    if (ent == null || ent.IsErased ||
-                        !string.Equals(ent.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    if (!TryReadOpenLinearSegment(ent, out var a, out var b))
-                    {
-                        continue;
-                    }
-
-                    var candidate = new CorrectionSegment(id, LayerUsecCorrectionZero, a, b);
-                    if (!candidate.IsHorizontalLike)
-                    {
-                        continue;
-                    }
-
-                    liveCorrectionZeroSegments.Add(candidate);
-                }
+                var liveCorrectionZeroSegments = CollectLiveHorizontalCorrectionSegments(LayerUsecCorrectionZero);
 
                 var normalizedOuterZero = 0;
                 var normalizedOuterZeroCandidates = 0;
@@ -1214,22 +1257,11 @@ namespace AtsBackgroundBuilder
                     for (var i = 0; i < liveCorrectionZeroSegments.Count; i++)
                     {
                         var seg = liveCorrectionZeroSegments[i];
-                        if (seg.MaxX < seam.MinX - 25.0 || seg.MinX > seam.MaxX + 25.0)
+                        if (!TryGetNormalizationCenterDistance(seg, seam, out var centerDistance))
                         {
                             continue;
                         }
 
-                        if (GetCorrectionHorizontalOverlap(seg, seam.MinX, seam.MaxX) < -30.0)
-                        {
-                            continue;
-                        }
-
-                        if (!seam.IntersectsExpandedStrip(seg, 14.0))
-                        {
-                            continue;
-                        }
-
-                        var centerDistance = Math.Abs(seam.GetCenterSignedOffset(seg.Mid));
                         normalizedOuterZeroCandidates++;
                         if (!CorrectionBandAxisClassifier.IsCloserToOuterBand(
                                 centerDistance,
@@ -1239,51 +1271,32 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!TryRelayerCorrectionSegment(tr, seg.Id, LayerUsecCorrection))
+                        if (!TryRelayerAndTrackCorrectionSegment(
+                                seg,
+                                LayerUsecCorrection,
+                                out var normalizedOuter))
                         {
                             continue;
                         }
 
-                        var normalizedOuter = new CorrectionSegment(seg.Id, LayerUsecCorrection, seg.A, seg.B);
-                        for (var existingIndex = 0; existingIndex < segments.Count; existingIndex++)
+                        var companionResult = TryEnsureCorrectionInnerCompanion(
+                            normalizedOuter,
+                            segments,
+                            point => seam.GetCenterSignedOffset(point),
+                            out _);
+                        if (companionResult.FoundExisting)
                         {
-                            if (segments[existingIndex].Id != seg.Id)
-                            {
-                                continue;
-                            }
-
-                            segments[existingIndex] = normalizedOuter;
-                            break;
-                        }
-
-                        if (TryFindCorrectionInnerCompanion(
-                                normalizedOuter,
-                                segments,
-                                CorrectionLinePostInsetMeters,
-                                point => seam.GetCenterSignedOffset(point),
-                                out var existingInner))
-                        {
-                            if (TryRelayerCorrectionSegment(tr, existingInner.Id, LayerUsecCorrectionZero))
+                            if (companionResult.RelayeredExisting)
                             {
                                 correctionGeometryChanged = true;
                             }
 
                             normalizedOuterZeroCompanionNoOp++;
                         }
-                        else if (TryCreateCorrectionInnerCompanion(
-                                     normalizedOuter,
-                                     point => seam.GetCenterSignedOffset(point),
-                                     CorrectionLinePostInsetMeters,
-                                     segments,
-                                     ms,
-                                     tr,
-                                     out var companionId,
-                                     out var companionA,
-                                     out var companionB))
+                        else if (companionResult.CreatedNew)
                         {
                             normalizedOuterZeroCompanionCreated++;
                             correctionGeometryChanged = true;
-                            segments.Add(new CorrectionSegment(companionId, LayerUsecCorrectionZero, companionA, companionB));
                         }
                         else
                         {
@@ -1322,38 +1335,7 @@ namespace AtsBackgroundBuilder
                     }
                 }
 
-                var liveCorrectionOuterSegments = new List<CorrectionSegment>();
-                foreach (ObjectId id in ms)
-                {
-                    Entity? ent = null;
-                    try
-                    {
-                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
-                    }
-                    catch (Autodesk.AutoCAD.Runtime.Exception)
-                    {
-                        continue;
-                    }
-
-                    if (ent == null || ent.IsErased ||
-                        !string.Equals(ent.Layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    if (!TryReadOpenLinearSegment(ent, out var a, out var b))
-                    {
-                        continue;
-                    }
-
-                    var candidate = new CorrectionSegment(id, LayerUsecCorrection, a, b);
-                    if (!candidate.IsHorizontalLike)
-                    {
-                        continue;
-                    }
-
-                    liveCorrectionOuterSegments.Add(candidate);
-                }
+                var liveCorrectionOuterSegments = CollectLiveHorizontalCorrectionSegments(LayerUsecCorrection);
 
                 var normalizedInsetOuterCandidates = 0;
                 var normalizedInsetOuter = 0;
@@ -1370,22 +1352,11 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (seg.MaxX < seam.MinX - 25.0 || seg.MinX > seam.MaxX + 25.0)
+                        if (!TryGetNormalizationCenterDistance(seg, seam, out var centerDistance))
                         {
                             continue;
                         }
 
-                        if (GetCorrectionHorizontalOverlap(seg, seam.MinX, seam.MaxX) < -30.0)
-                        {
-                            continue;
-                        }
-
-                        if (!seam.IntersectsExpandedStrip(seg, 14.0))
-                        {
-                            continue;
-                        }
-
-                        var centerDistance = Math.Abs(seam.GetCenterSignedOffset(seg.Mid));
                         normalizedInsetOuterCandidates++;
                         if (!CorrectionBandAxisClassifier.IsCloserToInnerBand(
                                 centerDistance,
@@ -1405,7 +1376,10 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        if (!TryRelayerCorrectionSegment(tr, seg.Id, LayerUsecCorrectionZero))
+                        if (!TryRelayerAndTrackCorrectionSegment(
+                                seg,
+                                LayerUsecCorrectionZero,
+                                out var normalizedInner))
                         {
                             continue;
                         }
@@ -1413,17 +1387,6 @@ namespace AtsBackgroundBuilder
                         normalizedInsetOuterIds.Add(seg.Id);
                         correctionGeometryChanged = true;
                         normalizedInsetOuter++;
-                        var normalizedInner = new CorrectionSegment(seg.Id, LayerUsecCorrectionZero, seg.A, seg.B);
-                        for (var existingIndex = 0; existingIndex < segments.Count; existingIndex++)
-                        {
-                            if (segments[existingIndex].Id != seg.Id)
-                            {
-                                continue;
-                            }
-
-                            segments[existingIndex] = normalizedInner;
-                            break;
-                        }
 
                         if (normalizedInsetOuterSamples.Count < 12)
                         {
@@ -1573,14 +1536,17 @@ namespace AtsBackgroundBuilder
 
             bool IsOrdinaryUsecOuterLayer(string layer) => OrdinaryUsecTieInAnchorLayerClassifier.IsOuterUsecAnchorLayer(layer);
 
-            bool IsHardVerticalTieInTargetLayer(string layer)
+            bool IsHardTieInBoundaryLayer(string layer)
             {
-                return IsOrdinaryUsecTieInLayer(layer) ||
-                       string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
+                return IsCorrectionLayer(layer) ||
                        string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
+            }
+
+            bool IsHardVerticalTieInTargetLayer(string layer)
+            {
+                return IsOrdinaryUsecTieInLayer(layer) || IsHardTieInBoundaryLayer(layer);
             }
 
             bool AreMatchingTieInBands(string sourceLayer, string targetLayer)
@@ -1600,34 +1566,20 @@ namespace AtsBackgroundBuilder
                 var horizontalAnchors = new List<(ObjectId Id, Point2d A, Point2d B)>();
                 var verticalAnchors = new List<(ObjectId Id, Point2d A, Point2d B)>();
                 var correctionZeroHorizontalTargets = new List<(LineDistancePoint A, LineDistancePoint B)>();
-                foreach (ObjectId id in ms)
+
+                void AddRelevantTieInSegment(ObjectId id, Entity ent)
                 {
-                    Entity? ent = null;
-                    try
-                    {
-                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
-                    }
-                    catch (Autodesk.AutoCAD.Runtime.Exception)
-                    {
-                        continue;
-                    }
-
-                    if (ent == null || ent.IsErased)
-                    {
-                        continue;
-                    }
-
                     var layer = ent.Layer ?? string.Empty;
                     if (!IsOrdinaryUsecTieInLayer(layer) &&
                         !IsHardVerticalTieInTargetLayer(layer) &&
                         !IsOrdinaryUsecOuterLayer(layer))
                     {
-                        continue;
+                        return;
                     }
 
                     if (!TryReadOpenSegment(ent, out var a, out var b) || !DoesSegmentIntersectAnyWindow(a, b))
                     {
-                        continue;
+                        return;
                     }
 
                     if (IsOrdinaryUsecTieInLayer(layer) && IsHorizontalLike(a, b))
@@ -1663,6 +1615,26 @@ namespace AtsBackgroundBuilder
                     }
                 }
 
+                foreach (ObjectId id in ms)
+                {
+                    Entity? ent = null;
+                    try
+                    {
+                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (ent == null || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    AddRelevantTieInSegment(id, ent);
+                }
+
                 var hasHardTrimTargets =
                     verticalTargets.Exists(target => EndpointTouchesHardAnchorLayer(target.Layer)) ||
                     horizontalTargets.Exists(target => EndpointTouchesHardAnchorLayer(target.Layer));
@@ -1673,26 +1645,28 @@ namespace AtsBackgroundBuilder
                     return false;
                 }
 
-                var ghostHorizontalRowsIgnored = 0;
-                if (correctionZeroHorizontalTargets.Count > 0)
+                List<(ObjectId Id, LineDistancePoint A, LineDistancePoint B)> CollectHorizontalGhostCandidates()
                 {
                     var ghostCandidates = new List<(ObjectId Id, LineDistancePoint A, LineDistancePoint B)>();
+
+                    void AddGhostCandidate(ObjectId id, Point2d a, Point2d b)
+                    {
+                        ghostCandidates.Add((
+                            id,
+                            new LineDistancePoint(a.X, a.Y),
+                            new LineDistancePoint(b.X, b.Y)));
+                    }
+
                     for (var i = 0; i < horizontalSources.Count; i++)
                     {
                         var source = horizontalSources[i];
-                        ghostCandidates.Add((
-                            source.Id,
-                            new LineDistancePoint(source.A.X, source.A.Y),
-                            new LineDistancePoint(source.B.X, source.B.Y)));
+                        AddGhostCandidate(source.Id, source.A, source.B);
                     }
 
                     for (var i = 0; i < horizontalAnchors.Count; i++)
                     {
                         var anchor = horizontalAnchors[i];
-                        ghostCandidates.Add((
-                            anchor.Id,
-                            new LineDistancePoint(anchor.A.X, anchor.A.Y),
-                            new LineDistancePoint(anchor.B.X, anchor.B.Y)));
+                        AddGhostCandidate(anchor.Id, anchor.A, anchor.B);
                     }
 
                     for (var i = 0; i < horizontalTargets.Count; i++)
@@ -1703,36 +1677,48 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        ghostCandidates.Add((
-                            target.Id,
-                            new LineDistancePoint(target.A.X, target.A.Y),
-                            new LineDistancePoint(target.B.X, target.B.Y)));
+                        AddGhostCandidate(target.Id, target.A, target.B);
                     }
 
-                    var ghostCandidateIndices = CorrectionInsetGhostRowClassifier.FindGhostChainIndices(
-                        ghostCandidates.Select(candidate => (candidate.A, candidate.B)).ToList(),
+                    return ghostCandidates;
+                }
+
+                void RemoveGhostHorizontalRows(IReadOnlyCollection<ObjectId> ghostHorizontalIds)
+                {
+                    var ghostIdSet = ghostHorizontalIds as HashSet<ObjectId> ?? new HashSet<ObjectId>(ghostHorizontalIds);
+                    horizontalSources = horizontalSources
+                        .Where(source => !ghostIdSet.Contains(source.Id))
+                        .ToList();
+                    horizontalAnchors = horizontalAnchors
+                        .Where(anchor => !ghostIdSet.Contains(anchor.Id))
+                        .ToList();
+                    horizontalTargets = horizontalTargets
+                        .Where(target => !ghostIdSet.Contains(target.Id))
+                        .ToList();
+                }
+
+                int IgnoreGhostHorizontalRows()
+                {
+                    if (correctionZeroHorizontalTargets.Count == 0)
+                    {
+                        return 0;
+                    }
+
+                    var ghostCandidates = CollectHorizontalGhostCandidates();
+                    var ghostHorizontalIds = CorrectionInsetGhostRowClassifier.FindGhostChainIds(
+                        ghostCandidates,
                         correctionZeroHorizontalTargets,
                         CorrectionLinePostInsetMeters);
-                    if (ghostCandidateIndices.Count > 0)
+                    if (ghostHorizontalIds.Count == 0)
                     {
-                        var ghostHorizontalIds = new HashSet<ObjectId>();
-                        foreach (var ghostCandidateIndex in ghostCandidateIndices)
-                        {
-                            ghostHorizontalIds.Add(ghostCandidates[ghostCandidateIndex].Id);
-                        }
-
-                        ghostHorizontalRowsIgnored += ghostHorizontalIds.Count;
-                        horizontalSources = horizontalSources
-                            .Where(source => !ghostHorizontalIds.Contains(source.Id))
-                            .ToList();
-                        horizontalAnchors = horizontalAnchors
-                            .Where(anchor => !ghostHorizontalIds.Contains(anchor.Id))
-                            .ToList();
-                        horizontalTargets = horizontalTargets
-                            .Where(target => !ghostHorizontalIds.Contains(target.Id))
-                            .ToList();
+                        return 0;
                     }
+
+                    RemoveGhostHorizontalRows(ghostHorizontalIds);
+                    return ghostHorizontalIds.Count;
                 }
+
+                var ghostHorizontalRowsIgnored = IgnoreGhostHorizontalRows();
 
                 if ((horizontalSources.Count == 0 || verticalTargets.Count == 0) &&
                     (verticalSources.Count == 0 || horizontalTargets.Count == 0))
@@ -1747,7 +1733,6 @@ namespace AtsBackgroundBuilder
                 const double endpointTouchTol = 0.50;
                 const double minMove = 0.05;
                 const double maxTrim = 80.0;
-                const double axisTol = 0.35;
                 const double spanTol = 0.50;
                 const double outerBoundaryTol = 0.40;
                 var trimmed = 0;
@@ -1782,103 +1767,251 @@ namespace AtsBackgroundBuilder
 
                 bool EndpointTouchesHardAnchorLayer(string layer)
                 {
-                    return string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
-                           string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
-                           string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                           string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
-                           string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
+                    return IsHardTieInBoundaryLayer(layer);
+                }
+
+                bool IsCompatibleEndpointTargetLayer(string sourceLayer, string targetLayer)
+                {
+                    return AreMatchingTieInBands(sourceLayer, targetLayer) ||
+                           EndpointTouchesHardAnchorLayer(targetLayer);
+                }
+
+                bool IsEligibleTieInTrimTargetLayer(string sourceLayer, string targetLayer)
+                {
+                    return IsCompatibleEndpointTargetLayer(sourceLayer, targetLayer) ||
+                           IsOrdinaryUsecTieInLayer(targetLayer);
+                }
+
+                bool TryFindBestTieInTrimTarget<TTarget>(
+                    Point2d a,
+                    Point2d b,
+                    string sourceLayer,
+                    IReadOnlyList<TTarget> targets,
+                    Func<TTarget, string> layerSelector,
+                    Func<TTarget, Point2d> aSelector,
+                    Func<TTarget, Point2d> bSelector,
+                    bool canTrimStart,
+                    bool canTrimEnd,
+                    out bool bestMoveStart,
+                    out Point2d bestTarget)
+                {
+                    var bestFound = false;
+                    bestMoveStart = false;
+                    bestTarget = default;
+                    var bestMoveDistance = double.MaxValue;
+                    var bestTargetPriority = int.MaxValue;
+                    for (var ti = 0; ti < targets.Count; ti++)
+                    {
+                        var target = targets[ti];
+                        var targetLayer = layerSelector(target);
+                        if (!IsEligibleTieInTrimTargetLayer(sourceLayer, targetLayer))
+                        {
+                            continue;
+                        }
+
+                        var targetA = aSelector(target);
+                        var targetB = bSelector(target);
+                        if (!TryIntersectInfiniteLines(a, b, targetA, targetB, out var intersection))
+                        {
+                            continue;
+                        }
+
+                        if (DistancePointToSegment(intersection, targetA, targetB) > spanTol)
+                        {
+                            continue;
+                        }
+
+                        // Tie-in overhang trim should only shorten the live source span.
+                        if (DistancePointToSegment(intersection, a, b) > spanTol)
+                        {
+                            continue;
+                        }
+
+                        var dStart = a.GetDistanceTo(intersection);
+                        var dEnd = b.GetDistanceTo(intersection);
+                        var moveStart = dStart <= dEnd;
+                        if ((moveStart && !canTrimStart) || (!moveStart && !canTrimEnd))
+                        {
+                            continue;
+                        }
+
+                        var moveDistance = moveStart ? dStart : dEnd;
+                        if (moveDistance <= minMove || moveDistance > maxTrim)
+                        {
+                            continue;
+                        }
+
+                        var targetPriority = GetTieInTargetPriority(sourceLayer, targetLayer);
+                        if (!bestFound ||
+                            targetPriority < bestTargetPriority ||
+                            (targetPriority == bestTargetPriority && moveDistance < bestMoveDistance - 1e-6))
+                        {
+                            bestFound = true;
+                            bestMoveStart = moveStart;
+                            bestMoveDistance = moveDistance;
+                            bestTargetPriority = targetPriority;
+                            bestTarget = intersection;
+                        }
+                    }
+
+                    return bestFound;
+                }
+
+                (bool Connected, bool HardConnected) GetEndpointAnchorState<TTarget, TAnchor>(
+                    Point2d endpoint,
+                    string sourceLayer,
+                    ObjectId sourceId,
+                    IReadOnlyList<(ObjectId Id, string Layer, Point2d A, Point2d B)> parallelSources,
+                    IReadOnlyList<TTarget> perpendicularTargets,
+                    Func<TTarget, string> targetLayerSelector,
+                    Func<TTarget, Point2d> targetASelector,
+                    Func<TTarget, Point2d> targetBSelector,
+                    IReadOnlyList<TAnchor> perpendicularAnchors,
+                    Func<TAnchor, Point2d> anchorASelector,
+                    Func<TAnchor, Point2d> anchorBSelector)
+                {
+                    for (var i = 0; i < parallelSources.Count; i++)
+                    {
+                        var other = parallelSources[i];
+                        if (other.Id == sourceId || !AreMatchingTieInBands(sourceLayer, other.Layer))
+                        {
+                            continue;
+                        }
+
+                        if (endpoint.GetDistanceTo(other.A) <= endpointTouchTol ||
+                            endpoint.GetDistanceTo(other.B) <= endpointTouchTol)
+                        {
+                            return (true, false);
+                        }
+                    }
+
+                    for (var i = 0; i < perpendicularTargets.Count; i++)
+                    {
+                        var target = perpendicularTargets[i];
+                        var targetLayer = targetLayerSelector(target);
+                        if (!IsCompatibleEndpointTargetLayer(sourceLayer, targetLayer))
+                        {
+                            continue;
+                        }
+
+                        if (DistancePointToSegment(endpoint, targetASelector(target), targetBSelector(target)) <= endpointTouchTol)
+                        {
+                            return (true, EndpointTouchesHardAnchorLayer(targetLayer));
+                        }
+                    }
+
+                    for (var i = 0; i < perpendicularAnchors.Count; i++)
+                    {
+                        var anchor = perpendicularAnchors[i];
+                        if (DistancePointToSegment(endpoint, anchorASelector(anchor), anchorBSelector(anchor)) <= endpointTouchTol)
+                        {
+                            return (true, false);
+                        }
+                    }
+
+                    return (false, false);
                 }
 
                 (bool Connected, bool HardConnected) GetHorizontalEndpointAnchorState(Point2d endpoint, string sourceLayer, ObjectId sourceId)
                 {
-                    for (var i = 0; i < horizontalSources.Count; i++)
-                    {
-                        var other = horizontalSources[i];
-                        if (other.Id == sourceId || !AreMatchingTieInBands(sourceLayer, other.Layer))
-                        {
-                            continue;
-                        }
-
-                        if (endpoint.GetDistanceTo(other.A) <= endpointTouchTol ||
-                            endpoint.GetDistanceTo(other.B) <= endpointTouchTol)
-                        {
-                            return (true, false);
-                        }
-                    }
-
-                    for (var i = 0; i < verticalTargets.Count; i++)
-                    {
-                        var target = verticalTargets[i];
-                        if (!AreMatchingTieInBands(sourceLayer, target.Layer) &&
-                            !string.Equals(target.Layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) &&
-                            !string.Equals(target.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) &&
-                            !string.Equals(target.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) &&
-                            !string.Equals(target.Layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) &&
-                            !string.Equals(target.Layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
-
-                        if (DistancePointToSegment(endpoint, target.A, target.B) <= endpointTouchTol)
-                        {
-                            return (true, EndpointTouchesHardAnchorLayer(target.Layer));
-                        }
-                    }
-
-                    for (var i = 0; i < verticalAnchors.Count; i++)
-                    {
-                        var anchor = verticalAnchors[i];
-                        if (DistancePointToSegment(endpoint, anchor.A, anchor.B) <= endpointTouchTol)
-                        {
-                            return (true, false);
-                        }
-                    }
-
-                    return (false, false);
+                    return GetEndpointAnchorState(
+                        endpoint,
+                        sourceLayer,
+                        sourceId,
+                        horizontalSources,
+                        verticalTargets,
+                        target => target.Layer,
+                        target => target.A,
+                        target => target.B,
+                        verticalAnchors,
+                        anchor => anchor.A,
+                        anchor => anchor.B);
                 }
 
                 (bool Connected, bool HardConnected) GetVerticalEndpointAnchorState(Point2d endpoint, string sourceLayer, ObjectId sourceId)
                 {
-                    for (var i = 0; i < verticalSources.Count; i++)
-                    {
-                        var other = verticalSources[i];
-                        if (other.Id == sourceId || !AreMatchingTieInBands(sourceLayer, other.Layer))
-                        {
-                            continue;
-                        }
+                    return GetEndpointAnchorState(
+                        endpoint,
+                        sourceLayer,
+                        sourceId,
+                        verticalSources,
+                        horizontalTargets,
+                        target => target.Layer,
+                        target => target.A,
+                        target => target.B,
+                        horizontalAnchors,
+                        anchor => anchor.A,
+                        anchor => anchor.B);
+                }
 
-                        if (endpoint.GetDistanceTo(other.A) <= endpointTouchTol ||
-                            endpoint.GetDistanceTo(other.B) <= endpointTouchTol)
-                        {
-                            return (true, false);
-                        }
+                bool TryTrimTieInSource<TTarget>(
+                    List<(ObjectId Id, string Layer, Point2d A, Point2d B)> sources,
+                    int sourceIndex,
+                    IReadOnlyList<TTarget> targets,
+                    Func<Point2d, string, ObjectId, (bool Connected, bool HardConnected)> getEndpointAnchorState,
+                    Func<Point2d, Point2d, bool> expectedOrientation,
+                    Func<TTarget, string> layerSelector,
+                    Func<TTarget, Point2d> aSelector,
+                    Func<TTarget, Point2d> bSelector)
+                {
+                    var source = sources[sourceIndex];
+                    if (!(tr.GetObject(source.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                    {
+                        return false;
                     }
 
-                    for (var i = 0; i < horizontalTargets.Count; i++)
+                    if (!TryReadOpenSegment(writable, out var a, out var b) || !expectedOrientation(a, b))
                     {
-                        var target = horizontalTargets[i];
-                        if (!AreMatchingTieInBands(sourceLayer, target.Layer) &&
-                            !EndpointTouchesHardAnchorLayer(target.Layer))
-                        {
-                            continue;
-                        }
-
-                        if (DistancePointToSegment(endpoint, target.A, target.B) <= endpointTouchTol)
-                        {
-                            return (true, EndpointTouchesHardAnchorLayer(target.Layer));
-                        }
+                        return false;
                     }
 
-                    for (var i = 0; i < horizontalAnchors.Count; i++)
+                    sources[sourceIndex] = (source.Id, source.Layer, a, b);
+                    var startAnchorState = getEndpointAnchorState(a, source.Layer, source.Id);
+                    var endAnchorState = getEndpointAnchorState(b, source.Layer, source.Id);
+                    var startOnBoundary = IsPointOnAnyWindowBoundaryForPlugin(a, outerBoundaryTol, clipWindows);
+                    var endOnBoundary = IsPointOnAnyWindowBoundaryForPlugin(b, outerBoundaryTol, clipWindows);
+                    var canTrimStart = !startAnchorState.HardConnected && !startOnBoundary && (endAnchorState.Connected || endOnBoundary);
+                    var canTrimEnd = !endAnchorState.HardConnected && !endOnBoundary && (startAnchorState.Connected || startOnBoundary);
+                    if (!canTrimStart && !canTrimEnd)
                     {
-                        var anchor = horizontalAnchors[i];
-                        if (DistancePointToSegment(endpoint, anchor.A, anchor.B) <= endpointTouchTol)
-                        {
-                            return (true, false);
-                        }
+                        return false;
                     }
 
-                    return (false, false);
+                    if (canTrimStart)
+                    {
+                        scanned++;
+                    }
+
+                    if (canTrimEnd)
+                    {
+                        scanned++;
+                    }
+
+                    if (!TryFindBestTieInTrimTarget(
+                            a,
+                            b,
+                            source.Layer,
+                            targets,
+                            layerSelector,
+                            aSelector,
+                            bSelector,
+                            canTrimStart,
+                            canTrimEnd,
+                            out var bestMoveStart,
+                            out var bestTarget) ||
+                        !TryMoveEndpoint(writable, bestMoveStart, bestTarget, endpointMoveTol))
+                    {
+                        return false;
+                    }
+
+                    if (!TryReadOpenSegment(writable, out var newA, out var newB))
+                    {
+                        return false;
+                    }
+
+                    sources[sourceIndex] = (source.Id, source.Layer, newA, newB);
+                    trimmed++;
+                    return true;
                 }
 
                 for (var iteration = 0; iteration < 4; iteration++)
@@ -1886,225 +2019,34 @@ namespace AtsBackgroundBuilder
                     var movedAny = false;
                     for (var si = 0; si < horizontalSources.Count; si++)
                     {
-                        var source = horizontalSources[si];
-                        if (!(tr.GetObject(source.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                        if (TryTrimTieInSource(
+                                horizontalSources,
+                                si,
+                                verticalTargets,
+                                GetHorizontalEndpointAnchorState,
+                                IsHorizontalLike,
+                                target => target.Layer,
+                                target => target.A,
+                                target => target.B))
                         {
-                            continue;
+                            movedAny = true;
                         }
-
-                        if (!TryReadOpenSegment(writable, out var a, out var b) || !IsHorizontalLike(a, b))
-                        {
-                            continue;
-                        }
-
-                        horizontalSources[si] = (source.Id, source.Layer, a, b);
-                        var startAnchorState = GetHorizontalEndpointAnchorState(a, source.Layer, source.Id);
-                        var endAnchorState = GetHorizontalEndpointAnchorState(b, source.Layer, source.Id);
-                        var startOnBoundary = IsPointOnAnyWindowBoundaryForPlugin(a, outerBoundaryTol, clipWindows);
-                        var endOnBoundary = IsPointOnAnyWindowBoundaryForPlugin(b, outerBoundaryTol, clipWindows);
-                        var canTrimStart = !startAnchorState.HardConnected && !startOnBoundary && (endAnchorState.Connected || endOnBoundary);
-                        var canTrimEnd = !endAnchorState.HardConnected && !endOnBoundary && (startAnchorState.Connected || startOnBoundary);
-                        if (!canTrimStart && !canTrimEnd)
-                        {
-                            continue;
-                        }
-
-                        if (canTrimStart)
-                        {
-                            scanned++;
-                        }
-
-                        if (canTrimEnd)
-                        {
-                            scanned++;
-                        }
-
-                        var bestFound = false;
-                        var bestMoveStart = false;
-                        var bestMoveDistance = double.MaxValue;
-                        var bestTargetPriority = int.MaxValue;
-                        var bestTarget = default(Point2d);
-                        for (var ti = 0; ti < verticalTargets.Count; ti++)
-                        {
-                            var target = verticalTargets[ti];
-                            var isMatchingBand = AreMatchingTieInBands(source.Layer, target.Layer);
-                            var isOrdinaryTieInTarget = IsOrdinaryUsecTieInLayer(target.Layer);
-                            var isHardBoundaryTarget =
-                                string.Equals(target.Layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(target.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(target.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(target.Layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(target.Layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
-                            if (!isMatchingBand && !isHardBoundaryTarget && !isOrdinaryTieInTarget)
-                            {
-                                continue;
-                            }
-
-                            if (!TryIntersectInfiniteLines(a, b, target.A, target.B, out var intersection))
-                            {
-                                continue;
-                            }
-
-                            if (DistancePointToSegment(intersection, target.A, target.B) > spanTol)
-                            {
-                                continue;
-                            }
-
-                            // Tie-in overhang trim should only shorten the live source span.
-                            if (DistancePointToSegment(intersection, a, b) > spanTol)
-                            {
-                                continue;
-                            }
-
-                            var dStart = a.GetDistanceTo(intersection);
-                            var dEnd = b.GetDistanceTo(intersection);
-                            var moveStart = dStart <= dEnd;
-                            if ((moveStart && !canTrimStart) || (!moveStart && !canTrimEnd))
-                            {
-                                continue;
-                            }
-
-                            var moveDistance = moveStart ? dStart : dEnd;
-                            if (moveDistance <= minMove || moveDistance > maxTrim)
-                            {
-                                continue;
-                            }
-
-                            var targetPriority = GetTieInTargetPriority(source.Layer, target.Layer);
-                            if (!bestFound ||
-                                targetPriority < bestTargetPriority ||
-                                (targetPriority == bestTargetPriority && moveDistance < bestMoveDistance - 1e-6))
-                            {
-                                bestFound = true;
-                                bestMoveStart = moveStart;
-                                bestMoveDistance = moveDistance;
-                                bestTargetPriority = targetPriority;
-                                bestTarget = intersection;
-                            }
-                        }
-
-                        if (!bestFound || !TryMoveEndpoint(writable, bestMoveStart, bestTarget, endpointMoveTol))
-                        {
-                            continue;
-                        }
-
-                        if (!TryReadOpenSegment(writable, out var newA, out var newB))
-                        {
-                            continue;
-                        }
-
-                        horizontalSources[si] = (source.Id, source.Layer, newA, newB);
-                        trimmed++;
-                        movedAny = true;
                     }
 
                     for (var si = 0; si < verticalSources.Count; si++)
                     {
-                        var source = verticalSources[si];
-                        if (!(tr.GetObject(source.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                        if (TryTrimTieInSource(
+                                verticalSources,
+                                si,
+                                horizontalTargets,
+                                GetVerticalEndpointAnchorState,
+                                IsVerticalLike,
+                                target => target.Layer,
+                                target => target.A,
+                                target => target.B))
                         {
-                            continue;
+                            movedAny = true;
                         }
-
-                        if (!TryReadOpenSegment(writable, out var a, out var b) || !IsVerticalLike(a, b))
-                        {
-                            continue;
-                        }
-
-                        verticalSources[si] = (source.Id, source.Layer, a, b);
-                        var startAnchorState = GetVerticalEndpointAnchorState(a, source.Layer, source.Id);
-                        var endAnchorState = GetVerticalEndpointAnchorState(b, source.Layer, source.Id);
-                        var startOnBoundary = IsPointOnAnyWindowBoundaryForPlugin(a, outerBoundaryTol, clipWindows);
-                        var endOnBoundary = IsPointOnAnyWindowBoundaryForPlugin(b, outerBoundaryTol, clipWindows);
-                        var canTrimStart = !startAnchorState.HardConnected && !startOnBoundary && (endAnchorState.Connected || endOnBoundary);
-                        var canTrimEnd = !endAnchorState.HardConnected && !endOnBoundary && (startAnchorState.Connected || startOnBoundary);
-                        if (!canTrimStart && !canTrimEnd)
-                        {
-                            continue;
-                        }
-
-                        if (canTrimStart)
-                        {
-                            scanned++;
-                        }
-
-                        if (canTrimEnd)
-                        {
-                            scanned++;
-                        }
-
-                        var bestFound = false;
-                        var bestMoveStart = false;
-                        var bestMoveDistance = double.MaxValue;
-                        var bestTargetPriority = int.MaxValue;
-                        var bestTarget = default(Point2d);
-                        for (var ti = 0; ti < horizontalTargets.Count; ti++)
-                        {
-                            var target = horizontalTargets[ti];
-                            var isMatchingBand = AreMatchingTieInBands(source.Layer, target.Layer);
-                            var isOrdinaryTieInTarget = IsOrdinaryUsecTieInLayer(target.Layer);
-                            var isHardBoundaryTarget = EndpointTouchesHardAnchorLayer(target.Layer);
-                            if (!isMatchingBand && !isHardBoundaryTarget && !isOrdinaryTieInTarget)
-                            {
-                                continue;
-                            }
-
-                            if (!TryIntersectInfiniteLines(a, b, target.A, target.B, out var intersection))
-                            {
-                                continue;
-                            }
-
-                            if (DistancePointToSegment(intersection, target.A, target.B) > spanTol)
-                            {
-                                continue;
-                            }
-
-                            // Tie-in overhang trim should only shorten the live source span.
-                            if (DistancePointToSegment(intersection, a, b) > spanTol)
-                            {
-                                continue;
-                            }
-
-                            var dStart = a.GetDistanceTo(intersection);
-                            var dEnd = b.GetDistanceTo(intersection);
-                            var moveStart = dStart <= dEnd;
-                            if ((moveStart && !canTrimStart) || (!moveStart && !canTrimEnd))
-                            {
-                                continue;
-                            }
-
-                            var moveDistance = moveStart ? dStart : dEnd;
-                            if (moveDistance <= minMove || moveDistance > maxTrim)
-                            {
-                                continue;
-                            }
-
-                            var targetPriority = GetTieInTargetPriority(source.Layer, target.Layer);
-                            if (!bestFound ||
-                                targetPriority < bestTargetPriority ||
-                                (targetPriority == bestTargetPriority && moveDistance < bestMoveDistance - 1e-6))
-                            {
-                                bestFound = true;
-                                bestMoveStart = moveStart;
-                                bestMoveDistance = moveDistance;
-                                bestTargetPriority = targetPriority;
-                                bestTarget = intersection;
-                            }
-                        }
-
-                        if (!bestFound || !TryMoveEndpoint(writable, bestMoveStart, bestTarget, endpointMoveTol))
-                        {
-                            continue;
-                        }
-
-                        if (!TryReadOpenSegment(writable, out var newA, out var newB))
-                        {
-                            continue;
-                        }
-
-                        verticalSources[si] = (source.Id, source.Layer, newA, newB);
-                        trimmed++;
-                        movedAny = true;
                     }
 
                     if (!movedAny)
@@ -2149,9 +2091,7 @@ namespace AtsBackgroundBuilder
                     }
 
                     var layer = ent.Layer ?? string.Empty;
-                    var isCorrectionLayer =
-                        string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
+                    var isCorrectionLayer = IsCorrectionLayer(layer);
                     if (!isCorrectionLayer || ent.ColorIndex == 256)
                     {
                         continue;
@@ -2201,41 +2141,7 @@ namespace AtsBackgroundBuilder
             {
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-                var liveSegments = new List<CorrectionSegment>();
-                foreach (ObjectId id in ms)
-                {
-                    Entity? ent = null;
-                    try
-                    {
-                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
-                    }
-                    catch (Autodesk.AutoCAD.Runtime.Exception)
-                    {
-                        continue;
-                    }
-
-                    if (ent == null || ent.IsErased)
-                    {
-                        continue;
-                    }
-
-                    var layer = ent.Layer ?? string.Empty;
-                    var isCorrectionLayer =
-                        string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
-                    if (!isCorrectionLayer || !TryReadOpenLinearSegment(ent, out var a, out var b))
-                    {
-                        continue;
-                    }
-
-                    var seg = new CorrectionSegment(id, layer, a, b);
-                    if (!seg.IsHorizontalLike)
-                    {
-                        continue;
-                    }
-
-                    liveSegments.Add(seg);
-                }
+                var liveSegments = CollectHorizontalCorrectionSegments(tr, ms, IsCorrectionLayer);
 
                 bool AreClusterNeighbors(CorrectionSegment a, CorrectionSegment b)
                 {
@@ -2261,14 +2167,7 @@ namespace AtsBackgroundBuilder
                 var erasedIds = new HashSet<ObjectId>();
                 void UpdateLiveSegmentLayer(ObjectId id, string layer)
                 {
-                    for (var i = 0; i < liveSegments.Count; i++)
-                    {
-                        if (liveSegments[i].Id == id)
-                        {
-                            liveSegments[i] = new CorrectionSegment(id, layer, liveSegments[i].A, liveSegments[i].B);
-                            return;
-                        }
-                    }
+                    UpdateTrackedCorrectionSegmentLayer(liveSegments, id, layer);
                 }
 
                 for (var si = 0; si < seams.Count; si++)
@@ -2649,9 +2548,7 @@ namespace AtsBackgroundBuilder
                         string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
+                        IsCorrectionSurveyedLayer(layer);
                     if (isCorrectionPromotableLayer)
                     {
                         twentyCandidates.Add((id, a, b));
@@ -3064,9 +2961,7 @@ namespace AtsBackgroundBuilder
                        string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
+                       IsCorrectionSurveyedLayer(layer);
             }
 
             bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) => TryMoveEndpointForCorrectionLinePost(writable, moveStart, target, moveTol);
@@ -3489,9 +3384,7 @@ namespace AtsBackgroundBuilder
 
                     var targetLayer = targetWritable.Layer ?? string.Empty;
                     var allowSecInsetDirectionBypass =
-                        (string.Equals(targetLayer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
-                         string.Equals(targetLayer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
-                         string.Equals(targetLayer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase)) &&
+                        IsCorrectionSurveyedLayer(targetLayer) &&
                         moveEndpoint.GetDistanceTo(connectionPoint) <= CorrectionLinePostInsetMeters + 1.0;
 
                     if (!allowSecInsetDirectionBypass &&
@@ -4282,6 +4175,74 @@ namespace AtsBackgroundBuilder
             return false;
         }
 
+        private static List<CorrectionSegment> CollectHorizontalCorrectionSegments(
+            Transaction tr,
+            BlockTableRecord modelSpace,
+            Func<string, bool> layerPredicate)
+        {
+            var liveSegments = new List<CorrectionSegment>();
+            if (tr == null || modelSpace == null || layerPredicate == null)
+            {
+                return liveSegments;
+            }
+
+            foreach (ObjectId id in modelSpace)
+            {
+                Entity? ent = null;
+                try
+                {
+                    ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                }
+                catch (Autodesk.AutoCAD.Runtime.Exception)
+                {
+                    continue;
+                }
+
+                if (ent == null || ent.IsErased)
+                {
+                    continue;
+                }
+
+                var layer = ent.Layer ?? string.Empty;
+                if (!layerPredicate(layer) || !TryReadOpenLinearSegment(ent, out var a, out var b))
+                {
+                    continue;
+                }
+
+                var seg = new CorrectionSegment(id, layer, a, b);
+                if (!seg.IsHorizontalLike)
+                {
+                    continue;
+                }
+
+                liveSegments.Add(seg);
+            }
+
+            return liveSegments;
+        }
+
+        private static void UpdateTrackedCorrectionSegmentLayer(
+            IList<CorrectionSegment> segments,
+            ObjectId id,
+            string layer)
+        {
+            if (segments == null || id.IsNull)
+            {
+                return;
+            }
+
+            for (var i = 0; i < segments.Count; i++)
+            {
+                if (segments[i].Id != id)
+                {
+                    continue;
+                }
+
+                segments[i] = new CorrectionSegment(id, layer, segments[i].A, segments[i].B);
+                return;
+            }
+        }
+
         private static string BuildCorrectionSeamKey(int zone, string meridian, int range, int northTownship)
         {
             return string.Format(
@@ -4291,6 +4252,17 @@ namespace AtsBackgroundBuilder
                 NormalizeNumberToken(meridian),
                 range,
                 northTownship);
+        }
+
+        private static bool IsCorrectionLayer(string layer)
+        {
+            if (string.IsNullOrWhiteSpace(layer))
+            {
+                return false;
+            }
+
+            return string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsCorrectionCandidateLayer(string layer)
@@ -4309,8 +4281,7 @@ namespace AtsBackgroundBuilder
                    string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
+                   IsCorrectionLayer(layer);
         }
 
         private static bool IsCorrectionSurveyedLayer(string layer)
@@ -4338,8 +4309,7 @@ namespace AtsBackgroundBuilder
                    string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
+                   IsCorrectionLayer(layer);
         }
 
         private static double GetCorrectionHorizontalOverlap(CorrectionSegment segment, double minX, double maxX)

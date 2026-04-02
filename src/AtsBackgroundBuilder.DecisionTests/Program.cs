@@ -121,6 +121,7 @@ internal static class Program
         TestPlsrApplyDecisionEngineRoutesAcceptedAndIgnored();
         TestPlsrApplyDecisionEnginePreservesAcceptedOrder();
         TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted();
+        TestPlsrApplyDecisionEngineIgnoresOwnerUpdateWhenReviewIgnoredAll();
 
         TestPlsrMissingLabelCandidateSelectorPrefersIssueCandidateAndDedupes();
         TestPlsrMissingLabelCandidateSelectorPreservesIndexedOrderWithoutPreferred();
@@ -131,10 +132,16 @@ internal static class Program
         TestPlsrQuarterPointMatcherRejectsWhenAllPointsAreOutside();
         TestPlsrQuarterPointMatcherRejectsWhenPointIsInsideBoundsButOutsideQuarter();
         TestPlsrQuarterPointBuilderBuildsDimensionMidpointCandidate();
+        TestPlsrQuarterPointBuilderBuildsDimensionLeaderMidpointCandidate();
+        TestPlsrQuarterPointBuilderBuildsLeaderSegmentMidpointCandidate();
         TestPlsrQuarterPointBuilderDedupesRepeatedDimensionPoints();
         TestPlsrQuarterPointBuilderBuildsExtentCenterCandidate();
         TestPlsrQuarterTouchResolverReturnsAllTouchedQuarterKeys();
         TestPlsrQuarterTouchResolverPrefersHigherScoreForPrimaryQuarter();
+        TestQuarterLabelFallbackPolicyEnablesQuarterOnlyLeaderPlacementForSlivers();
+        TestQuarterLabelFallbackPolicyKeepsNormalPlacementWhenInShapeCandidatesExist();
+        TestQuarterFallbackCandidateSelectorKeepsValidOrder();
+        TestQuarterFallbackCandidateSelectorAllowsSecondaryUsability();
         TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside();
         TestDispositionLabelColorPolicyForcesGreenForVariableWidthLabels();
         TestDispositionLabelColorPolicyPreservesRequestedColorForNonVariableLabels();
@@ -1591,6 +1598,34 @@ internal static class Program
         AssertEqual(idAccepted, result.AcceptedRoutedIssues[0].IssueId, nameof(TestPlsrApplyDecisionEngineIgnoresNonActionableEvenIfAccepted));
     }
 
+    private static void TestPlsrApplyDecisionEngineIgnoresOwnerUpdateWhenReviewIgnoredAll()
+    {
+        var idOwnerUpdate = Guid.NewGuid();
+        var idExpired = Guid.NewGuid();
+
+        var result = PlsrApplyDecisionEngine.Route(
+            new[]
+            {
+                new PlsrApplyDecisionItem
+                {
+                    IssueId = idOwnerUpdate,
+                    IsActionable = true,
+                    ActionType = PlsrApplyDecisionActionType.UpdateOwner
+                },
+                new PlsrApplyDecisionItem
+                {
+                    IssueId = idExpired,
+                    IsActionable = true,
+                    ActionType = PlsrApplyDecisionActionType.TagExpired
+                }
+            },
+            new HashSet<Guid>());
+
+        AssertEqual(0, result.AcceptedActionable, nameof(TestPlsrApplyDecisionEngineIgnoresOwnerUpdateWhenReviewIgnoredAll));
+        AssertEqual(2, result.IgnoredActionable, nameof(TestPlsrApplyDecisionEngineIgnoresOwnerUpdateWhenReviewIgnoredAll));
+        AssertEqual(0, result.AcceptedRoutedIssues.Count, nameof(TestPlsrApplyDecisionEngineIgnoresOwnerUpdateWhenReviewIgnoredAll));
+    }
+
     private static void TestPlsrMissingLabelCandidateSelectorPrefersIssueCandidateAndDedupes()
     {
         var result = PlsrMissingLabelCandidateSelector.Select(
@@ -1705,6 +1740,7 @@ internal static class Program
         var points = PlsrQuarterPointBuilder.BuildDimensionPoints(
             new PlsrQuarterMatchPoint(130.0, 130.0),
             new PlsrQuarterMatchPoint(130.0, 130.0),
+            null,
             new PlsrQuarterMatchPoint(20.0, 40.0),
             new PlsrQuarterMatchPoint(30.0, 40.0));
 
@@ -1716,11 +1752,47 @@ internal static class Program
         AssertEqual(true, result, nameof(TestPlsrQuarterPointBuilderBuildsDimensionMidpointCandidate));
     }
 
+    private static void TestPlsrQuarterPointBuilderBuildsDimensionLeaderMidpointCandidate()
+    {
+        var points = PlsrQuarterPointBuilder.BuildDimensionPoints(
+            new PlsrQuarterMatchPoint(130.0, 130.0),
+            new PlsrQuarterMatchPoint(130.0, 50.0),
+            new PlsrQuarterMatchPoint(-20.0, 50.0),
+            new PlsrQuarterMatchPoint(130.0, 40.0),
+            new PlsrQuarterMatchPoint(140.0, 40.0));
+
+        var result = PlsrQuarterPointMatcher.MatchesAnyPoint(
+            new PlsrQuarterMatchBounds(0.0, 0.0, 100.0, 100.0),
+            points,
+            point => Math.Abs(point.X - 55.0) < 0.001 && Math.Abs(point.Y - 50.0) < 0.001);
+
+        AssertEqual(true, result, nameof(TestPlsrQuarterPointBuilderBuildsDimensionLeaderMidpointCandidate));
+    }
+
+    private static void TestPlsrQuarterPointBuilderBuildsLeaderSegmentMidpointCandidate()
+    {
+        var points = PlsrQuarterPointBuilder.BuildLeaderPoints(
+            new PlsrQuarterMatchPoint(140.0, 50.0),
+            new[]
+            {
+                new PlsrQuarterMatchPoint(120.0, 50.0),
+                new PlsrQuarterMatchPoint(-20.0, 50.0)
+            });
+
+        var result = PlsrQuarterPointMatcher.MatchesAnyPoint(
+            new PlsrQuarterMatchBounds(0.0, 0.0, 100.0, 100.0),
+            points,
+            point => Math.Abs(point.X - 50.0) < 0.001 && Math.Abs(point.Y - 50.0) < 0.001);
+
+        AssertEqual(true, result, nameof(TestPlsrQuarterPointBuilderBuildsLeaderSegmentMidpointCandidate));
+    }
+
     private static void TestPlsrQuarterPointBuilderDedupesRepeatedDimensionPoints()
     {
         var points = PlsrQuarterPointBuilder.BuildDimensionPoints(
             new PlsrQuarterMatchPoint(25.0, 40.0),
             new PlsrQuarterMatchPoint(25.0, 40.0),
+            null,
             new PlsrQuarterMatchPoint(20.0, 40.0),
             new PlsrQuarterMatchPoint(30.0, 40.0));
 
@@ -1769,6 +1841,76 @@ internal static class Program
 
         AssertEqual(3, resolution.TouchedQuarterKeys.Count, nameof(TestPlsrQuarterTouchResolverPrefersHigherScoreForPrimaryQuarter));
         AssertEqual("5|19|57|12|SW", resolution.PrimaryQuarterKey, nameof(TestPlsrQuarterTouchResolverPrefersHigherScoreForPrimaryQuarter));
+    }
+
+    private static void TestQuarterLabelFallbackPolicyEnablesQuarterOnlyLeaderPlacementForSlivers()
+    {
+        var result = QuarterLabelFallbackPolicy.ShouldAllowQuarterOnlyLeaderPlacement(
+            allowOutsideDisposition: false,
+            isWidthAligned: false,
+            addLeader: true,
+            hasQuarterIntersectionPiece: true,
+            candidateCount: 0);
+
+        AssertEqual(true, result, nameof(TestQuarterLabelFallbackPolicyEnablesQuarterOnlyLeaderPlacementForSlivers));
+        AssertEqual(
+            320,
+            QuarterLabelFallbackPolicy.ExpandSearchPointsForQuarterOnlyLeaderPlacement(160),
+            nameof(TestQuarterLabelFallbackPolicyEnablesQuarterOnlyLeaderPlacementForSlivers));
+    }
+
+    private static void TestQuarterLabelFallbackPolicyKeepsNormalPlacementWhenInShapeCandidatesExist()
+    {
+        var result = QuarterLabelFallbackPolicy.ShouldAllowQuarterOnlyLeaderPlacement(
+            allowOutsideDisposition: false,
+            isWidthAligned: false,
+            addLeader: true,
+            hasQuarterIntersectionPiece: true,
+            candidateCount: 2);
+
+        AssertEqual(false, result, nameof(TestQuarterLabelFallbackPolicyKeepsNormalPlacementWhenInShapeCandidatesExist));
+        AssertEqual(
+            400,
+            QuarterLabelFallbackPolicy.ExpandSearchPointsForQuarterOnlyLeaderPlacement(400),
+            nameof(TestQuarterLabelFallbackPolicyKeepsNormalPlacementWhenInShapeCandidatesExist));
+    }
+
+    private static void TestQuarterFallbackCandidateSelectorKeepsValidOrder()
+    {
+        var result = QuarterFallbackCandidateSelector.Select(
+            new[]
+            {
+                new PlsrQuarterMatchPoint(10.0, 10.0),
+                new PlsrQuarterMatchPoint(20.0, 20.0),
+                new PlsrQuarterMatchPoint(20.0, 20.0),
+                new PlsrQuarterMatchPoint(30.0, 30.0)
+            },
+            point => point.X >= 20.0);
+
+        AssertEqual(2, result.Count, nameof(TestQuarterFallbackCandidateSelectorKeepsValidOrder));
+        AssertClose(20.0, result[0].X, 0.001, nameof(TestQuarterFallbackCandidateSelectorKeepsValidOrder));
+        AssertClose(20.0, result[0].Y, 0.001, nameof(TestQuarterFallbackCandidateSelectorKeepsValidOrder));
+        AssertClose(30.0, result[1].X, 0.001, nameof(TestQuarterFallbackCandidateSelectorKeepsValidOrder));
+        AssertClose(30.0, result[1].Y, 0.001, nameof(TestQuarterFallbackCandidateSelectorKeepsValidOrder));
+    }
+
+    private static void TestQuarterFallbackCandidateSelectorAllowsSecondaryUsability()
+    {
+        var result = QuarterFallbackCandidateSelector.Select(
+            new[]
+            {
+                new PlsrQuarterMatchPoint(12.0, 12.0),
+                new PlsrQuarterMatchPoint(24.0, 24.0),
+                new PlsrQuarterMatchPoint(36.0, 36.0)
+            },
+            point => point.X >= 30.0,
+            point => point.X >= 20.0 && point.X < 30.0);
+
+        AssertEqual(2, result.Count, nameof(TestQuarterFallbackCandidateSelectorAllowsSecondaryUsability));
+        AssertClose(24.0, result[0].X, 0.001, nameof(TestQuarterFallbackCandidateSelectorAllowsSecondaryUsability));
+        AssertClose(24.0, result[0].Y, 0.001, nameof(TestQuarterFallbackCandidateSelectorAllowsSecondaryUsability));
+        AssertClose(36.0, result[1].X, 0.001, nameof(TestQuarterFallbackCandidateSelectorAllowsSecondaryUsability));
+        AssertClose(36.0, result[1].Y, 0.001, nameof(TestQuarterFallbackCandidateSelectorAllowsSecondaryUsability));
     }
 
     private static void TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside()

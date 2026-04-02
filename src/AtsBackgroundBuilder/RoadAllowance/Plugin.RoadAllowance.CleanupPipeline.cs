@@ -38,8 +38,8 @@ namespace AtsBackgroundBuilder
             public Dictionary<ObjectId, int> SectionNumberByPolylineIdForUsec { get; set; } = new Dictionary<ObjectId, int>();
             public List<QuarterLabelInfo> QuarterInfosForRoadAllowanceRules { get; set; } = new List<QuarterLabelInfo>();
             public List<QuarterLabelInfo> CorrectionLineSectionInfos { get; set; } = new List<QuarterLabelInfo>();
-            public List<(bool Horizontal, double Axis, double SpanMin, double SpanMax)> OriginalRangeEdgeSecAnchors { get; set; } =
-                new List<(bool Horizontal, double Axis, double SpanMin, double SpanMax)>();
+            public List<RangeEdgeAnchor> OriginalRangeEdgeSecAnchors { get; set; } =
+                new List<RangeEdgeAnchor>();
         }
 
         private static void ExecuteRoadAllowanceCleanupPipeline(RoadAllowanceCleanupContext context)

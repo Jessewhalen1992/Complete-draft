@@ -5,6 +5,8 @@ namespace AtsBackgroundBuilder
 {
     internal static class CorrectionZeroCompanionProjection
     {
+        private const double CandidateComparisonTolerance = 1e-6;
+
         public static bool TryProjectCompanionTarget(
             LineDistancePoint endpoint,
             LineDistancePoint otherEndpoint,
@@ -22,70 +24,113 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            var outwardX = endpoint.X - otherEndpoint.X;
-            var outwardY = endpoint.Y - otherEndpoint.Y;
-            var outwardLength = Math.Sqrt((outwardX * outwardX) + (outwardY * outwardY));
-            if (outwardLength <= 1e-6)
+            if (!TryGetOutwardUnitVector(endpoint, otherEndpoint, out var outwardUnitX, out var outwardUnitY))
             {
                 return false;
             }
 
-            var outwardUnitX = outwardX / outwardLength;
-            var outwardUnitY = outwardY / outwardLength;
             var bestFound = false;
-            var bestSegmentGap = double.MaxValue;
-            var bestShiftDelta = double.MaxValue;
-            var bestOrdinaryOffsetDelta = double.MaxValue;
-            var bestAlong = double.MaxValue;
+            var bestCandidate = default(CompanionProjectionCandidate);
             for (var i = 0; i < correctionZeroSegments.Count; i++)
             {
                 var correction = correctionZeroSegments[i];
-                if (!TryIntersectInfiniteLines(endpoint, otherEndpoint, correction.A, correction.B, out var candidate))
+                if (!TryBuildCandidate(
+                        endpoint,
+                        otherEndpoint,
+                        ordinaryTarget,
+                        correction.A,
+                        correction.B,
+                        outwardUnitX,
+                        outwardUnitY,
+                        expectedInsetMeters,
+                        insetToleranceMeters,
+                        minExtendMeters,
+                        maxExtendMeters,
+                        out var candidate))
                 {
                     continue;
                 }
 
-                var along = ((candidate.X - endpoint.X) * outwardUnitX) + ((candidate.Y - endpoint.Y) * outwardUnitY);
-                if (along <= minExtendMeters || along > maxExtendMeters)
-                {
-                    continue;
-                }
-
-                var ordinaryOffset = Math.Abs(DistancePointToInfiniteLine(ordinaryTarget, correction.A, correction.B));
-                var ordinaryOffsetDelta = Math.Abs(ordinaryOffset - expectedInsetMeters);
-                if (ordinaryOffsetDelta > insetToleranceMeters)
-                {
-                    continue;
-                }
-
-                var shift = Distance(candidate, ordinaryTarget);
-                var shiftDelta = Math.Abs(shift - expectedInsetMeters);
-                if (shiftDelta > insetToleranceMeters)
-                {
-                    continue;
-                }
-
-                var segmentGap = DistancePointToSegment(candidate, correction.A, correction.B);
-
-                if (!bestFound ||
-                    segmentGap < bestSegmentGap - 1e-6 ||
-                    (Math.Abs(segmentGap - bestSegmentGap) <= 1e-6 &&
-                     (shiftDelta < bestShiftDelta - 1e-6 ||
-                      (Math.Abs(shiftDelta - bestShiftDelta) <= 1e-6 &&
-                       (ordinaryOffsetDelta < bestOrdinaryOffsetDelta - 1e-6 ||
-                        (Math.Abs(ordinaryOffsetDelta - bestOrdinaryOffsetDelta) <= 1e-6 &&
-                         along < bestAlong - 1e-6))))))
+                if (!bestFound || candidate.IsBetterThan(bestCandidate))
                 {
                     bestFound = true;
-                    bestSegmentGap = segmentGap;
-                    bestShiftDelta = shiftDelta;
-                    bestOrdinaryOffsetDelta = ordinaryOffsetDelta;
-                    bestAlong = along;
-                    correctionTarget = candidate;
+                    bestCandidate = candidate;
                 }
             }
 
+            correctionTarget = bestCandidate.Target;
             return bestFound;
+        }
+
+        private static bool TryGetOutwardUnitVector(
+            LineDistancePoint endpoint,
+            LineDistancePoint otherEndpoint,
+            out double outwardUnitX,
+            out double outwardUnitY)
+        {
+            outwardUnitX = endpoint.X - otherEndpoint.X;
+            outwardUnitY = endpoint.Y - otherEndpoint.Y;
+            var outwardLength = Math.Sqrt((outwardUnitX * outwardUnitX) + (outwardUnitY * outwardUnitY));
+            if (outwardLength <= CandidateComparisonTolerance)
+            {
+                outwardUnitX = 0.0;
+                outwardUnitY = 0.0;
+                return false;
+            }
+
+            outwardUnitX /= outwardLength;
+            outwardUnitY /= outwardLength;
+            return true;
+        }
+
+        private static bool TryBuildCandidate(
+            LineDistancePoint endpoint,
+            LineDistancePoint otherEndpoint,
+            LineDistancePoint ordinaryTarget,
+            LineDistancePoint correctionA,
+            LineDistancePoint correctionB,
+            double outwardUnitX,
+            double outwardUnitY,
+            double expectedInsetMeters,
+            double insetToleranceMeters,
+            double minExtendMeters,
+            double maxExtendMeters,
+            out CompanionProjectionCandidate candidate)
+        {
+            candidate = default;
+            if (!TryIntersectInfiniteLines(endpoint, otherEndpoint, correctionA, correctionB, out var projected))
+            {
+                return false;
+            }
+
+            var along = ((projected.X - endpoint.X) * outwardUnitX) + ((projected.Y - endpoint.Y) * outwardUnitY);
+            if (along <= minExtendMeters || along > maxExtendMeters)
+            {
+                return false;
+            }
+
+            var ordinaryOffset = Math.Abs(DistancePointToInfiniteLine(ordinaryTarget, correctionA, correctionB));
+            var ordinaryOffsetDelta = Math.Abs(ordinaryOffset - expectedInsetMeters);
+            if (ordinaryOffsetDelta > insetToleranceMeters)
+            {
+                return false;
+            }
+
+            var shift = Distance(projected, ordinaryTarget);
+            var shiftDelta = Math.Abs(shift - expectedInsetMeters);
+            if (shiftDelta > insetToleranceMeters)
+            {
+                return false;
+            }
+
+            var segmentGap = DistancePointToSegment(projected, correctionA, correctionB);
+            candidate = new CompanionProjectionCandidate(
+                projected,
+                segmentGap,
+                shiftDelta,
+                ordinaryOffsetDelta,
+                along);
+            return true;
         }
 
         private static bool TryIntersectInfiniteLines(
@@ -159,6 +204,44 @@ namespace AtsBackgroundBuilder
             var dx = left.X - right.X;
             var dy = left.Y - right.Y;
             return Math.Sqrt((dx * dx) + (dy * dy));
+        }
+
+        private readonly struct CompanionProjectionCandidate
+        {
+            public CompanionProjectionCandidate(
+                LineDistancePoint target,
+                double segmentGap,
+                double shiftDelta,
+                double ordinaryOffsetDelta,
+                double along)
+            {
+                Target = target;
+                SegmentGap = segmentGap;
+                ShiftDelta = shiftDelta;
+                OrdinaryOffsetDelta = ordinaryOffsetDelta;
+                Along = along;
+            }
+
+            public LineDistancePoint Target { get; }
+
+            private double SegmentGap { get; }
+
+            private double ShiftDelta { get; }
+
+            private double OrdinaryOffsetDelta { get; }
+
+            private double Along { get; }
+
+            public bool IsBetterThan(CompanionProjectionCandidate other)
+            {
+                return SegmentGap < other.SegmentGap - CandidateComparisonTolerance ||
+                       (Math.Abs(SegmentGap - other.SegmentGap) <= CandidateComparisonTolerance &&
+                        (ShiftDelta < other.ShiftDelta - CandidateComparisonTolerance ||
+                         (Math.Abs(ShiftDelta - other.ShiftDelta) <= CandidateComparisonTolerance &&
+                          (OrdinaryOffsetDelta < other.OrdinaryOffsetDelta - CandidateComparisonTolerance ||
+                           (Math.Abs(OrdinaryOffsetDelta - other.OrdinaryOffsetDelta) <= CandidateComparisonTolerance &&
+                            Along < other.Along - CandidateComparisonTolerance)))));
+            }
         }
     }
 }

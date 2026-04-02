@@ -41,6 +41,7 @@ namespace AtsBackgroundBuilder
             var rangeEdgeRelayerEnv = Environment.GetEnvironmentVariable("ATSBUILD_ENABLE_RANGE_EDGE_RELAYER");
             logger.WriteLine(
                 $"ATSBUILD_XLS_BATCH range-edge relayer env: {(string.IsNullOrWhiteSpace(rangeEdgeRelayerEnv) ? "<unset>" : rangeEdgeRelayerEnv)} (resolved {(EnableRangeEdgeRelayer ? "ON" : "OFF")}).");
+            logger.WriteLine("ATSBUILD_XLS_BATCH " + DescribeFinalUsecOutputRelayerEnvironment());
 
             ClearBufferedDefpointsWindowsBeforeBuild(database, logger);
 

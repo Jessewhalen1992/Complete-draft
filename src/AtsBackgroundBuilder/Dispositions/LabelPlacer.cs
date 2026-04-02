@@ -456,6 +456,7 @@ namespace AtsBackgroundBuilder.Dispositions
                                     continue;
                                 }
 
+                                var targetCorridor = intersectionPiece ?? disposition.Polyline;
                                 var maxPoints = _config.MaxOverlapAttempts;
                                 if (disposition.AddLeader)
                                 {
@@ -481,7 +482,7 @@ namespace AtsBackgroundBuilder.Dispositions
                                 {
                                     candidateCount = GetCandidateDimensionTextPoints(
                                             quarter.Polyline,
-                                            intersectionPiece ?? disposition.Polyline,
+                                            targetCorridor,
                                             measurementTarget,
                                             searchTarget,
                                             labelText,
@@ -508,11 +509,43 @@ namespace AtsBackgroundBuilder.Dispositions
                                         .Count();
                                 }
 
-                                if (candidateCount == 0 &&
-                                    GeometryUtils.IsPointInsidePolyline(quarter.Polyline, searchTarget) &&
-                                    GeometryUtils.IsPointInsidePolyline(disposition.Polyline, searchTarget))
+                                var effectiveMaxPoints = maxPoints;
+                                var allowQuarterOnlyLeaderPlacement =
+                                    QuarterLabelFallbackPolicy.ShouldAllowQuarterOnlyLeaderPlacement(
+                                        allowOutsideDisposition,
+                                        isWidthAligned,
+                                        disposition.AddLeader,
+                                        intersectionPiece != null,
+                                        candidateCount);
+                                if (allowQuarterOnlyLeaderPlacement)
                                 {
-                                    candidateCount = 1;
+                                    effectiveMaxPoints = QuarterLabelFallbackPolicy.ExpandSearchPointsForQuarterOnlyLeaderPlacement(maxPoints);
+                                    candidateCount = GetCandidateLabelPoints(
+                                            quarter.Polyline,
+                                            disposition.Polyline,
+                                            searchTarget,
+                                            allowOutsideDisposition: true,
+                                            _config.TextHeight,
+                                            effectiveMaxPoints,
+                                            measuredWidth,
+                                            maxLeaderLength,
+                                            labelText,
+                                            collisions: null,
+                                            isLeaderOrPlainText)
+                                        .Count();
+                                }
+
+                                if (candidateCount == 0)
+                                {
+                                    var fallbackCandidates = BuildQuarterFallbackCandidates(
+                                        quarter.Polyline,
+                                        targetCorridor,
+                                        disposition.Polyline,
+                                        searchTarget,
+                                        measurementTarget,
+                                        leaderTarget,
+                                        intersectionPiece);
+                                    candidateCount = fallbackCandidates.Count;
                                 }
 
                                 requests.Add(new PlacementRequest(
@@ -526,9 +559,9 @@ namespace AtsBackgroundBuilder.Dispositions
                                     labelText,
                                     textColorIndex,
                                     measuredWidth,
-                                    maxPoints,
+                                    effectiveMaxPoints,
                                     maxLeaderLength,
-                                    allowOutsideDisposition,
+                                    allowOutsideDisposition || allowQuarterOnlyLeaderPlacement,
                                     isLeaderOrPlainText,
                                     candidateCount,
                                     EstimateQuarterFootprintArea(quarter, disposition, intersectionPiece),
@@ -573,6 +606,7 @@ namespace AtsBackgroundBuilder.Dispositions
                         List<Point2d> candidates;
                         List<DimensionTextCandidate>? dimCandidates = null;
                         var widthSource = request.IntersectionPiece ?? request.Disposition.Polyline;
+                        var targetCorridor = request.IntersectionPiece ?? request.Disposition.Polyline;
                         var dimText = string.Empty;
                         var haveDimSpan = false;
                         var dimSpanUnit = default(Vector2d);
@@ -620,14 +654,21 @@ namespace AtsBackgroundBuilder.Dispositions
 
                         if (candidates.Count == 0)
                         {
-                            if (!GeometryUtils.IsPointInsidePolyline(request.Quarter.Polyline, request.SearchTarget) ||
-                                !GeometryUtils.IsPointInsidePolyline(request.Disposition.Polyline, request.SearchTarget))
+                            var fallbackCandidates = BuildQuarterFallbackCandidates(
+                                request.Quarter.Polyline,
+                                targetCorridor,
+                                request.Disposition.Polyline,
+                                request.SearchTarget,
+                                request.MeasurementTarget,
+                                request.LeaderTarget,
+                                request.IntersectionPiece);
+                            if (fallbackCandidates.Count == 0)
                             {
                                 _logger.WriteLine($"Skip label (no valid in-shape target): disp={request.Disposition.ObjectId}");
                                 continue;
                             }
 
-                            candidates.Add(request.SearchTarget);
+                            candidates.AddRange(fallbackCandidates);
                         }
 
                         var placed = false;
@@ -2683,6 +2724,95 @@ namespace AtsBackgroundBuilder.Dispositions
             {
                 yield return item.pt;
             }
+        }
+
+        private static List<Point2d> BuildQuarterFallbackCandidates(
+            Polyline quarter,
+            Polyline targetCorridor,
+            Polyline disposition,
+            Point2d searchTarget,
+            Point2d measurementTarget,
+            Point2d leaderTarget,
+            Polyline? intersectionPiece)
+        {
+            var seeds = new List<Point2d>
+            {
+                searchTarget,
+                measurementTarget,
+                leaderTarget
+            };
+
+            if (intersectionPiece != null)
+            {
+                try
+                {
+                    seeds.Add(GeometryUtils.GetSafeInteriorPoint(intersectionPiece));
+                }
+                catch
+                {
+                    // best effort only
+                }
+            }
+
+            try
+            {
+                if (GeometryUtils.TryFindPointInsideBoth(quarter, targetCorridor, out var overlapTarget))
+                {
+                    seeds.Add(overlapTarget);
+                }
+            }
+            catch
+            {
+                // best effort only
+            }
+
+            if (!ReferenceEquals(targetCorridor, disposition))
+            {
+                // Tiny clipped intersection pieces can reject every fallback seed even
+                // though the full disposition still has a real overlap inside the quarter.
+                try
+                {
+                    if (GeometryUtils.TryFindPointInsideBoth(quarter, disposition, out var dispositionOverlapTarget))
+                    {
+                        seeds.Add(dispositionOverlapTarget);
+                    }
+                }
+                catch
+                {
+                    // best effort only
+                }
+            }
+
+            return BuildOrderedFallbackCandidates(
+                seeds,
+                candidate => GeometryUtils.IsPointInsidePolyline(quarter, candidate) &&
+                             GeometryUtils.IsPointInsidePolyline(targetCorridor, candidate),
+                !ReferenceEquals(targetCorridor, disposition)
+                    ? candidate => GeometryUtils.IsPointInsidePolyline(quarter, candidate) &&
+                                   GeometryUtils.IsPointInsidePolyline(disposition, candidate)
+                    : null);
+        }
+
+        private static List<Point2d> BuildOrderedFallbackCandidates(
+            IEnumerable<Point2d>? seedCandidates,
+            Func<Point2d, bool> isUsable,
+            Func<Point2d, bool>? isSecondaryUsable = null)
+        {
+            if (seedCandidates == null || isUsable == null)
+            {
+                return new List<Point2d>();
+            }
+
+            var selected = QuarterFallbackCandidateSelector.Select(
+                seedCandidates.Select(candidate => new PlsrQuarterMatchPoint(candidate.X, candidate.Y)),
+                candidate => isUsable(new Point2d(candidate.X, candidate.Y)),
+                isSecondaryUsable == null
+                    ? null
+                    : candidate => isSecondaryUsable(new Point2d(candidate.X, candidate.Y)));
+
+            return selected
+                .Select(candidate => new Point2d(candidate.X, candidate.Y))
+                .ToList();
         }
 
         private static double EstimateOutsideDimensionTextGap(

@@ -137,6 +137,13 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
+            if (PreserveFinalUsecVariantLayers)
+            {
+                logger?.WriteLine(
+                    $"Cleanup: final build relayer skipped because {PreserveFinalUsecVariantLayersEnvVar} or {DisableFinalUsecOutputRelayerEnvVar} is enabled; preserving L-USEC variant layers.");
+                return;
+            }
+
             using var transaction = database.TransactionManager.StartTransaction();
             EnsureLayerWithColor(database, transaction, LayerUsecBase, ResolveUsecLayerColorIndex(LayerUsecBase));
 

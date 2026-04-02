@@ -4,15 +4,20 @@ namespace AtsBackgroundBuilder
 {
     internal static class CorrectionZeroTargetPreference
     {
+        private const double ComparisonTolerance = 1e-6;
+        private const string CorrectionZeroKind = "CORRZERO";
+
         public static bool IsBetterCandidate(
             double moveDistance,
             double boundaryGap,
             double bestMoveDistance,
             double bestBoundaryGap)
         {
-            return moveDistance < bestMoveDistance - 1e-6 ||
-                   (Math.Abs(moveDistance - bestMoveDistance) <= 1e-6 &&
-                    boundaryGap < bestBoundaryGap - 1e-6);
+            return IsBetterByPrimaryThenSecondary(
+                moveDistance,
+                bestMoveDistance,
+                boundaryGap,
+                bestBoundaryGap);
         }
 
         public static bool IsBetterInsetCandidate(
@@ -23,17 +28,18 @@ namespace AtsBackgroundBuilder
             double bestBoundaryGap,
             double bestMoveDistance)
         {
-            return targetOffsetError < bestTargetOffsetError - 1e-6 ||
-                   (Math.Abs(targetOffsetError - bestTargetOffsetError) <= 1e-6 &&
-                    boundaryGap < bestBoundaryGap - 1e-6) ||
-                   (Math.Abs(targetOffsetError - bestTargetOffsetError) <= 1e-6 &&
-                    Math.Abs(boundaryGap - bestBoundaryGap) <= 1e-6 &&
-                    moveDistance < bestMoveDistance - 1e-6);
+            return IsBetterByPrimaryThenSecondaryThenTertiary(
+                targetOffsetError,
+                bestTargetOffsetError,
+                boundaryGap,
+                bestBoundaryGap,
+                moveDistance,
+                bestMoveDistance);
         }
 
         public static bool ShouldPreserveExistingPrimaryBoundary(string kind)
         {
-            return string.Equals(kind, "CORRZERO", StringComparison.OrdinalIgnoreCase);
+            return string.Equals(kind, CorrectionZeroKind, StringComparison.OrdinalIgnoreCase);
         }
 
         public static bool IsBetterLiveSnapCandidate(
@@ -42,9 +48,11 @@ namespace AtsBackgroundBuilder
             double bestTargetDelta,
             double bestMoveDistance)
         {
-            return targetDelta < bestTargetDelta - 1e-6 ||
-                   (Math.Abs(targetDelta - bestTargetDelta) <= 1e-6 &&
-                    moveDistance < bestMoveDistance - 1e-6);
+            return IsBetterByPrimaryThenSecondary(
+                targetDelta,
+                bestTargetDelta,
+                moveDistance,
+                bestMoveDistance);
         }
 
         public static bool IsBetterEndpointAdjustmentCandidate(
@@ -53,7 +61,45 @@ namespace AtsBackgroundBuilder
             double bestDistanceFromOriginal)
         {
             return !hasExistingCandidate ||
-                   candidateDistanceFromOriginal < bestDistanceFromOriginal - 1e-6;
+                   IsStrictlyBetter(candidateDistanceFromOriginal, bestDistanceFromOriginal);
+        }
+
+        private static bool IsBetterByPrimaryThenSecondary(
+            double candidatePrimary,
+            double incumbentPrimary,
+            double candidateSecondary,
+            double incumbentSecondary)
+        {
+            return IsStrictlyBetter(candidatePrimary, incumbentPrimary) ||
+                   (AreEquivalent(candidatePrimary, incumbentPrimary) &&
+                    IsStrictlyBetter(candidateSecondary, incumbentSecondary));
+        }
+
+        private static bool IsBetterByPrimaryThenSecondaryThenTertiary(
+            double candidatePrimary,
+            double incumbentPrimary,
+            double candidateSecondary,
+            double incumbentSecondary,
+            double candidateTertiary,
+            double incumbentTertiary)
+        {
+            return IsStrictlyBetter(candidatePrimary, incumbentPrimary) ||
+                   (AreEquivalent(candidatePrimary, incumbentPrimary) &&
+                    IsBetterByPrimaryThenSecondary(
+                        candidateSecondary,
+                        incumbentSecondary,
+                        candidateTertiary,
+                        incumbentTertiary));
+        }
+
+        private static bool IsStrictlyBetter(double candidate, double incumbent)
+        {
+            return candidate < incumbent - ComparisonTolerance;
+        }
+
+        private static bool AreEquivalent(double left, double right)
+        {
+            return Math.Abs(left - right) <= ComparisonTolerance;
         }
     }
 }
