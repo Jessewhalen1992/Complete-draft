@@ -154,6 +154,9 @@ namespace AtsBackgroundBuilder.Core
                 var json = File.ReadAllText(configPath);
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
+                var hasExplicitDispositionShapefileOverride =
+                    root.TryGetProperty(nameof(DispositionShapefiles), out var dispositionShapefilesElement) &&
+                    dispositionShapefilesElement.ValueKind == JsonValueKind.Array;
 
                 // Start with defaults; selectively overwrite values that exist in the JSON.
                 ApplyJson(defaults, root);
@@ -166,9 +169,12 @@ namespace AtsBackgroundBuilder.Core
 
                 // Merge with baseline defaults so older configs inherit new default
                 // disposition shapefiles (for example AB_LCON.shp).
-                defaults.DispositionShapefiles = MergeUniqueShapeFileNames(
-                    defaults.DispositionShapefiles,
-                    baseline.DispositionShapefiles);
+                if (!hasExplicitDispositionShapefileOverride)
+                {
+                    defaults.DispositionShapefiles = MergeUniqueShapeFileNames(
+                        defaults.DispositionShapefiles,
+                        baseline.DispositionShapefiles);
+                }
 
                 return defaults;
             }
