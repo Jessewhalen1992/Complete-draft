@@ -60,6 +60,36 @@ function New-Directory {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
+function Try-RemovePathQuietly {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [switch]$Recurse,
+        [ref]$Warnings
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    try {
+        if ($Recurse.IsPresent) {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+        }
+        else {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+        }
+    }
+    catch {
+        $message = "Cleanup skipped for '$Path': $($_.Exception.Message)"
+        if ($Warnings) {
+            $Warnings.Value += $message
+        }
+
+        Write-Warning $message
+    }
+}
+
 function Invoke-ExternalProcess {
     param(
         [Parameter(Mandatory = $true)]
@@ -435,7 +465,7 @@ else {
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
-    $OutputDir = Join-Path $workspaceRoot ("data\atsbuild-harness\" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+    $OutputDir = Join-Path $workspaceRoot (".artifacts\atsbuild-harness\" + (Get-Date -Format "yyyyMMdd-HHmmss"))
 }
 
 $runDirectory = New-Directory -Path $OutputDir
@@ -582,6 +612,7 @@ elseif ($runnerResult -and $runnerResult.PSObject.Properties["BatchCompleted"]) 
 }
 
 $reviewExitCode = $null
+$cleanupWarnings = @()
 $reviewEnabled = $DefaultBlindMidpoints.IsPresent -or -not [string]::IsNullOrWhiteSpace($ReviewConfigPath)
 if ($reviewEnabled -and (Test-Path -LiteralPath $dxfPath)) {
     $reviewScriptPath = Resolve-ExistingPath -Path (Join-Path $PSScriptRoot "atsbuild_review.py") -Label "DXF review script"
@@ -600,12 +631,10 @@ if ($reviewEnabled -and (Test-Path -LiteralPath $dxfPath)) {
 }
 
 if (-not $KeepWorkingDrawing.IsPresent) {
-    if (Test-Path -LiteralPath $workingDwgPath) {
-        Remove-Item -LiteralPath $workingDwgPath -Force
-    }
+    Try-RemovePathQuietly -Path $workingDwgPath -Warnings ([ref]$cleanupWarnings)
 
-    if ($launcherWorkspace -and (Test-Path -LiteralPath $launcherWorkspace.RunDirectory)) {
-        Remove-Item -LiteralPath $launcherWorkspace.RunDirectory -Recurse -Force
+    if ($launcherWorkspace) {
+        Try-RemovePathQuietly -Path $launcherWorkspace.RunDirectory -Recurse -Warnings ([ref]$cleanupWarnings)
     }
 }
 
@@ -626,6 +655,7 @@ $summary = [pscustomobject]@{
     reviewExitCode = $reviewExitCode
     reviewEnabled = $reviewEnabled
     batchCompleted = $batchCompleted
+    cleanupWarnings = $cleanupWarnings
 }
 
 $summary | ConvertTo-Json -Depth 4

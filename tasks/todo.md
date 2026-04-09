@@ -8522,3 +8522,57 @@ Review 2026-04-02 (final L-USEC output relayer can be disabled for verification)
 - DXF layer proof on the same focused spec (`data\plsr-sliver-focus-spec.json`):
 - collapsed run `data\plsr-usec-relayer-default\artifacts\output.dxf`: `L-USEC=116`, `L-USEC-C=4`, `L-USEC-C-0=4`
 - preserved run `data\plsr-usec-relayer-preserve\artifacts\output.dxf`: `L-USEC=14`, `L-USEC-0=34`, `L-USEC2012=34`, `L-USEC3018=34`, `L-USEC-C=4`, `L-USEC-C-0=4`
+- [x] Review relevant lessons and confirm the repo state is safe for a pull/build run.
+- [x] Pull the latest `main` changes from `origin`.
+- [x] Build `src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln` in `Release`.
+- [x] Record the pull/build outcome and any follow-up notes in this review section.
+
+Review 2026-04-08 (git pull and build):
+- Pull: `git pull --ff-only` succeeded on `main`, fast-forwarding `fb4af49` -> `bf4acd8`.
+- Upstream change summary: Git updated `src/AtsBackgroundBuilder/Core/Config.cs` with 9 insertions and 3 deletions.
+- Build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` succeeded.
+- Restore/build result: restore was already up to date; both `AtsBackgroundBuilder` and `AtsBackgroundBuilder.DecisionTests` compiled successfully.
+- Output highlights:
+- `src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+- `src\AtsBackgroundBuilder.DecisionTests\bin\Release\net8.0\AtsBackgroundBuilder.DecisionTests.dll`
+- Verification: build finished with `0` warnings and `0` errors in about 38 seconds.
+
+## 2026-04-08 - ROI refactor pass with Full AutoCAD DXF before/after proof
+
+- [x] Lock the three best ROI refactors that are safe to prove on the focused PLSR sliver harness.
+- [x] Run a baseline `FullAutoCAD` harness replay and capture the before DXF/output review artifacts.
+- [x] Refactor `Plugin.Dispositions.LabelingPlsr.cs` section-label placement helpers into a dedicated service, then rebuild and compare DXF before/after.
+- [x] Refactor `Plugin.Dispositions.LabelingPlsr.cs` version-date parsing/formatting helpers into a dedicated service, then rebuild and compare DXF before/after.
+- [x] Refactor `Plugin.Dispositions.LabelingPlsr.cs` label-text parsing/normalization helpers into a dedicated service, then rebuild and compare DXF before/after.
+- [x] Run the full verification set again, update this review, and note any remaining follow-up.
+
+Review 2026-04-08 (ROI refactor pass with Full AutoCAD DXF before/after proof):
+- Chosen ROI refactors: keep the pass inside the active PLSR hotspot where a trustworthy focused Full AutoCAD replay already exists, instead of taking a riskier first extraction out of the 7k-9k line road-allowance files without a similarly tight live proof loop.
+- Refactor 1: extracted section-label block insertion/footprint helpers from `src\AtsBackgroundBuilder\Dispositions\Plugin.Dispositions.LabelingPlsr.cs` into `src\AtsBackgroundBuilder\Core\SectionLabelBlockService.cs`, then rewired the existing plugin helper methods to delegate there so the public behavior stayed unchanged while the PLSR hotspot shed AutoCAD block boilerplate.
+- Refactor 2: extracted the PLSR version-date parsing/formatting/status helpers into `src\AtsBackgroundBuilder\Core\PlsrVersionDateService.cs`, keeping all call sites stable through thin delegating wrappers in `Plugin.Dispositions.LabelingPlsr.cs`.
+- Refactor 3: extracted the PLSR label-text parsing/normalization helpers into `src\AtsBackgroundBuilder\Core\PlsrTextNormalizationService.cs`, including DISP number parsing, MText cleanup/flattening, owner normalization, expired-marker detection, and client-name comparison.
+- Supporting verification utility: added `scripts\compare_dxf_entities.py` to compare normalized `LINE`, `LWPOLYLINE`, `MTEXT`, `DIMENSION`, `INSERT`, and `ATTRIB` fingerprints between two DXFs so the before/after proof is automated instead of manual.
+- Build verification: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Decision-test verification: `dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build -p:Platform=x64 -p:NuGetAudit=false` passed (`Decision tests passed.`).
+- Baseline Full AutoCAD replay: `powershell -ExecutionPolicy Bypass -File .\scripts\atsbuild_harness.ps1 -Runner FullAutoCAD -FullAutoCadTimeoutSeconds 900 -DwgPath .\data\twp59-19-5-all-sections-source.dwg -SpecPath .\data\plsr-sliver-focus-spec.json -OutputDir .\data\refactor-roi-baseline` exported `artifacts\output.dxf` and completed the ATS batch successfully; the only failure was final launcher cleanup of the temp `C:\AtsHarness\run-20260408-095706-98bb092a` directory because AutoCAD still had a handle open.
+- Post-refactor Full AutoCAD replay: the same harness command with `-OutputDir .\data\refactor-roi-after` completed successfully with `batchCompleted = true` and exported `data\refactor-roi-after\artifacts\output.dxf`.
+- DXF before/after proof: `python .\scripts\compare_dxf_entities.py --before .\data\refactor-roi-baseline\artifacts\output.dxf --after .\data\refactor-roi-after\artifacts\output.dxf` passed with no added or missing supported entities. Supported counts matched exactly before/after: `LWPOLYLINE=156`, `LINE=43`, `INSERT=4`, `ATTRIB=16`, `MTEXT=46`, `DIMENSION=2`.
+- Result: the refactor pass removed several hundred lines of inline helper logic from `Plugin.Dispositions.LabelingPlsr.cs` while preserving the focused live AutoCAD/DXF output exactly on the chosen proof case.
+
+## 2026-04-08 - Harness cleanup and git-noise reduction
+
+- [x] Inspect the harness cleanup path and current ignore rules.
+- [x] Make post-run cleanup best-effort so a temp-folder delete failure does not fail an otherwise successful harness run.
+- [x] Move the default harness output root out of `data/` and into ignored local artifacts.
+- [x] Tighten `.gitignore` for local run/temp caches and generated review output.
+- [x] Re-verify the focused Full AutoCAD harness behavior and record the outcome.
+
+Review 2026-04-08 (harness cleanup and git-noise reduction):
+- Root cause: `scripts\atsbuild_harness.ps1` deleted the working DWG and launcher temp folder with raw `Remove-Item` calls after the run completed. If AutoCAD still had a live handle on the launcher workspace, PowerShell threw and the whole script exited even though the ATS batch had already finished and exported the DXF.
+- Harness fix: added `Try-RemovePathQuietly(...)` to `scripts\atsbuild_harness.ps1` and routed post-run cleanup through it. Cleanup failures now emit a warning and are surfaced in the JSON summary under `cleanupWarnings`, but they no longer mask a successful ATS run.
+- Noise reduction: changed the harness default output root from `data\atsbuild-harness\...` to `.artifacts\atsbuild-harness\...` so ad hoc local runs stop landing under the repo's main `data` tree.
+- Ignore rules: updated `.gitignore` to ignore `.artifacts`, local `.dotnet*` caches, harness-generated `data/*/artifacts`, `data/*/working`, `data/*/accore-isolate`, `data/*/isolate`, the focused `data/refactor-roi-*` and `data/*-convert-test` run folders, and the generated review text output.
+- Verification:
+- `powershell -ExecutionPolicy Bypass -File .\scripts\atsbuild_harness.ps1 -Runner FullAutoCAD -FullAutoCadTimeoutSeconds 900 -DwgPath .\data\twp59-19-5-all-sections-source.dwg -SpecPath .\data\plsr-sliver-focus-spec.json -OutputDir .\data\refactor-roi-cleanup-check` completed with `batchCompleted = true`.
+- The command no longer fails if launcher cleanup hits a locked folder; cleanup issues are reported as warnings/summary metadata instead of throwing.
+- Worktree proof: after the `.gitignore` update, `git status --short` dropped from hundreds of temp/output entries to just the real edited source files.

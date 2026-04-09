@@ -24,6 +24,7 @@ build/
 # dotnet publish / artifacts
 **/publish/
 **/artifacts/
+**/.artifacts/
 **/out/
 **/TestResults/
 
@@ -63,3 +64,20 @@ src/AtsBackgroundBuilder/Section Building Rules.txt
 # Python local caches
 **/__pycache__/
 *.py[cod]
+
+# Local dotnet/user caches
+.dotnet/
+.dotnet-cli/
+.dotnet-home/
+.dotnet_cli/
+**/.dotnet-home/
+
+# Harness and AutoCAD run outputs
+data/atsbuild-harness/
+data/refactor-roi-*/
+data/*/artifacts/
+data/*/working/
+data/*/accore-isolate/
+data/*/isolate/
+data/*-convert-test/
+output/disposition-label-placement-review.txt

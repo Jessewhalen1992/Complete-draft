@@ -28,71 +28,7 @@ namespace AtsBackgroundBuilder
             Point3d position,
             SectionKey key)
         {
-            const string blockName = "L-SECLBL";
-
-            if (!blockTable.Has(blockName))
-            {
-                editor?.WriteMessage($"\nBUILDSEC: Block '{blockName}' not found; skipped section label.");
-                return ObjectId.Null;
-            }
-
-            var blockId = blockTable[blockName];
-            var blockRef = new BlockReference(position, blockId)
-            {
-                ScaleFactors = new Scale3d(1.0)
-            };
-            var blockRefId = modelSpace.AppendEntity(blockRef);
-            transaction.AddNewlyCreatedDBObject(blockRef, true);
-
-            var blockDef = (BlockTableRecord)transaction.GetObject(blockId, OpenMode.ForRead);
-            if (blockDef.HasAttributeDefinitions)
-            {
-                foreach (ObjectId id in blockDef)
-                {
-                    if (!(transaction.GetObject(id, OpenMode.ForRead) is AttributeDefinition definition))
-                    {
-                        continue;
-                    }
-
-                    if (definition.Constant)
-                    {
-                        continue;
-                    }
-
-                    var reference = new AttributeReference();
-                    reference.SetAttributeFromBlock(definition, blockRef.BlockTransform);
-                    blockRef.AttributeCollection.AppendAttribute(reference);
-                    transaction.AddNewlyCreatedDBObject(reference, true);
-                }
-            }
-
-            SetBlockAttribute(blockRef, transaction, "SEC", key.Section);
-            SetBlockAttribute(blockRef, transaction, "TWP", key.Township);
-            SetBlockAttribute(blockRef, transaction, "RGE", key.Range);
-            SetBlockAttribute(blockRef, transaction, "MER", key.Meridian);
-
-            return blockRefId;
-        }
-
-        private static void SetBlockAttribute(BlockReference blockRef, Transaction transaction, string tag, string value)
-        {
-            if (blockRef == null || string.IsNullOrWhiteSpace(tag))
-            {
-                return;
-            }
-
-            foreach (ObjectId id in blockRef.AttributeCollection)
-            {
-                if (!(transaction.GetObject(id, OpenMode.ForWrite) is AttributeReference attr))
-                {
-                    continue;
-                }
-
-                if (string.Equals(attr.Tag, tag, StringComparison.OrdinalIgnoreCase))
-                {
-                    attr.TextString = value ?? string.Empty;
-                }
-            }
+            return SectionLabelBlockService.Insert(modelSpace, blockTable, transaction, editor, position, key);
         }
 
         private static Point2d ResolveSectionLabelPosition(
@@ -155,73 +91,7 @@ namespace AtsBackgroundBuilder
             out double width,
             out double height)
         {
-            width = 0;
-            height = 0;
-
-            const string blockName = "L-SECLBL";
-            if (blockTable == null || transaction == null || !blockTable.Has(blockName))
-            {
-                return false;
-            }
-
-            try
-            {
-                var blockId = blockTable[blockName];
-                var blockDef = (BlockTableRecord)transaction.GetObject(blockId, OpenMode.ForRead);
-
-                var found = false;
-                var minX = 0.0;
-                var minY = 0.0;
-                var maxX = 0.0;
-                var maxY = 0.0;
-
-                foreach (ObjectId id in blockDef)
-                {
-                    if (!(transaction.GetObject(id, OpenMode.ForRead) is Entity entity))
-                    {
-                        continue;
-                    }
-
-                    Extents3d extents;
-                    try
-                    {
-                        extents = entity.GeometricExtents;
-                    }
-                    catch
-                    {
-                        continue;
-                    }
-
-                    if (!found)
-                    {
-                        minX = extents.MinPoint.X;
-                        minY = extents.MinPoint.Y;
-                        maxX = extents.MaxPoint.X;
-                        maxY = extents.MaxPoint.Y;
-                        found = true;
-                    }
-                    else
-                    {
-                        minX = Math.Min(minX, extents.MinPoint.X);
-                        minY = Math.Min(minY, extents.MinPoint.Y);
-                        maxX = Math.Max(maxX, extents.MaxPoint.X);
-                        maxY = Math.Max(maxY, extents.MaxPoint.Y);
-                    }
-                }
-
-                if (!found)
-                {
-                    return false;
-                }
-
-                width = Math.Max(1.0, maxX - minX);
-                height = Math.Max(1.0, maxY - minY);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
+            return SectionLabelBlockService.TryGetFootprint(blockTable, transaction, out width, out height);
         }
 
         private static bool TryFindNonOverlapSectionPosition(
@@ -1809,165 +1679,50 @@ namespace AtsBackgroundBuilder
                 return "N/A";
             }
 
-            if (!TryParseDispositionVersionDate(sourceDisposition.OdVerDateRaw, out var odVersionDate))
-            {
-                return "N/A";
-            }
-
-            var candidateDates = new HashSet<DateTime>();
-            if (activity.VersionDates != null && activity.VersionDates.Count > 0)
-            {
-                foreach (var versionDate in activity.VersionDates)
-                {
-                    candidateDates.Add(versionDate.Date);
-                }
-            }
-
-            if (activity.VersionDate.HasValue)
-            {
-                candidateDates.Add(activity.VersionDate.Value.Date);
-            }
-
-            if (candidateDates.Count == 0)
-            {
-                return "N/A";
-            }
-
-            return candidateDates.Contains(odVersionDate.Date)
-                ? "MATCH"
-                : "NON-MATCH";
+            return PlsrVersionDateService.ResolveStatus(
+                sourceDisposition.OdVerDateRaw,
+                activity.VersionDate,
+                activity.VersionDates);
         }
 
         private static string FormatPlsrExpectedVersionDateForDisplay(PlsrActivity? activity)
         {
-            if (activity == null)
-            {
-                return "N/A";
-            }
-
-            if (activity.VersionDates != null && activity.VersionDates.Count > 0)
-            {
-                var preferredVersionDate = activity.VersionDates.Max();
-                return FormatPlsrVersionDateForDisplay(preferredVersionDate);
-            }
-
-            if (activity.VersionDate.HasValue)
-            {
-                return FormatPlsrVersionDateForDisplay(activity.VersionDate);
-            }
-
-            return "N/A";
+            return activity == null
+                ? "N/A"
+                : PlsrVersionDateService.FormatExpectedForDisplay(activity.VersionDate, activity.VersionDates);
         }
 
         private static string ResolvePlsrVersionDateMismatchDetail(PlsrActivity? activity)
         {
             _ = activity;
-            return "Disposition OD VER_DATE differs from PLSR XML VersionDate.";
+            return PlsrVersionDateService.ResolveMismatchDetail();
         }
 
         private static string FormatDispositionDateFieldsForDisplay(DispositionInfo? sourceDisposition)
         {
-            if (sourceDisposition == null)
-            {
-                return "N/A";
-            }
-
-            var verDateDisplay = FormatDispositionVersionDateForDisplay(sourceDisposition.OdVerDateRaw);
-            return string.Equals(verDateDisplay, "N/A", StringComparison.OrdinalIgnoreCase)
+            return sourceDisposition == null
                 ? "N/A"
-                : $"VER_DATE={verDateDisplay}";
+                : PlsrVersionDateService.FormatDispositionDateFieldsForDisplay(sourceDisposition.OdVerDateRaw);
         }
 
         private static string FormatDispositionVersionDateForDisplay(string? rawValue)
         {
-            if (TryParseDispositionVersionDate(rawValue, out var parsed))
-            {
-                return parsed.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            }
-
-            return "N/A";
+            return PlsrVersionDateService.FormatDispositionVersionDateForDisplay(rawValue);
         }
 
         private static string FormatPlsrVersionDateForDisplay(DateTime? value)
         {
-            if (!value.HasValue)
-            {
-                return "N/A";
-            }
-
-            return value.Value.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            return PlsrVersionDateService.FormatVersionDateForDisplay(value);
         }
 
         private static bool TryParseDispositionVersionDate(string? rawValue, out DateTime versionDate)
         {
-            versionDate = DateTime.MinValue;
-            if (string.IsNullOrWhiteSpace(rawValue))
-            {
-                return false;
-            }
-
-            var trimmed = rawValue.Trim();
-            if (DateTime.TryParseExact(trimmed, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var exactDate))
-            {
-                versionDate = exactDate.Date;
-                return true;
-            }
-
-            var digitsOnly = new string(trimmed.Where(char.IsDigit).ToArray());
-            if (digitsOnly.Length >= 8 &&
-                DateTime.TryParseExact(digitsOnly.Substring(0, 8), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var digitDate))
-            {
-                versionDate = digitDate.Date;
-                return true;
-            }
-
-            if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var numericDate))
-            {
-                var rounded = Math.Round(numericDate).ToString("0", CultureInfo.InvariantCulture);
-                if (rounded.Length >= 8 &&
-                    DateTime.TryParseExact(rounded.Substring(0, 8), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var numericParsedDate))
-                {
-                    versionDate = numericParsedDate.Date;
-                    return true;
-                }
-            }
-
-            DateTime parsedDate;
-            if (DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out parsedDate) ||
-                DateTime.TryParse(trimmed, out parsedDate))
-            {
-                versionDate = parsedDate.Date;
-                return true;
-            }
-
-            return false;
+            return PlsrVersionDateService.TryParseDispositionVersionDate(rawValue, out versionDate);
         }
 
         private static bool TryParsePlsrXmlVersionDate(string? rawValue, out DateTime versionDate)
         {
-            versionDate = DateTime.MinValue;
-            if (string.IsNullOrWhiteSpace(rawValue))
-            {
-                return false;
-            }
-
-            var trimmed = rawValue.Trim();
-            if (trimmed.Length >= 10 &&
-                DateTime.TryParseExact(trimmed.Substring(0, 10), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var isoDate))
-            {
-                versionDate = isoDate.Date;
-                return true;
-            }
-
-            DateTime parsedDate;
-            if (DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out parsedDate) ||
-                DateTime.TryParse(trimmed, out parsedDate))
-            {
-                versionDate = parsedDate.Date;
-                return true;
-            }
-
-            return false;
+            return PlsrVersionDateService.TryParseXmlVersionDate(rawValue, out versionDate);
         }
 
         private static Dictionary<string, HashSet<string>> BuildExistingDispNumsByQuarter(
@@ -3408,76 +3163,12 @@ namespace AtsBackgroundBuilder
 
         private static string ExtractDispositionNumber(IReadOnlyList<string> lines, string rawContents)
         {
-            if (lines != null)
-            {
-                for (int i = lines.Count - 1; i >= 0; i--)
-                {
-                    if (TryParseDispositionNumberFromText(lines[i], out var parsed))
-                    {
-                        return parsed;
-                    }
-                }
-            }
-
-            if (TryParseDispositionNumberFromText(rawContents, out var fallback))
-            {
-                return fallback;
-            }
-
-            return string.Empty;
+            return PlsrTextNormalizationService.ExtractDispositionNumber(lines, rawContents, PlsrDispositionPrefixes);
         }
 
         private static bool TryParseDispositionNumberFromText(string text, out string dispNum)
         {
-            dispNum = string.Empty;
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return false;
-            }
-
-            var upper = StripMTextControlCodes(text).ToUpperInvariant();
-            foreach (var prefix in PlsrDispositionPrefixes)
-            {
-                var spaced = Regex.Match(upper, $@"\b{Regex.Escape(prefix)}\s*[-]?\s*(\d{{2,}})\b", RegexOptions.IgnoreCase);
-                if (spaced.Success)
-                {
-                    dispNum = prefix + spaced.Groups[1].Value;
-                    return true;
-                }
-            }
-
-            var normalized = Regex.Replace(upper, "[^A-Z0-9]+", string.Empty);
-            if (normalized.Length < 4)
-            {
-                return false;
-            }
-
-            foreach (var prefix in PlsrDispositionPrefixes)
-            {
-                if (!normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                if (normalized.Length <= prefix.Length || !char.IsDigit(normalized[prefix.Length]))
-                {
-                    continue;
-                }
-
-                int end = prefix.Length;
-                while (end < normalized.Length && char.IsDigit(normalized[end]))
-                {
-                    end++;
-                }
-
-                if (end > prefix.Length)
-                {
-                    dispNum = prefix + normalized.Substring(prefix.Length, end - prefix.Length);
-                    return true;
-                }
-            }
-
-            return false;
+            return PlsrTextNormalizationService.TryParseDispositionNumberFromText(text, PlsrDispositionPrefixes, out dispNum);
         }
 
         private static Point2d GetDimensionAnchorPoint(AlignedDimension dimension)
@@ -4024,76 +3715,22 @@ namespace AtsBackgroundBuilder
 
         private static List<string> SplitMTextLines(string contents)
         {
-            if (string.IsNullOrWhiteSpace(contents))
-                return new List<string>();
-
-            var normalized = contents
-                .Replace("\\P", "\n")
-                .Replace("\\X", "\n")
-                .Replace("\r", "\n");
-            var raw = normalized.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            var lines = new List<string>();
-            foreach (var line in raw)
-            {
-                var cleaned = StripMTextControlCodes(line).Trim();
-                if (!string.IsNullOrWhiteSpace(cleaned))
-                    lines.Add(cleaned);
-            }
-
-            return lines;
+            return PlsrTextNormalizationService.SplitMTextLines(contents);
         }
 
         private static string StripMTextControlCodes(string text)
         {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return string.Empty;
-            }
-
-            var cleaned = text
-                .Replace("{", string.Empty)
-                .Replace("}", string.Empty)
-                .Replace("\\~", " ")
-                .Replace("\\P", " ")
-                .Replace("\\X", " ");
-
-            // Strip semicolon-terminated control groups (e.g. \A1; \pxqc; \C1; \F...;).
-            cleaned = Regex.Replace(cleaned, @"\\[A-Za-z][^;\\]*;", string.Empty, RegexOptions.IgnoreCase);
-            // Strip stacked fraction/text groups.
-            cleaned = Regex.Replace(cleaned, @"\\S[^;]*;", " ", RegexOptions.IgnoreCase);
-            // Strip one-char on/off controls (e.g. \L \l \O \o \K \k).
-            cleaned = Regex.Replace(cleaned, @"\\[LOKlok]", string.Empty);
-            // Strip any remaining generic one-letter controls.
-            cleaned = Regex.Replace(cleaned, @"\\[A-Za-z]", string.Empty);
-
-            return cleaned;
+            return PlsrTextNormalizationService.StripMTextControlCodes(text);
         }
 
         private static string FlattenMTextForDisplay(string contents)
         {
-            if (string.IsNullOrWhiteSpace(contents))
-            {
-                return string.Empty;
-            }
-
-            var lines = SplitMTextLines(contents);
-            if (lines.Count == 0)
-            {
-                return StripMTextControlCodes(contents).Trim();
-            }
-
-            return string.Join(" | ", lines);
+            return PlsrTextNormalizationService.FlattenMTextForDisplay(contents);
         }
 
         private static bool HasExpiredMarker(string? contents)
         {
-            if (string.IsNullOrWhiteSpace(contents))
-            {
-                return false;
-            }
-
-            var flattened = FlattenMTextForDisplay(contents);
-            return Regex.IsMatch(flattened, @"\bEXPIRED\b", RegexOptions.IgnoreCase);
+            return PlsrTextNormalizationService.HasExpiredMarker(contents);
         }
 
         private static bool IsDispositionTextLayer(string layerName)
@@ -4122,85 +3759,22 @@ namespace AtsBackgroundBuilder
 
         private static string NormalizeDispNum(string dispNum)
         {
-            if (string.IsNullOrWhiteSpace(dispNum))
-            {
-                return string.Empty;
-            }
-
-            var compact = Regex.Replace(dispNum.ToUpperInvariant(), "\\s+", string.Empty);
-            compact = Regex.Replace(compact, "[^A-Z0-9]", string.Empty);
-            if (string.IsNullOrWhiteSpace(compact))
-            {
-                return string.Empty;
-            }
-
-            var prefixMatch = Regex.Match(compact, "^[A-Z]{3}");
-            if (!prefixMatch.Success)
-            {
-                return compact;
-            }
-
-            var prefix = prefixMatch.Value;
-            var suffix = compact.Substring(prefix.Length);
-            if (string.IsNullOrWhiteSpace(suffix))
-            {
-                return prefix;
-            }
-
-            var digits = new string(suffix.Where(char.IsDigit).ToArray());
-            if (digits.Length > 0)
-            {
-                var trimmedDigits = digits.TrimStart('0');
-                if (trimmedDigits.Length == 0)
-                {
-                    trimmedDigits = "0";
-                }
-
-                return prefix + trimmedDigits;
-            }
-
-            return prefix + suffix;
+            return PlsrTextNormalizationService.NormalizeDispNum(dispNum);
         }
 
         private static string GetDispositionPrefix(string dispNum)
         {
-            if (string.IsNullOrWhiteSpace(dispNum))
-                return string.Empty;
-
-            var match = Regex.Match(dispNum, "^[A-Z]{3}");
-            return match.Success ? match.Value.ToUpperInvariant() : string.Empty;
+            return PlsrTextNormalizationService.GetDispositionPrefix(dispNum);
         }
 
         private static string NormalizeOwner(string owner)
         {
-            if (string.IsNullOrWhiteSpace(owner))
-                return string.Empty;
-
-            var upper = StripMTextControlCodes(owner).ToUpperInvariant();
-            var normalized = Regex.Replace(upper, "[^A-Z0-9]+", string.Empty);
-            return normalized;
+            return PlsrTextNormalizationService.NormalizeOwner(owner);
         }
 
         private static string MapClientNameForCompare(ExcelLookup lookup, string rawName)
         {
-            if (string.IsNullOrWhiteSpace(rawName))
-                return string.Empty;
-
-            var entry = lookup.Lookup(rawName);
-            if (entry != null && !string.IsNullOrWhiteSpace(entry.Value))
-                return entry.Value;
-
-            if (lookup.Values.Count > 0)
-            {
-                var target = NormalizeOwner(rawName);
-                foreach (var value in lookup.Values)
-                {
-                    if (NormalizeOwner(value) == target)
-                        return value;
-                }
-            }
-
-            return rawName;
+            return PlsrTextNormalizationService.MapClientNameForCompare(lookup, rawName);
         }
 
         private static bool TryApplyOwnerUpdate(
