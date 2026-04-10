@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Interop;
 using Autodesk.AutoCAD.EditorInput;
+using Compass.Infrastructure;
 using Compass.Models;
 using Compass.ViewModels;
 
@@ -70,8 +71,12 @@ public partial class BuildDrillWindow : Window
 
         try
         {
-            Hide();
+            var windowHandle = new WindowInteropHelper(this).Handle;
+            CompassStartupDiagnostics.Log("Build a Drill surface pick starting.");
+
+            using var interaction = document.Editor.StartUserInteraction(windowHandle);
             var result = document.Editor.GetPoint(new PromptPointOptions("\nPick surface point for this drill:"));
+            CompassStartupDiagnostics.Log($"Build a Drill surface pick completed with status {result.Status}.");
             if (result.Status == PromptStatus.OK)
             {
                 ViewModel.SetSurfacePoint(result.Value);
@@ -79,12 +84,8 @@ public partial class BuildDrillWindow : Window
         }
         catch (Exception ex)
         {
+            CompassStartupDiagnostics.LogException("Build a Drill surface pick", ex);
             MessageBox.Show($"Could not pick a surface point: {ex.Message}", "Build a Drill", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        finally
-        {
-            Show();
-            Activate();
         }
     }
 

@@ -507,6 +507,7 @@ public class DrillManagerViewModel : INotifyPropertyChanged
 
     private void RunBuildDrill()
     {
+        CompassStartupDiagnostics.Log("Build a Drill dialog opening from Drill Manager.");
         var dialog = new BuildDrillWindow(GetBuildableDrillNames());
         if (dialog.ShowDialog() == true && dialog.Result != null)
         {
@@ -523,7 +524,12 @@ public class DrillManagerViewModel : INotifyPropertyChanged
                 return;
             }
 
+            CompassStartupDiagnostics.Log($"Build a Drill queued for drawing '{document.Name}'.");
             BuildDrillCommandBridge.QueueExecution(document);
+        }
+        else
+        {
+            CompassStartupDiagnostics.Log("Build a Drill dialog closed without queueing a request.");
         }
     }
 

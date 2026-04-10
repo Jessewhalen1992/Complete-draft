@@ -8978,3 +8978,66 @@ Review 2026-04-08 (harness cleanup and git-noise reduction):
 - `powershell -ExecutionPolicy Bypass -File .\scripts\atsbuild_harness.ps1 -Runner FullAutoCAD -FullAutoCadTimeoutSeconds 900 -DwgPath .\data\twp59-19-5-all-sections-source.dwg -SpecPath .\data\plsr-sliver-focus-spec.json -OutputDir .\data\refactor-roi-cleanup-check` completed with `batchCompleted = true`.
 - The command no longer fails if launcher cleanup hits a locked folder; cleanup issues are reported as warnings/summary metadata instead of throwing.
 - Worktree proof: after the `.gitignore` update, `git status --short` dropped from hundreds of temp/output entries to just the real edited source files.
+
+## 2026-04-10 - Repo-wide release build after pull
+
+- [x] Review relevant lessons and confirm the repo is clean after the latest `main` pull.
+- [x] Build `src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln` in `Release`.
+- [x] Build `wls_program/src/WildlifeSweeps/WildlifeSweeps.sln` in `Release`.
+- [x] Build `compass_program/Compass.sln` in `Release`.
+- [x] Record the build results and any follow-up notes in this review section.
+
+Review 2026-04-10 (repo-wide release build after pull):
+- Repo state before build: `main` was already clean after the fast-forward pull to `bf1e79c`.
+- ATS build: `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- ATS outputs:
+- `src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+- `src\AtsBackgroundBuilder.DecisionTests\bin\Release\net8.0\AtsBackgroundBuilder.DecisionTests.dll`
+- ATS verification: restore was already up to date; build finished with `0` warnings and `0` errors in about 11 seconds.
+- WLS build: `dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release -p:Platform="Any CPU" -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- WLS output:
+- `wls_program\src\WildlifeSweeps\bin\Release\net8.0-windows\WildlifeSweeps.dll`
+- WLS verification: restore was already up to date; build finished with `0` warnings and `0` errors in about 2 seconds.
+- Compass build: `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Compass output:
+- `compass_program\src\Compass\bin\x64\Release\net8.0-windows\Compass.dll`
+- Compass verification: restore completed successfully and build finished with `2` warnings and `0` errors in about 8 seconds.
+- Follow-up note: both Compass warnings point to `compass_program\src\Compass\Services\DrillCadToolService.cs` using obsolete `Table.GetCellExtents(int, int, bool, Point3dCollection)` at line `1943`; the replacement suggested by the API is `Table.Cells[row,column].GetExtents`.
+
+## 2026-04-10 - Compass Build a Drill fatal AutoCAD abort
+
+- [x] Review recent Build a Drill lessons and inspect the current Compass Build a Drill entry points.
+- [x] Patch the Build a Drill surface-pick interaction so it does not prompt the AutoCAD editor directly from the modal WPF dialog context.
+- [x] Add light diagnostics around the Build a Drill launch / surface-pick boundary.
+- [x] Rebuild `compass_program/Compass.sln` in `Release` and verify the new DLL compiles cleanly.
+- [x] Record the likely root cause, fix, and remaining proof gap in this review section.
+
+Review 2026-04-10 (Compass Build a Drill fatal AutoCAD abort):
+- User report: the new Compass `Build a Drill` flow was aborting AutoCAD with a fatal unhandled exception instead of surfacing a normal error dialog.
+- Likely root cause: the `Get Surface` button in `compass_program\src\Compass\UI\BuildDrillWindow.xaml.cs` was hiding/showing the modal WPF dialog and then calling `document.Editor.GetPoint(...)` directly from that dialog context. That is the same unsafe palette/window-to-editor boundary we have already seen in other AutoCAD workflows, and it can abort the host before managed `catch` blocks get a chance to run.
+- Fix:
+- `BuildDrillWindow` now uses `document.Editor.StartUserInteraction(windowHandle)` and prompts for the surface point inside that AutoCAD-owned interaction scope instead of the old hide/show round-trip.
+- Added lightweight diagnostics to `%TEMP%\Compass-netload.log` around the Build a Drill dialog open, queue, command execution start, and surface-pick start/finish so the next live retest has a clean breadcrumb trail if anything still fails.
+- Build verification: `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Output:
+- `compass_program\src\Compass\bin\x64\Release\net8.0-windows\Compass.dll`
+- `build\compass\single-dll\Compass.dll`
+- Build result: `0` errors. The only remaining warnings are the two pre-existing obsolete `Table.GetCellExtents(...)` warnings in `DrillCadToolService.cs`.
+- Remaining proof gap: I have not live-replayed the patched `Get Surface` flow inside AutoCAD from this environment, so the closing proof still needs your in-drawing retest with the refreshed DLL.
+
+## 2026-04-10 - Compass native ATS LOCATION formatting should match archive output
+
+- [x] Inspect the native Compass CORDS LOCATION display formatter against the user screenshot and the archive-style ATS output contract.
+- [x] Patch the LOCATION formatter so zero-padding is preserved and the extra hyphen before `W` is removed.
+- [x] Rebuild `compass_program/Compass.sln` in `Release` and confirm the updated DLL compiles cleanly.
+- [x] Record the correction and verification result in this review section.
+
+Review 2026-04-10 (Compass native ATS LOCATION formatting should match archive output):
+- User correction: the native Compass ATS `LOCATION` values were dropping the archive zero-padding and adding an extra hyphen before the meridian suffix, for example `16-21-41-4-W5` instead of `16-21-041-04W5`.
+- Root cause: `FormatNativeLocation(...)` in `compass_program\src\Compass\Services\DrillCadToolService.cs` was rebuilding the display string with a generic integer formatter that stripped leading zeroes from section/township/range tokens and it hard-coded `-W` before the meridian.
+- Fix: the native LOCATION display formatter now uses explicit archive-style widths (`LSD=2`, `Section=2`, `Township=3`, `Range=2`, `Meridian=1`) and outputs the suffix as `04W5` instead of `04-W5`.
+- Build verification: `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Output:
+- `compass_program\src\Compass\bin\x64\Release\net8.0-windows\Compass.dll`
+- `build\compass\single-dll\Compass.dll` (`2026-04-10 3:09:12 PM`, `3,862,528` bytes)
+- Build result: `0` errors. The only remaining warnings are the same two pre-existing obsolete `Table.GetCellExtents(...)` warnings in `DrillCadToolService.cs`.

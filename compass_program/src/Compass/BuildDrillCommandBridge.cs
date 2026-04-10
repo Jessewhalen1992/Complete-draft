@@ -35,6 +35,7 @@ public class BuildDrillCommandBridge
     public static void QueueExecution(Document document)
     {
         ArgumentNullException.ThrowIfNull(document);
+        CompassStartupDiagnostics.Log($"Build a Drill execution command queued for '{document.Name}'.");
         document.SendStringToExecute($"{ExecuteCommandName} ", true, false, false);
     }
 
@@ -69,6 +70,7 @@ public class BuildDrillCommandBridge
         }
 
         CompassEnvironment.Initialize();
+        CompassStartupDiagnostics.Log($"Build a Drill execution starting in '{document.Name}'.");
         var service = new BuildDrillService(CompassEnvironment.Log, new LayerService());
         service.BuildDrill(pending.Request);
     }

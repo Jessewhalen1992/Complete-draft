@@ -755,15 +755,19 @@ public class DrillCadToolService
     {
         return string.Create(
             CultureInfo.InvariantCulture,
-            $"{match.Lsd}-{FormatLocationToken(match.Section)}-{FormatLocationToken(match.Township)}-{FormatLocationToken(match.Range)}-W{FormatLocationToken(match.Meridian)}");
+            $"{FormatLocationNumber(match.Lsd.ToString(CultureInfo.InvariantCulture), 2)}-" +
+            $"{FormatLocationNumber(match.Section, 2)}-" +
+            $"{FormatLocationNumber(match.Township, 3)}-" +
+            $"{FormatLocationNumber(match.Range, 2)}W" +
+            $"{FormatLocationNumber(match.Meridian, 1)}");
     }
 
-    private static string FormatLocationToken(string token)
+    private static string FormatLocationNumber(string token, int minimumWidth)
     {
         var trimmed = (token ?? string.Empty).Trim();
         if (int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
         {
-            return value.ToString(CultureInfo.InvariantCulture);
+            return value.ToString(new string('0', minimumWidth), CultureInfo.InvariantCulture);
         }
 
         return trimmed;
