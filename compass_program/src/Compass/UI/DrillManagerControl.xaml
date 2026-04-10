@@ -1,0 +1,387 @@
+<UserControl x:Class="Compass.UI.DrillManagerControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:models="clr-namespace:Compass.Models"
+             mc:Ignorable="d"
+             d:DesignWidth="900"
+             d:DesignHeight="560">
+    <Border Background="#FFF5F6FA" Padding="16">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Orientation="Vertical" Margin="0,0,0,16">
+                <TextBlock Text="Drill Properties"
+                           FontSize="22"
+                           FontWeight="Bold"
+                           Foreground="#FF222B45" />
+                <TextBlock Text="Manage drill labels, apply templates, and quickly update the full grid."
+                           FontSize="12"
+                           Foreground="#FF6B7280"
+                           Margin="0,4,0,0" />
+            </StackPanel>
+
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="340" />
+                    <ColumnDefinition Width="24" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <ScrollViewer Grid.Column="0"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <Border Background="White"
+                                BorderBrush="#FFE3E8EF"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="16"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="Grid setup"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="#FF111827" />
+                                <TextBlock Text="Choose how many drills you need in the grid."
+                                           FontSize="12"
+                                           Foreground="#FF6B7280"
+                                           Margin="0,4,0,12" />
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="Drill count"
+                                               VerticalAlignment="Center"
+                                               Margin="0,0,12,0"
+                                               Foreground="#FF374151" />
+                                    <ComboBox Width="120"
+                                              ItemsSource="{Binding DrillCountOptions}"
+                                              SelectedItem="{Binding DrillCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Background="White"
+                                BorderBrush="#FFE3E8EF"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="16"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="Selected drill"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="#FF111827" />
+                                <TextBlock Text="Pick a drill to edit, update its name, or clear it."
+                                           FontSize="12"
+                                           Foreground="#FF6B7280"
+                                           Margin="0,4,0,12" />
+                                <ComboBox ItemsSource="{Binding Drills}"
+                                          DisplayMemberPath="DisplayLabel"
+                                          SelectedValuePath="Index"
+                                          SelectedValue="{Binding SelectedDrillIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          Margin="0,0,0,8" />
+                                <TextBox Text="{Binding SelectedDrillName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Margin="0,0,0,12" />
+                                <Grid HorizontalAlignment="Right">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Button Grid.Row="0"
+                                            Grid.Column="0"
+                                            Content="Set"
+                                            Margin="0,0,12,0"
+                                            Padding="12,4"
+                                            MinWidth="90"
+                                            Command="{Binding SetSelectedCommand}" />
+                                    <Button Grid.Row="1"
+                                            Grid.Column="0"
+                                            Content="Set all"
+                                            Margin="0,8,12,0"
+                                            Padding="12,4"
+                                            MinWidth="90"
+                                            Command="{Binding SetAllCommand}" />
+                                    <Button Grid.Row="0"
+                                            Grid.Column="1"
+                                            Content="Clear"
+                                            Padding="12,4"
+                                            MinWidth="90"
+                                            Command="{Binding ClearSelectedCommand}" />
+                                    <Button Grid.Row="1"
+                                            Grid.Column="1"
+                                            Content="Clear all"
+                                            Margin="0,8,0,0"
+                                            Padding="12,4"
+                                            MinWidth="90"
+                                            Command="{Binding ClearAllCommand}" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Background="White"
+                                BorderBrush="#FFE3E8EF"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="16"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="Swap drills"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="#FF111827" />
+                                <TextBlock Text="Choose two drills and swap their names to quickly re-order the list."
+                                           FontSize="12"
+                                           Foreground="#FF6B7280"
+                                           Margin="0,4,0,12" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <ComboBox Grid.Column="0"
+                                              ItemsSource="{Binding Drills}"
+                                              DisplayMemberPath="DisplayLabel"
+                                              SelectedValuePath="Index"
+                                              SelectedValue="{Binding SwapFirstIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              Margin="0,0,12,0" />
+                                    <ComboBox Grid.Column="1"
+                                              ItemsSource="{Binding Drills}"
+                                              DisplayMemberPath="DisplayLabel"
+                                              SelectedValuePath="Index"
+                                              SelectedValue="{Binding SwapSecondIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              Margin="0,0,12,0" />
+                                    <Button Grid.Column="2"
+                                            Content="Swap"
+                                            Padding="12,4"
+                                            MinWidth="90"
+                                            Command="{Binding SwapCommand}" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                    <Border Background="White"
+                            BorderBrush="#FFE3E8EF"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="16"
+                            Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="AutoCAD tools"
+                                       FontSize="14"
+                                       FontWeight="SemiBold"
+                                       Foreground="#FF111827" />
+                            <TextBlock Text="Sync drill names from block attributes or create a WELL CORNERS table."
+                                       FontSize="12"
+                                       Foreground="#FF6B7280"
+                                       Margin="0,4,0,12" />
+                            <StackPanel Margin="0,0,0,12">
+                                <TextBlock Text="Heading type"
+                                           FontSize="12"
+                                           FontWeight="SemiBold"
+                                           Foreground="#FF111827" />
+                                <ComboBox ItemsSource="{Binding HeadingOptions}"
+                                          SelectedItem="{Binding Heading, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          Width="160"
+                                          Margin="0,8,0,0" />
+                            </StackPanel>
+                            <StackPanel>
+                                <Button Content="Update from block attributes"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Command="{Binding UpdateFromBlockAttributesCommand}" />
+                                <Button Content="Create WELL CORNERS table"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        Command="{Binding CreateWellCornersTableCommand}" />
+                                <Button Content="Check"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        Command="{Binding CheckCommand}" />
+                                <Button Content="Headings All"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        Command="{Binding HeadingsAllCommand}" />
+                                <Button Content="Create XLS"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        Command="{Binding CreateXlsCommand}" />
+                                <Button Content="Complete CORDS"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        Command="{Binding CompleteCordsCommand}" />
+                                <Button Content="Complete CORDS (Archive)"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        Command="{Binding CompleteCordsArchiveCommand}" />
+                                <Button Content="Get UTMS"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        Command="{Binding GetUtmsCommand}" />
+                                <Button Content="Add Drill Points"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        Command="{Binding AddDrillPointsCommand}" />
+                                <Button Content="Build a Drill"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        Command="{Binding BuildDrillCommand}" />
+                                <Button Content="Add Offsets"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        Command="{Binding AddOffsetsCommand}" />
+                                <Button Content="Update Offsets"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        Command="{Binding UpdateOffsetsCommand}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <Border Grid.Column="2"
+                    Background="White"
+                    BorderBrush="#FFE3E8EF"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Width="Auto" MinWidth="140" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Drill label"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FF4B5563" />
+                        <TextBlock Grid.Column="1"
+                                   Text="Drill name"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FF4B5563" />
+                        <TextBlock Grid.Column="2"
+                                   Text="Actions"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FF4B5563"
+                                   HorizontalAlignment="Right" />
+                    </Grid>
+
+                    <ListView Grid.Row="1"
+                              ItemsSource="{Binding Drills}"
+                              SelectedValuePath="Index"
+                              SelectedValue="{Binding SelectedDrillIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              BorderThickness="0">
+                        <ListView.Resources>
+                            <Style TargetType="ScrollViewer">
+                                <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
+                            </Style>
+                        </ListView.Resources>
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Margin" Value="0,0,0,8" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Border BorderBrush="#FFE3E8EF"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        Padding="10"
+                                        ToolTip="{Binding CheckSummary}">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="#FFF9FAFB" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding CheckStatus}" Value="{x:Static models:DrillCheckStatus.Pass}">
+                                                    <Setter Property="Background" Value="#FFE6FFED" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding CheckStatus}" Value="{x:Static models:DrillCheckStatus.Fail}">
+                                                    <Setter Property="Background" Value="#FFFFEAEA" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="2*" />
+                                            <ColumnDefinition Width="2*" />
+                                            <ColumnDefinition Width="Auto" MinWidth="140" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding DisplayLabel}"
+                                                   VerticalAlignment="Center"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FF111827" />
+                                        <TextBox Grid.Column="1"
+                                                 Margin="8,0"
+                                                 VerticalAlignment="Center"
+                                                 Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <StackPanel Grid.Column="2"
+                                                    Orientation="Horizontal"
+                                                    HorizontalAlignment="Right">
+                                            <Button Content="Set"
+                                                    Padding="10,3"
+                                                    MinWidth="56"
+                                                    Command="{Binding DataContext.SetSelectedCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
+                                                    CommandParameter="{Binding Index}" />
+                                            <Button Content="Reset"
+                                                    Padding="10,3"
+                                                    MinWidth="56"
+                                                    Margin="8,0,0,0"
+                                                    Command="{Binding DataContext.ClearSelectedCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
+                                                    CommandParameter="{Binding Index}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+    </Border>
+</UserControl>

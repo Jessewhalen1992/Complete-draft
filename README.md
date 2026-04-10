@@ -55,6 +55,28 @@ dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release
 
 This keeps WLS isolated as its own project while allowing selective code/function reuse from the main ATS plugin when needed.
 
+## Compass Module
+
+This repository also contains the Compass codebase as a standalone module under:
+
+```
+compass_program/
+```
+
+Standalone Compass solution entry point:
+
+```
+compass_program/Compass.sln
+```
+
+Build from repository root:
+
+```powershell
+dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64
+```
+
+The in-repo Compass module is standardized on AutoCAD 2025+ so it can evolve without carrying the legacy AutoCAD 2015 / `net45` build path.
+
 ## Pre-AutoCAD Ops Gate
 
 Run the calibrated section-validation gate in one step:

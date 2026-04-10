@@ -1,3 +1,405 @@
+# Follow-up (Compass Native CORDS Formatting Match, 2026-04-09)
+
+- [x] Tighten native `METES` / `BOUNDS` formatting to one decimal place with a space before the direction suffix.
+- [x] Adjust native `LOCATION` display formatting to match the user's preferred hyphenation and zero-padding style without changing ATS lookup behavior.
+- [x] Rebuild Compass and refresh the packaged DLL after the display-only formatting changes.
+
+## Review (Compass Native CORDS Formatting Match, 2026-04-09)
+
+- User correction: the native table values were logically correct, but `METES` / `BOUNDS` were still too precise (`0.00`) and the legal `LOCATION` string was over-normalized for display.
+- Fix:
+- `AtsQuarterLocationResolver` now formats locals as `0.0` plus a space and direction, for example `348.8 N`.
+- `DrillCadToolService` now uses a display-specific location formatter for native CORDS rows, producing values like `1-6-27-19-W4` instead of the zero-padded raw ATS token string.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Refreshed packaged DLL: `build/compass/single-dll/Compass.dll`.
+
+# Follow-up (Compass Native Complete CORDS, 2026-04-09)
+
+- [x] Inspect the existing `cords.py` / archive table flow and mirror the real field contract in Compass.
+- [x] Add a new native `Complete CORDS` Drill Manager action while keeping `Complete CORDS (Archive)` available.
+- [x] Build the direct data pipeline from `Z-DRILL-POINT` labels to native table rows: location, metes, bounds, NAD83 UTM/lat-long, and NAD27 UTM/lat-long.
+- [x] Reuse or extend existing ATS section-index and coordinate conversion helpers instead of introducing a separate external script dependency.
+- [x] Rebuild Compass, refresh the packaged DLL, and document the verification/result notes here.
+
+## Review (Compass Native Complete CORDS, 2026-04-09)
+
+- Found and verified the historical source of truth in `C:\AUTOCAD-SETUP\Lisp_2000\Drill Properties\cords.py` plus the live `C:\CORDS\ExportedCoords.csv` / `ExportedCoordsFormatted.xlsx` output.
+- Important archive-behavior note: the old output proves `METES` / `BOUNDS` are section-relative nearest-boundary values, not LSD-cell-relative distances, so the native replacement follows the actual archive math.
+- Added a new native `Complete CORDS` button/command in Drill Manager while preserving `Complete CORDS (Archive)` as the legacy fallback.
+- The native path now reads `Z-DRILL-POINT`, infers or prompts for UTM zone, resolves ATS LSD locations from the section index, computes section-relative locals (`LOCATION`, `METES`, `BOUNDS`), converts NAD83/NAD27 UTM values, computes NAD83/NAD27 lat/long, and inserts the AutoCAD data table directly.
+- Linked the ATS/WLS resolver helpers into Compass and extended them for the native table flow:
+- `AtsQuarterLocationResolver` now returns section tokens plus formatted `Metes` / `Bounds`.
+- `UtmCoordinateConverter` now supports a NAD27 ellipsoid path in addition to the existing NAD83 path.
+- Added a reusable `AutoCadProjectionHelper` for UTM datum shifts so the native CORDS path does not depend on `cords.exe`.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- `dotnet build .\wls_program\src\WildlifeSweeps\WildlifeSweeps.sln -c Release -p:Platform="Any CPU" -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Refreshed packaged DLL: `build/compass/single-dll/Compass.dll` (`2026-04-09 8:20:58 PM`, `3,860,992` bytes).
+- Remaining proof gap: I have not live-run the new native `Complete CORDS` button inside AutoCAD yet, so runtime parity with the archive flow still needs one in-drawing test.
+
+# Follow-up (Compass Complete CORDS Archive Rename, 2026-04-09)
+
+- [x] Rename the current Complete CORDS button and user-facing flow to `Complete CORDS (Archive)`.
+- [x] Keep the legacy implementation intact while making the archive status clear in the UI and messages.
+- [x] Rebuild Compass and confirm the rename compiles cleanly.
+
+## Review (Compass Complete CORDS Archive Rename, 2026-04-09)
+
+- Updated the Drill Manager button text to `Complete CORDS (Archive)`.
+- Renamed the viewmodel command/property and the service entrypoint so the legacy path is clearly marked as archive code instead of the current preferred workflow.
+- Updated the legacy dialog titles, success messages, and error logging in `DrillCadToolService`.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+
+# Follow-up (Compass Build a Drill Surface Start and CORDS Labels, 2026-04-09)
+
+- [x] Add an optional `Get Surface` picker to Build a Drill so the path can start from a picked surface point when desired.
+- [x] Assign the drill's CORDS letter from the selected drill's order in the Drill Manager list (`A` for first drill, `B` for second, etc.).
+- [x] Emit `Z-DRILL-POINT` labels during Build a Drill so later CORDS workflows can use `A1/A2/...` or `B1/B2/...` directly.
+- [x] Preserve the user's numbering rule: with a surface point the labels start at `A1`, without a surface point the first built point starts at `A2`.
+- [x] Remove any old drill-point texts for that same drill letter on `Z-DRILL-POINT` before writing the new ones.
+- [x] Rebuild Compass and refresh the packaged deployment DLL.
+
+## Review (Compass Build a Drill Surface Start and CORDS Labels, 2026-04-09)
+
+- Added a `Get Surface` action to the Build a Drill dialog plus a live summary/clear control, so the user can optionally pick a surface point from the drawing before building.
+- `BuildDrillDialogViewModel` now carries:
+- the selected drill letter derived from the drill's current order in the list,
+- the optional picked surface point,
+- a simple preview of the resulting CORDS tags.
+- `BuildDrillService` now:
+- prepends the optional surface point to the built path when one is picked,
+- writes the final path on `P-PDRILLPATH`,
+- refreshes the matching drill-point texts on `Z-DRILL-POINT`,
+- removes existing labels for that same drill letter on that specific layer before writing replacements.
+- Label numbering behavior now matches the user's rule:
+- with surface picked: `A1` = surface, then `A2`, `A3`, ...
+- without surface picked: first built point starts at `A2`.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Refreshed packaged DLL: `build/compass/single-dll/Compass.dll` (`2026-04-09 7:55:08 PM`, `3,840,000` bytes).
+
+# Follow-up (Compass Build a Drill Output Layer Rename, 2026-04-09)
+
+- [x] Update Build a Drill to emit the final path on `P-PDRILLPATH` instead of `P-DRILLPATH`.
+- [x] Rebuild Compass and refresh the packaged deployment DLL.
+- [x] Update the task notes so the documented output layer matches the live code.
+
+## Review (Compass Build a Drill Output Layer Rename, 2026-04-09)
+
+- User correction: the working output layer should be `P-PDRILLPATH`, not `P-DRILLPATH`.
+- Fix: `compass_program/src/Compass/Services/BuildDrillService.cs` now uses `P-PDRILLPATH` as the Build a Drill output layer constant.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Refreshed packaged DLL: `build/compass/single-dll/Compass.dll` (`2026-04-09 7:17:10 PM`, `3,834,368` bytes).
+
+# Follow-up (Compass Build a Drill ADE Point Shape Variants, 2026-04-09)
+
+- [x] Re-open the NAD27 Build a Drill failure after the user showed the command-line ADE expression still errored even with real-number literals.
+- [x] Strengthen the direct `Application.Invoke(...)` ADE call with additional point argument shapes before relying on the asynchronous command-line fallback.
+- [x] Refresh the packaged single-DLL drop after the rebuild so the deployment path matches the latest `bin` output.
+
+## Review (Compass Build a Drill ADE Point Shape Variants, 2026-04-09)
+
+- Live proof refinement: the user transcript proved two things at once:
+- the command-line ADE fallback was really executing in AutoCAD,
+- but it still errored, and the blank Lisp symbol result was also a reminder that `SendCommand` is asynchronous inside the still-running .NET command path.
+- Fix:
+- `compass_program/src/Compass/Services/BuildDrillService.cs` now tries three synchronous ADE point argument shapes through `Application.Invoke(...)` before falling back further:
+- `Point3d`,
+- `XYZ list`,
+- `XY list`.
+- This keeps the preferred path synchronous and gives the ADE bridge a better chance of matching the point representation AutoCAD Map expects in-process.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Refreshed packaged DLL: `build/compass/single-dll/Compass.dll` (`2026-04-09 7:12:46 PM`, `3,834,368` bytes).
+
+# Follow-up (Compass Build a Drill ADE Real Literal Fix, 2026-04-09)
+
+- [x] Re-open the command-line ADE fallback after the user provided the live AutoCAD command transcript.
+- [x] Fix the generated Lisp expression so whole-number coordinates are sent as real literals, not integers.
+- [x] Rebuild Compass and confirm the single-DLL deployment output refreshes.
+
+## Review (Compass Build a Drill ADE Real Literal Fix, 2026-04-09)
+
+- Live proof refinement: the user command transcript showed the fallback expression was really executing in AutoCAD, but it was sending `(list 384511 5681671)` into `ade_projptforward`. AutoCAD Map then reported `Invalid or missing point to be transformed`, which matches ADE rejecting integer literals for that point input even though the same numeric values work as reals in the user's LISP routine.
+- Fix:
+- `compass_program/src/Compass/Services/BuildDrillService.cs` now formats the command-line ADE point values with a dedicated real-literal helper, so whole-number coordinates are emitted as `384511.0` / `5681671.0` instead of integer atoms.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Refreshed single-DLL deployment output: `build/compass/single-dll/Compass.dll` (`2026-04-09 7:09:07 PM`, `3,833,856` bytes).
+- Remaining proof gap: one more live AutoCAD retest is still needed, but the command-line fallback is now sending the same real-number shape that the user's working LISP path expects.
+
+# Follow-up (Compass Build a Drill ADE Command-Line Fallback, 2026-04-09)
+
+- [x] Re-open the NAD27 Build a Drill failure after the new diagnostics proved `ade_projptforward` still returned `null` through `Application.Invoke(...)`.
+- [x] Add a second ADE fallback that runs the projection as a real command-line AutoLISP expression instead of relying only on `Application.Invoke(...)`.
+- [x] Read the command-line Lisp result back into .NET and parse the converted NAD83 coordinates.
+- [x] Rebuild Compass and refresh the single-DLL deployment output.
+
+## Review (Compass Build a Drill ADE Command-Line Fallback, 2026-04-09)
+
+- Live proof refinement: the user retest showed the new DLL was definitely loaded and narrowed the remaining issue to `ade_projptforward` specifically: `managed Map transformer could not be created; ADE ade_projptforward returned null`.
+- Root cause direction: Autodesk's own developer notes show that some `ade_*` functions can work when run as true AutoLISP/command-line code while still returning `null` through `.NET Application.Invoke(...)`. That lines up exactly with the user's LISP succeeding while the direct invoke path still failed on `ade_projptforward`.
+- Fix:
+- `compass_program/src/Compass/Services/BuildDrillService.cs` now keeps the existing invoke-based ADE path first for the cheap/synchronous case.
+- If that still fails, it falls back to a command-line AutoLISP expression sent through AutoCAD COM `SendCommand`, which:
+- runs `ade_projsetsrc`,
+- runs `ade_projsetdest`,
+- runs `ade_projptforward`,
+- writes the result into a unique Lisp symbol as `OK:x,y` or `ERR:...`,
+- then .NET reads that symbol back with `Document.GetLispSymbol(...)` and parses the NAD83 point.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Refreshed single-DLL deployment output: `build/compass/single-dll/Compass.dll` timestamp refreshed again on this rebuild.
+- Remaining proof gap: this still needs one more live AutoCAD retest to confirm the command-line ADE bridge closes the same gap your working LISP already proves in-session.
+
+# Follow-up (Compass Build a Drill ADE Truthiness and Lock Scope, 2026-04-09)
+
+- [x] Re-open the still-failing NAD27 Build a Drill path after the command-context shift did not change the live AutoCAD error.
+- [x] Remove the extra active-document lock around the command-owned Build a Drill execution path.
+- [x] Fix the ADE invoke success check so it accepts AutoLISP truthiness (`non-nil`), not only literal `T`.
+- [x] Add exact ADE stage diagnostics to the failure text/logging so the next live retest shows the real failing step instead of the same generic message.
+- [x] Rebuild Compass and refresh the single-DLL deployment output.
+
+## Review (Compass Build a Drill ADE Truthiness and Lock Scope, 2026-04-09)
+
+- Root cause refinement: even after moving Build a Drill into a real AutoCAD command, the service still wrapped the whole run in `document.LockDocument()`, which is not how the user's working LISP/ADE path executes. At the same time, the ADE fallback only treated a literal `T` return as success, but AutoLISP truth is any non-`nil` result. That meant an ADE call could succeed for the user's LISP yet still be treated as a failure by the DLL.
+- Fix:
+- `compass_program/src/Compass/Services/BuildDrillService.cs` no longer takes an extra active-document lock around command-owned Build a Drill execution.
+- The ADE fallback now treats any non-`nil` `Application.Invoke(...)` result as success for `ade_projsetsrc` / `ade_projsetdest`, which matches AutoLISP semantics instead of requiring literal `T`.
+- The NAD27 failure message now includes the exact failing stage and raw ADE return summary, so the next live AutoCAD retest will surface whether `ade_projsetsrc`, `ade_projsetdest`, or `ade_projptforward` is the remaining blocker if conversion still fails.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Refreshed single-DLL deployment output: `build/compass/single-dll/Compass.dll` (`2026-04-09 5:08:51 PM`, `3,831,296` bytes).
+- Remaining proof gap: this still needs the user's live AutoCAD retest, but the next failure (if any) should now report the real ADE step instead of repeating the generic "coordinate conversion is not available" message.
+
+# Follow-up (Compass Build a Drill NAD27 Map 2025 Lazy Resolution, 2026-04-09)
+
+- [x] Re-open the remaining NAD27 Map 2025 failure after the user confirmed new UI behavior was already present in AutoCAD.
+- [x] Keep the AutoCAD Map assembly resolver alive for the whole Compass session instead of only during the initial type probe.
+- [x] Preload the key 2025 coordinate-system assemblies used by the modern Map factory path.
+- [x] Rebuild Compass and confirm the single-DLL deployment output updates cleanly.
+
+## Review (Compass Build a Drill NAD27 Map 2025 Lazy Resolution, 2026-04-09)
+
+- Root cause refinement: the earlier Map 2025 patch broadened the assembly probe correctly, but the resolver only lived during the short assembly-scan window. The newer `Autodesk.Map.IM.CoordinateSystem.*` stack can lazy-load `AcMapSpatialReferenceMgd` and related siblings later when `CreateFromCode(...)` or transformation creation runs, so the modern path could still report "conversion is not available" even though the right factory type had already been found.
+- Fix:
+- `wls_program/src/WildlifeSweeps/CoordinateConverters.cs` now installs one process-wide Map assembly resolver the first time the shared transformer is used, instead of creating a temporary resolver scope that disappears before the lazy loads happen.
+- the resolver now searches both the known AutoCAD 2025 base folders and the requesting assembly's own location/parent folders, so `Map\bin` assemblies can pull sibling dependencies reliably.
+- added proactive preload ordering for the modern coordinate stack: `Autodesk.Map.IM.CoordinateSystem.API.dll`, `Autodesk.Map.IM.CoordinateSystem.SpatialReferenceApi.dll`, `Autodesk.Map.IM.CoordinateSystem.Factory.dll`, `AcMapSpatialReference.dll`, and `AcMapSpatialReferenceMgd.dll`.
+- also broadened the candidate name/file lists so the modern coordinate API assemblies are considered first-class probe targets instead of incidental dependencies.
+- second refinement after another live failure: the earlier resolver still did not search `Map\bin\GisPlatform` or `Map\bin\FDO`, which are part of the AutoCAD Map runtime layout on this machine.
+- added those directories to the managed assembly search path and added a second coordinate-transform fallback based on the older Autodesk/MapGuide `OSGeo.MapGuide.MgCoordinateSystemFactory` API surface, so the build no longer relies only on the newer `Autodesk.Map.IM.CoordinateSystem.*` stack.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Updated deployment output: `build/compass/single-dll/Compass.dll` timestamp refreshed again on this rebuild.
+- Remaining proof gap: I still need your live AutoCAD retest to prove the managed Map path now resolves cleanly inside the host process. The local build is clean, but the real closing proof is a fresh `NETLOAD` + NAD27 drill-point test in AutoCAD 2025 Map.
+
+# Follow-up (Compass Build a Drill ADE NAD27 Fallback, 2026-04-09)
+
+- [x] Stop assuming another managed Map assembly combination will fix the live AutoCAD host failure after repeated identical NAD27 errors.
+- [x] Add an ADE/LISP-backed fallback that mirrors the user's known-good AutoCAD Map projection engine.
+- [x] Rebuild Compass and refresh the single-DLL deployment output.
+
+## Review (Compass Build a Drill ADE NAD27 Fallback, 2026-04-09)
+
+- Root cause pivot: after the managed `CoordinateSystemFactory` and MapGuide fallback work still produced the exact same live error dialog, the reliable next proof boundary was the user's own statement that AutoLISP/ADE conversion already works in that AutoCAD Map session.
+- Fix:
+- `compass_program/src/Compass/Services/BuildDrillService.cs` now tries NAD27 conversion in this order:
+- shared managed Map transformer,
+- ADE/LISP fallback through AutoCAD's invoke surface.
+- The ADE fallback uses `Application.Invoke(...)` with:
+- `ade_errclear`
+- `ade_projsetsrc`
+- `ade_projsetdest`
+- `ade_projptforward`
+- so the Build a Drill NAD27 path can now ask AutoCAD Map to perform the same projection work the user's existing LISP routine already depends on.
+- The service now holds the active document lock across both point resolution and final polyline creation, so the invoke-backed conversion and the entity write happen in one document-owned flow.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Updated deployment output: `build/compass/single-dll/Compass.dll` timestamp refreshed again on this rebuild.
+- Remaining proof gap: this still needs one live AutoCAD retest to prove the host's ADE functions are invokable through `Application.Invoke(...)` in the same session where the user's LISP succeeds.
+
+# Follow-up (Compass Build a Drill Command Context, 2026-04-09)
+
+- [x] Re-check why a working LISP path could still fail from the Compass palette button.
+- [x] Move the actual Build a Drill execution off the WPF callback path and onto a real AutoCAD command context.
+- [x] Rebuild Compass and refresh the single-DLL deployment output.
+
+## Review (Compass Build a Drill Command Context, 2026-04-09)
+
+- Root cause refinement: the user's NAD27 LISP succeeds because it runs inside AutoCAD command context. Build a Drill was still being executed directly from the palette/viewmodel path, which is a different runtime context even inside the same session.
+- Fix:
+- added `compass_program/src/Compass/BuildDrillCommandBridge.cs`,
+- queues the selected `BuildDrillRequest`,
+- fires `COMPASSBUILDDRILL_EXECUTE` via `SendStringToExecute(...)`,
+- executes the real build inside a `[CommandMethod(..., CommandFlags.Modal)]`.
+- Updated `compass_program/src/Compass/ViewModels/DrillManagerViewModel.cs` so the Build a Drill dialog now queues the request and hands execution to that AutoCAD command instead of constructing/running the service directly from the WPF button handler.
+- Registered the new command class in `compass_program/src/Compass/CompassApplication.cs`.
+- This means the NAD27 conversion path, including the new ADE fallback, should now run under the same style of command context as the user's working LISP instead of under palette callback context.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Updated deployment output: `build/compass/single-dll/Compass.dll` timestamp refreshed again on this rebuild.
+- Remaining proof gap: this needs one live AutoCAD retest to confirm the command-context shift closes the gap in the same session where the LISP conversion already succeeds.
+
+# Follow-up (Compass Build a Drill Source Cascade, 2026-04-09)
+
+- [x] Add a convenience cascade so changing one point between `NAD83 UTMS` and `NAD27 UTMS` updates the coordinate-mode points below it.
+- [x] Keep `SECTION OFFSETS` rows manually controllable and out of the NAD83/NAD27 auto-swap behavior.
+- [x] Rebuild Compass and record the updated behavior in this file.
+
+## Review (Compass Build a Drill Source Cascade, 2026-04-09)
+
+- Updated the Build a Drill point viewmodel so when a point changes to `NAD83 UTMS` or `NAD27 UTMS`, the coordinate-mode points below it automatically switch to that same source.
+- The cascade intentionally skips any lower point already set to `SECTION OFFSETS`, so mixed workflows stay editable and a deliberate offset row is not overwritten by the convenience toggle.
+- Lower points can still be changed manually after the cascade; this is a one-time helper, not a lock.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Remaining warning is unchanged: the legacy `Table.GetCellExtents(...)` obsoletion in `compass_program/src/Compass/Services/DrillCadToolService.cs`.
+
+# Follow-up (Compass Build a Drill NAD27 Map 2025 Conversion, 2026-04-09)
+
+- [x] Inspect the current NAD27 conversion path and the locally installed AutoCAD Map assemblies to identify the runtime mismatch.
+- [x] Update the shared Map coordinate transformer to search the actual AutoCAD 2025 Map assemblies instead of only the older `AcMapMgd` assembly name.
+- [x] Rebuild Compass and record the conversion fix and remaining runtime proof gap.
+
+## Review (Compass Build a Drill NAD27 Map 2025 Conversion, 2026-04-09)
+
+- Root cause: the NAD27 path in `wls_program/src/WildlifeSweeps/CoordinateConverters.cs` only tried to load `AcMapMgd`. On this AutoCAD 2025 Map install, that assembly name/file is not present, so the managed probe failed even though the machine clearly has working Map/ADE conversion capability for the user's LISP routine.
+- Local install proof: the machine includes `C:\Program Files\Autodesk\AutoCAD 2025\Map\AcMapSpatialReferenceMgd.dll`, and a binary token scan showed it contains `CoordinateSystemFactory`.
+- Fix:
+- replaced the one-name `Assembly.Load("AcMapMgd")` probe with a broader factory search,
+- first checks already loaded AppDomain assemblies,
+- then tries candidate assembly names including `AcMapSpatialReferenceMgd`, `AcMapCoordsysCoreMgd`, `ManagedMapApi`, `Autodesk.Map.Platform`, `Autodesk.Gis.Map.ManagedADP`, and `Autodesk.Map.IM.CoordinateSystem.Factory`,
+- then tries explicit file loads from `AutoCADBaseDir`, `AutoCADBaseDir\Map`, `AutoCADBaseDir\bin`, and `AutoCADBaseDir\Map\bin`,
+- added a temporary assembly resolver so when a candidate Map assembly is loaded from file, its sibling dependencies can also be resolved from the AutoCAD `Map` folders instead of dying on first dependency load,
+- now supports both:
+- the older legacy Map factory pattern (`Autodesk.Gis.Map.Platform.CoordinateSystemFactory` / `CsCoordinateSystemFactory`),
+- and the modern AutoCAD 2025 coordinate API path via `Autodesk.Map.IM.CoordinateSystem.Factory.CoordinateSystemFactory`, `CoordinateSystems().CreateFromCode(...)`, and `Transformations().Create(...)`.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Remaining proof gap: I have not yet re-run the rebuilt `Compass.dll` inside the live AutoCAD session that showed the screenshot error, so the code-path fix is build-proven and assembly-surface-proven, but still needs your in-AutoCAD retest to close the loop.
+
+# Follow-up (Compass Build a Drill Shared Zone, 2026-04-09)
+
+- [x] Move the Build a Drill UTM zone input to one shared dialog-level selector instead of repeating it for every point.
+- [x] Keep the existing multi-point path build contract intact while feeding the shared zone into every point request.
+- [x] Rebuild Compass and record the updated behavior in this file.
+
+## Review (Compass Build a Drill Shared Zone, 2026-04-09)
+
+- Updated the Build a Drill dialog so `Zone` is chosen once at the top of the window and reused for every point in that drill path.
+- Removed the per-point zone selector from each point card to match the user's "same drawing, same zone" workflow.
+- Kept the existing request/service contract intact by applying the shared dialog-level zone when each `BuildDrillPointRequest` is created, so the build logic and NAD27 conversion path did not need a broader service rewrite.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Remaining warning is unchanged: the legacy `Table.GetCellExtents(...)` obsoletion in `compass_program/src/Compass/Services/DrillCadToolService.cs`.
+
+# Follow-up (Compass Single-DLL Packaging, 2026-04-09)
+
+- [x] Confirm how the legacy Compass build produced a mostly self-contained `Compass.dll` and choose the matching packaging approach for the AutoCAD 2025+ build.
+- [x] Reintroduce managed dependency embedding/merging for the Compass 2025 build without trying to embed AutoCAD host assemblies.
+- [x] Build Compass and verify the output folder no longer requires the loose plug-in-side dependency DLL set for `NETLOAD`.
+- [x] Record the packaging behavior, limits, and verification results in this file.
+
+## Review (Compass Single-DLL Packaging, 2026-04-09)
+
+- Root cause: the older Compass deployment looked like a single DLL because the legacy project used `Fody` + `Costura.Fody` to embed plug-in-side managed dependencies into `Compass.dll`. The first AutoCAD 2025+ integration had dropped those package references, so `net8.0-windows` was emitting the loose dependency set beside the DLL.
+- Fix:
+- re-added `Fody` and `Costura.Fody` package references to `compass_program/src/Compass/Compass.csproj`,
+- kept the existing `FodyWeavers.xml` Costura config in place,
+- left AutoCAD host references (`accoremgd`, `Acdbmgd`, `Acmgd`, `AdWindows`, optional `ManagedMapApi`) as external host-provided references,
+- tightened the post-build copy so `build/compass/net8.0-windows/` is cleaned and recopied from the current deployment artifact list instead of leaving stale loose DLLs from earlier builds,
+- added a dedicated single-file deployment drop at `build/compass/single-dll/Compass.dll`.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Main output folder after the packaging change: `compass_program/src/Compass/bin/x64/Release/net8.0-windows/` now contains only `Compass.dll`, `Compass.deps.json`, and `Compass.pdb`.
+- Clean deployment copy: `build/compass/net8.0-windows/` now also contains only `Compass.dll`, `Compass.deps.json`, and `Compass.pdb`.
+- Single-DLL deployment copy: `build/compass/single-dll/Compass.dll`
+- Embedded-resource proof: the built assembly contains Costura resources for the previously loose plug-in-side DLLs, including `EPPlus`, `Newtonsoft.Json`, `NLog`, and the supporting `Microsoft.Extensions.*` assemblies.
+- Remaining limit: this does not embed AutoCAD's own managed host DLLs. AutoCAD 2025+ still needs to provide those at runtime, which is the correct and intended plug-in model.
+- Remaining warning is unchanged: the legacy `Table.GetCellExtents(...)` obsoletion in `compass_program/src/Compass/Services/DrillCadToolService.cs`.
+
+# Follow-up (Compass Build a Drill, 2026-04-09)
+
+- [x] Confirm the existing Drill Manager insertion pattern and wire in a new `Build a Drill` command without changing `Complete CORDS`.
+- [x] Add a dedicated Build a Drill dialog that lets the user choose a drill name, point count (max 15), and per-point source mode (`NAD83 UTMS`, `NAD27 UTMS`, or `SECTION OFFSETS`).
+- [x] Implement per-point NAD83 direct input and NAD27 -> NAD83 conversion using AutoCAD Map/ManagedMap coordinate transformation logic.
+- [x] Implement per-point section-offset resolution from a specified ATS section with `NoS` / `SoN` and `WoE` / `EoW` inputs.
+- [x] Implement ATS-on section-boundary selection using ATS fabric layers, explicitly excluding `L-USEC3018`.
+- [x] Implement ATS-off section-boundary selection by finding the closest `L-SEC-HB` fabric within the ATS-section buffer.
+- [x] Draw the connected drill path on `P-PDRILLPATH` from the resolved point list and verify the Compass solution still builds cleanly.
+- [x] Record the final behavior, assumptions, and verification results in this file.
+
+## Review (Compass Build a Drill, 2026-04-09)
+
+- Added a new `Build a Drill` command to the Compass Drill Manager without modifying the existing `Complete CORDS` implementation or command path.
+- Added a dedicated Build a Drill dialog that:
+- lists the current drill names from the Drill Manager,
+- lets the user choose `2` to `15` points,
+- lets each point independently resolve from `NAD83 UTMS`, `NAD27 UTMS`, or `SECTION OFFSETS`.
+- NAD83/NAD27 points accept one shared dialog-level zone (`11` or `12`) plus per-point `X / Easting` and `Y / Northing`.
+- NAD27 points are converted to NAD83 with the shared AutoCAD Map/ManagedMap transformer helper already used elsewhere in the repo.
+- Section-offset points accept `Section`, `Township`, `Range`, `Meridian`, an `ATS fabric` checkbox, and `N of S` / `S of N` plus `E of W` / `W of E` distance inputs.
+- ATS-on section offsets resolve against the closest parallel ATS fabric boundaries from `L-USEC-0`, `L-USEC2012`, `L-USEC-2012`, or `L-SEC`, and intentionally never consider `L-USEC3018`.
+- ATS-off section offsets first anchor against the ATS/section-index frame, then look for the nearest parallel `L-SEC-HB` boundary within a `10 m` search distance for each side; if none is found, the ATS/section-index boundary is retained as a fallback instead of failing outright.
+- The final build output is one connected `Polyline` on layer `P-PDRILLPATH`, using the resolved point list in entry order. This satisfies the user's requested "line from point to point" output while supporting multi-point paths.
+- Shared ATS/WLS helpers were linked into Compass to avoid rewriting section-frame and coordinate-transform logic:
+- `src/AtsBackgroundBuilder/Sections/SectionIndexReader.cs`
+- `wls_program/src/WildlifeSweeps/AtsPolygonFrameBuilder.cs`
+- `wls_program/src/WildlifeSweeps/CoordinateConverters.cs`
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Output assembly: `compass_program/src/Compass/bin/x64/Release/net8.0-windows/Compass.dll`
+- Remaining warning is unchanged from earlier Compass work: the legacy `Table.GetCellExtents(...)` obsoletion in `compass_program/src/Compass/Services/DrillCadToolService.cs`.
+- Assumptions kept for this pass:
+- a connected `Polyline` on `P-PDRILLPATH` is an acceptable implementation of the requested point-to-point line output,
+- point order is exactly the order shown in the dialog,
+- section-offset fallback should prefer "closest usable fabric" over hard failure when no `L-SEC-HB` match is found nearby.
+
+# Follow-up (Compass Integration, 2026-04-09)
+
+- [x] Audit `C:\Users\Work Test 2\Desktop\COMPASS PROGRAMS` against this repo and choose the module-style integration shape.
+- [x] Import the Compass source into this repo without carrying over source-repo metadata, `bin/`, or `obj/`.
+- [x] Retarget Compass project plumbing to AutoCAD 2025-only and remove the legacy `net45`/2015 bundle path.
+- [x] Preserve the existing `Complete CORDS` function behavior during the integration pass.
+- [x] Update docs/ignore rules and verify the integrated Compass solution builds from this repo.
+
+## Review (Compass Integration, 2026-04-09)
+
+- Integrated `C:\Users\Work Test 2\Desktop\COMPASS PROGRAMS` as a standalone sibling module under `compass_program/`, matching the isolation style already used by `wls_program/`.
+- Imported the reusable repo content (`Compass.sln`, `.nuget/`, `lib/`, `src/`, `README.md`) and intentionally left behind source-repo metadata and build junk (`.git/`, `.vs/`, `bin/`, `obj/`, the loose ZIP archive).
+- Retargeted `compass_program/src/Compass/Compass.csproj` from `net48;net45` to a single `net8.0-windows` AutoCAD 2025+ build with `x64` platform settings, defaulting references to `C:\Program Files\Autodesk\AutoCAD 2025` while still honoring `ACAD_DIR` / `AUTOCAD_ROOT`.
+- Removed the legacy `net45` / Map3D 2015 bundle path from the in-repo Compass build plumbing and added a copy step to `build/compass/net8.0-windows/`.
+- Preserved the existing `Complete CORDS` workflow source behavior. The integration pass did not rewrite `DrillCadToolService.CompleteCords(...)`; changes were limited to module import, build targeting, docs, and one logging API modernization in `NLogLogger`.
+- Added/update docs for the new module in `compass_program/README.md`, `README.md`, and `compass_program/lib/AutoCAD2025/README.md`, and added a root ignore rule so local fallback AutoCAD DLLs under `compass_program/lib/AutoCAD2025/` do not show up as repo changes.
+- Verification:
+  - `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+  - Output assembly: `compass_program/src/Compass/bin/x64/Release/net8.0-windows/Compass.dll`
+  - Copied build output: `build/compass/net8.0-windows/`
+  - Remaining warning: one legacy AutoCAD API obsoletion in `compass_program/src/Compass/Services/DrillCadToolService.cs` (`Table.GetCellExtents(...)`), repeated once by the generated WPF temp project. I left that call untouched in this pass to avoid behavior drift inside the Drill Manager code path while preserving the user's requested `Complete CORDS` compatibility boundary.
+
+# Follow-up (Git Pull + Build, 2026-04-07)
+
+- [x] Review repo state and confirm a safe pull strategy with the current untracked `data/` outputs.
+- [x] Fast-forward local `main` to `origin/main` without disturbing existing local artifacts.
+- [x] Build `src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln` in `Release`.
+- [x] Build `wls_program/src/WildlifeSweeps/WildlifeSweeps.sln` in `Release`.
+- [x] Record build verification details and final status in this file.
+
+## Review (Git Pull + Build, 2026-04-07)
+
+- `git pull --ff-only origin main` fast-forwarded `main` from `b9e8917` to `bf4acd8`.
+- Existing untracked harness/output directories under `data/` remained untouched. The only temporary pull blocker was `tasks/todo.md`, which I resolved by removing my local plan stub, pulling, then reapplying this run entry on top of the updated upstream file.
+- `dotnet build "src/AtsBackgroundBuilder/AtsBackgroundBuilder.sln" -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed with `0 Warning(s)` and `0 Error(s)`. Key outputs:
+  - `src/AtsBackgroundBuilder/bin/x64/Release/net8.0-windows/AtsBackgroundBuilder.dll`
+  - `src/AtsBackgroundBuilder.DecisionTests/bin/Release/net8.0/AtsBackgroundBuilder.DecisionTests.dll`
+- Initial WLS solution build with `-p:Platform=x64` failed because `wls_program/src/WildlifeSweeps/WildlifeSweeps.sln` only defines `Release|Any CPU`.
+- Rerunning with `dotnet build "wls_program/src/WildlifeSweeps/WildlifeSweeps.sln" -c Release -p:Platform="Any CPU" -p:NuGetAudit=false /m:1 -v:minimal` passed with `0 Warning(s)` and `0 Error(s)`. Key output:
+  - `wls_program/src/WildlifeSweeps/bin/Release/net8.0-windows/WildlifeSweeps.dll`
+
 # Follow-up (59-19-5 Wrong Vertical Usec Span, 2026-04-02)
 
 - [x] Confirm the exact bad segment `519547.970,5991604.369 -> 519544.528,5992409.028` in the saved `59-19-5` harness outputs and identify its preserved final layer.

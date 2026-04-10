@@ -16,6 +16,7 @@ TestResults.xml
 # Build results
 bin/
 obj/
+compass_program/lib/AutoCAD2025/*.dll
 
 # Custom build output (your case: build/net8.0-windows/* contains copied AutoCAD DLLs)
 build/

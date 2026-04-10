@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage
+  SchemaVersion="1.0"
+  AppVersion="1.0.0.0"
+  ProductCode="{297EF123-3A5B-48F2-AA30-E86426A2BDA4}"
+  UpgradeCode="{EA2F1717-D2DE-4897-8062-F5F07BAAEFD1}"
+  Name="Compass Map 3D 2015"
+  Author="Compass"
+  Description="Compass plug-in bundle for AutoCAD Map 3D 2015">
+  <CompanyDetails Name="Compass" />
+  <Components>
+    <RuntimeRequirements OS="Win64" Platform="Map" SeriesMin="R20.0" SeriesMax="R20.0" />
+    <ComponentEntry
+      AppName="Compass"
+      AppDescription="Compass plug-in for AutoCAD Map 3D 2015"
+      AppType=".Net"
+      LoadReasons="LoadOnAutoCADStartup"
+      ModuleName="./Contents/Win64/Compass.dll">
+      <AssemblyMappings>
+        <AssemblyMapping Name="Compass" Path="./Contents/Win64/EPPlus.dll" />
+        <AssemblyMapping Name="Compass" Path="./Contents/Win64/Newtonsoft.Json.dll" />
+        <AssemblyMapping Name="Compass" Path="./Contents/Win64/NLog.dll" />
+      </AssemblyMappings>
+    </ComponentEntry>
+  </Components>
+</ApplicationPackage>

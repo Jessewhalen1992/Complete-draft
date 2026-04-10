@@ -1,0 +1,28 @@
+<UserControl x:Class="Compass.UI.ProfileManagerControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d"
+             d:DesignWidth="360"
+             d:DesignHeight="320">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="3D Profile Manager" FontSize="18" FontWeight="Bold" />
+            <TextBlock Text="Bridge integration point for the Profile-Xing-Gen workflow." FontSize="12" Foreground="Gray" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <Border Grid.Row="1" Padding="12" BorderThickness="1" BorderBrush="#FFE0E0E0" CornerRadius="4">
+            <TextBlock TextWrapping="Wrap">
+                This is a placeholder for the Profile-Xing-Gen integration. Hook your existing workflow here by loading the
+                required assemblies or invoking the necessary AutoCAD commands. The palette provides docking and snapping
+                behavior consistent with other modern AutoCAD palettes.
+            </TextBlock>
+        </Border>
+    </Grid>
+</UserControl>

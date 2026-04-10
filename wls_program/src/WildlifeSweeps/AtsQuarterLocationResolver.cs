@@ -60,17 +60,35 @@ namespace WildlifeSweeps
                 string location,
                 int lsd,
                 string quarterToken,
+                string section,
+                string township,
+                string range,
+                string meridian,
+                string metes,
+                string bounds,
                 IReadOnlyList<Point2d> quarterVertices)
             {
                 Location = location;
                 Lsd = lsd;
                 QuarterToken = quarterToken;
+                Section = section;
+                Township = township;
+                Range = range;
+                Meridian = meridian;
+                Metes = metes;
+                Bounds = bounds;
                 QuarterVertices = quarterVertices ?? Array.Empty<Point2d>();
             }
 
             public string Location { get; }
             public int Lsd { get; }
             public string QuarterToken { get; }
+            public string Section { get; }
+            public string Township { get; }
+            public string Range { get; }
+            public string Meridian { get; }
+            public string Metes { get; }
+            public string Bounds { get; }
             public IReadOnlyList<Point2d> QuarterVertices { get; }
         }
 
@@ -157,8 +175,19 @@ namespace WildlifeSweeps
 
             var quarter = ResolveQuarterBounds(best, point);
             var lsd = ResolveLsdNumber(best, point);
+            var locals = ResolveLocals(best, point);
             var location = $"{lsd}-{best.Section}-{best.Township}-{best.Range}-W{best.Meridian}";
-            match = new LsdMatch(location, lsd, quarter.Token, BuildQuarterVertices(best, quarter));
+            match = new LsdMatch(
+                location,
+                lsd,
+                quarter.Token,
+                best.Section,
+                best.Township,
+                best.Range,
+                best.Meridian,
+                locals.Metes,
+                locals.Bounds,
+                BuildQuarterVertices(best, quarter));
             return true;
         }
 
@@ -430,6 +459,35 @@ namespace WildlifeSweeps
             return LsdNumberingHelper.GetLsdNumber(row, col);
         }
 
+        private static LocalOffsets ResolveLocals(SectionSpatialFrame section, Point2d point)
+        {
+            var vector = point - section.SouthWest;
+            var easting = Math.Max(0.0, Math.Min(section.Width, vector.DotProduct(section.EastUnit) / section.EastUnit.Length));
+            var northing = Math.Max(0.0, Math.Min(section.Height, vector.DotProduct(section.NorthUnit) / section.NorthUnit.Length));
+
+            var distanceFromSouth = northing;
+            var distanceFromNorth = section.Height - northing;
+            var distanceFromWest = easting;
+            var distanceFromEast = section.Width - easting;
+
+            var metes = distanceFromSouth <= distanceFromNorth
+                ? FormatLocalOffset(distanceFromSouth, "N")
+                : FormatLocalOffset(distanceFromNorth, "S");
+
+            var bounds = distanceFromWest <= distanceFromEast
+                ? FormatLocalOffset(distanceFromWest, "E")
+                : FormatLocalOffset(distanceFromEast, "W");
+
+            return new LocalOffsets(metes, bounds);
+        }
+
+        private static string FormatLocalOffset(double distance, string direction)
+        {
+            return string.Create(
+                CultureInfo.InvariantCulture,
+                $"{distance:0.0} {direction}");
+        }
+
         private static IReadOnlyList<Point2d> BuildQuarterVertices(SectionSpatialFrame section, QuarterBounds quarter)
         {
             return new[]
@@ -492,6 +550,18 @@ namespace WildlifeSweeps
             public double UMax { get; }
             public double TMin { get; }
             public double TMax { get; }
+        }
+
+        private readonly struct LocalOffsets
+        {
+            public LocalOffsets(string metes, string bounds)
+            {
+                Metes = metes;
+                Bounds = bounds;
+            }
+
+            public string Metes { get; }
+            public string Bounds { get; }
         }
 
         private readonly struct SectionExtents
