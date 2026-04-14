@@ -3816,7 +3816,9 @@ namespace AtsBackgroundBuilder
             {
                 if (tr.GetObject(label.Id, OpenMode.ForWrite) is AlignedDimension alignedDimension)
                 {
+                    var placement = CaptureAlignedDimensionPlacement(alignedDimension);
                     alignedDimension.DimensionText = updated;
+                    RestoreAlignedDimensionPlacement(alignedDimension, placement);
                     label.RawContents = updated;
                     label.Owner = expectedOwner.Trim();
                     return true;
@@ -3875,7 +3877,9 @@ namespace AtsBackgroundBuilder
             {
                 if (tr.GetObject(label.Id, OpenMode.ForWrite) is AlignedDimension alignedDimension)
                 {
+                    var placement = CaptureAlignedDimensionPlacement(alignedDimension);
                     alignedDimension.DimensionText = updated;
+                    RestoreAlignedDimensionPlacement(alignedDimension, placement);
                     label.RawContents = updated;
                     return true;
                 }

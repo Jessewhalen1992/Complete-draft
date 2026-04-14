@@ -1512,12 +1512,17 @@ namespace AtsBackgroundBuilder
         {
             var quarters = quarterLabelContext.Quarters;
             var existingDispNumsByQuarter = quarterLabelContext.ExistingDispNumsByQuarter;
+            var createdAlignedDimensionIds = new HashSet<ObjectId>();
 
             if (executionPlan.ShouldPlaceLabelsBeforePlsr)
             {
                 setExitStage("placing_labels");
                 var placer = new LabelPlacer(database, editor, layerManager, config, logger, useAlignedDimensions: true);
                 var placement = placer.PlaceLabels(quarters, dispositions, currentClient, existingDispNumsByQuarter);
+                foreach (var id in placement.CreatedAlignedDimensionIds)
+                {
+                    createdAlignedDimensionIds.Add(id);
+                }
 
                 result.LabelsPlaced = placement.LabelsPlaced;
                 result.SkippedNoLayerMapping += placement.SkippedNoLayerMapping;
@@ -1561,7 +1566,14 @@ namespace AtsBackgroundBuilder
             }
 
             setExitStage("aligned_dimension_text_finalize");
-            LabelPlacer.AlignRenderedAlignedDimensionTextsToLeaders(database, logger);
+            if (createdAlignedDimensionIds.Count > 0)
+            {
+                LabelPlacer.AlignRenderedAlignedDimensionTextsToLeaders(database, logger, createdAlignedDimensionIds);
+            }
+            else
+            {
+                logger.WriteLine("Aligned dimension finalize pass skipped: no aligned-dimension labels were created in this run.");
+            }
 
             // Final output-only normalization: keep the full 0/20/30 subtype logic during build,
             // then collapse visible USEC result linework to the base layer after all logic is done.

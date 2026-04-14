@@ -9041,3 +9041,415 @@ Review 2026-04-10 (Compass native ATS LOCATION formatting should match archive o
 - `compass_program\src\Compass\bin\x64\Release\net8.0-windows\Compass.dll`
 - `build\compass\single-dll\Compass.dll` (`2026-04-10 3:09:12 PM`, `3,862,528` bytes)
 - Build result: `0` errors. The only remaining warnings are the same two pre-existing obsolete `Table.GetCellExtents(...)` warnings in `DrillCadToolService.cs`.
+
+## 2026-04-13 - Compass Build a Drill should use hard ATS section boundaries only
+
+- [x] Re-check the Build a Drill section-offset boundary-selection contract after the user correction.
+- [x] Update the live boundary selection so section offsets use only hard ATS boundaries (`L-USEC-0` / `L-USEC-2012`) with section-index fallback, never `L-USEC3018`, `L-SEC`, or `L-SEC-HB`.
+- [x] Rebuild `compass_program/Compass.sln` in `Release`.
+- [x] Record the fix, verification result, and any remaining proof gap in this review section.
+
+Review 2026-04-13 (Compass Build a Drill should use hard ATS section boundaries only):
+- User correction: Build a Drill was not using the correct live section lines. For section offsets, the authoritative live boundaries are the hard ATS lines only: the `0` line or the `20.12` line, and never the `30.18` line.
+- Root cause in the first pass: the implementation and notes still allowed non-hard boundary families into the workflow. ATS-on mode considered plain `L-SEC`, and ATS-off mode switched over to `L-SEC-HB`, which no longer matches the corrected contract for drill building.
+- Fix:
+- `compass_program\src\Compass\Services\BuildDrillService.cs` now restricts live section-offset boundary selection to `L-USEC-0`, `L-USEC2012`, and `L-USEC-2012` only.
+- When the live hard boundaries are unavailable, Build a Drill now falls back to the section-index frame instead of hopping to `L-SEC-HB`.
+- The section-offset UI label now says `Use ATS hard boundaries` so the live/fallback behavior is clearer.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Refreshed outputs:
+- `compass_program\src\Compass\bin\x64\Release\net8.0-windows\Compass.dll` (`2026-04-13 11:49:35 AM`, `3,862,528` bytes)
+- `build\compass\single-dll\Compass.dll` (`2026-04-13 11:49:35 AM`, `3,862,528` bytes)
+- Build result: `0` errors. The same two pre-existing obsolete `Table.GetCellExtents(...)` warnings remain in `compass_program\src\Compass\Services\DrillCadToolService.cs`.
+- Remaining proof gap: I have not live-run Build a Drill inside AutoCAD from this environment, so the final behavioral proof is still your in-drawing retest with the refreshed DLL.
+
+## 2026-04-13 - Compass Build a Drill must derive hard boundaries from ATS build rules
+
+- [x] Re-open the Build a Drill hard-boundary fix after the live retest showed it was still falling back to the raw section-index box.
+- [x] Replace the ATS-hard-boundary fallback so it derives 0/20.12 lines from a scratch ATS section build instead of using original section coordinates.
+- [x] Keep section-index-only behavior only for the explicit non-ATS path.
+- [x] Rebuild `compass_program/Compass.sln` in `Release`.
+- [x] Record the corrected behavior, verification result, and remaining proof gap in this review section.
+
+Review 2026-04-13 (Compass Build a Drill must derive hard boundaries from ATS build rules):
+- User correction: the prior patch was still wrong because `section-index fallback` means Build a Drill is measuring from the original section box, and for interior drill points that box cannot tell which real 20.12 hard boundary ATS would build. The correct behavior is to run the same section-building rules ATS uses and derive the hard lines from that result.
+- Root cause in the second pass: even after removing `L-SEC-HB`, ATS-hard-boundary mode still allowed a fallback to the raw section-index frame when the live drawing did not already contain matching `L-USEC-0` / `L-USEC-2012` geometry.
+- Fix:
+- `compass_program\src\Compass\Services\BuildDrillService.cs` now keeps section-index geometry only for the explicit non-ATS path.
+- When `Use ATS hard boundaries` is enabled, Build a Drill now:
+- first uses the live `L-USEC-0` / `L-USEC2012` / `L-USEC-2012` lines if all four sides are present,
+- otherwise opens a file-backed scratch drawing, removes existing ATS helper linework, reflects into `AtsBackgroundBuilder.Plugin.DrawSectionsFromRequests(...)`, and harvests the generated hard boundary ids from the ATS road-allowance pipeline,
+- then resolves the four section boundaries from those ATS-generated `0` / `20.12` lines.
+- If that ATS derivation still cannot produce a full hard-boundary set, Build a Drill now fails instead of silently drawing from the original section box.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Refreshed outputs:
+- `compass_program\src\Compass\bin\x64\Release\net8.0-windows\Compass.dll` (`2026-04-13 12:01:43 PM`, `3,872,768` bytes)
+- `build\compass\single-dll\Compass.dll` (`2026-04-13 12:01:43 PM`, `3,872,768` bytes)
+- Build result: `0` errors. The same two pre-existing obsolete `Table.GetCellExtents(...)` warnings remain in `compass_program\src\Compass\Services\DrillCadToolService.cs`.
+- Remaining proof gap: I still cannot execute the live AutoCAD Build a Drill flow from this environment, so the closing proof is your next in-drawing retest with this refreshed DLL. The important expected behavior change is that ATS mode should now report `live hard ATS boundaries` or `ATS-built hard boundaries`; it should no longer report `section-index fallback`.
+
+## 2026-04-13 - Compass Build a Drill must resolve ATS hard boundaries per point probe
+
+- [x] Re-open the ATS hard-boundary resolver after the scratch build proved candidate segments exist but the whole-side boundary collapse still failed.
+- [x] Replace the rigid `BoundarySet` harvest with point-specific probe resolution against ATS-generated `L-USEC-0` / `L-USEC2012` / `L-USEC-2012` candidate segments.
+- [x] Rebuild `compass_program/Compass.sln` in `Release`.
+- [x] Record the final resolver behavior, verification result, and remaining proof gap in this review section.
+
+Review 2026-04-13 (Compass Build a Drill must resolve ATS hard boundaries per point probe):
+- User correction: the ATS scratch build was already producing candidate hard-boundary segments, but Build a Drill still failed because it was trying to collapse those generated pieces into one perfect north/south/east/west boundary set for the whole section.
+- Root cause in the third pass: that whole-side collapse assumption is too rigid for ATS-generated `0` / `20.12` geometry. A valid hard boundary can be split into multiple segments, so requiring one section-wide line per side throws false failures even when the right ATS-built pieces exist.
+- Fix:
+- `compass_program\src\Compass\Services\BuildDrillService.cs` now caches ATS hard-boundary candidate segments instead of a pre-collapsed `BoundarySet`.
+- The resolver now builds the provisional section-index point, fires a probe through that location for each side, and chooses the nearest ATS hard-boundary segment that actually crosses that probe on the correct side of the point.
+- This keeps ATS mode anchored to ATS-built `L-USEC-0` / `L-USEC2012` / `L-USEC-2012` geometry while allowing split hard-boundary segments to resolve correctly.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Refreshed outputs:
+- `compass_program\src\Compass\bin\x64\Release\net8.0-windows\Compass.dll` (`2026-04-13 2:53:57 PM`, `3,875,840` bytes)
+- `build\compass\single-dll\Compass.dll` (`2026-04-13 2:53:57 PM`, `3,875,840` bytes)
+- Build result: `0` errors. The same two pre-existing obsolete `Table.GetCellExtents(...)` warnings remain in `compass_program\src\Compass\Services\DrillCadToolService.cs`.
+- Remaining proof gap: I still cannot execute the live AutoCAD Build a Drill flow from this environment, so the closing proof is your next in-drawing retest with the refreshed DLL. The expected behavior change is that ATS mode should now succeed from split hard-boundary candidates instead of failing with `did not produce a full set` just because the 20.12 line is segmented.
+
+## 2026-04-13 - Compass Build a Drill needs a headless text-output harness
+
+- [x] Inspect the existing Compass Build a Drill command path and repo harness patterns for a clean headless entry point.
+- [x] Add a non-UI Build a Drill command path that can read a request file and write text/JSON resolution output without opening the Compass palette.
+- [x] Add a PowerShell harness that drives the new command through `accoreconsole` for repeatable text-output runs.
+- [x] Rebuild Compass and verify the headless path with a smoke run.
+- [x] Record the new headless workflow and verification result in this review section.
+
+Review 2026-04-13 (Compass Build a Drill needs a headless text-output harness):
+- User request: add a headless Build a Drill run that can output text results so ATS boundary debugging does not depend on modal dialogs and screenshots.
+- Fix:
+- `compass_program\src\Compass\Services\BuildDrillService.cs` now exposes a reusable execution path that can resolve the request with or without drawing geometry, so the interactive UI and the headless command share the same point-resolution logic.
+- `compass_program\src\Compass\BuildDrillCommandBridge.cs` now includes `COMPASSBUILDDRILL_HEADLESS`, which reads a request JSON file from environment variables and writes both text and JSON reports with the resolved point coordinates and notes.
+- `compass_program\src\Compass\CompassApplication.cs` now skips palette initialization in headless mode so the same Compass DLL can be `NETLOAD`ed into a non-UI host.
+- `scripts\compass_builddrill_harness.ps1` now drives the new command through `accoreconsole`, captures stdout/stderr, and emits `builddrill-report.txt`, `builddrill-report.json`, and `summary.json`.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Smoke request: a simple two-point NAD83 request in `.artifacts\compass-builddrill-smoke\request.json`.
+- Smoke run: `powershell -ExecutionPolicy Bypass -File .\scripts\compass_builddrill_harness.ps1 -DwgPath .\data\twp59-19-5-all-sections-source.dwg -RequestPath .\.artifacts\compass-builddrill-smoke\request.json -OutputDir .\.artifacts\compass-builddrill-smoke\run4`
+- Smoke result: the run wrote a successful text report and JSON report with the resolved point coordinates in `.artifacts\compass-builddrill-smoke\run4\artifacts\`.
+- Remaining caveat: in this environment `accoreconsole` still returned exit code `-1073741819` after the report was already written successfully, so for now the report files are the trustworthy completion signal and the host exit code is still a follow-up item if we need a perfectly clean automation signal.
+
+## 2026-04-13 - Verify Build a Drill headless results for 15-64-3-W6 and 22-64-3-W6
+
+- [x] Create a headless request JSON for the two user-specified ATS section-offset points.
+- [x] Run the Compass headless Build a Drill harness and capture the text/JSON output.
+- [x] Compare the resolved coordinates against the user's expected targets and record the result in this review section.
+
+Review 2026-04-13 (Verify Build a Drill headless results for 15-64-3-W6 and 22-64-3-W6):
+- User verification target:
+- `200 N of S and 200 E of W 15-64-3-W6` should land at `411050.726, 6043647.517`
+- `200 S of N and 200 E of W 22-64-3-W6` should land at `411105.674, 6046464.039`
+- Headless ATS run:
+- Request file: `.artifacts\compass-builddrill-usercase\request.json`
+- Command: `powershell -ExecutionPolicy Bypass -File .\scripts\compass_builddrill_harness.ps1 -DwgPath .\data\twp59-19-5-all-sections-source.dwg -RequestPath .\.artifacts\compass-builddrill-usercase\request.json -OutputDir .\.artifacts\compass-builddrill-usercase\run`
+- ATS result: failed on point 1 with `Could not find a north hard ATS boundary crossing the requested probe line (crossing candidates: 1, total candidates: 12).`
+- Report outputs:
+- `.artifacts\compass-builddrill-usercase\run\artifacts\builddrill-report.txt`
+- `.artifacts\compass-builddrill-usercase\run\artifacts\builddrill-report.json`
+- Section-index control run:
+- Request file: `.artifacts\compass-builddrill-usercase\request-section-index.json`
+- Command: `powershell -ExecutionPolicy Bypass -File .\scripts\compass_builddrill_harness.ps1 -DwgPath .\data\twp59-19-5-all-sections-source.dwg -RequestPath .\.artifacts\compass-builddrill-usercase\request-section-index.json -OutputDir .\.artifacts\compass-builddrill-usercase\run-section-index`
+- Control result:
+- Point 1 resolved to `411061.017, 6043657.368`
+- Point 2 resolved to `411116.084, 6046463.842`
+- Delta from expected:
+- Point 1: `+10.291 E`, `+9.851 N`, total error `14.246 m`
+- Point 2: `+10.410 E`, `-0.197 N`, total error `10.412 m`
+- Conclusion: the headless harness reproduces the ATS bug cleanly, and the section-index control remains materially wrong versus the expected ATS-built targets, so the remaining issue is still in hard-boundary candidate side selection for this township/section pair rather than in the harness itself.
+
+## 2026-04-13 - Fix Build a Drill ATS side ownership and exact offset solve
+
+- [x] Re-run the exact headless usercase after the side-dependency fix and capture which ATS layers each point is actually using.
+- [x] Confirm whether the remaining miss is a wrong `0` vs `20.12` side choice, a math error after side selection, or both.
+- [x] Update `compass_program\src\Compass\Services\BuildDrillService.cs` so ATS probe selection uses side-aware hard-boundary layer intent instead of nearest-crossing-only scoring.
+- [x] Replace the provisional-point coordinate mix with an exact intersection of the selected ATS offset lines so skewed west/north boundaries resolve to the true point.
+- [x] Rebuild `compass_program/Compass.sln` in `Release`, rerun the exact headless usercase, and record the coordinate deltas here.
+
+Review 2026-04-13 (Fix Build a Drill ATS side ownership and exact offset solve):
+- Re-run status before the next patch:
+- Command: `powershell -ExecutionPolicy Bypass -File .\scripts\compass_builddrill_harness.ps1 -DwgPath .\data\twp59-19-5-all-sections-source.dwg -RequestPath .\.artifacts\compass-builddrill-usercase\request.json -OutputDir .\.artifacts\compass-builddrill-usercase\run-after-detail`
+- Point 1 now resolves to `411050.724, 6043647.517`, which is effectively on target.
+- Point 2 still resolves to `411106.072, 6046484.144`, which is about `+0.398 E` and `+20.105 N` from the expected `411105.674, 6046464.039`.
+- The new headless detail text shows:
+- Point 1: `S:L-USEC2012, W:L-USEC2012`
+- Point 2: `N:L-USEC2012, W:L-USEC2012`
+- Root cause direction before the next patch:
+- Point 2 proves the north-side resolver is still choosing the wrong hard line for this section; the expected target is consistent with the north `0` line, not the north `20.12` line.
+- The remaining `0.398 m` easting miss is also a clue that the current solver still mixes provisional probe intersections with frame coordinates, which can drift on skewed ATS side segments even after the right layers are chosen.
+- Final fix:
+- `compass_program\src\Compass\Services\BuildDrillService.cs` now resolves the final drill point by intersecting the two selected offset ATS boundary lines directly, instead of mixing provisional probe hits back into section-frame coordinates.
+- The north/east selector can now treat the section-index outer edge as a synthetic `0` hard-boundary candidate (`SECTION-INDEX-0`) while west/south continue to rely on ATS-built hard-boundary geometry for the inset choice.
+- Final verification:
+- Command: `powershell -ExecutionPolicy Bypass -File .\scripts\compass_builddrill_harness.ps1 -DwgPath .\data\twp59-19-5-all-sections-source.dwg -RequestPath .\.artifacts\compass-builddrill-usercase\request.json -OutputDir .\.artifacts\compass-builddrill-usercase\run-after-outerzero`
+- Final result:
+- Point 1 resolved to `411050.726454, 6043647.517158` from `S:L-USEC2012, W:L-USEC2012`
+- Point 2 resolved to `411105.674650, 6046464.047316` from `N:SECTION-INDEX-0, W:L-USEC2012`
+- Delta from expected:
+- Point 1: `+0.000454 E`, `+0.000158 N`, total error `0.000480 m`
+- Point 2: `+0.000650 E`, `+0.008316 N`, total error `0.008342 m`
+- Conclusion: the headless replay now matches the user targets to within about `8 mm`, and the resolved side sources show the intended mixed hard-boundary behavior: ATS `20.12` on the west/south sides, section-index `0` where the outer north hard line is the correct owner.
+
+## 2026-04-13 - Add Build a Drill CSF sync and UTM confirmation
+
+- [x] Add a Combined Scale Factor field to Build a Drill point entry, keep it shared/synced across all points, and validate it for section-offset requests.
+- [x] Apply inverse CSF scaling (`1 / CSF`) to section-offset distances before Build a Drill resolves ATS or section-index offset points.
+- [x] Add a quick `ARE YOU IN UTM?` confirmation before the Build a Drill dialog opens.
+- [x] Rebuild `compass_program/Compass.sln` in `Release` and verify the Build a Drill request flow still works, including backward-compatible headless requests.
+
+Review 2026-04-13 (Add Build a Drill CSF sync and UTM confirmation):
+- User addition after the ATS fix: Build a Drill section offsets need a Combined Scale Factor input like `0.999123`, and the actual offset distances must use the inverse multiplier (`1 / CSF`).
+- UI behavior requested: each point should show the CSF field, but changing one should update all of them automatically.
+- Workflow guardrail requested: show a quick `ARE YOU IN UTM?` confirmation before the user even enters the Build a Drill dialog.
+- Added a per-point `Combined scale factor` field in the dialog, synchronized across all points, with positive/non-zero validation for section-offset rows.
+- Build a Drill now applies `distance / CSF` before ATS or section-index boundary resolution, so the actual geometry offsets use the inverse combined scale factor.
+- Added a blocking `ARE YOU IN UTM?` yes/no confirmation before the Build a Drill dialog opens.
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed after the changes.
+- Headless verification confirmed backward compatibility with the existing request payload (`CSF` omitted defaults to `1.0`) and confirmed a `0.999123` request shifts the computed points as expected.
+
+## 2026-04-13 - Build user-provided 10-drill ATS batch
+
+- [x] Translate the six screenshots into concrete Build a Drill requests for drills 1-10, carrying the shared `CombinedScaleFactor = 0.999463310`.
+- [x] Verify the available headless host drawing can resolve the `62-20W5` / `62-21W5` / `63-20W5` / `63-21W5` ATS sections.
+- [x] Run the 10 drill builds, preserve the generated DWG output, and provide the artifact path back to the user.
+
+Review 2026-04-13 (Build user-provided 10-drill ATS batch):
+- User request: build ten drills from the supplied screenshot tables, using the shared CSF `0.999463310`, and return a DWG or DXF result.
+- Planned interpretation unless the run proves otherwise:
+- The first screenshot is point 1 for drills 1-10 in row order.
+- The second screenshot supplies point 2 for drills 1 and 10.
+- The third screenshot supplies point 3 for drills 1 and 10.
+- The fourth screenshot supplies point 4 for drill 1.
+- The fifth screenshot supplies point 5 for drill 1.
+- The sixth screenshot supplies the final point for drills 1-10 in row order.
+- Verification:
+- A proof run confirmed the existing headless host drawing could resolve `30-62-20-W5` / `36-62-21-W5` using the new CSF math and `CreateGeometry = true`.
+- The first full batch exposed a real ATS resolver gap at `5-63-20-W5`: south/west sides still required a `20.12` crossing even when only a valid `0` boundary existed.
+- `BuildDrillService` was updated so all four sides can consider synthetic `SECTION-INDEX-0` candidates while still keeping south/west biased toward `20.12` and north/east biased toward `0`.
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed after the resolver fix.
+- The rerun batch succeeded for all ten drills: `DRILL_1` (6 points), `DRILL_2`-`DRILL_9` (2 points each), and `DRILL_10` (4 points).
+- Final DWG artifact: `.artifacts\compass-builddrill-10drills-fixed\artifacts\builddrill-10-drills.dwg`
+- Supporting artifacts:
+- Request JSONs: `.artifacts\compass-builddrill-10drills-fixed\requests\`
+- Per-drill reports and working DWGs: `.artifacts\compass-builddrill-10drills-fixed\run-*\`
+- Batch summary: `.artifacts\compass-builddrill-10drills-fixed\artifacts\drill-batch-summary.json`
+- Assumption carried into the run: the separate point-4 screenshot for `DRILL_1` duplicates point 3 exactly (`270 W of E`, `150 S of N`, `31-62-20-W5`), so the built path contains the same waypoint twice.
+
+## 2026-04-13 - Fix headless Build a Drill DWG persistence
+
+- [x] Reproduce why the delivered batch DWG showed only the original section fabric and no drill geometry.
+- [x] Move headless geometry persistence into the plugin path so runs emit a fresh saved DWG instead of relying on `QUIT`/`QSAVE` against the temporary host file.
+- [x] Regenerate the 10-drill batch and verify the corrected final DWG contains the expected drill path and point entities.
+
+Review 2026-04-13 (Fix headless Build a Drill DWG persistence):
+- User correction: the previously delivered DWG opened with only sections visible and no drill geometry.
+- Root cause: the original harness relied on quitting the temporary working drawing, and the command script answered `Y` to `Really want to discard all changes to drawing?`, so the report reflected in-memory geometry but the DWG on disk stayed unchanged. A later `QSAVE` attempt also failed because the host drawing was an older DWG flavor with AEC objects, which AutoCAD refused to save in place as that older format.
+- Fix:
+- `compass_program\src\Compass\BuildDrillCommandBridge.cs` now accepts `COMPASS_BUILDDRILL_SAVED_DRAWING_PATH` and writes a fresh output DWG directly from the database in current format during successful headless geometry runs.
+- `scripts\compass_builddrill_harness.ps1` now passes that saved-drawing path through the environment and reports it in `summary.json`.
+- Verification:
+- Proof run saved `builddrill-output.dwg` and a follow-up headless query confirmed `P-PDRILLPATH_COUNT=1` and `Z-DRILL-POINT_COUNT=2`.
+- Regenerated batch artifact: `.artifacts\compass-builddrill-10drills-saved\artifacts\builddrill-10-drills.dwg`
+- Final integrity query against that artifact confirmed `P-PDRILLPATH_COUNT=10` and `Z-DRILL-POINT_COUNT=26`.
+
+## 2026-04-13 - Correct Build a Drill CSF direction and regenerate DP2 batch
+
+- [x] Compare the original workbook against the previously used screenshot-derived drill requests and note any mismatches.
+- [x] Change Build a Drill CSF handling from inverse scaling to direct multiplication (`distance * CSF`) and update any related UI/help text.
+- [x] Rebuild and regenerate the saved 10-drill DWG with the corrected CSF/input mapping, then verify the output drawing contains the drill entities.
+
+Review 2026-04-13 (Correct Build a Drill CSF direction and regenerate DP2 batch):
+- User correction: the Combined Scale Factor should scale offsets as `offset * CSF`, not `offset / CSF`.
+- User also supplied the original workbook `04-30-62-20W5 Coordinates and Key tops for DP2.xlsx` to compare against the earlier manually transcribed drill list before regenerating the DWG.
+- Workbook comparison result:
+- The screenshot-derived batch mostly matched the workbook, but `DRILL_1` waypoint 2 was wrong in the earlier batch. The workbook shows `270 W of E`, `150 N of S`, `Sec 31-62-20W5`, while the earlier request incorrectly duplicated the later `150 S of N` waypoint.
+- Fix:
+- `compass_program\src\Compass\Services\BuildDrillService.cs` now applies CSF as `distance * combinedScaleFactor`.
+- `compass_program\src\Compass\UI\BuildDrillWindow.xaml` now tells the user `Section offsets use offset * CSF.`
+- Regeneration path:
+- Rebuilt Compass with `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal`.
+- Recreated all ten request JSON files directly from the workbook heel/waypoint/BH columns instead of relying on screenshot transcription.
+- Regenerated saved artifact: `.artifacts\compass-builddrill-10drills-csf-corrected\artifacts\builddrill-10-drills-csf-corrected.dwg`
+- Verification:
+- Final integrity query against the regenerated DWG confirmed `P-PDRILLPATH_COUNT=10` and `Z-DRILL-POINT_COUNT=26`.
+- Supporting files:
+- Coordinate summary: `.artifacts\compass-builddrill-10drills-csf-corrected\artifacts\drill-batch-coordinates.txt`
+- Batch manifest: `.artifacts\compass-builddrill-10drills-csf-corrected\artifacts\drill-batch-summary.json`
+
+## 2026-04-13 - Rerun DP2 batch on deployed autoload DLL
+
+- [x] Regenerate the DP2 batch using the deployed `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` so the run is definitely on the current autoloaded build.
+- [x] Keep the circled/crossed-out ICP coordinate block out of the request generation and continue using only heel/waypoint/BH offset columns from the workbook.
+- [x] Verify the regenerated saved DWG still contains the full drill geometry and return the refreshed artifact path.
+
+Review 2026-04-13 (Rerun DP2 batch on deployed autoload DLL):
+- User concern: earlier headless runs may have been executing against the stale autoloaded DLL even though the workspace build had been updated.
+- User also clarified the circled/crossed-out ICP points should be ignored.
+- Deployment check:
+- `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` was stale at first (`2026-04-13 14:53:57`, SHA256 `1915E13933BC5EB475979920BE19AE5139AF78C1FDD560203EAB6D67FAA07347`).
+- It was replaced with the current build (`2026-04-13 16:15:56`, SHA256 `00D4C6AFB20DFFFB14FD87945F41ACA3A0886C83E18E68A8926EC30C2A502070`).
+- Regeneration path:
+- Recreated the request JSONs from the workbook again, explicitly ignoring Surface and ICP coordinate blocks and using only Heel / Way Point 1-4 / BH offsets.
+- Reran the full batch with `-PluginDllPath C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll`.
+- Final artifact: `.artifacts\compass-builddrill-10drills-deployed-rerun\artifacts\builddrill-10-drills-deployed-rerun.dwg`
+- Verification:
+- Final integrity query against that DWG confirmed `P-PDRILLPATH_COUNT=10` and `Z-DRILL-POINT_COUNT=26`.
+- Coordinate summary: `.artifacts\compass-builddrill-10drills-deployed-rerun\artifacts\drill-batch-coordinates.txt`
+
+## 2026-04-14 - Use correction ATS boundaries for Build a Drill correction-line offsets
+
+- [x] Reproduce the correction-line boundary-family mismatch and confirm `L-USEC-C-0` is present in the ATS candidate pool for the affected section side.
+- [x] Update Build a Drill boundary normalization/prioritization so correction-line offsets can resolve from `L-USEC-C-0` instead of skipping it.
+- [x] Rebuild Compass and run a focused proof that the affected correction-line side reports `L-USEC-C-0` in the resolution detail.
+
+Review 2026-04-14 (Use correction ATS boundaries for Build a Drill correction-line offsets):
+- User correction: when offsetting from a correction line, Build a Drill must use `L-USEC-C-0` linework instead of drifting onto the ordinary hard-boundary family.
+- Root cause:
+- `BuildDrillService` already preserved `L-USEC-C-0` in the ATS scratch isolation layers, but the boundary normalizer only admitted ordinary `L-USEC-0` and `20.12` hard layers.
+- Because `L-USEC-C-0` never made it through `IsHardBoundaryLayer`, correction-side probe resolution could not select the correction zero boundary even when ATS had built it.
+- Fix:
+- Added `L-USEC-C-0` to the recognized hard-boundary family and gave it higher selection priority than ordinary `L-USEC-0` / `20.12` when a correction-side candidate is present.
+- Deployment:
+- Rebuilt `compass_program\\Compass.sln` in `Release`, copied the refreshed `Compass.dll` to both `build\\compass\\single-dll\\Compass.dll` and `C:\\AUTOCAD-SETUP CG\\CG_LISP\\Compass.dll`.
+- Verification:
+- Focused headless proof request on `Sec 1-59-19-W5` with `100 N of S / 100 E of W` and `200 N of S / 200 E of W` now resolves both points from `S:L-USEC-C-0, W:L-USEC2012`.
+- Proof artifact: `.artifacts\\compass-builddrill-correctionline-proof\\run3\\artifacts\\builddrill-report.txt`
+
+## 2026-04-14 - Investigate ATS build + PLSR-only label shifting on Ignore All / Cancel
+
+- [x] Reproduce or trace the ATS-build plus PLSR-only flow that surfaces the review dialog.
+- [x] Inspect the PLSR review dialog button handlers and downstream apply pipeline for `Ignore All`, `Cancel`, and apply actions.
+- [x] Confirm whether label geometry is mutated before confirmation or whether a later relayout/normalization pass runs even when the user declines changes.
+- [x] Implement the smallest safe fix so declined PLSR actions leave label positions untouched.
+- [x] Verify with a focused proof path and capture the root cause and result in the review notes.
+
+## Review (ATS build + PLSR-only label shifting on Ignore All / Cancel, 2026-04-14)
+
+- Root cause:
+- `Ignore All` and `Cancel` were not the direct problem. `ReviewDecisionService.ResolveAcceptedIssueIds(...)` already returns an empty accepted set when the review is cancelled or when every row stays ignored.
+- The real drift came later in the ATS post-quarter pipeline: `Plugin.ExecutePostQuarterPipeline(...)` always ran `LabelPlacer.AlignRenderedAlignedDimensionTextsToLeaders(...)`, and that finalize pass walked every aligned dimension in model space, clamping text/dim-line placement even on a PLSR-check-only run.
+- That meant a build with `PLSR Check` enabled could still move pre-existing aligned-dimension labels after the review dialog, even when the user pressed `Ignore All` or `Cancel`.
+- Fix:
+- Scoped the final aligned-dimension normalize pass to only the aligned-dimension labels created during this run, instead of sweeping the whole drawing.
+- `LabelPlacer.PlaceLabels(...)` now records created aligned-dimension `ObjectId`s in `PlacementResult.CreatedAlignedDimensionIds`.
+- `Plugin.ExecutePostQuarterPipeline(...)` now skips the finalize pass entirely when no aligned-dimension labels were created in the current run.
+- Also wired the existing aligned-dimension placement snapshot helpers into PLSR owner/expired text edits so accepted text-only updates preserve the label's text position and dim-line point.
+- Verification:
+- `dotnet msbuild src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj /t:Compile /p:Configuration=Release /p:Platform=x64` passed.
+- `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release` compiled both projects and produced a fresh `src\\AtsBackgroundBuilder\\bin\\x64\\Release\\net8.0-windows\\AtsBackgroundBuilder.dll`, but the final deployment copy into `build\\net8.0-windows\\AtsBackgroundBuilder.dll` failed because AutoCAD had the target DLL locked.
+
+## 2026-04-14 - Rerun 10-drill batch headlessly with CSF 1 and corrected Sec 25 reference
+
+- [x] Reuse the prior 10-drill request set as the authority source for the rerun instead of reconstructing the point list by hand.
+- [x] Patch the batch to `CombinedScaleFactor = 1.0`, switch the rerun to non-ATS mode, and correct the bad `Sec 26` request to `Sec 25`.
+- [x] Run the 10-drill batch headlessly against the user-supplied DWG and verify the final saved drawing/artifacts.
+
+Review 2026-04-14 (Rerun 10-drill batch headlessly with CSF 1 and corrected Sec 25 reference):
+- User correction: the rerun should reuse the same 10 drills, set `CSF = 1`, and correct the one bad `Sec 26` reference to `Sec 25`.
+- Request authority:
+- Reused the saved per-drill request JSONs from `.artifacts\\compass-builddrill-10drills-atsfixed\\run-01..10-*\\working\\builddrill-request.json` as the source set.
+- Patched each point to `useAtsFabric = false` and `combinedScaleFactor = 1.0`; corrected the `DRILL_8` heel section from `26` to `25`.
+- Runtime findings:
+- The user-supplied `new buidl test 10.dwg` would not save headlessly. AutoCAD reported `Object(s) added to DB too late during save ... AeccDbSettingsNode`, and the run failed with `eFileAccessErr`.
+- Long artifact folder names also caused `accoreconsole /isolate` profile-copy failures, so the successful rerun used the short root `.artifacts\\bd10na1`.
+- Successful fallback run:
+- Completed the full 10-drill non-ATS batch from the stable sibling base DWG `.artifacts\\compass-builddrill-10drills-atsfixed\\artifacts\\builddrill-10-drills-atsfixed.dwg`.
+- Final artifact: `.artifacts\\bd10na1\\art\\builddrill-10-drills-nonats-csf1-sec25.dwg`
+- Verification:
+- All 10 headless runs returned `success: true`, totaling `26` points across the batch.
+- `DRILL_8` rerun report confirms the corrected request executed and resolved from section index in non-ATS mode.
+- Final filtered count on the saved DWG reports `P-PDRILLPATH_POLYLINE_COUNT=28` and `Z-DRILL-POINT_TEXT_COUNT=26`.
+
+## 2026-04-14 - Restore ATS-off Build a Drill snapping to nearby L-SEC-HB fabric
+
+- [x] Re-check the historical ATS-off Build a Drill contract and isolate the old `L-SEC-HB within 10 m of ATS/reference boundaries` behavior.
+- [x] Reintroduce the ATS-off `L-SEC-HB` snap in Build a Drill without disturbing ATS-on hard-boundary resolution.
+- [x] Rebuild and rerun the 10-drill non-ATS batch with `CSF = 1` and the corrected `Sec 25` request.
+
+Review 2026-04-14 (Restore ATS-off Build a Drill snapping to nearby L-SEC-HB fabric):
+- User correction: ATS-off Build a Drill is supposed to use `L-SEC-HB` lines that sit within roughly `10 m` of the calculated ATS/reference hard boundary, when those HB lines actually exist in the drawing.
+- Root cause:
+- The revived ATS-off path was still matching `L-SEC-HB` candidates by anchor midpoint distance, which misses valid local HB segments that cross the point probe line but do not line up well with the full ATS boundary midpoint.
+- My first 10-drill rerun also used the stable fallback DWG `builddrill-10-drills-atsfixed.dwg`, which contains `0` `L-SEC-HB` entities, so there was no HB linework available to snap to even with the corrected rule.
+- Fix:
+- `BuildDrillService` now resolves ATS-off `L-SEC-HB` matches by the same point-specific probe line used for the request, then accepts a candidate only when it is parallel, on the correct side of the point, and within the `10 m` tolerance of the ATS/reference boundary for that side.
+- Verification:
+- Rebuilt `compass_program\\Compass.sln` in `Release` successfully.
+- Confirmed the fallback DWG has `0` `L-SEC-HB` entities, while the user drawing `new buidl test 10.dwg` has `39`.
+- Focused proof on `DRILL_6` against `new buidl test 10.dwg` now reports `section offsets from L-SEC-HB` for both points, including `S:L-SEC-HB (ref SECTION-INDEX-0), E:L-SEC-HB (ref SECTION-INDEX-0)` and `N:L-SEC-HB (ref L-USEC-0), E:L-SEC-HB (ref L-USEC-0)`.
+- Full 10-drill headless verification against `new buidl test 10.dwg` in report-only mode succeeded for all `10` drills / `26` points, with `24` points resolving from `L-SEC-HB`.
+- Remaining blocker:
+- Creating a new saved DWG directly from `new buidl test 10.dwg` still fails in headless mode with `Autodesk.AutoCAD.Runtime.Exception: eFileAccessErr`, so the corrected behavior is verified from reports but the Civil 3D save issue still needs its own workaround if we want a finished batch DWG from that exact source file.
+
+## 2026-04-14 - Retry full non-ATS batch save on user DWG after closing AutoCAD
+
+- [x] Refresh both packaged and autoload `Compass.dll` from the latest verified build.
+- [x] Rerun the 10-drill non-ATS / `L-SEC-HB` batch with `CSF = 1` on `new buidl test 10.dwg`.
+- [x] Verify whether the saved DWG succeeds now that AutoCAD is closed and capture the final artifact path or remaining save blocker.
+
+Review 2026-04-14 (Retry full non-ATS batch save on user DWG after closing AutoCAD):
+- Deployment:
+- Refreshed both `build\\compass\\single-dll\\Compass.dll` and `C:\\AUTOCAD-SETUP CG\\CG_LISP\\Compass.dll` from the latest Release build after AutoCAD was closed.
+- Export root cause:
+- The corrected ATS-off / `L-SEC-HB` solver was fine, but saving the active Civil 3D headless document still failed.
+- Direct active-document `SaveAs` raised `eFileAccessErr`.
+- A side database write initially hit `eWrongDatabase` until the export switched `HostApplicationServices.WorkingDatabase` to the side copy.
+- Saving that side copy directly still raised `eExcessiveItemCount`, so the final workaround was to export a `Wblock()` snapshot of the side copy instead of saving the live side database itself.
+- Final result:
+- The full 10-drill batch completed successfully on `new buidl test 10.dwg` with `UseAtsFabric = false`, `CSF = 1`, and the corrected `Sec 25` request.
+- Final artifact: `.artifacts\\bd10na6\\art\\builddrill-10-drills-nonats-lsechb-csf1-sec25.dwg`
+- Verification:
+- The final DWG opens successfully in headless validation.
+- `P-PDRILLPATH` count increased from `82` on the source DWG to `92` on the final DWG, confirming `10` added drill paths.
+- `Z-DRILL-POINT` labels matching `A` through `J` total exactly `26`, matching the requested batch.
+
+## 2026-04-14 - Enforce no SECTION-INDEX fallback for non-ATS hard-boundary resolution
+
+- [x] Audit the latest non-ATS batch and identify any points whose calculated hard-boundary reference still comes from `SECTION-INDEX`.
+- [x] Remove the `SECTION-INDEX` fallback from the non-ATS hard-boundary resolution path so sides must resolve from calculated `0` / `20.12` ATS families.
+- [x] Rebuild and rerun verification on the provided DWG, then confirm the reports contain no `SECTION-INDEX` references for this workflow.
+
+Review 2026-04-14 (Enforce no SECTION-INDEX fallback for non-ATS hard-boundary resolution):
+- User correction: non-ATS Build a Drill should never silently fall back to generic `SECTION-INDEX`; requested sides must come from calculated `20.12` or explicit calculated `0` boundaries.
+- Root cause:
+- The ATS-off resolver still allowed requested sides to fall back through `ResolveReferenceBoundariesForPoint(...)`, which merged generic frame boundaries into point-side resolution and produced summaries like `ref SECTION-INDEX` and `section offsets from section index / ATS reference`.
+- My first strict fix overcorrected by removing the explicit outer `0` candidate too, which caused false failures on split sections that legitimately need the calculated `0` side.
+- Fix:
+- `ResolveSectionOffsetPointWithoutAtsFabric(...)` now requires calculated hard-boundary resolution for requested sides before any `L-SEC-HB` snap is attempted.
+- `TryResolveCalculatedHardBoundariesForPoint(...)` now resolves requested sides from calculated ATS candidates plus the explicit `SECTION-INDEX-0` outer `0` candidates, but never from bare `SECTION-INDEX` fallback.
+- Verification:
+- Rebuilt `compass_program\\Compass.sln` in `Release` and refreshed `build\\compass\\single-dll\\Compass.dll`.
+- Focused proof on `DRILL_10` now resolves the formerly bad points as `N:SECTION-INDEX-0, W:L-USEC2012` and `S:SECTION-INDEX-0, W:L-USEC2012`, with no generic `SECTION-INDEX` fallback wording.
+- Regenerated the full 10-drill saved batch on `new buidl test 10.dwg`.
+- Final artifact: `.artifacts\\bd10na7\\art\\builddrill-10-drills-nonats-calculated-hardboundaries.dwg`
+- Report scan found no matches for `section offsets from section index`, `ref SECTION-INDEX)`, or `:SECTION-INDEX.` in the regenerated batch reports.
+
+## 2026-04-13 - Fix ATS-built boundary mismatch for Build a Drill section offsets
+
+- [x] Reproduce the `Sec 7-63-20W5` mismatch against ATS-built section linework and capture which hard-boundary candidates Build a Drill actually harvests.
+- [x] Compare the ATS Builder output geometry with the Build a Drill candidate/probe selection so synthetic `SECTION-INDEX-0` fallback is only used when the built section truly has no authoritative hard boundary on that side.
+- [x] Implement the smallest safe fix, rebuild Compass, redeploy `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll`, and rerun focused proof checks on the affected point(s).
+
+Review 2026-04-13 (Fix ATS-built boundary mismatch for Build a Drill section offsets):
+- User correction: they are building the section with ATS Builder first and dimensioning from that result, so Build a Drill must match the ATS-built linework rather than quietly drifting onto synthetic section-index fallback.
+- Investigation goal: prove whether `Sec 7-63-20W5` has a real ATS east hard boundary in the generated section and whether Build a Drill is skipping it during candidate harvest or probe selection.
+- Root cause:
+- ATS Builder's final output relayers the visible `0 / 20.12 / 30.18` road-allowance curves onto plain `L-USEC`, so the old live collector missed the built section entirely when it only scanned hard layers.
+- The old live collector also scanned the whole drawing without section-local filtering, so unrelated hard-layer geometry could short-circuit the scratch path and still leave the resolver on synthetic `SECTION-INDEX-0`.
+- Fix:
+- `BuildDrillService` now normalizes section-local boundary candidates by frame proximity, classifies nearby relayered `L-USEC` curves back into `0` and `20.12` families, and uses those live/scratch section-local candidates before synthetic fallback.
+- ATS offset intersections now shift the selected side lines by each boundary's inward normal instead of blindly using the section frame axis.
+- Deployment:
+- Rebuilt `compass_program\\Compass.sln` in `Release`, copied the refreshed `Compass.dll` to both `build\\compass\\single-dll\\Compass.dll` and `C:\\AUTOCAD-SETUP CG\\CG_LISP\\Compass.dll`.
+- Verification:
+- Focused ATS-built proof on `Sec 7-63-20W5` now resolves point `F3` from `N:L-USEC-0, E:L-USEC-0` with coordinates `499725.701, 6032742.869`.
+- Measured against the ATS-built visible east `0` line, the point now lands at `229.8766 m`, matching `230 * 0.99946331`.
+- Regenerated the 10-drill batch on the deployed DLL from an ATS-built base drawing.
+- Final artifact: `.artifacts\\compass-builddrill-10drills-atsfixed\\artifacts\\builddrill-10-drills-atsfixed.dwg`
+- Integrity check:
+- The ATS-built base drawing already contained `8` `P-PDRILLPATH` polylines and `2` `Z-DRILL-POINT` texts.
+- The corrected final DWG contains `18` `P-PDRILLPATH` polylines and `26` `Z-DRILL-POINT` texts, confirming this rerun added `10` drill paths and ended with the expected `26` point labels.

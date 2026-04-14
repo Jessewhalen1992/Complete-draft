@@ -762,6 +762,7 @@ namespace AtsBackgroundBuilder.Dispositions
 
                             placed = true;
                             result.LabelsPlaced++;
+                            RegisterCreatedAlignedDimension(result, created);
                             RegisterPlacedQuarterLabel(
                                 existingDispNumsByQuarter,
                                 request.QuarterKey,
@@ -796,6 +797,7 @@ namespace AtsBackgroundBuilder.Dispositions
                                 placed = true;
                                 result.LabelsPlaced++;
                                 result.OverlapForced++;
+                                RegisterCreatedAlignedDimension(result, forced);
                                 RegisterPlacedQuarterLabel(
                                     existingDispNumsByQuarter,
                                     request.QuarterKey,
@@ -824,6 +826,22 @@ namespace AtsBackgroundBuilder.Dispositions
 
             return result;
         }
+
+        private static void RegisterCreatedAlignedDimension(PlacementResult result, Entity createdEntity)
+        {
+            if (result == null || createdEntity == null)
+            {
+                return;
+            }
+
+            if (createdEntity is AlignedDimension alignedDimension &&
+                !alignedDimension.ObjectId.IsNull &&
+                alignedDimension.ObjectId.IsValid)
+            {
+                result.CreatedAlignedDimensionIds.Add(alignedDimension.ObjectId);
+            }
+        }
+
         private Entity? CreateLabelEntity(
             Transaction tr,
             BlockTableRecord modelSpace,
@@ -1771,7 +1789,10 @@ namespace AtsBackgroundBuilder.Dispositions
             }
         }
 
-        internal static int AlignRenderedAlignedDimensionTextsToLeaders(Database database, Logger logger)
+        internal static int AlignRenderedAlignedDimensionTextsToLeaders(
+            Database database,
+            Logger logger,
+            ISet<ObjectId>? targetDimensionIds = null)
         {
             if (database == null)
             {
@@ -1791,6 +1812,11 @@ namespace AtsBackgroundBuilder.Dispositions
 
                     foreach (ObjectId entityId in modelSpace)
                     {
+                        if (targetDimensionIds != null && !targetDimensionIds.Contains(entityId))
+                        {
+                            continue;
+                        }
+
                         if (!(tr.GetObject(entityId, OpenMode.ForWrite, false) is AlignedDimension dimension) || dimension.IsErased)
                         {
                             continue;
@@ -3982,6 +4008,7 @@ namespace AtsBackgroundBuilder.Dispositions
         public int SkippedNoIntersection { get; set; }
         public int OverlapForced { get; set; }
         public int MultiQuarterProcessed { get; set; }
+        public HashSet<ObjectId> CreatedAlignedDimensionIds { get; } = new HashSet<ObjectId>();
     }
 }
 
