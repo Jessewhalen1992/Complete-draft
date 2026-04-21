@@ -1,0 +1,10 @@
+{
+  "scope": "twp43-8-5",
+  "accepted_label": "rerun311-short-buffer-owner1",
+  "accepted_dxf": "data/regression-baselines/twp43-8-5/accepted-output.dxf",
+  "corrected_reference_dxf": "src/AtsBackgroundBuilder/REFERENCE ONLY/43-8-5 corrected.dxf",
+  "seed_dwg": ".artifacts/march9nad27_proof/blank-seed.dwg",
+  "workbook": "data/regression-baselines/twp43-8-5/accepted-input.xlsx",
+  "ats_fabric_only": true,
+  "notes": "Accepted user-approved township baseline. Future section-logic changes should rerun this township and compare against accepted_dxf before sign-off."
+}

@@ -180,7 +180,17 @@ namespace AtsBackgroundBuilder
             using var tr = database.TransactionManager.StartTransaction();
             foreach (var id in candidateIds.Where(id => !id.IsNull && id.IsValid).Distinct())
             {
-                if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity entity))
+                Entity? entity = null;
+                try
+                {
+                    entity = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                }
+                catch (Autodesk.AutoCAD.Runtime.Exception)
+                {
+                    continue;
+                }
+
+                if (entity == null || entity.IsErased)
                 {
                     continue;
                 }

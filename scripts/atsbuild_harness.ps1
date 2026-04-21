@@ -28,11 +28,17 @@ param(
 
     [string]$PythonExe = "python",
 
-    [switch]$KeepWorkingDrawing
+    [switch]$KeepWorkingDrawing,
+
+    [switch]$LeaveAutoCadOpen
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($LeaveAutoCadOpen.IsPresent -and $Runner -ne "FullAutoCAD") {
+    throw "-LeaveAutoCadOpen is only supported with -Runner FullAutoCAD."
+}
 
 function Resolve-ExistingPath {
     param(
@@ -253,7 +259,8 @@ function Initialize-FullAutoCadLauncherWorkspace {
         [Parameter(Mandatory = $true)]
         [string]$ResolvedPluginDllPath,
         [Parameter(Mandatory = $true)]
-        [string]$RunTag
+        [string]$RunTag,
+        [switch]$LeaveAutoCadOpen
     )
 
     $resolvedRoot = New-Directory -Path $RootPath
@@ -295,10 +302,24 @@ function Initialize-FullAutoCadLauncherWorkspace {
         "0",
         "NETLOAD",
         $launcherPluginDllPath,
-        "ATSBUILD_XLS_BATCH",
-        "QUIT",
-        "N"
+        "ATSBUILD_XLS_BATCH"
     )
+
+    if ($LeaveAutoCadOpen.IsPresent) {
+        $scriptLines += @(
+            "FILEDIA",
+            "1",
+            "CMDDIA",
+            "1"
+        )
+    }
+    else {
+        $scriptLines += @(
+            "QUIT",
+            "N"
+        )
+    }
+
     [System.IO.File]::WriteAllLines($launcherScriptPath, $scriptLines, [System.Text.Encoding]::ASCII)
 
     return [pscustomobject]@{
@@ -332,7 +353,8 @@ function Invoke-FullAutoCadBatch {
         [long]$PluginLogOffset = 0,
         [hashtable]$EnvironmentVariables,
         [string]$StdOutPath,
-        [string]$StdErrPath
+        [string]$StdErrPath,
+        [switch]$LeaveAutoCadOpen
     )
 
     $savedEnvironment = @{}
@@ -387,8 +409,9 @@ function Invoke-FullAutoCadBatch {
             Start-Sleep -Seconds ([Math]::Max(1, $PollSeconds))
         }
 
+        $leaveOpenAfterCompletion = $LeaveAutoCadOpen.IsPresent -and $batchCompleted -and -not $timedOut
         $forcedStop = $false
-        if (-not $process.HasExited -and ($batchCompleted -or $timedOut)) {
+        if (-not $process.HasExited -and ($timedOut -or ($batchCompleted -and -not $leaveOpenAfterCompletion))) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
             $forcedStop = $true
             Start-Sleep -Seconds 2
@@ -423,7 +446,9 @@ function Invoke-FullAutoCadBatch {
             BatchCompleted = $batchCompleted
             TimedOut = $timedOut
             ForcedStop = $forcedStop
+            ProcessAlive = (-not $process.HasExited)
             ProcessId = $process.Id
+            LeftOpen = ($leaveOpenAfterCompletion -and -not $forcedStop -and -not $process.HasExited)
         }
     }
     finally {
@@ -517,7 +542,8 @@ if ($Runner -eq "FullAutoCAD") {
         -ResolvedDwgPath $resolvedDwgPath `
         -ResolvedWorkbookPath $resolvedWorkbookPath `
         -ResolvedPluginDllPath $resolvedPluginDllPath `
-        -RunTag $runTag
+        -RunTag $runTag `
+        -LeaveAutoCadOpen:$LeaveAutoCadOpen
     $launcherDirectorySummary = $launcherWorkspace.RunDirectory
     Copy-Item -LiteralPath $launcherWorkspace.ScriptPath -Destination (Join-Path $artifactDirectory "acad.run.scr") -Force
 
@@ -538,7 +564,8 @@ if ($Runner -eq "FullAutoCAD") {
         -TimeoutSeconds $FullAutoCadTimeoutSeconds `
         -EnvironmentVariables $environmentVariables `
         -StdOutPath $consoleStdOutPath `
-        -StdErrPath $consoleStdErrPath
+        -StdErrPath $consoleStdErrPath `
+        -LeaveAutoCadOpen:$LeaveAutoCadOpen
 
     if (Test-Path -LiteralPath $launcherWorkspace.DxfPath) {
         Copy-Item -LiteralPath $launcherWorkspace.DxfPath -Destination $dxfPath -Force
@@ -630,7 +657,8 @@ if ($reviewEnabled -and (Test-Path -LiteralPath $dxfPath)) {
     [System.IO.File]::WriteAllText($reviewStdOutPath, $reviewText, [System.Text.Encoding]::UTF8)
 }
 
-if (-not $KeepWorkingDrawing.IsPresent) {
+$preserveWorkingArtifacts = $KeepWorkingDrawing.IsPresent -or $LeaveAutoCadOpen.IsPresent
+if (-not $preserveWorkingArtifacts) {
     Try-RemovePathQuietly -Path $workingDwgPath -Warnings ([ref]$cleanupWarnings)
 
     if ($launcherWorkspace) {
@@ -651,6 +679,11 @@ $summary = [pscustomobject]@{
     runnerExitCode = $(if ($runnerResult) { $runnerResult.ExitCode } else { $null })
     runnerTimedOut = $(if ($runnerResult -and $runnerResult.PSObject.Properties["TimedOut"]) { $runnerResult.TimedOut } else { $false })
     runnerForcedStop = $(if ($runnerResult -and $runnerResult.PSObject.Properties["ForcedStop"]) { $runnerResult.ForcedStop } else { $false })
+    leaveAutoCadOpenRequested = $LeaveAutoCadOpen.IsPresent
+    autoCadLeftOpen = $(if ($runnerResult -and $runnerResult.PSObject.Properties["LeftOpen"]) { $runnerResult.LeftOpen } else { $false })
+    autoCadProcessAlive = $(if ($runnerResult -and $runnerResult.PSObject.Properties["ProcessAlive"]) { $runnerResult.ProcessAlive } else { $false })
+    autoCadProcessId = $(if ($runnerResult -and $runnerResult.PSObject.Properties["ProcessId"]) { $runnerResult.ProcessId } else { $null })
+    openDrawing = $(if ($LeaveAutoCadOpen.IsPresent -and $launcherWorkspace) { $launcherWorkspace.DwgPath } else { $null })
     accoreExitCode = $(if ($Runner -eq "AccoreConsole" -and $runnerResult) { $runnerResult.ExitCode } else { $null })
     reviewExitCode = $reviewExitCode
     reviewEnabled = $reviewEnabled

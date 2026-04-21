@@ -1,3 +1,79 @@
+# Follow-up (Compass Well Corners Content Override Rotation, 2026-04-21)
+
+- [x] Re-open the WELL CORNERS ID bubble issue after the rebuilt and redeployed DLL still produced cells with `Block rotation = 0d` in AutoCAD Properties.
+- [x] Switch the bubble-cell persistence path to the content-index override API so rotation/scale/autoscale are stored as explicit content overrides on the final table object.
+- [ ] Rebuild Compass, redeploy the DLL, and record the result below.
+
+## Review (Compass Well Corners Content Override Rotation, 2026-04-21)
+
+- User proof: even after the prior redeploy, the generated ID cells still showed `Block rotation = 0d` in AutoCAD Properties and the bubbles rendered one row low/outside the table.
+- Root cause refinement: the earlier attempts still did not mark the final cell content with explicit rotation/scale/autoscale overrides on the content object itself. AutoCAD's table API metadata shows those persisted properties live on `CellContent`, not just the broader block-cell setter surface.
+- Fix:
+- `WellCornerTableService` now assigns the bubble block through the `Cell` / `CellContent` object path and explicitly sets `content.Overrides = CellProperties.Rotation | Scale | AutoScale` before writing `Rotation = 90d`, `Scale = 1.0`, and `IsAutoScale = false`.
+- The post-`GenerateLayout()` reapply step remains in place, so those override-backed content properties are stamped onto the final table object instead of only the pre-layout draft.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Deployment blocker:
+- the freshly built DLL now has hash `1431221169AD94FCE033100FE8837B0E47BB8F16A8BC9685113ED34D48897359`, but `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` is still the older `2:10:18 PM` file with hash `86FD98A5D0B419F489993A606476F46E754781B6DEF12C0090E1F27F2D896C89` because Windows reported the deployed DLL is currently locked by another process.
+- Remaining proof gap:
+- I could not replace the live AutoCAD deployment DLL while it was locked, so the newest content-override fix has not yet been exercised inside AutoCAD.
+
+# Follow-up (Compass Well Corners Bubble Rotation Persistence, 2026-04-21)
+
+- [x] Re-open the WELL CORNERS bubble-cell issue after the user proved the generated table cell still shows `Block rotation = 0d` in AutoCAD Properties.
+- [x] Move the bubble block-rotation persistence to the final table-layout phase so the generated ID cells store `90d`, not just an in-memory content rotation.
+- [x] Rebuild Compass and document the result plus any remaining runtime proof gap below.
+
+## Review (Compass Well Corners Bubble Rotation Persistence, 2026-04-21)
+
+- User proof: the AutoCAD Properties palette still showed the generated ID cell as `Block rotation = 0d`, and manually changing that property to `90d` immediately fixed the bubble placement.
+- Root cause direction: setting only `CellContent.Rotation` during the early table-build phase was not enough. `GenerateLayout()` / final table recompute could rebuild the cell content from the table object's stored state, leaving the persisted block-cell rotation at `0d`.
+- Fix:
+- `WellCornerTableService` now reapplies each bubble ID cell after `table.GenerateLayout()` on the final table object, using the table-level block-cell setters AutoCAD exposes for persisted block properties: `SetAutoScale(false)`, `SetBlockScale(1.0)`, and `SetBlockRotation(90d)`.
+- The existing content-level block setup is still kept, so the final table now gets both the block content data and the post-layout persisted block-cell rotation the user verified AutoCAD honors.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Refreshed deployed AutoCAD DLL: `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` now matches the freshly built `bin\x64\Release\net8.0-windows\Compass.dll` hash, so the next retest will exercise the new build instead of the old `1:55 PM` drop.
+- Remaining proof gap: I still cannot live-run the rebuilt DLL inside AutoCAD from this environment, so the final on-screen proof still needs one more user retest.
+
+# Follow-up (Compass Well Corners Bubble Cell Anchoring, 2026-04-21)
+
+- [x] Reproduce the reported bubble-cell misalignment from the user's screenshot and confirm the table rows/columns themselves are not the drifting part.
+- [x] Rework the Well Corners ID-cell setup so AutoCAD initializes those cells as true block cells through the table API path instead of only direct cell/content property assignment.
+- [x] Rebuild Compass and document the correction plus remaining proof gap below.
+
+## Review (Compass Well Corners Bubble Cell Anchoring, 2026-04-21)
+
+- User correction: the new `Induction_Bend_No` bubbles were rendering one row too low and the last bubble fell outside the table, even though the table grid itself was correct.
+- Root-cause direction: the initial implementation relied on direct `Cell` / `CellContent` property assignment for the block-backed ID cells. AutoCAD accepted the block content, but it did not reliably initialize those cells as true `BlockCell`s with the expected block-cell layout behavior.
+- Fix:
+- `WellCornerTableService` now initializes each ID cell through the table block-cell API path: `SetCellType(..., BlockCell)`, `SetBlockTableRecordId(..., autoFit: false)`, `SetAutoScale(false)`, `SetBlockScale(1.0)`, `SetBlockRotation(...)`, and then writes the `BEND` attribute through the cell's block attribute setter.
+- Follow-up user proof: even with the 2026-04-21 `1:55 PM` deployed DLL, manually changing the generated cell's block rotation from `0d` to `90d` inside AutoCAD fixed the bubble placement. That proved the remaining bug was not stale deployment; the generated table cell still was not persisting the rotation the way AutoCAD expected.
+- Correction:
+- `WellCornerTableService` now still uses the table API to create a true `BlockCell`, but it applies the final bubble rotation directly on the created `CellContent` (`content.Rotation = 90d`) after the block record is assigned. That matches the property path the user confirmed AutoCAD is actually honoring at runtime.
+- The surrounding table geometry, styling, and blank elevation behavior were left unchanged.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Remaining proof gap: I still have not live-run the corrected command inside AutoCAD after this bubble-cell fix, so I can confirm compile success but not final on-screen placement from this environment alone.
+
+# Follow-up (Compass Well Corners Full Coordinate Table, 2026-04-21)
+
+- [x] Inspect the current Drill Manager `Create WELL CORNERS table` flow and confirm it is the service to patch for the requested full-table layout.
+- [x] Rebuild the Well Corners table generator so it creates one true AutoCAD table with a merged `TABLE OF COORDINATES` title row, shaded header row, `ID / NORTHING / EASTING / ELEVATION` columns, `25.00` row heights, and `70.00 / 80.00 / 80.00 / 80.00` column widths.
+- [x] Use `Induction_Bend_No` as the block-backed ID cell content, numbering the corner rows in pick order and leaving elevation values blank for manual entry.
+- [x] Match the requested styling as closely as the AutoCAD table API allows: title text height `14.00` in color `ACI 14`, all other text height `10.00`, and shaded cells filled with `ACI 254`.
+- [x] Rebuild Compass, verify the change compiles cleanly, and document the implementation and proof notes below.
+
+## Review (Compass Well Corners Full Coordinate Table, 2026-04-21)
+
+- Confirmed the user-facing Drill Manager action routes through `WellCornerTableService.CreateWellCornersTable()`, so the update stayed on the existing Well Corners command instead of the separate Existing Well Table workflow.
+- Replaced the old 2-column vertex dump with a true AutoCAD table that now builds a merged `TABLE OF COORDINATES` title row, a shaded `ID / NORTHING / EASTING / ELEVATION` header row, and one row per picked polygon corner.
+- The table now uses the requested `70 / 80 / 80 / 80` column widths and `25.00` row heights, applies a black background to the title/body cells, uses `ACI 254` on shaded header cells, keeps the title at text height `14.00` in `ACI 14`, and sets the remaining text cells to `10.00`.
+- ID cells now load the `Induction_Bend_No` block definition from the active drawing or the known AutoCAD setup block folders, set the `BEND` attribute to `1..N`, keep block scale at `1.0`, and rotate the block content `90` degrees to match the captured table-cell setup.
+- Elevation cells are intentionally left blank for manual entry while northing/easting values continue to come from the selected polyline vertex coordinates.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Remaining proof gap: I have not live-run the updated `Create WELL CORNERS table` action inside AutoCAD yet, so the final visual/runtime proof still needs one in-drawing click-through.
 # Follow-up (Compass Native CORDS Formatting Match, 2026-04-09)
 
 - [x] Tighten native `METES` / `BOUNDS` formatting to one decimal place with a space before the direction suffix.
@@ -9453,3 +9529,41 @@ Review 2026-04-13 (Fix ATS-built boundary mismatch for Build a Drill section off
 - Integrity check:
 - The ATS-built base drawing already contained `8` `P-PDRILLPATH` polylines and `2` `Z-DRILL-POINT` texts.
 - The corrected final DWG contains `18` `P-PDRILLPATH` polylines and `26` `Z-DRILL-POINT` texts, confirming this rerun added `10` drill paths and ended with the expected `26` point labels.
+
+## 2026-04-21 - Establish permanent 43-8-5 township regression baseline
+
+- [x] Preserve the accepted `43-8-5` ATS-only workbook and baseline metadata for repeatable township regression checks.
+- [x] Add a reusable regression runner that rebuilds the township from the accepted workbook and compares it to the accepted baseline DXF.
+- [x] Smoke-run the new baseline harness and confirm it reports an exact baseline match with ATS fabric only.
+
+Review 2026-04-21 (Establish permanent 43-8-5 township regression baseline):
+- Baseline inputs preserved at:
+- `data\\regression-baselines\\twp43-8-5\\accepted-input.xlsx`
+- `data\\regression-baselines\\twp43-8-5\\baseline.json`
+- Reusable runner added:
+- `scripts\\run_township_regression.ps1`
+- Verification:
+- Smoke proof run `twp43-8-5-regression-smoke-rerun310` completed successfully.
+- `compare-baseline.json` reported `baselineComparePassed = true`.
+- `Imported dispositions: 0` stayed clean.
+
+## 2026-04-21 - Restore west short buffered seam row as original correction outer
+
+- [x] Inspect the west seam cluster around `624157 / 624267 / 624888` and confirm the short row was restored on the wrong owner layer.
+- [x] Implement a narrow reusable owner discriminator so the short restored companion returns as `L-USEC-C` when the long inward pair already proves an original correction-outer companion exists.
+- [x] Rebuild, rerun the permanent `43-8-5` township regression, and confirm only the intended entity owner changes.
+
+Review 2026-04-21 (Restore west short buffered seam row as original correction outer):
+- User correction:
+- The short row `624157.735, 5837040.319 -> 624267.742, 5837045.590` is only a `100 m` buffer original boundary and should not be offset twice.
+- Root cause:
+- The late short seam-edge inward companion restore always recreated that row on `L-USEC-C-0`, even when the surrounding live corridor already showed the same long buffered pattern as an original `L-USEC-C` plus its single inset `L-USEC-C-0` companion.
+- Fix:
+- In `Plugin.RoadAllowance.CorrectionLinePostProcessing.cs`, the late short seam-edge restore now checks whether the inward long `L-USEC-C-0` row already has a matching long `L-USEC-C` companion one inset band inward. If it does, the short restored companion is created as `L-USEC-C` instead of `L-USEC-C-0`.
+- Verification:
+- `dotnet build` passed.
+- `dotnet test` passed.
+- Regression proof run `twp43-8-5-regression-rerun311-short-buffer-owner1` completed with `Imported dispositions: 0`.
+- `compare-baseline.json` showed exactly one supported-entity swap:
+- removed `L-USEC-C-0 624157.735,5837040.319 -> 624267.742,5837045.590`
+- added `L-USEC-C 624157.735,5837040.319 -> 624267.742,5837045.590`

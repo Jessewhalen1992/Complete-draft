@@ -12,6 +12,7 @@ namespace WildlifeSweeps
     {
         private static readonly object MapAssemblySync = new();
         private static readonly StringComparer PathComparer = StringComparer.OrdinalIgnoreCase;
+        private const string TracePathEnvironmentVariable = "COMPASS_NAD27_TRACE_PATH";
         [ThreadStatic]
         private static HashSet<string>? _resolvingAssemblyNames;
 
@@ -38,23 +39,28 @@ namespace WildlifeSweeps
         public static bool TryCreate(string sourceCode, string destCode, out Map3dCoordinateTransformer? transformer)
         {
             transformer = null;
+            Trace($"Map3dCoordinateTransformer.TryCreate start {sourceCode}->{destCode}");
             EnsureMapAssembliesPrepared();
 
             if (TryCreateLegacy(sourceCode, destCode, out transformer))
             {
+                Trace("Map3dCoordinateTransformer.TryCreate using legacy factory.");
                 return true;
             }
 
             if (TryCreateModern(sourceCode, destCode, out transformer))
             {
+                Trace("Map3dCoordinateTransformer.TryCreate using modern factory.");
                 return true;
             }
 
             if (TryCreateMapGuide(sourceCode, destCode, out transformer))
             {
+                Trace("Map3dCoordinateTransformer.TryCreate using MapGuide factory.");
                 return true;
             }
 
+            Trace("Map3dCoordinateTransformer.TryCreate failed to create any transformer.");
             return false;
         }
 
@@ -139,6 +145,7 @@ namespace WildlifeSweeps
             var factoryType = FindLegacyFactoryType();
             if (factoryType == null)
             {
+                Trace("Legacy transformer unavailable: factory type not found.");
                 return false;
             }
 
@@ -147,49 +154,64 @@ namespace WildlifeSweeps
             {
                 factory = Activator.CreateInstance(factoryType);
             }
-            catch
+            catch (Exception ex)
             {
+                Trace($"Legacy transformer unavailable: Activator.CreateInstance failed for {factoryType.FullName}: {ex.GetType().Name}: {ex.Message}");
                 return false;
             }
 
             if (factory == null)
             {
+                Trace($"Legacy transformer unavailable: Activator.CreateInstance returned null for {factoryType.FullName}.");
                 return false;
             }
 
             var createMethod = GetCreateCoordinateSystemMethod(factoryType);
             if (createMethod == null)
             {
+                Trace($"Legacy transformer unavailable: no coordinate-system create method on {factoryType.FullName}.");
                 return false;
             }
 
-            var source = createMethod.Invoke(factory, new object[] { sourceCode });
-            var dest = createMethod.Invoke(factory, new object[] { destCode });
-            if (source == null || dest == null)
+            try
             {
-                return false;
-            }
+                var source = createMethod.Invoke(factory, new object[] { sourceCode });
+                var dest = createMethod.Invoke(factory, new object[] { destCode });
+                if (source == null || dest == null)
+                {
+                    Trace($"Legacy transformer unavailable: source or destination coordinate system was null on {factoryType.FullName}.");
+                    return false;
+                }
 
-            var createTransformMethod = GetCreateTransformMethod(factoryType);
-            if (createTransformMethod == null)
+                var createTransformMethod = GetCreateTransformMethod(factoryType);
+                if (createTransformMethod == null)
+                {
+                    Trace($"Legacy transformer unavailable: no transform creation method on {factoryType.FullName}.");
+                    return false;
+                }
+
+                var transform = createTransformMethod.Invoke(factory, new[] { source, dest });
+                if (transform == null)
+                {
+                    Trace($"Legacy transformer unavailable: transform creation returned null on {factoryType.FullName}.");
+                    return false;
+                }
+
+                var transformMethod = GetTransformMethod(transform.GetType(), out var signature);
+                if (transformMethod == null)
+                {
+                    Trace($"Legacy transformer unavailable: no usable transform method on {transform.GetType().FullName}.");
+                    return false;
+                }
+
+                transformer = new Map3dCoordinateTransformer(transform, transformMethod, signature);
+                return true;
+            }
+            catch (Exception ex)
             {
+                Trace($"Legacy transformer unavailable: {factoryType.FullName} threw {ex.GetType().Name}: {ex.Message}");
                 return false;
             }
-
-            var transform = createTransformMethod.Invoke(factory, new[] { source, dest });
-            if (transform == null)
-            {
-                return false;
-            }
-
-            var transformMethod = GetTransformMethod(transform.GetType(), out var signature);
-            if (transformMethod == null)
-            {
-                return false;
-            }
-
-            transformer = new Map3dCoordinateTransformer(transform, transformMethod, signature);
-            return true;
         }
 
         private static bool TryCreateModern(string sourceCode, string destCode, out Map3dCoordinateTransformer? transformer)
@@ -198,6 +220,7 @@ namespace WildlifeSweeps
             var factoryType = FindModernFactoryType();
             if (factoryType == null)
             {
+                Trace("Modern transformer unavailable: factory type not found.");
                 return false;
             }
 
@@ -206,13 +229,15 @@ namespace WildlifeSweeps
             {
                 factory = Activator.CreateInstance(factoryType);
             }
-            catch
+            catch (Exception ex)
             {
+                Trace($"Modern transformer unavailable: Activator.CreateInstance failed for {factoryType.FullName}: {ex.GetType().Name}: {ex.Message}");
                 return false;
             }
 
             if (factory == null)
             {
+                Trace($"Modern transformer unavailable: Activator.CreateInstance returned null for {factoryType.FullName}.");
                 return false;
             }
 
@@ -222,6 +247,7 @@ namespace WildlifeSweeps
                 var transformationsMethod = factoryType.GetMethod("Transformations", BindingFlags.Public | BindingFlags.Instance);
                 if (coordinateSystemsMethod == null || transformationsMethod == null)
                 {
+                    Trace($"Modern transformer unavailable: missing CoordinateSystems/Transformations on {factoryType.FullName}.");
                     return false;
                 }
 
@@ -229,12 +255,14 @@ namespace WildlifeSweeps
                 var transformations = transformationsMethod.Invoke(factory, null);
                 if (coordinateSystems == null || transformations == null)
                 {
+                    Trace($"Modern transformer unavailable: CoordinateSystems/Transformations returned null on {factoryType.FullName}.");
                     return false;
                 }
 
                 var createCoordinateSystemMethod = coordinateSystems.GetType().GetMethod("CreateFromCode", new[] { typeof(string) });
                 if (createCoordinateSystemMethod == null)
                 {
+                    Trace($"Modern transformer unavailable: no CreateFromCode on {coordinateSystems.GetType().FullName}.");
                     return false;
                 }
 
@@ -242,6 +270,7 @@ namespace WildlifeSweeps
                 var dest = createCoordinateSystemMethod.Invoke(coordinateSystems, new object[] { destCode });
                 if (source == null || dest == null)
                 {
+                    Trace($"Modern transformer unavailable: source or destination coordinate system was null on {coordinateSystems.GetType().FullName}.");
                     return false;
                 }
 
@@ -254,6 +283,7 @@ namespace WildlifeSweeps
                     });
                 if (createTransformationMethod == null)
                 {
+                    Trace($"Modern transformer unavailable: no Create method on {transformations.GetType().FullName}.");
                     return false;
                 }
 
@@ -262,15 +292,27 @@ namespace WildlifeSweeps
                     : createTransformationMethod.Invoke(transformations, new[] { source, dest });
                 if (transform == null)
                 {
+                    Trace($"Modern transformer unavailable: transform creation returned null on {transformations.GetType().FullName}.");
                     return false;
                 }
 
-                var coordinateType = transform.GetType().Assembly
-                    .GetType("Autodesk.Map.IM.CoordinateSystem.API.Coordinate", throwOnError: false)
+                var transformMethod = transform.GetType()
+                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(method =>
+                    {
+                        if (!string.Equals(method.Name, "Transform", StringComparison.Ordinal))
+                        {
+                            return false;
+                        }
+
+                        return method.GetParameters().Length == 1;
+                    });
+                var coordinateType = transformMethod?.GetParameters().FirstOrDefault()?.ParameterType
+                    ?? transform.GetType().Assembly.GetType("Autodesk.Map.IM.CoordinateSystem.API.Coordinate", throwOnError: false)
                     ?? factoryType.Assembly.GetType("Autodesk.Map.IM.CoordinateSystem.API.Coordinate", throwOnError: false);
-                var transformMethod = transform.GetType().GetMethod("Transform", new[] { coordinateType! });
                 if (coordinateType == null || transformMethod == null)
                 {
+                    Trace($"Modern transformer unavailable: coordinate type or Transform method missing on {transform.GetType().FullName}.");
                     return false;
                 }
 
@@ -279,6 +321,7 @@ namespace WildlifeSweeps
                 var northingProperty = coordinateType.GetProperty("Northing");
                 if (coordinateCtor == null || eastingProperty == null || northingProperty == null)
                 {
+                    Trace($"Modern transformer unavailable: coordinate members missing on {coordinateType.FullName}.");
                     return false;
                 }
 
@@ -304,8 +347,9 @@ namespace WildlifeSweeps
                 });
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                Trace($"Modern transformer unavailable: {factoryType.FullName} threw {ex.GetType().Name}: {ex.Message}");
                 return false;
             }
         }
@@ -316,6 +360,7 @@ namespace WildlifeSweeps
             var factoryType = FindMapGuideFactoryType();
             if (factoryType == null)
             {
+                Trace("MapGuide transformer unavailable: factory type not found.");
                 return false;
             }
 
@@ -324,13 +369,15 @@ namespace WildlifeSweeps
             {
                 factory = Activator.CreateInstance(factoryType);
             }
-            catch
+            catch (Exception ex)
             {
+                Trace($"MapGuide transformer unavailable: Activator.CreateInstance failed for {factoryType.FullName}: {ex.GetType().Name}: {ex.Message}");
                 return false;
             }
 
             if (factory == null)
             {
+                Trace($"MapGuide transformer unavailable: Activator.CreateInstance returned null for {factoryType.FullName}.");
                 return false;
             }
 
@@ -339,6 +386,7 @@ namespace WildlifeSweeps
                 var createMethod = factoryType.GetMethod("Create", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(string) }, null);
                 if (createMethod == null)
                 {
+                    Trace($"MapGuide transformer unavailable: no Create(string) on {factoryType.FullName}.");
                     return false;
                 }
 
@@ -346,6 +394,7 @@ namespace WildlifeSweeps
                 var dest = createMethod.Invoke(factory, new object[] { destCode });
                 if (source == null || dest == null)
                 {
+                    Trace($"MapGuide transformer unavailable: source or destination coordinate system was null on {factoryType.FullName}.");
                     return false;
                 }
 
@@ -361,26 +410,30 @@ namespace WildlifeSweeps
                     });
                 if (getTransformMethod == null)
                 {
+                    Trace($"MapGuide transformer unavailable: no GetTransform method on {factoryType.FullName}.");
                     return false;
                 }
 
                 var transform = getTransformMethod.Invoke(factory, new[] { source, dest });
                 if (transform == null)
                 {
+                    Trace($"MapGuide transformer unavailable: GetTransform returned null on {factoryType.FullName}.");
                     return false;
                 }
 
                 var transformMethod = GetTransformMethod(transform.GetType(), out var signature);
                 if (transformMethod == null)
                 {
+                    Trace($"MapGuide transformer unavailable: no usable Transform method on {transform.GetType().FullName}.");
                     return false;
                 }
 
                 transformer = new Map3dCoordinateTransformer(transform, transformMethod, signature);
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                Trace($"MapGuide transformer unavailable: {factoryType.FullName} threw {ex.GetType().Name}: {ex.Message}");
                 return false;
             }
         }
@@ -403,10 +456,12 @@ namespace WildlifeSweeps
                 var factoryType = TryGetLegacyFactoryType(assembly);
                 if (factoryType != null)
                 {
+                    Trace($"Legacy factory discovered in {assembly.FullName}: {factoryType.FullName}");
                     return factoryType;
                 }
             }
 
+            Trace("Legacy factory not found in loaded candidate assemblies.");
             return null;
         }
 
@@ -428,10 +483,12 @@ namespace WildlifeSweeps
                 var factoryType = TryGetModernFactoryType(assembly);
                 if (factoryType != null)
                 {
+                    Trace($"Modern factory discovered in {assembly.FullName}: {factoryType.FullName}");
                     return factoryType;
                 }
             }
 
+            Trace("Modern factory not found in loaded candidate assemblies.");
             return null;
         }
 
@@ -453,10 +510,12 @@ namespace WildlifeSweeps
                 var factoryType = TryGetMapGuideFactoryType(assembly);
                 if (factoryType != null)
                 {
+                    Trace($"MapGuide factory discovered in {assembly.FullName}: {factoryType.FullName}");
                     return factoryType;
                 }
             }
 
+            Trace("MapGuide factory not found in loaded candidate assemblies.");
             return null;
         }
 
@@ -475,14 +534,17 @@ namespace WildlifeSweeps
                 {
                     assembly = Assembly.Load(assemblyName);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Trace($"Assembly.Load failed for {assemblyName}: {ex.GetType().Name}: {ex.Message}");
                 }
 
                 if (assembly == null)
                 {
                     continue;
                 }
+
+                Trace($"Assembly.Load succeeded for {assemblyName}: {assembly.FullName}");
 
                 var key = assembly.FullName ?? assemblyName;
                 if (!loaded.ContainsKey(key))
@@ -499,14 +561,17 @@ namespace WildlifeSweeps
                 {
                     assembly = Assembly.LoadFrom(assemblyPath);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Trace($"Assembly.LoadFrom failed for {assemblyPath}: {ex.GetType().Name}: {ex.Message}");
                 }
 
                 if (assembly == null)
                 {
                     continue;
                 }
+
+                Trace($"Assembly.LoadFrom succeeded for {assemblyPath}: {assembly.FullName}");
 
                 var key = assembly.FullName ?? assemblyPath;
                 if (!loaded.ContainsKey(key))
@@ -591,6 +656,12 @@ namespace WildlifeSweeps
                     .Distinct(PathComparer)
                     .ToArray();
 
+                Trace("Prepared map assembly search directories:");
+                foreach (var directory in _mapAssemblySearchDirectories)
+                {
+                    Trace("  " + directory);
+                }
+
                 AppDomain.CurrentDomain.AssemblyResolve += ResolveMapAssembly;
                 _mapAssemblyResolverInstalled = true;
 
@@ -599,9 +670,11 @@ namespace WildlifeSweeps
                     try
                     {
                         Assembly.LoadFrom(assemblyPath);
+                        Trace($"Preloaded preferred assembly: {assemblyPath}");
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        Trace($"Failed to preload preferred assembly {assemblyPath}: {ex.GetType().Name}: {ex.Message}");
                     }
                 }
             }
@@ -636,16 +709,43 @@ namespace WildlifeSweeps
                     {
                         return Assembly.LoadFrom(candidate);
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        Trace($"ResolveMapAssembly failed for {requestedName} at {candidate}: {ex.GetType().Name}: {ex.Message}");
                     }
                 }
 
+                Trace($"ResolveMapAssembly could not resolve {requestedName}.");
                 return null;
             }
             finally
             {
                 _resolvingAssemblyNames.Remove(requestedName);
+            }
+        }
+
+        private static void Trace(string message)
+        {
+            try
+            {
+                var path = Environment.GetEnvironmentVariable(TracePathEnvironmentVariable);
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    return;
+                }
+
+                var directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                File.AppendAllText(
+                    path,
+                    $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} {message}{Environment.NewLine}");
+            }
+            catch
+            {
             }
         }
 

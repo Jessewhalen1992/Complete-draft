@@ -82,9 +82,10 @@ namespace AtsBackgroundBuilder
 
                     if (generatedSet.Contains(id))
                     {
+                        var layerName = ent.Layer ?? string.Empty;
                         secTargetSegments.Add((a, b));
-                        var isUsecLayer = string.Equals(ent.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase);
-                        var isSecLayer = string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase);
+                        var isUsecLayer = string.Equals(layerName, "L-USEC", StringComparison.OrdinalIgnoreCase);
+                        var isSecLayer = string.Equals(layerName, "L-SEC", StringComparison.OrdinalIgnoreCase);
                         if ((isUsecLayer || isSecLayer) && IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
                         {
                             generatedVerticalUsecTargets.Add((a, b));
@@ -589,7 +590,7 @@ namespace AtsBackgroundBuilder
             var protectedBoundaryIds = new HashSet<ObjectId>();
             using (var tr = database.TransactionManager.StartTransaction())
             {
-                var sourceSegments = new List<(ObjectId Id, Point2d A, Point2d B, bool IsUsec, bool IsSec)>();
+                var sourceSegments = new List<(ObjectId Id, Point2d A, Point2d B, bool IsUsec, bool IsSec, bool Generated)>();
                 var verticalUsecBoundaries = new List<(Point2d A, Point2d B)>();
                 var generatedUsecVerticalTargets = new List<(Point2d A, Point2d B, bool IsUsecLayer)>();
                 var lsdSegments = new List<(ObjectId Id, Point2d A, Point2d B)>();
@@ -612,16 +613,16 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (generatedSet.Contains(id))
+                    var layerName = ent.Layer ?? string.Empty;
+                    var isGenerated = generatedSet.Contains(id);
+                    var isUsecLayer = IsUsecLayer(layerName);
+                    var isSecLayer = string.Equals(layerName, "L-SEC", StringComparison.OrdinalIgnoreCase);
+                    if (isGenerated)
                     {
-                        var isUsecGeneratedLayer = string.Equals(ent.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase);
-                        var isSecGeneratedLayer = string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase);
-                        if ((isUsecGeneratedLayer || isSecGeneratedLayer) && IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
+                        if ((isUsecLayer || isSecLayer) && IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
                         {
-                            generatedUsecVerticalTargets.Add((a, b, isUsecGeneratedLayer));
+                            generatedUsecVerticalTargets.Add((a, b, isUsecLayer));
                         }
-
-                        continue;
                     }
 
                     if (string.Equals(ent.Layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
@@ -640,15 +641,13 @@ namespace AtsBackgroundBuilder
                     }
 
                     if (!string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase) &&
-                        !string.Equals(ent.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase) &&
+                        !IsUsecLayer(ent.Layer ?? string.Empty) &&
                         !string.Equals(ent.Layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
-                    var isUsecLayer = string.Equals(ent.Layer, "L-USEC", StringComparison.OrdinalIgnoreCase);
-                    var isSecLayer = string.Equals(ent.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase);
-                    sourceSegments.Add((id, a, b, isUsecLayer, isSecLayer));
+                    sourceSegments.Add((id, a, b, isUsecLayer, isSecLayer, isGenerated));
                     if (isUsecLayer && IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
                     {
                         verticalUsecBoundaries.Add((a, b));
@@ -667,18 +666,20 @@ namespace AtsBackgroundBuilder
                 const double maxExtend = 40.0;
                 const double twentyTwelveBandMin = 7.2;
                 const double twentyTwelveBandMax = 13.4;
+                const double thirtySixteenTol = 2.8;
                 const double endpointMoveTol = 0.05;
                 var adjusted = 0;
                 var secHorizontalSources = 0;
                 var secHorizontalWithTwentyBandTarget = 0;
                 var secHorizontalRejectedNoTwentyBandTarget = 0;
+                var generatedHorizontalDerivedTwentyTargets = 0;
                 var lsdMidpointAdjustments = new List<(Point2d OldA, Point2d OldB, Point2d OldMid, Point2d NewMid)>();
                 var movedSourceSegments = new List<(ObjectId Id, Point2d OldA, Point2d OldB, Point2d NewA, Point2d NewB)>();
 
                 foreach (var src in sourceSegments)
                 {
                     // Never shift original L-USEC south-boundary segments to generated 20.11 targets.
-                    if (src.IsUsec)
+                    if (src.IsUsec && !src.Generated)
                     {
                         continue;
                     }
@@ -720,7 +721,8 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
-                    if (!hasEastContinuation)
+                    var allowGeneratedSouthConnectionWithoutEastContinuation = src.Generated && src.IsUsec;
+                    if (!hasEastContinuation && !allowGeneratedSouthConnectionWithoutEastContinuation)
                     {
                         continue;
                     }
@@ -729,6 +731,7 @@ namespace AtsBackgroundBuilder
                     // (connected vertical line goes north from this corner).
                     var touchesWestUsec = false;
                     var hasNorthwardVertical = false;
+                    var hasSouthwardVertical = false;
                     foreach (var boundary in verticalUsecBoundaries)
                     {
                         var d = DistancePointToSegment(west, boundary.A, boundary.B);
@@ -745,9 +748,14 @@ namespace AtsBackgroundBuilder
                         {
                             hasNorthwardVertical = true;
                         }
+                        else if (far.Y < (west.Y - cornerTol))
+                        {
+                            hasSouthwardVertical = true;
+                        }
                     }
 
-                    if (!touchesWestUsec || !hasNorthwardVertical)
+                    var allowGeneratedSouthwardConnection = src.Generated && src.IsUsec && hasSouthwardVertical;
+                    if (!touchesWestUsec || (!hasNorthwardVertical && !allowGeneratedSouthwardConnection))
                     {
                         continue;
                     }
@@ -807,8 +815,13 @@ namespace AtsBackgroundBuilder
                                         c.T <= twentyTwelveBandMax)
                             .OrderBy(c => c.T)
                             .ToList();
+                        var thirtyUsecCandidates = targetCandidates
+                            .Where(c => c.IsUsecLayer &&
+                                        Math.Abs(c.T - RoadAllowanceUsecWidthMeters) <= thirtySixteenTol)
+                            .OrderBy(c => c.T)
+                            .ToList();
 
-                        if (src.IsSec)
+                        if (src.IsSec || (src.Generated && src.IsUsec))
                         {
                             if (twentyUsecCandidates.Count > 0)
                             {
@@ -823,6 +836,23 @@ namespace AtsBackgroundBuilder
                             else
                             {
                                 secHorizontalRejectedNoTwentyBandTarget++;
+                            }
+                        }
+
+                        if (!bestT.HasValue && src.Generated && thirtyUsecCandidates.Count > 0)
+                        {
+                            // ATS-only builds can leave the south boundary sitting on the outer
+                            // 30.16 vertical without explicitly drawing the intervening 20.11
+                            // vertical. In that case, derive the 20.11 tie-in by stepping one
+                            // 30.16->20.11 band inward from the touched outer boundary.
+                            var derivedTwentyT = thirtyUsecCandidates[0].T - (RoadAllowanceUsecWidthMeters - RoadAllowanceSecWidthMeters);
+                            if (derivedTwentyT >= twentyTwelveBandMin &&
+                                derivedTwentyT <= twentyTwelveBandMax &&
+                                derivedTwentyT > minExtend &&
+                                derivedTwentyT <= maxExtend)
+                            {
+                                bestT = derivedTwentyT;
+                                generatedHorizontalDerivedTwentyTargets++;
                             }
                         }
                     }
@@ -1045,7 +1075,7 @@ namespace AtsBackgroundBuilder
                     logger?.WriteLine($"Cleanup: erased {blindSiblingErased} blind-line sibling segment(s) after SW extension.");
                 }
                 logger?.WriteLine(
-                    $"Cleanup: SW south-boundary 20.11 target stats sources={secHorizontalSources}, with20.11Target={secHorizontalWithTwentyBandTarget}, rejectedNo20.11Target={secHorizontalRejectedNoTwentyBandTarget}, adjusted={adjusted}.");
+                    $"Cleanup: SW south-boundary 20.11 target stats sources={secHorizontalSources}, with20.11Target={secHorizontalWithTwentyBandTarget}, rejectedNo20.11Target={secHorizontalRejectedNoTwentyBandTarget}, derivedGenerated20.11={generatedHorizontalDerivedTwentyTargets}, adjusted={adjusted}.");
             }
         }
         private static void ExtendNwQuarterWestUsecNorthToNextHorizontalUsec(
@@ -2176,11 +2206,13 @@ namespace AtsBackgroundBuilder
                     bool Vertical,
                     bool IsSecLayer,
                     bool IsUsecLayer,
+                    bool IsCorrectionZeroLayer,
                     bool Generated,
                     double Axis,
                     double MajorMin,
                     double MajorMax,
                     string Layer)>();
+                var correctionSegments = new List<(Point2d A, Point2d B, string Layer)>();
 
                 void AddRoadSegment(
                     ObjectId id,
@@ -2188,6 +2220,7 @@ namespace AtsBackgroundBuilder
                     Point2d b,
                     bool isSecLayer,
                     bool isUsecLayer,
+                    bool isCorrectionZeroLayer,
                     bool generated,
                     string layer)
                 {
@@ -2212,7 +2245,20 @@ namespace AtsBackgroundBuilder
                     var majorMax = horizontal
                         ? Math.Max(a.X, b.X)
                         : Math.Max(a.Y, b.Y);
-                    roadSegments.Add((id, a, b, horizontal, vertical, isSecLayer, isUsecLayer, generated, axis, majorMin, majorMax, layer));
+                    roadSegments.Add((id, a, b, horizontal, vertical, isSecLayer, isUsecLayer, isCorrectionZeroLayer, generated, axis, majorMin, majorMax, layer));
+                }
+
+                void AddCorrectionSegment(
+                    Point2d a,
+                    Point2d b,
+                    string layer)
+                {
+                    if (a.GetDistanceTo(b) <= 1e-4 || !DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        return;
+                    }
+
+                    correctionSegments.Add((a, b, layer));
                 }
 
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
@@ -2225,9 +2271,11 @@ namespace AtsBackgroundBuilder
                     }
 
                     var layerName = ent.Layer ?? string.Empty;
+                    var isCorrection = string.Equals(layerName, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase);
                     var isUsec = IsUsecLayer(layerName);
                     var isSec = string.Equals(layerName, "L-SEC", StringComparison.OrdinalIgnoreCase);
-                    if (!isUsec && !isSec)
+                    var isCorrectionZero = string.Equals(layerName, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
+                    if (!isUsec && !isSec && !isCorrection && !isCorrectionZero)
                     {
                         continue;
                     }
@@ -2236,12 +2284,25 @@ namespace AtsBackgroundBuilder
                     var layer = layerName;
                     if (ent is Line ln)
                     {
+                        var start = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                        var end = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                        if (isCorrection || isCorrectionZero)
+                        {
+                            AddCorrectionSegment(start, end, layer);
+                        }
+
+                        if (!isUsec && !isSec && !isCorrectionZero)
+                        {
+                            continue;
+                        }
+
                         AddRoadSegment(
                             id,
-                            new Point2d(ln.StartPoint.X, ln.StartPoint.Y),
-                            new Point2d(ln.EndPoint.X, ln.EndPoint.Y),
+                            start,
+                            end,
                             isSec,
                             isUsec,
+                            isCorrectionZero,
                             isGenerated,
                             layer);
                         continue;
@@ -2254,7 +2315,19 @@ namespace AtsBackgroundBuilder
 
                     for (var vi = 0; vi < pl.NumberOfVertices - 1; vi++)
                     {
-                        AddRoadSegment(id, pl.GetPoint2dAt(vi), pl.GetPoint2dAt(vi + 1), isSec, isUsec, isGenerated, layer);
+                        var a = pl.GetPoint2dAt(vi);
+                        var b = pl.GetPoint2dAt(vi + 1);
+                        if (isCorrection || isCorrectionZero)
+                        {
+                            AddCorrectionSegment(a, b, layer);
+                        }
+
+                        if (!isUsec && !isSec && !isCorrectionZero)
+                        {
+                            continue;
+                        }
+
+                        AddRoadSegment(id, a, b, isSec, isUsec, isCorrectionZero, isGenerated, layer);
                     }
                 }
 
@@ -2476,6 +2549,7 @@ namespace AtsBackgroundBuilder
                     var seg = roadSegments[idx];
                     var layer = seg.Layer ?? string.Empty;
                     if (seg.IsSecLayer ||
+                        seg.IsCorrectionZeroLayer ||
                         string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
                     {
                         return endpointRoleZero;
@@ -2778,12 +2852,469 @@ namespace AtsBackgroundBuilder
                         vertical,
                         source.IsSecLayer,
                         source.IsUsecLayer,
+                        source.IsCorrectionZeroLayer,
                         source.Generated,
                         axis,
                         majorMin,
                         majorMax,
                         source.Layer);
                     return true;
+                }
+
+                const double minExtend = 0.05;
+                const double maxExtend = 40.0;
+                const double targetApparentTol = 40.0;
+                const double correctionStopTouchTol = 0.35;
+                const double correctionStopAlongTol = 1.25;
+                const double correctionStopCollinearTol = 0.35;
+
+                bool EndpointTouchesCorrectionZeroStop(Point2d endpoint)
+                {
+                    for (var j = 0; j < correctionSegments.Count; j++)
+                    {
+                        var target = correctionSegments[j];
+                        if (!string.Equals(target.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        if (DistancePointToSegment(endpoint, target.A, target.B) <= correctionStopTouchTol)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool HasLongCorrectionZeroInsetCompanion(int sourceIndex)
+                {
+                    if (sourceIndex < 0 || sourceIndex >= roadSegments.Count)
+                    {
+                        return false;
+                    }
+
+                    var source = roadSegments[sourceIndex];
+                    if (!source.Horizontal)
+                    {
+                        return false;
+                    }
+
+                    var sourceDir = source.B - source.A;
+                    var sourceLen = sourceDir.Length;
+                    if (sourceLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    const double companionDirectionDotMin = 0.985;
+                    const double companionOffsetTol = 1.25;
+                    const double companionCoverageFraction = 0.70;
+                    var sourceUnit = sourceDir / sourceLen;
+                    var sourceMid = Midpoint(source.A, source.B);
+
+                    static double GetProjectedOverlapLength(Point2d a0, Point2d a1, Point2d b0, Point2d b1)
+                    {
+                        var dir = a1 - a0;
+                        var len = dir.Length;
+                        if (len <= 1e-6)
+                        {
+                            return 0.0;
+                        }
+
+                        var unit = dir / len;
+                        var s0 = (b0 - a0).DotProduct(unit);
+                        var s1 = (b1 - a0).DotProduct(unit);
+                        var minS = Math.Max(0.0, Math.Min(s0, s1));
+                        var maxS = Math.Min(len, Math.Max(s0, s1));
+                        return Math.Max(0.0, maxS - minS);
+                    }
+
+                    for (var j = 0; j < correctionSegments.Count; j++)
+                    {
+                        var target = correctionSegments[j];
+                        if (!string.Equals(target.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        if (!IsHorizontalLikeForQuarterExtensionsConnectivity(target.A, target.B))
+                        {
+                            continue;
+                        }
+
+                        var targetDir = target.B - target.A;
+                        var targetLen = targetDir.Length;
+                        if (targetLen <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        var targetUnit = targetDir / targetLen;
+                        if (Math.Abs(sourceUnit.DotProduct(targetUnit)) < companionDirectionDotMin)
+                        {
+                            continue;
+                        }
+
+                        var overlap = GetProjectedOverlapLength(source.A, source.B, target.A, target.B);
+                        if (overlap < sourceLen * companionCoverageFraction)
+                        {
+                            continue;
+                        }
+
+                        var sourceToTarget = Math.Abs(DistancePointToInfiniteLine(sourceMid, target.A, target.B));
+                        if (Math.Abs(sourceToTarget - CorrectionLineInsetMeters) > companionOffsetTol)
+                        {
+                            continue;
+                        }
+
+                        var targetToSource = Math.Abs(DistancePointToInfiniteLine(Midpoint(target.A, target.B), source.A, source.B));
+                        if (Math.Abs(targetToSource - CorrectionLineInsetMeters) > companionOffsetTol)
+                        {
+                            continue;
+                        }
+
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                bool EndpointTouchesThirtyBoundaryPreserveStop(int sourceIndex, Point2d endpoint, Point2d other)
+                {
+                    if (sourceIndex < 0 || sourceIndex >= roadSegments.Count)
+                    {
+                        return false;
+                    }
+
+                    var source = roadSegments[sourceIndex];
+                    var hasLongInsetCompanion = HasLongCorrectionZeroInsetCompanion(sourceIndex);
+                    if (!source.Horizontal)
+                    {
+                        return false;
+                    }
+
+                    bool HasNearbyParallelSectionRow()
+                    {
+                        var sourceDir = source.B - source.A;
+                        var sourceLen = sourceDir.Length;
+                        if (sourceLen <= 1e-6)
+                        {
+                            return false;
+                        }
+
+                        const double sectionDirectionDotMin = 0.985;
+                        const double sectionOffsetMin = 8.0;
+                        const double sectionOffsetMax = 40.0;
+                        const double sectionMinOverlap = 150.0;
+                        var sourceUnit = sourceDir / sourceLen;
+
+                        for (var j = 0; j < roadSegments.Count; j++)
+                        {
+                            if (j == sourceIndex)
+                            {
+                                continue;
+                            }
+
+                            var candidate = roadSegments[j];
+                            if (!candidate.Horizontal || !candidate.IsSecLayer)
+                            {
+                                continue;
+                            }
+
+                            var candidateDir = candidate.B - candidate.A;
+                            var candidateLen = candidateDir.Length;
+                            if (candidateLen <= 1e-6)
+                            {
+                                continue;
+                            }
+
+                            var candidateUnit = candidateDir / candidateLen;
+                            if (Math.Abs(sourceUnit.DotProduct(candidateUnit)) < sectionDirectionDotMin)
+                            {
+                                continue;
+                            }
+
+                            var overlap = Math.Min(source.MajorMax, candidate.MajorMax) - Math.Max(source.MajorMin, candidate.MajorMin);
+                            if (overlap < sectionMinOverlap)
+                            {
+                                continue;
+                            }
+
+                            var offset = Math.Abs(DistancePointToInfiniteLine(Midpoint(source.A, source.B), candidate.A, candidate.B));
+                            if (offset < sectionOffsetMin || offset > sectionOffsetMax)
+                            {
+                                continue;
+                            }
+
+                            return true;
+                        }
+
+                        return false;
+                    }
+
+                    var hasNearbySectionRow = HasNearbyParallelSectionRow();
+
+                    const double ordinaryVerticalEndpointPreserveTol = 0.15;
+                    for (var j = 0; j < roadSegments.Count; j++)
+                    {
+                        if (j == sourceIndex)
+                        {
+                            continue;
+                        }
+
+                        var target = roadSegments[j];
+                        if (!target.Vertical ||
+                            target.IsSecLayer ||
+                            target.IsCorrectionZeroLayer ||
+                            IsCorrectionSurveyedLayer(target.Layer ?? string.Empty) ||
+                            !blindSegmentList[j])
+                        {
+                            continue;
+                        }
+
+                        if (endpoint.GetDistanceTo(target.A) > ordinaryVerticalEndpointPreserveTol &&
+                            endpoint.GetDistanceTo(target.B) > ordinaryVerticalEndpointPreserveTol)
+                        {
+                            continue;
+                        }
+
+                        if (!hasLongInsetCompanion && hasNearbySectionRow)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool EndpointTouchesOrdinaryVerticalBoundaryEndpoint(int sourceIndex, Point2d endpoint, Point2d other)
+                {
+                    const double ordinaryVerticalEndpointPreserveTol = 0.15;
+                    if (sourceIndex < 0 || sourceIndex >= roadSegments.Count)
+                    {
+                        return false;
+                    }
+
+                    var source = roadSegments[sourceIndex];
+                    if (!source.Horizontal)
+                    {
+                        return false;
+                    }
+
+                    for (var j = 0; j < roadSegments.Count; j++)
+                    {
+                        if (j == sourceIndex)
+                        {
+                            continue;
+                        }
+
+                        var target = roadSegments[j];
+                        if (!target.Vertical ||
+                            target.IsSecLayer ||
+                            target.IsCorrectionZeroLayer)
+                        {
+                            continue;
+                        }
+
+                        if (blindSegmentList[j])
+                        {
+                            continue;
+                        }
+
+                        if (endpoint.GetDistanceTo(target.A) <= ordinaryVerticalEndpointPreserveTol ||
+                            endpoint.GetDistanceTo(target.B) <= ordinaryVerticalEndpointPreserveTol)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return EndpointTouchesThirtyBoundaryPreserveStop(sourceIndex, endpoint, other);
+                }
+
+                bool TryFindPreferredCorrectionZeroStop(
+                    int sourceIndex,
+                    Point2d endpoint,
+                    Point2d other,
+                    out Point2d stopPoint,
+                    out double stopAlong,
+                    out double stopScore)
+                {
+                    stopPoint = endpoint;
+                    stopAlong = double.MaxValue;
+                    stopScore = double.MaxValue;
+
+                    var outward = endpoint - other;
+                    if (outward.Length <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var outwardUnit = outward / outward.Length;
+                    var minPreferredAlong = Math.Max(minExtend, CorrectionLineInsetMeters - correctionStopAlongTol);
+                    var maxPreferredAlong = CorrectionLineInsetMeters + correctionStopAlongTol;
+                    var sourceSegment = roadSegments[sourceIndex];
+                    var bestPoint = stopPoint;
+                    var bestAlong = stopAlong;
+                    var bestScore = stopScore;
+
+                    bool TryScoreCorrectionStopCandidate(Point2d candidate, Point2d targetA, Point2d targetB)
+                    {
+                        var along = (candidate - endpoint).DotProduct(outwardUnit);
+                        if (along < minPreferredAlong || along > maxPreferredAlong)
+                        {
+                            return false;
+                        }
+
+                        var targetDistance = DistancePointToSegment(candidate, targetA, targetB);
+                        if (targetDistance > targetApparentTol)
+                        {
+                            return false;
+                        }
+
+                        var score = Math.Abs(along - CorrectionLineInsetMeters) + (2.0 * targetDistance);
+                        if (score >= bestScore)
+                        {
+                            return false;
+                        }
+
+                        bestPoint = candidate;
+                        bestAlong = along;
+                        bestScore = score;
+                        return true;
+                    }
+
+                    var found = false;
+                    for (var j = 0; j < correctionSegments.Count; j++)
+                    {
+                        var target = correctionSegments[j];
+                        if (!string.Equals(target.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        if (TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(
+                                sourceSegment.A,
+                                sourceSegment.B,
+                                target.A,
+                                target.B,
+                                out var intersection))
+                        {
+                            if (TryScoreCorrectionStopCandidate(intersection, target.A, target.B))
+                            {
+                                found = true;
+                            }
+
+                            continue;
+                        }
+
+                        // Correction-zero companions can be collinear with the ordinary source row.
+                        // In that case there is no unique line intersection, so score the companion
+                        // endpoints directly and prefer the expected inset stop.
+                        if (DistancePointToInfiniteLine(target.A, sourceSegment.A, sourceSegment.B) > correctionStopCollinearTol ||
+                            DistancePointToInfiniteLine(target.B, sourceSegment.A, sourceSegment.B) > correctionStopCollinearTol)
+                        {
+                            continue;
+                        }
+
+                        if (TryScoreCorrectionStopCandidate(target.A, target.A, target.B))
+                        {
+                            found = true;
+                        }
+
+                        if (TryScoreCorrectionStopCandidate(target.B, target.A, target.B))
+                        {
+                            found = true;
+                        }
+                    }
+
+                    stopPoint = bestPoint;
+                    stopAlong = bestAlong;
+                    stopScore = bestScore;
+                    return found;
+                }
+
+                var correctionZeroExtended = 0;
+                var baseSegmentCount = roadSegments.Count;
+                for (var i = 0; i < baseSegmentCount; i++)
+                {
+                    var source = roadSegments[i];
+                    var sourceRole = GetEndpointRole(i);
+                    if (sourceRole != endpointRoleZero || source.IsCorrectionZeroLayer || source.IsSecLayer)
+                    {
+                        continue;
+                    }
+
+                    for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                    {
+                        var endpoint = endpointIndex == 0 ? source.A : source.B;
+                        var other = endpointIndex == 0 ? source.B : source.A;
+                        var outward = endpoint - other;
+                        if (outward.Length <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        var outwardUnit = outward / outward.Length;
+                        var foundCorrectionZeroTarget = false;
+                        var bestCorrectionZeroScore = double.MaxValue;
+                        var bestCorrectionZeroPoint = endpoint;
+                        for (var j = 0; j < roadSegments.Count; j++)
+                        {
+                            if (j == i)
+                            {
+                                continue;
+                            }
+
+                            var target = roadSegments[j];
+                            if (!target.IsCorrectionZeroLayer || !IsOppositeDirectionTarget(i, j))
+                            {
+                                continue;
+                            }
+
+                            if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(source.A, source.B, target.A, target.B, out var intersection))
+                            {
+                                continue;
+                            }
+
+                            var along = (intersection - endpoint).DotProduct(outwardUnit);
+                            if (along <= minExtend || along > maxExtend)
+                            {
+                                continue;
+                            }
+
+                            var targetDistance = DistancePointToSegment(intersection, target.A, target.B);
+                            if (targetDistance > targetApparentTol)
+                            {
+                                continue;
+                            }
+
+                            var score = along + (2.0 * targetDistance);
+                            if (score >= bestCorrectionZeroScore)
+                            {
+                                continue;
+                            }
+
+                            foundCorrectionZeroTarget = true;
+                            bestCorrectionZeroScore = score;
+                            bestCorrectionZeroPoint = intersection;
+                        }
+
+                        if (!foundCorrectionZeroTarget)
+                        {
+                            continue;
+                        }
+
+                        if (TryExtendSourceEndpoint(i, endpoint, bestCorrectionZeroPoint))
+                        {
+                            correctionZeroExtended++;
+                            logger?.WriteLine(
+                                $"Cleanup: correction-zero endpoint extend source={source.Layer} role={sourceRole} " +
+                                $"seg={source.A.X:0.###},{source.A.Y:0.###}->{source.B.X:0.###},{source.B.Y:0.###} " +
+                                $"endpoint={endpoint.X:0.###},{endpoint.Y:0.###} target={bestCorrectionZeroPoint.X:0.###},{bestCorrectionZeroPoint.Y:0.###} " +
+                                $"score={bestCorrectionZeroScore:0.###}.");
+                        }
+                    }
                 }
 
                 var scannedTwentyEndpoints = 0;
@@ -2800,16 +3331,21 @@ namespace AtsBackgroundBuilder
                 var blindFallbackUsed = 0;
                 var sourceRoleZeroSegments = 0;
                 var sourceRoleTwentySegments = 0;
-                const double minExtend = 0.05;
-                const double maxExtend = 40.0;
-                const double targetApparentTol = 40.0;
-
-                var baseSegmentCount = roadSegments.Count;
                 for (var i = 0; i < baseSegmentCount; i++)
                 {
                     var source = roadSegments[i];
                     var sourceRole = GetEndpointRole(i);
                     if (sourceRole != endpointRoleZero && sourceRole != endpointRoleTwenty)
+                    {
+                        continue;
+                    }
+
+                    if (source.IsSecLayer)
+                    {
+                        continue;
+                    }
+
+                    if (source.IsCorrectionZeroLayer)
                     {
                         continue;
                     }
@@ -2841,6 +3377,41 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
+                        if (sourceRole == endpointRoleZero)
+                        {
+                            if (EndpointTouchesCorrectionZeroStop(endpoint))
+                            {
+                                alreadyConnected++;
+                                continue;
+                            }
+
+                            if (EndpointTouchesOrdinaryVerticalBoundaryEndpoint(i, endpoint, other))
+                            {
+                                alreadyConnected++;
+                                continue;
+                            }
+
+                            if (TryFindPreferredCorrectionZeroStop(i, endpoint, other, out var preferredCorrectionStop, out var preferredCorrectionAlong, out var preferredCorrectionScore))
+                            {
+                                if (TryExtendSourceEndpoint(i, endpoint, preferredCorrectionStop))
+                                {
+                                    correctionZeroExtended++;
+                                    logger?.WriteLine(
+                                        $"Cleanup: correction-zero stop normalize source={source.Layer} role={sourceRole} " +
+                                        $"seg={source.A.X:0.###},{source.A.Y:0.###}->{source.B.X:0.###},{source.B.Y:0.###} " +
+                                        $"endpoint={endpoint.X:0.###},{endpoint.Y:0.###} target={preferredCorrectionStop.X:0.###},{preferredCorrectionStop.Y:0.###} " +
+                                        $"along={preferredCorrectionAlong:0.###} score={preferredCorrectionScore:0.###}.");
+                                    source = roadSegments[i];
+                                }
+                                else if (endpoint.GetDistanceTo(preferredCorrectionStop) <= correctionStopTouchTol)
+                                {
+                                    alreadyConnected++;
+                                }
+
+                                continue;
+                            }
+                        }
+
                         var outwardUnit = outward / outward.Length;
                         if (HasExistingOppositeConnection(i, endpoint, other))
                         {
@@ -2866,6 +3437,45 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
 
+                            if (target.IsCorrectionZeroLayer)
+                            {
+                                if (sourceRole != endpointRoleZero)
+                                {
+                                    continue;
+                                }
+
+                                if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(source.A, source.B, target.A, target.B, out var correctionZeroIntersection))
+                                {
+                                    continue;
+                                }
+
+                                var correctionZeroAlong = (correctionZeroIntersection - endpoint).DotProduct(outwardUnit);
+                                if (correctionZeroAlong <= minExtend || correctionZeroAlong > maxExtend)
+                                {
+                                    maxDistanceRejected++;
+                                    continue;
+                                }
+
+                                var correctionZeroTargetDistance = DistancePointToSegment(correctionZeroIntersection, target.A, target.B);
+                                if (correctionZeroTargetDistance > targetApparentTol)
+                                {
+                                    targetDistanceRejected++;
+                                    continue;
+                                }
+
+                                var correctionZeroScore = correctionZeroAlong + (2.0 * correctionZeroTargetDistance);
+                                if (correctionZeroScore < bestScore)
+                                {
+                                    found = true;
+                                    bestScore = correctionZeroScore;
+                                    bestTargetPoint = correctionZeroIntersection;
+                                    bestUsedGeneratedThirtyAsZero = false;
+                                    bestUsedBlindFallback = false;
+                                }
+
+                                continue;
+                            }
+
                             if (!IsAllowedEndpointTarget(i, j, out var usedGeneratedThirtyAsZero, out var usedBlindFallback))
                             {
                                 roleRejected++;
@@ -2884,7 +3494,8 @@ namespace AtsBackgroundBuilder
                                 continue;
                             }
 
-                            if (!IsSameSideOfRoadAllowance(i, endpoint, other, intersection))
+                            if (!target.IsCorrectionZeroLayer &&
+                                !IsSameSideOfRoadAllowance(i, endpoint, other, intersection))
                             {
                                 sideRejected++;
                                 continue;
@@ -2918,6 +3529,11 @@ namespace AtsBackgroundBuilder
 
                         if (TryExtendSourceEndpoint(i, endpoint, bestTargetPoint))
                         {
+                            logger?.WriteLine(
+                                $"Cleanup: canonical endpoint extend source={source.Layer} role={sourceRole} " +
+                                $"seg={source.A.X:0.###},{source.A.Y:0.###}->{source.B.X:0.###},{source.B.Y:0.###} " +
+                                $"endpoint={endpoint.X:0.###},{endpoint.Y:0.###} target={bestTargetPoint.X:0.###},{bestTargetPoint.Y:0.###} " +
+                                $"score={bestScore:0.###} blind={bestUsedBlindFallback} gen30as0={bestUsedGeneratedThirtyAsZero}.");
                             extended++;
                             extendedInPlace++;
                             if (bestUsedGeneratedThirtyAsZero)

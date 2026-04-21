@@ -5,8 +5,8 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="Build a Drill"
-        Width="760"
-        Height="720"
+        Width="780"
+        Height="760"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanMinimize"
         Background="#FFF5F6FA">
@@ -140,24 +140,48 @@
                                                    FontWeight="SemiBold"
                                                    Foreground="#FF111827" />
 
-                                        <Grid Margin="0,12,0,0">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="120" />
-                                                <ColumnDefinition Width="*" />
-                                            </Grid.ColumnDefinitions>
+                                         <Grid Margin="0,12,0,0">
+                                             <Grid.ColumnDefinitions>
+                                                 <ColumnDefinition Width="120" />
+                                                 <ColumnDefinition Width="150" />
+                                                 <ColumnDefinition Width="12" />
+                                                 <ColumnDefinition Width="*" />
+                                             </Grid.ColumnDefinitions>
 
-                                            <TextBlock Grid.Column="0"
-                                                       Text="Build from"
-                                                       VerticalAlignment="Center"
-                                                       Foreground="#FF374151" />
-                                            <ComboBox Grid.Column="1"
-                                                      ItemsSource="{Binding SourceOptions}"
-                                                      SelectedItem="{Binding SelectedSource, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                      DisplayMemberPath="Label" />
-                                        </Grid>
+                                             <TextBlock Grid.Column="0"
+                                                        Text="Build from"
+                                                        VerticalAlignment="Center"
+                                                        Foreground="#FF374151" />
+                                             <ComboBox Grid.Column="1"
+                                                       Margin="0,0,0,0"
+                                                       ItemsSource="{Binding SourceOptions}"
+                                                       SelectedItem="{Binding SelectedSource, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                       DisplayMemberPath="Label" />
+                                         </Grid>
 
-                                        <Grid Margin="0,12,0,0"
-                                              Visibility="{Binding CoordinateInputsVisibility}">
+                                         <Grid Margin="0,10,0,0">
+                                             <Grid.ColumnDefinitions>
+                                                 <ColumnDefinition Width="160" />
+                                                 <ColumnDefinition Width="120" />
+                                                 <ColumnDefinition Width="12" />
+                                                 <ColumnDefinition Width="*" />
+                                             </Grid.ColumnDefinitions>
+
+                                             <TextBlock Grid.Column="0"
+                                                        Text="Combined scale factor"
+                                                        VerticalAlignment="Center"
+                                                        Foreground="#FF374151" />
+                                             <TextBox Grid.Column="1"
+                                                      Text="{Binding CombinedScaleFactor, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                             <TextBlock Grid.Column="3"
+                                                        VerticalAlignment="Center"
+                                                        Foreground="#FF6B7280"
+                                                        Text="Shared across all points. Section offsets use offset * CSF."
+                                                        TextWrapping="Wrap" />
+                                         </Grid>
+
+                                         <Grid Margin="0,12,0,0"
+                                               Visibility="{Binding CoordinateInputsVisibility}">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="140" />
                                                 <ColumnDefinition Width="*" />
@@ -229,7 +253,7 @@
                                             </Grid>
 
                                             <CheckBox Margin="0,10,0,0"
-                                                      Content="ATS fabric"
+                                                      Content="Use ATS hard boundaries"
                                                       IsChecked="{Binding UseAtsFabric, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 
                                             <Grid Margin="0,10,0,0">

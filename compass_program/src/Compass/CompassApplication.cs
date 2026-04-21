@@ -25,6 +25,12 @@ public class CompassApplication : IExtensionApplication
     {
         CompassStartupDiagnostics.Log("CompassApplication.Initialize started.");
         CompassEnvironment.Initialize();
+        if (CompassHostMode.IsHeadless)
+        {
+            CompassStartupDiagnostics.Log("CompassApplication.Initialize detected headless host mode; skipping palette initialization.");
+            return;
+        }
+
         EnsureModules();
         EnsureCompassPaletteTab();
 

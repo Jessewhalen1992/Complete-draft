@@ -267,6 +267,12 @@
                                         HorizontalContentAlignment="Left"
                                         Margin="0,8,0,0"
                                         Command="{Binding UpdateOffsetsCommand}" />
+                                <Button Content="EXISTING WELL TABLE"
+                                        Padding="12,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Margin="0,8,0,0"
+                                        Command="{Binding ExistingWellTableCommand}" />
                             </StackPanel>
                         </StackPanel>
                     </Border>

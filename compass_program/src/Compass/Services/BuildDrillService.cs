@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -9,6 +10,7 @@ using System.Windows;
 using AtsBackgroundBuilder;
 using AtsBackgroundBuilder.Sections;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
 using Compass.Infrastructure.Logging;
@@ -22,117 +24,62 @@ namespace Compass.Services;
 public sealed class BuildDrillService
 {
     private static readonly object AdeProjectionSync = new();
+    private const string Nad27TracePathEnvironmentVariable = "COMPASS_NAD27_TRACE_PATH";
     private const string DrillPathLayer = "P-PDRILLPATH";
     private const string DrillPointsLayer = "Z-DRILL-POINT";
+    private const string HorizontalBoundaryLayer = "L-SEC-HB";
     private const double DrillPointTextHeight = 2.0;
     private const string DefaultSectionIndexFolder = @"C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\RES MANAGER";
     private const double AtsBoundarySearchDistance = 45.0;
     private const double HorizontalBoundarySearchDistance = 10.0;
     private const double MinimumLineLength = 1e-3;
     private const double ParallelDotTolerance = 0.8;
-    private static readonly string[] AtsBoundaryLayers =
+    private const double BoundaryProbeSegmentTolerance = 0.25;
+    private const double BoundaryProbeExtensionTolerance = 30.0;
+    private const double BoundarySideTolerance = 1e-3;
+    private const double VisibleBoundaryFamilyTolerance = 2.5;
+    private static readonly string[] HardBoundaryLayers =
     {
+        "L-USEC-C-0",
         "L-USEC-0",
         "L-USEC2012",
-        "L-USEC-2012",
-        "L-SEC"
+        "L-USEC-2012"
     };
-    private static readonly string[] HorizontalBoundaryLayers =
+    private static readonly HashSet<string> AtsScratchIsolationLayers = new(StringComparer.OrdinalIgnoreCase)
     {
-        "L-SEC-HB"
+        "L-SEC",
+        "L-SEC-0",
+        "L-SEC-2012",
+        "L-QSEC",
+        "L-QSEC-BOX",
+        "L-USEC",
+        "L-USEC-0",
+        "L-USEC2012",
+        "L-USEC3018",
+        "L-USEC-2012",
+        "L-USEC-3018",
+        "L-USEC-C",
+        "L-USEC-C-0",
+        "L-SECTION-LSD",
+        "L-QUATER",
+        "L-QUARTER"
     };
 
     private readonly ILog _log;
-    private readonly LayerService _layerService;
-
     public BuildDrillService(ILog log, LayerService layerService)
     {
         _log = log ?? throw new ArgumentNullException(nameof(log));
-        _layerService = layerService ?? throw new ArgumentNullException(nameof(layerService));
+        ArgumentNullException.ThrowIfNull(layerService);
     }
 
     public void BuildDrill(BuildDrillRequest request)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        if (request.Points == null || request.Points.Count < 2)
-        {
-            MessageBox.Show("Build a Drill needs at least two points.", "Build a Drill", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        var document = AutoCADApplication.DocumentManager.MdiActiveDocument;
-        if (document == null)
-        {
-            MessageBox.Show("No active AutoCAD document is available.", "Build a Drill", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
         try
         {
-            var pathPoints = new List<Point3d>(request.Points.Count + (request.SurfacePoint.HasValue ? 1 : 0));
-            var pointNotes = new List<string>(request.Points.Count + (request.SurfacePoint.HasValue ? 1 : 0));
-
-            if (request.SurfacePoint.HasValue)
-            {
-                pathPoints.Add(request.SurfacePoint.Value);
-                pointNotes.Add("surface start point");
-            }
-
-            for (var i = 0; i < request.Points.Count; i++)
-            {
-                var pointRequest = request.Points[i];
-                var point = ResolveTargetPoint(pointRequest, document.Database, document.Name, out var sourceDescription);
-                pathPoints.Add(point);
-                pointNotes.Add(sourceDescription);
-            }
-
-            _layerService.EnsureLayer(document.Database, DrillPathLayer);
-            _layerService.EnsureLayer(document.Database, DrillPointsLayer);
-            var drillLetter = NormalizeDrillLetter(request.DrillLetter);
-            var labeledPoints = BuildLabeledPoints(drillLetter, request.SurfacePoint, request.Points.Count, pathPoints);
-
-            using (var transaction = document.Database.TransactionManager.StartTransaction())
-            {
-                var blockTable = (BlockTable)transaction.GetObject(document.Database.BlockTableId, OpenMode.ForRead);
-                var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-
-                RemoveExistingDrillPointLabels(modelSpace, transaction, drillLetter);
-
-                var polyline = new Polyline(pathPoints.Count)
-                {
-                    Layer = DrillPathLayer
-                };
-
-                for (var i = 0; i < pathPoints.Count; i++)
-                {
-                    polyline.AddVertexAt(i, new Point2d(pathPoints[i].X, pathPoints[i].Y), 0.0, 0.0, 0.0);
-                }
-
-                modelSpace.AppendEntity(polyline);
-                transaction.AddNewlyCreatedDBObject(polyline, true);
-
-                foreach (var labeledPoint in labeledPoints)
-                {
-                    var text = new DBText
-                    {
-                        Position = labeledPoint.Point,
-                        Height = DrillPointTextHeight,
-                        TextString = labeledPoint.Label,
-                        Layer = DrillPointsLayer,
-                        ColorIndex = 7
-                    };
-
-                    modelSpace.AppendEntity(text);
-                    transaction.AddNewlyCreatedDBObject(text, true);
-                }
-
-                transaction.Commit();
-            }
-
-            var summary = BuildPointSummary(pointNotes);
-            _log.Info($"Build a Drill created a {pathPoints.Count}-point path for '{request.DrillName}' on {DrillPathLayer} with {labeledPoints.Count} point labels on {DrillPointsLayer}. {summary}");
+            var result = ExecuteBuildDrill(request);
+            _log.Info($"Build a Drill created a {result.Points.Count}-point path for '{request.DrillName}' on {DrillPathLayer} with {result.Points.Count} point labels on {DrillPointsLayer}. {result.Summary}");
             MessageBox.Show(
-                $"Built {request.DrillName} with {pathPoints.Count} point(s) on {DrillPathLayer}.\nPoint labels were refreshed on {DrillPointsLayer}.\n{summary}",
+                $"Built {request.DrillName} with {result.Points.Count} point(s) on {DrillPathLayer}.\nPoint labels were refreshed on {DrillPointsLayer}.\n{result.Summary}",
                 "Build a Drill",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -142,6 +89,95 @@ public sealed class BuildDrillService
             _log.Error($"Build a Drill failed: {ex.Message}", ex);
             MessageBox.Show($"Build a Drill failed:\n{ex.Message}", "Build a Drill", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    public BuildDrillExecutionResult ExecuteBuildDrill(BuildDrillRequest request, BuildDrillExecutionOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        options ??= new BuildDrillExecutionOptions();
+
+        if (request.Points == null || request.Points.Count < 2)
+        {
+            throw new InvalidOperationException("Build a Drill needs at least two points.");
+        }
+
+        var document = AutoCADApplication.DocumentManager.MdiActiveDocument;
+        if (document == null)
+        {
+            throw new InvalidOperationException("No active AutoCAD document is available.");
+        }
+
+        var pathPoints = new List<Point3d>(request.Points.Count + (request.SurfacePoint.HasValue ? 1 : 0));
+        var pointNotes = new List<string>(request.Points.Count + (request.SurfacePoint.HasValue ? 1 : 0));
+        var sectionBoundaryCache = new Dictionary<string, CachedBoundaryResolution>(StringComparer.OrdinalIgnoreCase);
+
+        if (request.SurfacePoint.HasValue)
+        {
+            pathPoints.Add(request.SurfacePoint.Value);
+            pointNotes.Add("surface start point");
+        }
+
+        for (var i = 0; i < request.Points.Count; i++)
+        {
+            var pointRequest = request.Points[i];
+            try
+            {
+                var point = ResolveTargetPoint(
+                    pointRequest,
+                    document.Database,
+                    document.Editor,
+                    document.Name,
+                    sectionBoundaryCache,
+                    out var sourceDescription);
+                pathPoints.Add(point);
+                pointNotes.Add(sourceDescription);
+            }
+            catch (System.Exception ex)
+            {
+                throw new InvalidOperationException($"Point {i + 1} failed: {ex.Message}", ex);
+            }
+        }
+
+        var drillLetter = NormalizeDrillLetter(request.DrillLetter);
+        var labeledPoints = BuildLabeledPoints(drillLetter, request.SurfacePoint, request.Points.Count, pathPoints);
+        if (options.CreateGeometry)
+        {
+            CreateDrillGeometry(document.Database, pathPoints, labeledPoints, drillLetter);
+        }
+
+        var summary = BuildPointSummary(pointNotes);
+        return new BuildDrillExecutionResult
+        {
+            DocumentName = document.Name,
+            DrillName = request.DrillName,
+            DrillLetter = drillLetter,
+            GeometryCreated = options.CreateGeometry,
+            Summary = summary,
+            Points = BuildResolvedPoints(pathPoints, labeledPoints, pointNotes)
+        };
+    }
+
+    public void WriteResolvedGeometry(Database database, BuildDrillExecutionResult result)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        ArgumentNullException.ThrowIfNull(result);
+
+        if (result.Points == null || result.Points.Count == 0)
+        {
+            throw new InvalidOperationException("No resolved Build a Drill points were available to write.");
+        }
+
+        var pathPoints = new List<Point3d>(result.Points.Count);
+        var labeledPoints = new List<LabeledDrillPoint>(result.Points.Count);
+        foreach (var point in result.Points)
+        {
+            var resolvedPoint = new Point3d(point.X, point.Y, point.Z);
+            pathPoints.Add(resolvedPoint);
+            labeledPoints.Add(new LabeledDrillPoint(point.Label, resolvedPoint));
+        }
+
+        var drillLetter = NormalizeDrillLetter(result.DrillLetter);
+        CreateDrillGeometry(database, pathPoints, labeledPoints, drillLetter);
     }
 
     private static string BuildPointSummary(IReadOnlyList<string> pointNotes)
@@ -165,6 +201,92 @@ public sealed class BuildDrillService
         }
 
         return builder.ToString();
+    }
+
+    private void CreateDrillGeometry(
+        Database database,
+        IReadOnlyList<Point3d> pathPoints,
+        IReadOnlyList<LabeledDrillPoint> labeledPoints,
+        string drillLetter)
+    {
+        using var transaction = database.TransactionManager.StartTransaction();
+        EnsureLayerExists(database, transaction, DrillPathLayer);
+        EnsureLayerExists(database, transaction, DrillPointsLayer);
+        var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+        var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+        RemoveExistingDrillPointLabels(modelSpace, transaction, drillLetter);
+
+        var polyline = new Polyline(pathPoints.Count)
+        {
+            Layer = DrillPathLayer
+        };
+
+        for (var i = 0; i < pathPoints.Count; i++)
+        {
+            polyline.AddVertexAt(i, new Point2d(pathPoints[i].X, pathPoints[i].Y), 0.0, 0.0, 0.0);
+        }
+
+        modelSpace.AppendEntity(polyline);
+        transaction.AddNewlyCreatedDBObject(polyline, true);
+
+        foreach (var labeledPoint in labeledPoints)
+        {
+            var text = new DBText
+            {
+                Position = labeledPoint.Point,
+                Height = DrillPointTextHeight,
+                TextString = labeledPoint.Label,
+                Layer = DrillPointsLayer,
+                ColorIndex = 7
+            };
+
+            modelSpace.AppendEntity(text);
+            transaction.AddNewlyCreatedDBObject(text, true);
+        }
+
+        transaction.Commit();
+    }
+
+    private static void EnsureLayerExists(Database database, Transaction transaction, string layerName)
+    {
+        var layerTable = (LayerTable)transaction.GetObject(database.LayerTableId, OpenMode.ForRead);
+        if (layerTable.Has(layerName))
+        {
+            return;
+        }
+
+        layerTable.UpgradeOpen();
+        var record = new LayerTableRecord
+        {
+            Name = layerName
+        };
+        layerTable.Add(record);
+        transaction.AddNewlyCreatedDBObject(record, true);
+    }
+
+    private static IReadOnlyList<BuildDrillResolvedPoint> BuildResolvedPoints(
+        IReadOnlyList<Point3d> pathPoints,
+        IReadOnlyList<LabeledDrillPoint> labeledPoints,
+        IReadOnlyList<string> pointNotes)
+    {
+        var points = new List<BuildDrillResolvedPoint>(pathPoints.Count);
+        for (var i = 0; i < pathPoints.Count; i++)
+        {
+            var label = i < labeledPoints.Count ? labeledPoints[i].Label : string.Empty;
+            var note = i < pointNotes.Count ? pointNotes[i] : string.Empty;
+            points.Add(new BuildDrillResolvedPoint
+            {
+                Sequence = i + 1,
+                Label = label,
+                X = pathPoints[i].X,
+                Y = pathPoints[i].Y,
+                Z = pathPoints[i].Z,
+                Note = note
+            });
+        }
+
+        return points;
     }
 
     private static string NormalizeDrillLetter(string? drillLetter)
@@ -250,7 +372,13 @@ public sealed class BuildDrillService
 
     private sealed record LabeledDrillPoint(string Label, Point3d Point);
 
-    private Point3d ResolveTargetPoint(BuildDrillPointRequest request, Database database, string? drawingPath, out string sourceDescription)
+    private Point3d ResolveTargetPoint(
+        BuildDrillPointRequest request,
+        Database database,
+        Editor editor,
+        string? drawingPath,
+        IDictionary<string, CachedBoundaryResolution> sectionBoundaryCache,
+        out string sourceDescription)
     {
         switch (request.Source)
         {
@@ -263,7 +391,7 @@ public sealed class BuildDrillService
                 return ConvertNad27ToNad83(request);
 
             case BuildDrillSource.SectionOffsets:
-                return ResolveSectionOffsetPoint(request, database, drawingPath, out sourceDescription);
+                return ResolveSectionOffsetPoint(request, database, editor, drawingPath, sectionBoundaryCache, out sourceDescription);
 
             default:
                 throw new InvalidOperationException($"Unsupported build source: {request.Source}.");
@@ -275,27 +403,36 @@ public sealed class BuildDrillService
         var sourceCode = $"UTM27-{request.Zone}";
         var destinationCode = $"UTM83-{request.Zone}";
         var failureDetails = new List<string>(2);
+        TraceNad27Step($"ConvertNad27ToNad83 start {sourceCode}->{destinationCode} x={request.X:0.###} y={request.Y:0.###}");
 
+        TraceNad27Step("Attempting managed Map transformer creation.");
         if (Map3dCoordinateTransformer.TryCreate(sourceCode, destinationCode, out var transformer) && transformer != null)
         {
+            TraceNad27Step("Managed Map transformer created. Attempting projection.");
             // The shared Map transformer helper returns Y first and X second.
             if (transformer.TryProject(new Point3d(request.X, request.Y, 0.0), out var transformedY, out var transformedX))
             {
+                TraceNad27Step($"Managed Map transformer succeeded -> x={transformedX:0.###} y={transformedY:0.###}");
                 return new Point3d(transformedX, transformedY, 0.0);
             }
 
+            TraceNad27Step("Managed Map transformer returned no projected point.");
             failureDetails.Add("managed Map transformer loaded but returned no projected point");
         }
         else
         {
+            TraceNad27Step("Managed Map transformer could not be created.");
             failureDetails.Add("managed Map transformer could not be created");
         }
 
+        TraceNad27Step("Attempting ADE fallback.");
         if (TryConvertNad27ToNad83ViaAde(sourceCode, destinationCode, request.X, request.Y, out var fallbackPoint, out var adeDetail))
         {
+            TraceNad27Step($"ADE fallback succeeded -> x={fallbackPoint.X:0.###} y={fallbackPoint.Y:0.###}");
             return fallbackPoint;
         }
 
+        TraceNad27Step($"ADE fallback failed: {adeDetail}");
         failureDetails.Add(adeDetail);
         var detail = string.Join("; ", failureDetails.Where(part => !string.IsNullOrWhiteSpace(part)));
         _log.Warn($"Build a Drill NAD27 conversion failed for {sourceCode} -> {destinationCode}: {detail}");
@@ -310,17 +447,23 @@ public sealed class BuildDrillService
 
         lock (AdeProjectionSync)
         {
+            TraceNad27Step("ADE invoke fallback starting.");
             if (TryConvertNad27ToNad83ViaAdeInvoke(sourceCode, destinationCode, x, y, out point, out detail))
             {
+                TraceNad27Step("ADE invoke fallback succeeded.");
                 return true;
             }
 
+            TraceNad27Step($"ADE invoke fallback failed: {detail}");
             var invokeDetail = detail;
+            TraceNad27Step("ADE SendCommand fallback starting.");
             if (TryConvertNad27ToNad83ViaSendCommand(sourceCode, destinationCode, x, y, out point, out var commandDetail))
             {
+                TraceNad27Step("ADE SendCommand fallback succeeded.");
                 return true;
             }
 
+            TraceNad27Step($"ADE SendCommand fallback failed: {commandDetail}");
             detail = $"{invokeDetail}; command-line ADE returned {commandDetail}";
             return false;
         }
@@ -333,8 +476,10 @@ public sealed class BuildDrillService
 
         try
         {
+            TraceNad27Step("ADE invoke: ade_errclear");
             InvokeLispFunction("ade_errclear");
 
+            TraceNad27Step($"ADE invoke: ade_projsetsrc {sourceCode}");
             using var sourceResult = InvokeLispFunction("ade_projsetsrc", new TypedValue((int)LispDataType.Text, sourceCode));
             if (!HasTruthyLispResult(sourceResult))
             {
@@ -342,6 +487,7 @@ public sealed class BuildDrillService
                 return false;
             }
 
+            TraceNad27Step($"ADE invoke: ade_projsetdest {destinationCode}");
             using var destinationResult = InvokeLispFunction("ade_projsetdest", new TypedValue((int)LispDataType.Text, destinationCode));
             if (!HasTruthyLispResult(destinationResult))
             {
@@ -349,6 +495,7 @@ public sealed class BuildDrillService
                 return false;
             }
 
+            TraceNad27Step("ADE invoke: ade_projptforward Point3d");
             if (TryInvokeAdeProjectionVariant(
                     "Point3d",
                     out point,
@@ -358,6 +505,7 @@ public sealed class BuildDrillService
                 return true;
             }
 
+            TraceNad27Step("ADE invoke: ade_projptforward XYZ list");
             if (TryInvokeAdeProjectionVariant(
                     "XYZ list",
                     out point,
@@ -371,6 +519,7 @@ public sealed class BuildDrillService
                 return true;
             }
 
+            TraceNad27Step("ADE invoke: ade_projptforward XY list");
             if (TryInvokeAdeProjectionVariant(
                     "XY list",
                     out point,
@@ -387,6 +536,7 @@ public sealed class BuildDrillService
         }
         catch (System.Exception ex)
         {
+            TraceNad27Step($"ADE invoke exception: {ex.GetType().Name}: {ex.Message}");
             detail = $"ADE invoke fallback threw {ex.GetType().Name}: {ex.Message}";
             return false;
         }
@@ -426,6 +576,7 @@ public sealed class BuildDrillService
 
         try
         {
+            TraceNad27Step("ADE SendCommand: dispatching expression.");
             InvokeComSendCommand(expression);
             var symbolValue = document.GetLispSymbol(symbolName);
             var raw = symbolValue?.ToString() ?? string.Empty;
@@ -443,6 +594,7 @@ public sealed class BuildDrillService
         }
         catch (System.Exception ex)
         {
+            TraceNad27Step($"ADE SendCommand exception: {ex.GetType().Name}: {ex.Message}");
             detail = $"SendCommand ADE fallback threw {ex.GetType().Name}: {ex.Message}";
             return false;
         }
@@ -632,7 +784,36 @@ public sealed class BuildDrillService
         return $"{value.TypeCode}:{renderedValue}";
     }
 
-    private Point3d ResolveSectionOffsetPoint(BuildDrillPointRequest request, Database database, string? drawingPath, out string sourceDescription)
+    private static void TraceNad27Step(string message)
+    {
+        try
+        {
+            var path = Environment.GetEnvironmentVariable(Nad27TracePathEnvironmentVariable);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            var fullPath = Path.GetFullPath(path);
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath) ?? Path.GetTempPath());
+            File.AppendAllText(
+                fullPath,
+                $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} {message}{Environment.NewLine}",
+                Encoding.UTF8);
+        }
+        catch
+        {
+            // Best-effort trace only.
+        }
+    }
+
+    private Point3d ResolveSectionOffsetPoint(
+        BuildDrillPointRequest request,
+        Database database,
+        Editor editor,
+        string? drawingPath,
+        IDictionary<string, CachedBoundaryResolution> sectionBoundaryCache,
+        out string sourceDescription)
     {
         if (!TryLoadSectionFrame(request, drawingPath, out var sectionFrame))
         {
@@ -642,21 +823,331 @@ public sealed class BuildDrillService
 
         ValidateDistancesAgainstFrame(request, sectionFrame);
 
-        var rawBoundaries = CreateFrameBoundaries(sectionFrame);
-        var atsResult = ResolveNearestBoundaries(database, rawBoundaries, AtsBoundaryLayers, AtsBoundarySearchDistance);
-        if (request.UseAtsFabric)
+        var sectionIndexBoundaries = CreateFrameBoundaries(sectionFrame);
+        if (!request.UseAtsFabric)
         {
-            sourceDescription = atsResult.UsedFallback
-                ? "section offsets from ATS fabric / section-index fallback"
-                : "section offsets from ATS fabric";
-            return ComputeOffsetPoint(sectionFrame, atsResult.Boundaries, request);
+            return ResolveSectionOffsetPointWithoutAtsFabric(
+                request,
+                database,
+                editor,
+                drawingPath,
+                sectionFrame,
+                sectionIndexBoundaries,
+                sectionBoundaryCache,
+                out sourceDescription);
         }
 
-        var hbResult = ResolveNearestBoundaries(database, atsResult.Boundaries, HorizontalBoundaryLayers, HorizontalBoundarySearchDistance);
-        sourceDescription = hbResult.UsedFallback
-            ? "section offsets from L-SEC-HB / ATS fallback"
-            : "section offsets from L-SEC-HB";
-        return ComputeOffsetPoint(sectionFrame, hbResult.Boundaries, request);
+        if (!TryGetOrResolveSectionHardBoundaryCandidates(
+                request,
+                database,
+                editor,
+                drawingPath,
+                sectionFrame,
+                sectionBoundaryCache,
+                out var cachedResolution,
+                out var resolutionDetail))
+        {
+            throw new InvalidOperationException(
+                $"Could not resolve hard ATS boundaries for section {request.Section}-{request.Township}-{request.Range}-W{request.Meridian} in zone {request.Zone}. {resolutionDetail}");
+        }
+
+        if (!TryComputeOffsetPointFromBoundaryCandidates(sectionFrame, cachedResolution.Candidates, request, out var cachedPoint, out var cachedDetail))
+        {
+            throw new InvalidOperationException(
+                $"Could not resolve hard ATS boundaries for section {request.Section}-{request.Township}-{request.Range}-W{request.Meridian} in zone {request.Zone}. {cachedDetail}");
+        }
+
+        sourceDescription = AppendResolutionDetail(cachedResolution.SourceDescription, cachedDetail);
+        return cachedPoint;
+    }
+
+    private Point3d ResolveSectionOffsetPointWithoutAtsFabric(
+        BuildDrillPointRequest request,
+        Database database,
+        Editor editor,
+        string? drawingPath,
+        SectionFrame frame,
+        BoundarySet sectionIndexBoundaries,
+        IDictionary<string, CachedBoundaryResolution> sectionBoundaryCache,
+        out string sourceDescription)
+    {
+        if (!TryGetOrResolveSectionHardBoundaryCandidates(
+                request,
+                database,
+                editor,
+                drawingPath,
+                frame,
+                sectionBoundaryCache,
+                out var hardBoundaryResolution,
+                out var hardBoundaryDetail))
+        {
+            throw new InvalidOperationException(
+                $"Could not resolve calculated hard ATS boundaries for section {request.Section}-{request.Township}-{request.Range}-W{request.Meridian} in zone {request.Zone}. {hardBoundaryDetail}");
+        }
+
+        if (!TryResolveCalculatedHardBoundariesForPoint(
+                frame,
+                request,
+                hardBoundaryResolution.Candidates,
+                sectionIndexBoundaries,
+                out var referenceBoundaries,
+                out var resolutionDetail))
+        {
+            throw new InvalidOperationException(
+                $"Could not resolve calculated hard ATS boundaries for section {request.Section}-{request.Township}-{request.Range}-W{request.Meridian} in zone {request.Zone}. {resolutionDetail}");
+        }
+
+        var referencePoint = ComputeOffsetPoint(frame, referenceBoundaries, request);
+        var hbSearch = ResolveNearestBoundaries(
+            database,
+            frame,
+            new Point2d(referencePoint.X, referencePoint.Y),
+            referenceBoundaries,
+            new[] { HorizontalBoundaryLayer },
+            HorizontalBoundarySearchDistance);
+
+        sourceDescription = AppendResolutionDetail(
+            UsesHorizontalBoundaryForRequestedSides(request, hbSearch.Boundaries)
+                ? "section offsets from L-SEC-HB"
+                : "section offsets from calculated hard boundaries",
+            DescribeNonAtsBoundaryResolution(request, referenceBoundaries, hbSearch.Boundaries));
+
+        return ComputeOffsetPoint(frame, hbSearch.Boundaries, request);
+    }
+
+    private static string AppendResolutionDetail(string sourceDescription, string? detail)
+    {
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            return sourceDescription;
+        }
+
+        return $"{sourceDescription} ({detail})";
+    }
+
+    private bool TryGetOrResolveSectionHardBoundaryCandidates(
+        BuildDrillPointRequest request,
+        Database database,
+        Editor editor,
+        string? drawingPath,
+        SectionFrame frame,
+        IDictionary<string, CachedBoundaryResolution> sectionBoundaryCache,
+        out CachedBoundaryResolution resolution,
+        out string detail)
+    {
+        var cacheKey = BuildSectionBoundaryCacheKey(request, "hard");
+        if (sectionBoundaryCache.TryGetValue(cacheKey, out resolution))
+        {
+            detail = string.Empty;
+            return true;
+        }
+
+        if (TryCollectLiveHardBoundaryCandidates(database, frame, out var liveCandidates) &&
+            liveCandidates.Count > 0)
+        {
+            resolution = new CachedBoundaryResolution(liveCandidates, "section offsets from live hard ATS boundaries");
+            sectionBoundaryCache[cacheKey] = resolution;
+            detail = string.Empty;
+            return true;
+        }
+
+        if (TryResolveAtsScratchHardBoundaries(editor, database, drawingPath, frame, request, out var scratchCandidates, out var scratchDetail) &&
+            scratchCandidates.Count > 0)
+        {
+            resolution = new CachedBoundaryResolution(scratchCandidates, "section offsets from ATS-built hard boundaries");
+            sectionBoundaryCache[cacheKey] = resolution;
+            detail = string.Empty;
+            return true;
+        }
+
+        resolution = default;
+        detail = string.IsNullOrWhiteSpace(scratchDetail)
+            ? "No hard ATS boundary candidates were available for this section."
+            : scratchDetail;
+        return false;
+    }
+
+    private static string BuildSectionBoundaryCacheKey(BuildDrillPointRequest request, string mode)
+    {
+        return string.Join(
+            "|",
+            request.Zone.ToString(CultureInfo.InvariantCulture),
+            request.Section.Trim(),
+            request.Township.Trim(),
+            request.Range.Trim(),
+            request.Meridian.Trim(),
+            mode);
+    }
+
+    private static bool TryCollectLiveHardBoundaryCandidates(Database database, SectionFrame frame, out List<StraightBoundary> candidates)
+    {
+        candidates = CollectBoundaryCandidates(database, frame, null);
+        return candidates.Count > 0;
+    }
+
+    private bool TryResolveAtsScratchHardBoundaries(
+        Editor editor,
+        Database database,
+        string? drawingPath,
+        SectionFrame frame,
+        BuildDrillPointRequest request,
+        out List<StraightBoundary> candidates,
+        out string detail)
+    {
+        candidates = new List<StraightBoundary>();
+        detail = string.Empty;
+        if (database == null || editor == null)
+        {
+            detail = "The active AutoCAD document was unavailable for ATS hard-boundary generation.";
+            return false;
+        }
+
+        if (!TryLoadAtsBackgroundBuilderAssembly(database, out var atsAssembly, out var assemblySource))
+        {
+            detail = "AtsBackgroundBuilder.dll was not found in the current probe paths.";
+            return false;
+        }
+
+        var pluginType = atsAssembly.GetType("AtsBackgroundBuilder.Plugin", throwOnError: false);
+        var loggerType = atsAssembly.GetType("AtsBackgroundBuilder.Logger", throwOnError: false);
+        var configType = atsAssembly.GetType("AtsBackgroundBuilder.Core.Config", throwOnError: false);
+        var sectionRequestType = atsAssembly.GetType("AtsBackgroundBuilder.SectionRequest", throwOnError: false);
+        var quarterSelectionType = atsAssembly.GetType("AtsBackgroundBuilder.QuarterSelection", throwOnError: false);
+        var sectionKeyType = atsAssembly.GetType("AtsBackgroundBuilder.Sections.SectionKey", throwOnError: false)
+            ?? atsAssembly.GetType("AtsBackgroundBuilder.SectionKey", throwOnError: false);
+        if (pluginType == null ||
+            loggerType == null ||
+            configType == null ||
+            sectionRequestType == null ||
+            quarterSelectionType == null ||
+            sectionKeyType == null)
+        {
+            detail = "The required ATS section-build types were not found.";
+            return false;
+        }
+
+        var drawSectionsMethod = pluginType
+            .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+            .FirstOrDefault(method =>
+                string.Equals(method.Name, "DrawSectionsFromRequests", StringComparison.Ordinal) &&
+                method.GetParameters().Length == 8);
+        if (drawSectionsMethod == null)
+        {
+            detail = "The ATS DrawSectionsFromRequests method was not found.";
+            return false;
+        }
+
+        object? logger = null;
+        try
+        {
+            logger = Activator.CreateInstance(loggerType);
+            var config = Activator.CreateInstance(configType);
+            if (logger == null || config == null)
+            {
+                detail = "Failed to instantiate ATS runtime objects.";
+                return false;
+            }
+
+            SetReflectionProperty(config, "UseSectionIndex", true);
+            SetReflectionProperty(config, "SectionIndexFolder", ResolveSectionIndexFolderForAtsBuild(database, drawingPath));
+
+            var quarterAll = Enum.Parse(quarterSelectionType, "All", ignoreCase: true);
+            var requestListType = typeof(List<>).MakeGenericType(sectionRequestType);
+            var requestList = Activator.CreateInstance(requestListType);
+            var addRequest = requestListType.GetMethod("Add");
+            if (requestList == null || addRequest == null)
+            {
+                detail = "Failed to create the ATS section request list.";
+                return false;
+            }
+
+            var sectionKey = Activator.CreateInstance(
+                sectionKeyType,
+                request.Zone,
+                request.Section,
+                request.Township,
+                request.Range,
+                request.Meridian);
+            if (sectionKey == null)
+            {
+                detail = "Failed to create the ATS section key.";
+                return false;
+            }
+
+            var sectionRequest = Activator.CreateInstance(sectionRequestType, quarterAll, sectionKey, "AUTO");
+            if (sectionRequest == null)
+            {
+                detail = "Failed to create the ATS section request.";
+                return false;
+            }
+
+            addRequest.Invoke(requestList, new[] { sectionRequest });
+
+            if (!TryOpenFileBackedScratchDatabase(database, out var scratchDb, out var scratchDetail))
+            {
+                detail = scratchDetail;
+                return false;
+            }
+
+            using (scratchDb)
+            {
+                var removedScratchEntities = RemoveScratchAtsLinework(scratchDb);
+                object? sectionDrawResult;
+                var previousWorkingDb = HostApplicationServices.WorkingDatabase;
+                try
+                {
+                    HostApplicationServices.WorkingDatabase = scratchDb;
+                    sectionDrawResult = drawSectionsMethod.Invoke(
+                        null,
+                        new object[] { editor, scratchDb, requestList, config, logger, false, false, true });
+                }
+                finally
+                {
+                    HostApplicationServices.WorkingDatabase = previousWorkingDb;
+                }
+
+                if (sectionDrawResult == null)
+                {
+                    detail = "The ATS scratch build returned no section result.";
+                    return false;
+                }
+
+                var generatedIds = GetObjectIdsFromReflectionProperty(sectionDrawResult, "GeneratedRoadAllowanceEntityIds");
+                var generatedCandidates = CollectBoundaryCandidates(scratchDb, frame, generatedIds);
+                var sectionCandidates = CollectBoundaryCandidates(scratchDb, frame, null);
+                candidates = MergeBoundaryCandidates(generatedCandidates, sectionCandidates);
+                if (candidates.Count == 0)
+                {
+                    detail =
+                        "The ATS scratch build completed but did not produce any hard 0/20.12 boundary candidates for this section.";
+                    return false;
+                }
+
+                detail =
+                    $"Derived {candidates.Count} hard ATS boundary candidate segment(s) from a scratch ATS section build after removing {removedScratchEntities} pre-existing ATS helper entity(ies) ({generatedCandidates.Count} generated-id/local matches, {sectionCandidates.Count} section-local matches; {assemblySource}).";
+                return true;
+            }
+        }
+        catch (TargetInvocationException ex)
+        {
+            var inner = ex.InnerException;
+            detail = inner == null
+                ? $"ATS scratch section build failed: {ex.Message}"
+                : $"ATS scratch section build failed: {inner.GetType().Name}: {inner.Message}";
+            return false;
+        }
+        catch (System.Exception ex)
+        {
+            detail = $"ATS scratch section build failed: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            if (logger is IDisposable disposableLogger)
+            {
+                disposableLogger.Dispose();
+            }
+        }
     }
 
     private bool TryLoadSectionFrame(BuildDrillPointRequest request, string? drawingPath, out SectionFrame frame)
@@ -747,19 +1238,456 @@ public sealed class BuildDrillService
         }
     }
 
-    private static void ValidateDistancesAgainstFrame(BuildDrillPointRequest request, SectionFrame frame)
+    private static List<StraightBoundary> CollectBoundaryCandidates(Database database, SectionFrame frame, IReadOnlyCollection<ObjectId>? candidateIds)
     {
-        if (request.NorthSouthDistance > frame.Height + 1e-6)
+        var candidates = new List<StraightBoundary>();
+        if (database == null)
         {
-            throw new InvalidOperationException(
-                $"North/south distance {request.NorthSouthDistance:0.###} is larger than the section height ({frame.Height:0.###}).");
+            return candidates;
         }
 
-        if (request.EastWestDistance > frame.Width + 1e-6)
+        using var transaction = database.TransactionManager.StartTransaction();
+
+        if (candidateIds != null && candidateIds.Count > 0)
+        {
+            foreach (var candidateId in candidateIds)
+            {
+                TryAddBoundaryCandidate(transaction, candidateId, frame, candidates);
+            }
+        }
+        else
+        {
+            var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+            if (blockTable.Has(BlockTableRecord.ModelSpace))
+            {
+                var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId entityId in modelSpace)
+                {
+                    TryAddBoundaryCandidate(transaction, entityId, frame, candidates);
+                }
+            }
+        }
+
+        transaction.Commit();
+        return candidates;
+    }
+
+    private static void TryAddBoundaryCandidate(
+        Transaction transaction,
+        ObjectId entityId,
+        SectionFrame frame,
+        List<StraightBoundary> candidates)
+    {
+        if (entityId.IsNull ||
+            transaction.GetObject(entityId, OpenMode.ForRead, false) is not Curve curve ||
+            curve.IsErased)
+        {
+            return;
+        }
+
+        if (!TryCreateStraightBoundary(curve, out var boundary))
+        {
+            return;
+        }
+
+        if (!TryNormalizeBoundaryCandidate(frame, boundary, curve.Layer ?? string.Empty, out var normalized))
+        {
+            return;
+        }
+
+        candidates.Add(normalized);
+    }
+
+    private static bool TryNormalizeBoundaryCandidate(
+        SectionFrame frame,
+        StraightBoundary boundary,
+        string layer,
+        out StraightBoundary normalized)
+    {
+        normalized = default;
+        if (!TryClassifyBoundarySide(frame, boundary, out var side, out var sideDistance))
+        {
+            return false;
+        }
+
+        string normalizedLayer;
+        if (IsHardBoundaryLayer(layer))
+        {
+            normalizedLayer = layer;
+        }
+        else if (string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!TryClassifyVisibleBoundaryFamily(sideDistance, out normalizedLayer))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            return false;
+        }
+
+        normalized = new StraightBoundary(side, boundary.OrderedStart(side), boundary.OrderedEnd(side), normalizedLayer);
+        return true;
+    }
+
+    private static bool TryClassifyBoundarySide(
+        SectionFrame frame,
+        StraightBoundary boundary,
+        out BoundarySide side,
+        out double sideDistance)
+    {
+        side = default;
+        sideDistance = double.MaxValue;
+        foreach (var anchor in EnumerateFrameBoundaries(frame))
+        {
+            if (!boundary.IsParallelTo(anchor))
+            {
+                continue;
+            }
+
+            var candidateDistance = boundary.DistanceToPoint(anchor.Midpoint);
+            if (candidateDistance > AtsBoundarySearchDistance || candidateDistance >= sideDistance)
+            {
+                continue;
+            }
+
+            side = anchor.Side;
+            sideDistance = candidateDistance;
+        }
+
+        return sideDistance < double.MaxValue;
+    }
+
+    private static IEnumerable<StraightBoundary> EnumerateFrameBoundaries(SectionFrame frame)
+    {
+        var boundaries = CreateFrameBoundaries(frame);
+        yield return boundaries.South;
+        yield return boundaries.North;
+        yield return boundaries.West;
+        yield return boundaries.East;
+    }
+
+    private static bool TryClassifyVisibleBoundaryFamily(double sideDistance, out string layer)
+    {
+        if (sideDistance <= VisibleBoundaryFamilyTolerance)
+        {
+            layer = "L-USEC-0";
+            return true;
+        }
+
+        if (Math.Abs(sideDistance - 20.12) <= VisibleBoundaryFamilyTolerance)
+        {
+            layer = "L-USEC2012";
+            return true;
+        }
+
+        layer = string.Empty;
+        return false;
+    }
+
+    private static bool IsHardBoundaryLayer(string layer)
+    {
+        return IsCorrectionUsecZeroLayer(layer) || IsActualUsecZeroLayer(layer) || IsUsecTwentyLayer(layer);
+    }
+
+    private static List<StraightBoundary> MergeBoundaryCandidates(params IReadOnlyList<StraightBoundary>[] sets)
+    {
+        var merged = new List<StraightBoundary>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var set in sets)
+        {
+            if (set == null)
+            {
+                continue;
+            }
+
+            foreach (var candidate in set)
+            {
+                var key = string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{candidate.Side}|{candidate.Layer}|{candidate.Start.X:0.###}|{candidate.Start.Y:0.###}|{candidate.End.X:0.###}|{candidate.End.Y:0.###}");
+                if (seen.Add(key))
+                {
+                    merged.Add(candidate);
+                }
+            }
+        }
+
+        return merged;
+    }
+
+    private static bool TryOpenFileBackedScratchDatabase(
+        Database sourceDatabase,
+        out Database? scratchDatabase,
+        out string detail)
+    {
+        scratchDatabase = null;
+        detail = string.Empty;
+        if (sourceDatabase == null)
+        {
+            detail = "The active drawing database was unavailable for ATS hard-boundary generation.";
+            return false;
+        }
+
+        var sourcePath = sourceDatabase.Filename;
+        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+        {
+            detail = "Build a Drill needs the current drawing saved before ATS can open a file-backed scratch database.";
+            return false;
+        }
+
+        try
+        {
+            scratchDatabase = new Database(false, true);
+            scratchDatabase.ReadDwgFile(sourcePath, FileOpenMode.OpenForReadAndAllShare, allowCPConversion: false, password: null);
+            scratchDatabase.CloseInput(true);
+            return true;
+        }
+        catch (System.Exception ex)
+        {
+            scratchDatabase?.Dispose();
+            scratchDatabase = null;
+            detail = $"Failed to open a file-backed ATS scratch database from '{sourcePath}': {ex.Message}";
+            return false;
+        }
+    }
+
+    private static int RemoveScratchAtsLinework(Database database)
+    {
+        if (database == null)
+        {
+            return 0;
+        }
+
+        var removed = 0;
+        using var transaction = database.TransactionManager.StartTransaction();
+        var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+        if (!blockTable.Has(BlockTableRecord.ModelSpace))
+        {
+            return 0;
+        }
+
+        var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+        foreach (ObjectId entityId in modelSpace)
+        {
+            if (transaction.GetObject(entityId, OpenMode.ForWrite, false) is not Entity entity ||
+                entity.IsErased)
+            {
+                continue;
+            }
+
+            if (!AtsScratchIsolationLayers.Contains(entity.Layer ?? string.Empty))
+            {
+                continue;
+            }
+
+            entity.Erase();
+            removed++;
+        }
+
+        transaction.Commit();
+        return removed;
+    }
+
+    private static List<ObjectId> GetObjectIdsFromReflectionProperty(object source, string propertyName)
+    {
+        var ids = new List<ObjectId>();
+        if (source == null || string.IsNullOrWhiteSpace(propertyName))
+        {
+            return ids;
+        }
+
+        var property = source.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+        if (property?.GetValue(source) is not IEnumerable enumerable)
+        {
+            return ids;
+        }
+
+        foreach (var item in enumerable)
+        {
+            if (item is ObjectId objectId && !objectId.IsNull)
+            {
+                ids.Add(objectId);
+            }
+        }
+
+        return ids;
+    }
+
+    private static bool TryLoadAtsBackgroundBuilderAssembly(Database database, out Assembly atsAssembly, out string source)
+    {
+        atsAssembly = AppDomain.CurrentDomain
+            .GetAssemblies()
+            .FirstOrDefault(assembly =>
+                string.Equals(assembly.GetName().Name, "AtsBackgroundBuilder", StringComparison.OrdinalIgnoreCase));
+        if (atsAssembly != null)
+        {
+            source = string.IsNullOrWhiteSpace(atsAssembly.Location) ? "already loaded assembly" : atsAssembly.Location;
+            return true;
+        }
+
+        var candidates = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        static void AddCandidate(List<string> target, HashSet<string> seenPaths, string? baseFolder, string fileName = "AtsBackgroundBuilder.dll")
+        {
+            if (string.IsNullOrWhiteSpace(baseFolder))
+            {
+                return;
+            }
+
+            try
+            {
+                var fullPath = Path.GetFullPath(Path.Combine(baseFolder, fileName));
+                if (seenPaths.Add(fullPath))
+                {
+                    target.Add(fullPath);
+                }
+            }
+            catch
+            {
+                // Ignore invalid probe paths.
+            }
+        }
+
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+        var probe = assemblyDirectory;
+        for (var i = 0; i < 8 && !string.IsNullOrWhiteSpace(probe); i++)
+        {
+            AddCandidate(candidates, seen, probe);
+            AddCandidate(candidates, seen, Path.Combine(probe, "build", "net8.0-windows"));
+            probe = Path.GetDirectoryName(probe);
+        }
+
+        AddCandidate(candidates, seen, AppContext.BaseDirectory);
+        AddCandidate(candidates, seen, Environment.CurrentDirectory);
+        AddCandidate(candidates, seen, SafeGetDirectoryName(database?.Filename));
+
+        foreach (var candidate in candidates)
+        {
+            if (!File.Exists(candidate))
+            {
+                continue;
+            }
+
+            try
+            {
+                atsAssembly = Assembly.LoadFrom(candidate);
+                source = candidate;
+                return true;
+            }
+            catch
+            {
+                // Keep probing.
+            }
+        }
+
+        source = string.Empty;
+        return false;
+    }
+
+    private static string ResolveSectionIndexFolderForAtsBuild(Database database, string? drawingPath)
+    {
+        var candidates = new[]
+        {
+            Environment.GetEnvironmentVariable("COMPASS_SECTION_INDEX_FOLDER"),
+            Environment.GetEnvironmentVariable("WLS_SECTION_INDEX_FOLDER"),
+            Environment.GetEnvironmentVariable("ATSBUILD_SECTION_INDEX_FOLDER"),
+            Environment.GetEnvironmentVariable("ATS_SECTION_INDEX_FOLDER"),
+            SafeGetDirectoryName(drawingPath),
+            SafeGetDirectoryName(database?.Filename),
+            Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),
+            Environment.CurrentDirectory,
+            DefaultSectionIndexFolder
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate) && Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return DefaultSectionIndexFolder;
+    }
+
+    private static string SafeGetDirectoryName(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            return Path.GetDirectoryName(path) ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static bool SetReflectionProperty(object target, string propertyName, object value)
+    {
+        if (target == null || string.IsNullOrWhiteSpace(propertyName))
+        {
+            return false;
+        }
+
+        var property = target.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+        if (property == null || !property.CanWrite)
+        {
+            return false;
+        }
+
+        try
+        {
+            var valueType = value?.GetType();
+            if (valueType == null || property.PropertyType.IsAssignableFrom(valueType))
+            {
+                property.SetValue(target, value);
+                return true;
+            }
+
+            var converted = Convert.ChangeType(value, property.PropertyType, CultureInfo.InvariantCulture);
+            property.SetValue(target, converted);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void ValidateDistancesAgainstFrame(BuildDrillPointRequest request, SectionFrame frame)
+    {
+        var northSouthDistance = GetScaledOffsetDistance(request.NorthSouthDistance, request.CombinedScaleFactor);
+        var eastWestDistance = GetScaledOffsetDistance(request.EastWestDistance, request.CombinedScaleFactor);
+
+        if (northSouthDistance > frame.Height + 1e-6)
         {
             throw new InvalidOperationException(
-                $"East/west distance {request.EastWestDistance:0.###} is larger than the section width ({frame.Width:0.###}).");
+                $"North/south distance {northSouthDistance:0.###} is larger than the section height ({frame.Height:0.###}) after CSF scaling.");
         }
+
+        if (eastWestDistance > frame.Width + 1e-6)
+        {
+            throw new InvalidOperationException(
+                $"East/west distance {eastWestDistance:0.###} is larger than the section width ({frame.Width:0.###}) after CSF scaling.");
+        }
+    }
+
+    private static double GetScaledOffsetDistance(double distance, double combinedScaleFactor)
+    {
+        if (distance <= 0.0 || combinedScaleFactor <= 0.0)
+        {
+            return distance;
+        }
+
+        return distance * combinedScaleFactor;
     }
 
     private static BoundarySet CreateFrameBoundaries(SectionFrame frame)
@@ -771,7 +1699,165 @@ public sealed class BuildDrillService
             new StraightBoundary(BoundarySide.East, frame.SouthEast, frame.NorthEast, "SECTION-INDEX"));
     }
 
-    private static BoundarySearchResult ResolveNearestBoundaries(Database database, BoundarySet anchors, IReadOnlyCollection<string> layers, double maxDistance)
+    private static BoundarySet ResolveReferenceBoundariesForPoint(
+        SectionFrame frame,
+        BuildDrillPointRequest request,
+        IReadOnlyList<StraightBoundary> candidates,
+        BoundarySet fallback)
+    {
+        var provisional = BuildRawOffsetPoint(frame, request);
+        var provisional2d = new Point2d(provisional.X, provisional.Y);
+        var allCandidates = MergeBoundaryCandidates(candidates, CreateOuterSectionIndexZeroCandidates(frame));
+
+        var south = TryResolveReferenceBoundary(frame, provisional2d, allCandidates, BoundarySide.South, fallback.South);
+        var north = TryResolveReferenceBoundary(frame, provisional2d, allCandidates, BoundarySide.North, fallback.North);
+        var west = TryResolveReferenceBoundary(frame, provisional2d, allCandidates, BoundarySide.West, fallback.West);
+        var east = TryResolveReferenceBoundary(frame, provisional2d, allCandidates, BoundarySide.East, fallback.East);
+
+        return new BoundarySet(south, north, west, east);
+    }
+
+    private static StraightBoundary TryResolveReferenceBoundary(
+        SectionFrame frame,
+        Point2d probePoint,
+        IReadOnlyList<StraightBoundary> candidates,
+        BoundarySide side,
+        StraightBoundary fallback)
+    {
+        return TryFindBoundaryProbeIntersection(frame, candidates, probePoint, side, out _, out var boundary, out _)
+            ? boundary
+            : fallback;
+    }
+
+    private static bool TryResolveCalculatedHardBoundariesForPoint(
+        SectionFrame frame,
+        BuildDrillPointRequest request,
+        IReadOnlyList<StraightBoundary> candidates,
+        BoundarySet placeholders,
+        out BoundarySet boundaries,
+        out string detail)
+    {
+        boundaries = placeholders;
+        detail = string.Empty;
+        if (candidates == null || candidates.Count == 0)
+        {
+            detail = "No calculated 0 / 20.12 hard-boundary candidates were available.";
+            return false;
+        }
+
+        var provisional = BuildRawOffsetPoint(frame, request);
+        var provisional2d = new Point2d(provisional.X, provisional.Y);
+        var calculatedCandidates = candidates.Concat(CreateOuterSectionIndexZeroCandidates(frame)).ToList();
+        var south = placeholders.South;
+        var north = placeholders.North;
+        var west = placeholders.West;
+        var east = placeholders.East;
+        var resolvedSides = new List<string>(2);
+
+        if (request.NorthSouthReference == BuildDrillNorthSouthReference.NorthOfSouth)
+        {
+            if (!TryFindBoundaryProbeIntersection(frame, calculatedCandidates, provisional2d, BoundarySide.South, out _, out south, out var southDetail))
+            {
+                detail = southDetail;
+                return false;
+            }
+
+            resolvedSides.Add($"S:{south.Layer}");
+        }
+        else
+        {
+            if (!TryFindBoundaryProbeIntersection(frame, calculatedCandidates, provisional2d, BoundarySide.North, out _, out north, out var northDetail))
+            {
+                detail = northDetail;
+                return false;
+            }
+
+            resolvedSides.Add($"N:{north.Layer}");
+        }
+
+        if (request.EastWestReference == BuildDrillEastWestReference.EastOfWest)
+        {
+            if (!TryFindBoundaryProbeIntersection(frame, calculatedCandidates, provisional2d, BoundarySide.West, out _, out west, out var westDetail))
+            {
+                detail = westDetail;
+                return false;
+            }
+
+            resolvedSides.Add($"W:{west.Layer}");
+        }
+        else
+        {
+            if (!TryFindBoundaryProbeIntersection(frame, calculatedCandidates, provisional2d, BoundarySide.East, out _, out east, out var eastDetail))
+            {
+                detail = eastDetail;
+                return false;
+            }
+
+            resolvedSides.Add($"E:{east.Layer}");
+        }
+
+        boundaries = new BoundarySet(south, north, west, east);
+        detail = $"Calculated hard ATS boundaries resolved from {string.Join(", ", resolvedSides)}.";
+        return true;
+    }
+
+    private static bool UsesHorizontalBoundaryForRequestedSides(BuildDrillPointRequest request, BoundarySet boundaries)
+    {
+        var northSouthBoundary = request.NorthSouthReference == BuildDrillNorthSouthReference.NorthOfSouth
+            ? boundaries.South
+            : boundaries.North;
+        var eastWestBoundary = request.EastWestReference == BuildDrillEastWestReference.EastOfWest
+            ? boundaries.West
+            : boundaries.East;
+
+        return string.Equals(northSouthBoundary.Layer, HorizontalBoundaryLayer, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(eastWestBoundary.Layer, HorizontalBoundaryLayer, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string DescribeNonAtsBoundaryResolution(
+        BuildDrillPointRequest request,
+        BoundarySet references,
+        BoundarySet resolved)
+    {
+        var parts = new List<string>(2);
+        if (request.NorthSouthReference == BuildDrillNorthSouthReference.NorthOfSouth)
+        {
+            parts.Add(DescribeNonAtsBoundaryResolution("S", references.South, resolved.South));
+        }
+        else
+        {
+            parts.Add(DescribeNonAtsBoundaryResolution("N", references.North, resolved.North));
+        }
+
+        if (request.EastWestReference == BuildDrillEastWestReference.EastOfWest)
+        {
+            parts.Add(DescribeNonAtsBoundaryResolution("W", references.West, resolved.West));
+        }
+        else
+        {
+            parts.Add(DescribeNonAtsBoundaryResolution("E", references.East, resolved.East));
+        }
+
+        return $"Resolved ATS-off side selection from {string.Join(", ", parts)}.";
+    }
+
+    private static string DescribeNonAtsBoundaryResolution(string prefix, StraightBoundary reference, StraightBoundary resolved)
+    {
+        if (string.Equals(resolved.Layer, HorizontalBoundaryLayer, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{prefix}:{resolved.Layer} (ref {reference.Layer})";
+        }
+
+        return $"{prefix}:{resolved.Layer}";
+    }
+
+    private static BoundarySearchResult ResolveNearestBoundaries(
+        Database database,
+        SectionFrame frame,
+        Point2d probePoint,
+        BoundarySet anchors,
+        IReadOnlyCollection<string> layers,
+        double maxDistance)
     {
         var normalizedLayers = new HashSet<string>(layers, StringComparer.OrdinalIgnoreCase);
         var candidates = new List<StraightBoundary>();
@@ -804,38 +1890,84 @@ public sealed class BuildDrillService
             transaction.Commit();
         }
 
-        var south = FindBoundary(anchors.South, candidates, maxDistance, out var southFallback);
-        var north = FindBoundary(anchors.North, candidates, maxDistance, out var northFallback);
-        var west = FindBoundary(anchors.West, candidates, maxDistance, out var westFallback);
-        var east = FindBoundary(anchors.East, candidates, maxDistance, out var eastFallback);
+        var south = FindBoundary(frame, probePoint, anchors.South, candidates, maxDistance, out var southFallback);
+        var north = FindBoundary(frame, probePoint, anchors.North, candidates, maxDistance, out var northFallback);
+        var west = FindBoundary(frame, probePoint, anchors.West, candidates, maxDistance, out var westFallback);
+        var east = FindBoundary(frame, probePoint, anchors.East, candidates, maxDistance, out var eastFallback);
 
         return new BoundarySearchResult(
             new BoundarySet(south, north, west, east),
             southFallback || northFallback || westFallback || eastFallback);
     }
 
-    private static StraightBoundary FindBoundary(StraightBoundary anchor, IReadOnlyList<StraightBoundary> candidates, double maxDistance, out bool usedFallback)
+    private static StraightBoundary FindBoundary(
+        SectionFrame frame,
+        Point2d probePoint,
+        StraightBoundary anchor,
+        IReadOnlyList<StraightBoundary> candidates,
+        double maxDistance,
+        out bool usedFallback)
     {
         usedFallback = true;
 
         StraightBoundary? best = null;
-        var bestDistance = double.MaxValue;
+        var bestAnchorGap = double.MaxValue;
+        var bestExtensionDistance = double.MaxValue;
+        var bestProbeGap = double.MaxValue;
+        var sideAxis = anchor.Side is BoundarySide.South or BoundarySide.North ? frame.NorthUnit : frame.EastUnit;
+        var boundaryAxis = anchor.Side is BoundarySide.South or BoundarySide.North ? frame.EastUnit : frame.NorthUnit;
+        var probeAxis = anchor.Side is BoundarySide.South or BoundarySide.North ? frame.NorthUnit : frame.EastUnit;
+        var probeCoordinate = ProjectAlongAxis(probePoint - frame.SouthWest, sideAxis);
+        var anchorIntersection = IntersectProbeWithBoundary(probePoint, probeAxis, anchor);
+        var anchorCoordinate = ProjectAlongAxis(anchorIntersection - frame.SouthWest, sideAxis);
+
         foreach (var candidate in candidates)
         {
-            if (!candidate.IsParallelTo(anchor))
+            if (!IsBoundaryParallelToAxis(candidate, boundaryAxis))
             {
                 continue;
             }
 
-            var distance = candidate.DistanceToPoint(anchor.Midpoint);
-            if (distance > maxDistance)
+            if (!TryIntersectProbeWithBoundaryCandidate(
+                    probePoint,
+                    probeAxis,
+                    candidate,
+                    out var candidateIntersection,
+                    out var extensionDistance))
             {
                 continue;
             }
 
-            if (distance < bestDistance)
+            var candidateCoordinate = ProjectAlongAxis(candidateIntersection - frame.SouthWest, sideAxis);
+            var probeGap = anchor.Side switch
             {
-                bestDistance = distance;
+                BoundarySide.South => probeCoordinate - candidateCoordinate,
+                BoundarySide.North => candidateCoordinate - probeCoordinate,
+                BoundarySide.West => probeCoordinate - candidateCoordinate,
+                BoundarySide.East => candidateCoordinate - probeCoordinate,
+                _ => double.MaxValue
+            };
+
+            if (probeGap < -BoundarySideTolerance)
+            {
+                continue;
+            }
+
+            var anchorGap = Math.Abs(candidateCoordinate - anchorCoordinate);
+            if (anchorGap > maxDistance)
+            {
+                continue;
+            }
+
+            if (anchorGap < bestAnchorGap ||
+                (Math.Abs(anchorGap - bestAnchorGap) <= 1e-6 && extensionDistance < bestExtensionDistance) ||
+                (Math.Abs(anchorGap - bestAnchorGap) <= 1e-6 &&
+                 Math.Abs(extensionDistance - bestExtensionDistance) <= 1e-6 &&
+                 probeGap < bestProbeGap))
+            {
+                bestAnchorGap = anchorGap;
+                bestExtensionDistance = extensionDistance;
+                bestProbeGap = probeGap;
                 best = new StraightBoundary(anchor.Side, candidate.OrderedStart(anchor.Side), candidate.OrderedEnd(anchor.Side), candidate.Layer);
             }
         }
@@ -861,7 +1993,7 @@ public sealed class BuildDrillService
 
         var direction = end - start;
         var side = Math.Abs(direction.X) >= Math.Abs(direction.Y) ? BoundarySide.South : BoundarySide.West;
-        boundary = new StraightBoundary(side, start, end, curve.Layer);
+        boundary = new StraightBoundary(side, start, end, curve.Layer ?? string.Empty);
         return true;
     }
 
@@ -869,6 +2001,8 @@ public sealed class BuildDrillService
     {
         var provisional = BuildRawOffsetPoint(frame, request);
         var provisional2d = new Point2d(provisional.X, provisional.Y);
+        var eastWestDistance = GetScaledOffsetDistance(request.EastWestDistance, request.CombinedScaleFactor);
+        var northSouthDistance = GetScaledOffsetDistance(request.NorthSouthDistance, request.CombinedScaleFactor);
 
         var southPoint = IntersectProbeWithBoundary(provisional2d, frame.NorthUnit, boundaries.South);
         var northPoint = IntersectProbeWithBoundary(provisional2d, frame.NorthUnit, boundaries.North);
@@ -876,12 +2010,12 @@ public sealed class BuildDrillService
         var eastPoint = IntersectProbeWithBoundary(provisional2d, frame.EastUnit, boundaries.East);
 
         var eastCoordinate = request.EastWestReference == BuildDrillEastWestReference.EastOfWest
-            ? ProjectAlongAxis(westPoint - frame.SouthWest, frame.EastUnit) + request.EastWestDistance
-            : ProjectAlongAxis(eastPoint - frame.SouthWest, frame.EastUnit) - request.EastWestDistance;
+            ? ProjectAlongAxis(westPoint - frame.SouthWest, frame.EastUnit) + eastWestDistance
+            : ProjectAlongAxis(eastPoint - frame.SouthWest, frame.EastUnit) - eastWestDistance;
 
         var northCoordinate = request.NorthSouthReference == BuildDrillNorthSouthReference.NorthOfSouth
-            ? ProjectAlongAxis(southPoint - frame.SouthWest, frame.NorthUnit) + request.NorthSouthDistance
-            : ProjectAlongAxis(northPoint - frame.SouthWest, frame.NorthUnit) - request.NorthSouthDistance;
+            ? ProjectAlongAxis(southPoint - frame.SouthWest, frame.NorthUnit) + northSouthDistance
+            : ProjectAlongAxis(northPoint - frame.SouthWest, frame.NorthUnit) - northSouthDistance;
 
         var finalPoint2d = frame.SouthWest + (frame.EastUnit * eastCoordinate) + (frame.NorthUnit * northCoordinate);
         return new Point3d(finalPoint2d.X, finalPoint2d.Y, 0.0);
@@ -889,15 +2023,407 @@ public sealed class BuildDrillService
 
     private static Point3d BuildRawOffsetPoint(SectionFrame frame, BuildDrillPointRequest request)
     {
+        var eastWestDistance = GetScaledOffsetDistance(request.EastWestDistance, request.CombinedScaleFactor);
+        var northSouthDistance = GetScaledOffsetDistance(request.NorthSouthDistance, request.CombinedScaleFactor);
         var eastCoordinate = request.EastWestReference == BuildDrillEastWestReference.EastOfWest
-            ? request.EastWestDistance
-            : frame.Width - request.EastWestDistance;
+            ? eastWestDistance
+            : frame.Width - eastWestDistance;
         var northCoordinate = request.NorthSouthReference == BuildDrillNorthSouthReference.NorthOfSouth
-            ? request.NorthSouthDistance
-            : frame.Height - request.NorthSouthDistance;
+            ? northSouthDistance
+            : frame.Height - northSouthDistance;
 
         var point = frame.SouthWest + (frame.EastUnit * eastCoordinate) + (frame.NorthUnit * northCoordinate);
         return new Point3d(point.X, point.Y, 0.0);
+    }
+
+    private static bool TryComputeOffsetPointFromBoundaryCandidates(
+        SectionFrame frame,
+        IReadOnlyList<StraightBoundary> candidates,
+        BuildDrillPointRequest request,
+        out Point3d point,
+        out string detail)
+    {
+        point = default;
+        detail = string.Empty;
+        if (candidates == null || candidates.Count == 0)
+        {
+            detail = "No hard ATS boundary candidates were available.";
+            return false;
+        }
+
+        var provisional = BuildRawOffsetPoint(frame, request);
+        var provisional2d = new Point2d(provisional.X, provisional.Y);
+        var outerZeroCandidates = CreateOuterSectionIndexZeroCandidates(frame);
+        var allCandidates = candidates.Count == 0
+            ? outerZeroCandidates
+            : candidates.Concat(outerZeroCandidates).ToList();
+        StraightBoundary southBoundary = default;
+        StraightBoundary northBoundary = default;
+        StraightBoundary westBoundary = default;
+        StraightBoundary eastBoundary = default;
+
+        if (request.NorthSouthReference == BuildDrillNorthSouthReference.NorthOfSouth)
+        {
+            if (!TryFindBoundaryProbeIntersection(frame, allCandidates, provisional2d, BoundarySide.South, out _, out southBoundary, out var southDetail))
+            {
+                detail = southDetail;
+                return false;
+            }
+        }
+        else
+        {
+            if (!TryFindBoundaryProbeIntersection(frame, allCandidates, provisional2d, BoundarySide.North, out _, out northBoundary, out var northDetail))
+            {
+                detail = northDetail;
+                return false;
+            }
+        }
+
+        if (request.EastWestReference == BuildDrillEastWestReference.EastOfWest)
+        {
+            if (!TryFindBoundaryProbeIntersection(frame, allCandidates, provisional2d, BoundarySide.West, out _, out westBoundary, out var westDetail))
+            {
+                detail = westDetail;
+                return false;
+            }
+        }
+        else
+        {
+            if (!TryFindBoundaryProbeIntersection(frame, allCandidates, provisional2d, BoundarySide.East, out _, out eastBoundary, out var eastDetail))
+            {
+                detail = eastDetail;
+                return false;
+            }
+        }
+
+        var northSouthBoundary = request.NorthSouthReference == BuildDrillNorthSouthReference.NorthOfSouth
+            ? southBoundary
+            : northBoundary;
+        var eastWestBoundary = request.EastWestReference == BuildDrillEastWestReference.EastOfWest
+            ? westBoundary
+            : eastBoundary;
+        if (!TryIntersectOffsetBoundaryLines(frame, request, northSouthBoundary, eastWestBoundary, out point, out var intersectionDetail))
+        {
+            detail = intersectionDetail;
+            return false;
+        }
+
+        var usedSides = new List<string>(2);
+        if (request.NorthSouthReference == BuildDrillNorthSouthReference.NorthOfSouth)
+        {
+            usedSides.Add($"S:{southBoundary.Layer}");
+        }
+        else
+        {
+            usedSides.Add($"N:{northBoundary.Layer}");
+        }
+
+        if (request.EastWestReference == BuildDrillEastWestReference.EastOfWest)
+        {
+            usedSides.Add($"W:{westBoundary.Layer}");
+        }
+        else
+        {
+            usedSides.Add($"E:{eastBoundary.Layer}");
+        }
+
+        detail = $"Resolved ATS probe crossings from {string.Join(", ", usedSides)}. {intersectionDetail}";
+        return true;
+    }
+
+    private static List<StraightBoundary> CreateOuterSectionIndexZeroCandidates(SectionFrame frame)
+    {
+        return new List<StraightBoundary>(4)
+        {
+            new(BoundarySide.South, frame.SouthWest, frame.SouthEast, "SECTION-INDEX-0"),
+            new(BoundarySide.West, frame.SouthWest, frame.NorthWest, "SECTION-INDEX-0"),
+            new(BoundarySide.North, frame.NorthWest, frame.NorthEast, "SECTION-INDEX-0"),
+            new(BoundarySide.East, frame.SouthEast, frame.NorthEast, "SECTION-INDEX-0")
+        };
+    }
+
+    private static bool TryIntersectOffsetBoundaryLines(
+        SectionFrame frame,
+        BuildDrillPointRequest request,
+        StraightBoundary northSouthBoundary,
+        StraightBoundary eastWestBoundary,
+        out Point3d point,
+        out string detail)
+    {
+        point = default;
+        detail = string.Empty;
+        var northSouthDistance = GetScaledOffsetDistance(request.NorthSouthDistance, request.CombinedScaleFactor);
+        var eastWestDistance = GetScaledOffsetDistance(request.EastWestDistance, request.CombinedScaleFactor);
+
+        var northSouthOffset = GetBoundaryInwardNormal(
+            northSouthBoundary,
+            request.NorthSouthReference == BuildDrillNorthSouthReference.NorthOfSouth
+                ? frame.NorthUnit
+                : frame.NorthUnit.Negate()) * northSouthDistance;
+        var eastWestOffset = GetBoundaryInwardNormal(
+            eastWestBoundary,
+            request.EastWestReference == BuildDrillEastWestReference.EastOfWest
+                ? frame.EastUnit
+                : frame.EastUnit.Negate()) * eastWestDistance;
+
+        var shiftedNorthSouthStart = northSouthBoundary.Start + northSouthOffset;
+        var shiftedNorthSouthEnd = northSouthBoundary.End + northSouthOffset;
+        var shiftedEastWestStart = eastWestBoundary.Start + eastWestOffset;
+        var shiftedEastWestEnd = eastWestBoundary.End + eastWestOffset;
+        if (!TryIntersectInfiniteLines(
+                shiftedNorthSouthStart,
+                shiftedNorthSouthEnd,
+                shiftedEastWestStart,
+                shiftedEastWestEnd,
+                out var resolvedPoint))
+        {
+            detail = "Resolved ATS offset lines could not be intersected.";
+            return false;
+        }
+
+        point = new Point3d(resolvedPoint.X, resolvedPoint.Y, 0.0);
+        detail = "Computed exact ATS offset-line intersection.";
+        return true;
+    }
+
+    private static Vector2d GetBoundaryInwardNormal(StraightBoundary boundary, Vector2d preferredDirection)
+    {
+        var direction = boundary.End - boundary.Start;
+        if (direction.Length <= 1e-9)
+        {
+            return preferredDirection.GetNormal();
+        }
+
+        var unit = direction.GetNormal();
+        var leftNormal = new Vector2d(-unit.Y, unit.X);
+        var rightNormal = new Vector2d(unit.Y, -unit.X);
+        var preferred = preferredDirection.Length <= 1e-9
+            ? preferredDirection
+            : preferredDirection.GetNormal();
+        return leftNormal.DotProduct(preferred) >= rightNormal.DotProduct(preferred)
+            ? leftNormal
+            : rightNormal;
+    }
+
+    private static bool TryFindBoundaryProbeIntersection(
+        SectionFrame frame,
+        IReadOnlyList<StraightBoundary> candidates,
+        Point2d probePoint,
+        BoundarySide side,
+        out Point2d intersection,
+        out StraightBoundary boundary,
+        out string detail)
+    {
+        intersection = default;
+        boundary = default;
+        detail = string.Empty;
+
+        var sideAxis = side is BoundarySide.South or BoundarySide.North ? frame.NorthUnit : frame.EastUnit;
+        var boundaryAxis = side is BoundarySide.South or BoundarySide.North ? frame.EastUnit : frame.NorthUnit;
+        var probeAxis = side is BoundarySide.South or BoundarySide.North ? frame.NorthUnit : frame.EastUnit;
+        var probeSideCoordinate = ProjectAlongAxis(probePoint - frame.SouthWest, sideAxis);
+
+        var bestPriority = int.MaxValue;
+        var bestExtensionDistance = double.MaxValue;
+        var bestGap = double.MaxValue;
+        var parallelMatches = 0;
+
+        foreach (var candidate in candidates)
+        {
+            if (!IsBoundaryParallelToAxis(candidate, boundaryAxis))
+            {
+                continue;
+            }
+
+            if (!TryIntersectProbeWithBoundaryCandidate(
+                    probePoint,
+                    probeAxis,
+                    candidate,
+                    out var candidateIntersection,
+                    out var extensionDistance))
+            {
+                continue;
+            }
+
+            parallelMatches++;
+            var candidateCoordinate = ProjectAlongAxis(candidateIntersection - frame.SouthWest, sideAxis);
+            var gap = side switch
+            {
+                BoundarySide.South => probeSideCoordinate - candidateCoordinate,
+                BoundarySide.North => candidateCoordinate - probeSideCoordinate,
+                BoundarySide.West => probeSideCoordinate - candidateCoordinate,
+                BoundarySide.East => candidateCoordinate - probeSideCoordinate,
+                _ => double.MaxValue
+            };
+
+            if (gap < -BoundarySideTolerance)
+            {
+                continue;
+            }
+
+            var priority = GetBoundaryLayerPriority(side, candidate.Layer);
+            if (priority < bestPriority ||
+                (priority == bestPriority && extensionDistance < bestExtensionDistance) ||
+                (priority == bestPriority &&
+                 Math.Abs(extensionDistance - bestExtensionDistance) <= 1e-6 &&
+                 gap < bestGap))
+            {
+                bestPriority = priority;
+                bestExtensionDistance = extensionDistance;
+                bestGap = gap;
+                intersection = candidateIntersection;
+                boundary = new StraightBoundary(side, candidate.OrderedStart(side), candidate.OrderedEnd(side), candidate.Layer);
+            }
+        }
+
+        if (bestGap < double.MaxValue)
+        {
+            detail = bestExtensionDistance <= BoundaryProbeSegmentTolerance
+                ? $"{side} hard ATS boundary resolved from {boundary.Layer}."
+                : $"{side} hard ATS boundary resolved from {boundary.Layer} using {bestExtensionDistance:0.###}m bounded extension.";
+            return true;
+        }
+
+        detail =
+            $"Could not find a {side.ToString().ToLowerInvariant()} hard ATS boundary crossing the requested probe line (crossing candidates: {parallelMatches}, total candidates: {candidates.Count}).";
+        return false;
+    }
+
+    private static int GetBoundaryLayerPriority(BoundarySide side, string layer)
+    {
+        if (IsCorrectionUsecZeroLayer(layer))
+        {
+            return -1;
+        }
+
+        if (IsActualUsecZeroLayer(layer))
+        {
+            return side is BoundarySide.North or BoundarySide.East ? 0 : 1;
+        }
+
+        if (IsUsecTwentyLayer(layer))
+        {
+            return side is BoundarySide.South or BoundarySide.West ? 0 : 1;
+        }
+
+        if (IsSyntheticSectionIndexZeroLayer(layer))
+        {
+            return 2;
+        }
+
+        return 3;
+    }
+
+    private static bool IsActualUsecZeroLayer(string layer)
+    {
+        return string.Equals(layer, "L-USEC-0", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCorrectionUsecZeroLayer(string layer)
+    {
+        return string.Equals(layer, "L-USEC-C-0", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSyntheticSectionIndexZeroLayer(string layer)
+    {
+        return string.Equals(layer, "SECTION-INDEX-0", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUsecTwentyLayer(string layer)
+    {
+        return string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsBoundaryParallelToAxis(StraightBoundary boundary, Vector2d axis)
+    {
+        var direction = (boundary.End - boundary.Start).GetNormal();
+        return Math.Abs(direction.DotProduct(axis.GetNormal())) >= ParallelDotTolerance;
+    }
+
+    private static bool TryIntersectProbeWithBoundaryCandidate(
+        Point2d probePoint,
+        Vector2d probeAxis,
+        StraightBoundary boundary,
+        out Point2d intersection,
+        out double extensionDistance)
+    {
+        intersection = default;
+        extensionDistance = double.MaxValue;
+        var probeStart = probePoint - (probeAxis * 10000.0);
+        var probeEnd = probePoint + (probeAxis * 10000.0);
+        if (!TryIntersectInfiniteLines(probeStart, probeEnd, boundary.Start, boundary.End, out intersection))
+        {
+            return false;
+        }
+
+        return TryMeasureBoundaryProbeExtension(intersection, boundary.Start, boundary.End, out extensionDistance);
+    }
+
+    private static bool TryMeasureBoundaryProbeExtension(
+        Point2d point,
+        Point2d start,
+        Point2d end,
+        out double extensionDistance)
+    {
+        extensionDistance = double.MaxValue;
+        var dx = end.X - start.X;
+        var dy = end.Y - start.Y;
+        var lengthSquared = (dx * dx) + (dy * dy);
+        if (lengthSquared <= 1e-12)
+        {
+            var distance = point.GetDistanceTo(start);
+            if (distance <= BoundaryProbeSegmentTolerance)
+            {
+                extensionDistance = 0.0;
+                return true;
+            }
+
+            if (distance <= BoundaryProbeExtensionTolerance)
+            {
+                extensionDistance = distance;
+                return true;
+            }
+
+            return false;
+        }
+
+        var parameter = (((point.X - start.X) * dx) + ((point.Y - start.Y) * dy)) / lengthSquared;
+        if (parameter >= -BoundaryProbeSegmentTolerance && parameter <= 1.0 + BoundaryProbeSegmentTolerance)
+        {
+            extensionDistance = 0.0;
+            return true;
+        }
+
+        var nearestEndpoint = parameter < 0.0 ? start : end;
+        var nearestDistance = point.GetDistanceTo(nearestEndpoint);
+        if (nearestDistance <= BoundaryProbeExtensionTolerance)
+        {
+            extensionDistance = nearestDistance;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsPointOnSegment(Point2d point, Point2d start, Point2d end, double tolerance)
+    {
+        var dx = end.X - start.X;
+        var dy = end.Y - start.Y;
+        var lengthSquared = (dx * dx) + (dy * dy);
+        if (lengthSquared <= 1e-12)
+        {
+            return point.GetDistanceTo(start) <= tolerance;
+        }
+
+        var parameter = (((point.X - start.X) * dx) + ((point.Y - start.Y) * dy)) / lengthSquared;
+        if (parameter < -tolerance || parameter > 1.0 + tolerance)
+        {
+            return false;
+        }
+
+        var closest = new Point2d(start.X + (parameter * dx), start.Y + (parameter * dy));
+        return point.GetDistanceTo(closest) <= tolerance;
     }
 
     private static Point2d IntersectProbeWithBoundary(Point2d point, Vector2d axis, StraightBoundary boundary)
@@ -997,6 +2523,8 @@ public sealed class BuildDrillService
             return point.GetDistanceTo(closest);
         }
     }
+
+    private readonly record struct CachedBoundaryResolution(IReadOnlyList<StraightBoundary> Candidates, string SourceDescription);
 
     private readonly record struct BoundarySet(
         StraightBoundary South,

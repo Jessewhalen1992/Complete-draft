@@ -30,7 +30,14 @@ public class DrillCadToolService
     private const string DrillBlockName = "DRILL";
     private const string OffsetsLayer = "P-Drill-Offset";
     private const string HorizontalLayer = "L-SEC-HB";
+    private const string NotesLayer = "CG-NOTES";
     private const string CordsDirectory = @"C:\\CORDS";
+    private const string ExistingWellTableTitle = "EXISTING WELL HEADS WITHIN PAD BOUNDARY";
+    private const string ExistingWellTableStyleName = "induction Bend";
+    private const short ExistingWellTableHeadingColorIndex = 14;
+    private const double ExistingWellTableRowHeight = 25.0;
+    private const double ExistingWellTableNameColumnWidth = 85.0;
+    private const double ExistingWellTableCoordinateColumnWidth = 120.0;
     private static readonly Regex HeadingLabelRegex = new(@"\b(?:ICP|HEEL|LANDING)\b", RegexOptions.IgnoreCase);
     private static readonly string[] CordsExecutableSearchPaths =
     {
@@ -126,6 +133,35 @@ public class DrillCadToolService
         public double Nad27Easting { get; }
         public double Nad27Latitude { get; }
         public double Nad27Longitude { get; }
+    }
+
+    private sealed class ExistingWellTablePoint
+    {
+        public ExistingWellTablePoint(string name, Point3d point)
+        {
+            Name = name;
+            Point = point;
+        }
+
+        public string Name { get; }
+
+        public Point3d Point { get; }
+    }
+
+    private sealed class ExistingWellTableRow
+    {
+        public ExistingWellTableRow(string name, string firstValue, string secondValue)
+        {
+            Name = name;
+            FirstValue = firstValue;
+            SecondValue = secondValue;
+        }
+
+        public string Name { get; }
+
+        public string FirstValue { get; }
+
+        public string SecondValue { get; }
     }
 
     public DrillCadToolService(ILog log, LayerService layerService)
@@ -524,6 +560,87 @@ public class DrillCadToolService
         }
     }
 
+    public void CreateExistingWellTable(ExistingWellTableConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var document = AutoCADApplication.DocumentManager.MdiActiveDocument;
+        if (document == null)
+        {
+            ShowAlert("No active AutoCAD document.");
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            "ARE YOU IN UTM?",
+            "EXISTING WELL TABLE",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            var pickedPoints = PromptForExistingWellPoints(document);
+            if (pickedPoints == null)
+            {
+                return;
+            }
+
+            if (pickedPoints.Count == 0)
+            {
+                document.Editor.WriteMessage("\nNo existing well points were picked.");
+                return;
+            }
+
+            var gridPoints = pickedPoints
+                .Select(point => new GridPointCoordinate(point.Name, point.Point.Y, point.Point.X))
+                .ToList();
+
+            if (!TryResolveExistingWellZone(document, gridPoints, configuration.Zone, out var zone, out var zoneDetail))
+            {
+                ShowAlert(zoneDetail);
+                return;
+            }
+
+            if (!UtmCoordinateConverter.TryCreate(zone.ToString(CultureInfo.InvariantCulture), out var nad83Converter) || nad83Converter == null)
+            {
+                ShowAlert($"Could not create the NAD83 UTM converter for zone {zone}.");
+                return;
+            }
+
+            if (!UtmCoordinateConverter.TryCreateNad27(zone.ToString(CultureInfo.InvariantCulture), out var nad27Converter) || nad27Converter == null)
+            {
+                ShowAlert($"Could not create the NAD27 UTM converter for zone {zone}.");
+                return;
+            }
+
+            var rows = BuildExistingWellTableRows(pickedPoints, configuration.CoordinateFormat, zone, nad83Converter, nad27Converter);
+            var insertionResult = document.Editor.GetPoint("\nSelect top-left insertion point for the EXISTING WELL TABLE:");
+            if (insertionResult.Status != PromptStatus.OK)
+            {
+                document.Editor.WriteMessage("\nInsertion point cancelled.");
+                return;
+            }
+
+            using (document.LockDocument())
+            {
+                _layerService.EnsureLayer(document.Database, NotesLayer);
+                DrawExistingWellTable(document.Database, insertionResult.Value, configuration.CoordinateFormat, rows);
+            }
+
+            MessageBox.Show("Existing well table created!", "EXISTING WELL TABLE", MessageBoxButton.OK, MessageBoxImage.Information);
+            _log.Info($"EXISTING WELL TABLE succeeded in zone {zone} for {rows.Count} point(s) using {configuration.CoordinateFormat}.");
+        }
+        catch (System.Exception ex)
+        {
+            _log.Error($"Error in EXISTING WELL TABLE: {ex.Message}", ex);
+            ShowAlert($"Error in EXISTING WELL TABLE: {ex.Message}");
+        }
+    }
+
     private bool TryResolveNativeCordsContext(
         Document document,
         IReadOnlyList<GridPointCoordinate> gridPoints,
@@ -625,6 +742,291 @@ public class DrillCadToolService
         }
 
         return int.TryParse(result.StringResult, NumberStyles.Integer, CultureInfo.InvariantCulture, out zone);
+    }
+
+    private bool TryResolveExistingWellZone(
+        Document document,
+        IReadOnlyList<GridPointCoordinate> gridPoints,
+        int? configuredZone,
+        out int zone,
+        out string detail)
+    {
+        zone = 0;
+        detail = string.Empty;
+
+        if (configuredZone.HasValue)
+        {
+            zone = configuredZone.Value;
+            if (zone is 11 or 12)
+            {
+                return true;
+            }
+
+            detail = "Existing Well Table only supports UTM zone 11 or 12.";
+            return false;
+        }
+
+        if (TryInferZoneFromResolver(document.Name, gridPoints, out zone, out _))
+        {
+            return true;
+        }
+
+        detail = "Could not automatically determine the UTM zone for the picked wells. Re-run EXISTING WELL TABLE and choose zone 11 or 12.";
+        return false;
+    }
+
+    private List<ExistingWellTablePoint>? PromptForExistingWellPoints(Document document)
+    {
+        var editor = document.Editor;
+        var points = new List<ExistingWellTablePoint>();
+        editor.WriteMessage("\nPick existing well-head points one at a time. Press Enter when finished.");
+
+        while (true)
+        {
+            var pointOptions = new PromptPointOptions(
+                points.Count == 0
+                    ? "\nPick existing well-head point or press Enter to cancel:"
+                    : "\nPick another existing well-head point or press Enter to finish:")
+            {
+                AllowNone = true
+            };
+
+            var pointResult = editor.GetPoint(pointOptions);
+            if (pointResult.Status == PromptStatus.None)
+            {
+                return points;
+            }
+
+            if (pointResult.Status != PromptStatus.OK)
+            {
+                editor.WriteMessage("\nPoint selection cancelled.");
+                return null;
+            }
+
+            if (!TryPromptForExistingWellName(editor, points.Count + 1, out var name))
+            {
+                editor.WriteMessage("\nName entry cancelled.");
+                return null;
+            }
+
+            points.Add(new ExistingWellTablePoint(name, pointResult.Value));
+        }
+    }
+
+    private static bool TryPromptForExistingWellName(Editor editor, int pointIndex, out string name)
+    {
+        name = string.Empty;
+
+        while (true)
+        {
+            var nameOptions = new PromptStringOptions($"\nEnter name for picked well #{pointIndex}:")
+            {
+                AllowSpaces = true
+            };
+
+            var nameResult = editor.GetString(nameOptions);
+            if (nameResult.Status != PromptStatus.OK)
+            {
+                return false;
+            }
+
+            var trimmed = (nameResult.StringResult ?? string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(trimmed))
+            {
+                name = trimmed;
+                return true;
+            }
+
+            editor.WriteMessage("\nName cannot be blank.");
+        }
+    }
+
+    private List<ExistingWellTableRow> BuildExistingWellTableRows(
+        IReadOnlyList<ExistingWellTablePoint> pickedPoints,
+        ExistingWellTableCoordinateFormat coordinateFormat,
+        int zone,
+        UtmCoordinateConverter nad83Converter,
+        UtmCoordinateConverter nad27Converter)
+    {
+        var rows = new List<ExistingWellTableRow>(pickedPoints.Count);
+        var sourceCode = $"UTM83-{zone}";
+        var destinationCode = $"UTM27-{zone}";
+
+        foreach (var pickedPoint in pickedPoints)
+        {
+            var nad83Point = pickedPoint.Point;
+            Point3d? nad27Point = null;
+
+            if (coordinateFormat is ExistingWellTableCoordinateFormat.Nad27Utms or ExistingWellTableCoordinateFormat.Nad27LatLong)
+            {
+                if (!AutoCadProjectionHelper.TryTransformUtm(
+                        sourceCode,
+                        destinationCode,
+                        nad83Point.X,
+                        nad83Point.Y,
+                        out var convertedPoint,
+                        out var detail))
+                {
+                    throw new InvalidOperationException(
+                        $"Could not convert existing well '{pickedPoint.Name}' from {sourceCode} to {destinationCode}. {detail}");
+                }
+
+                nad27Point = convertedPoint;
+            }
+
+            string firstValue;
+            string secondValue;
+            switch (coordinateFormat)
+            {
+                case ExistingWellTableCoordinateFormat.Nad83Utms:
+                    firstValue = FormatUtmValue(nad83Point.Y);
+                    secondValue = FormatUtmValue(nad83Point.X);
+                    break;
+                case ExistingWellTableCoordinateFormat.Nad27Utms:
+                    firstValue = FormatUtmValue(nad27Point!.Value.Y);
+                    secondValue = FormatUtmValue(nad27Point.Value.X);
+                    break;
+                case ExistingWellTableCoordinateFormat.Nad83LatLong:
+                    if (!nad83Converter.TryProject(nad83Point, out var nad83Latitude, out var nad83Longitude))
+                    {
+                        throw new InvalidOperationException(
+                            $"Could not convert NAD83 lat/long for existing well '{pickedPoint.Name}' in UTM zone {zone}.");
+                    }
+
+                    firstValue = FormatLatLongValue(nad83Latitude);
+                    secondValue = FormatLatLongValue(nad83Longitude);
+                    break;
+                case ExistingWellTableCoordinateFormat.Nad27LatLong:
+                    if (!nad27Converter.TryProject(nad27Point!.Value, out var nad27Latitude, out var nad27Longitude))
+                    {
+                        throw new InvalidOperationException(
+                            $"Could not convert NAD27 lat/long for existing well '{pickedPoint.Name}' in UTM zone {zone}.");
+                    }
+
+                    firstValue = FormatLatLongValue(nad27Latitude);
+                    secondValue = FormatLatLongValue(nad27Longitude);
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unsupported Existing Well Table coordinate format '{coordinateFormat}'.");
+            }
+
+            rows.Add(new ExistingWellTableRow(pickedPoint.Name, firstValue, secondValue));
+        }
+
+        return rows;
+    }
+
+    private static (string FirstHeader, string SecondHeader) GetExistingWellTableHeaders(ExistingWellTableCoordinateFormat coordinateFormat)
+    {
+        return coordinateFormat switch
+        {
+            ExistingWellTableCoordinateFormat.Nad83Utms => ("NORTHING (NAD83)", "EASTING (NAD83)"),
+            ExistingWellTableCoordinateFormat.Nad27Utms => ("NORTHING (NAD27)", "EASTING (NAD27)"),
+            ExistingWellTableCoordinateFormat.Nad83LatLong => ("LATITUDE (NAD83)", "LONGITUDE (NAD83)"),
+            ExistingWellTableCoordinateFormat.Nad27LatLong => ("LATITUDE (NAD27)", "LONGITUDE (NAD27)"),
+            _ => ("NORTHING (NAD83)", "EASTING (NAD83)")
+        };
+    }
+
+    private void DrawExistingWellTable(
+        Database database,
+        Point3d topLeftInsertionPoint,
+        ExistingWellTableCoordinateFormat coordinateFormat,
+        IReadOnlyList<ExistingWellTableRow> rows)
+    {
+        using var transaction = database.TransactionManager.StartTransaction();
+        var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+        var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+        var totalRows = rows.Count + 2;
+        var totalHeight = ExistingWellTableRowHeight * totalRows;
+        var insertionPoint = new Point3d(
+            topLeftInsertionPoint.X,
+            topLeftInsertionPoint.Y - totalHeight,
+            topLeftInsertionPoint.Z);
+        var table = new Table
+        {
+            Position = insertionPoint,
+            Layer = NotesLayer
+        };
+        var styleId = GetTableStyleId(database, transaction, ExistingWellTableStyleName);
+        if (!styleId.IsNull)
+        {
+            table.TableStyle = styleId;
+        }
+
+        table.SetSize(totalRows, 3);
+        table.Columns[0].Width = ExistingWellTableNameColumnWidth;
+        table.Columns[1].Width = ExistingWellTableCoordinateColumnWidth;
+        table.Columns[2].Width = ExistingWellTableCoordinateColumnWidth;
+
+        for (var rowIndex = 0; rowIndex < totalRows; rowIndex++)
+        {
+            table.Rows[rowIndex].Height = ExistingWellTableRowHeight;
+        }
+
+        var headers = GetExistingWellTableHeaders(coordinateFormat);
+        table.Cells[0, 0].TextString = FormatExistingWellTableHeadingText(ExistingWellTableTitle);
+        table.Cells[0, 0].Alignment = CellAlignment.MiddleCenter;
+
+        table.Cells[1, 0].TextString = "NAME";
+        table.Cells[1, 1].TextString = headers.FirstHeader;
+        table.Cells[1, 2].TextString = headers.SecondHeader;
+
+        for (var index = 0; index < rows.Count; index++)
+        {
+            var row = rows[index];
+            var tableRow = index + 2;
+            table.Cells[tableRow, 0].TextString = row.Name;
+            table.Cells[tableRow, 1].TextString = row.FirstValue;
+            table.Cells[tableRow, 2].TextString = row.SecondValue;
+        }
+
+        for (var rowIndex = 0; rowIndex < totalRows; rowIndex++)
+        {
+            for (var columnIndex = 0; columnIndex < 3; columnIndex++)
+            {
+                table.Cells[rowIndex, columnIndex].Alignment = CellAlignment.MiddleCenter;
+            }
+        }
+
+        modelSpace.AppendEntity(table);
+        transaction.AddNewlyCreatedDBObject(table, true);
+
+        table.MergeCells(CellRange.Create(table, 0, 0, 0, 2));
+        table.GenerateLayout();
+        ConfigureExistingWellTableBorders(table);
+        table.RecomputeTableBlock(true);
+        transaction.Commit();
+    }
+
+    private static void ConfigureExistingWellTableBorders(Table table)
+    {
+        RemoveAllCellBorders(table);
+        var borderColor = Color.FromColorIndex(ColorMethod.ByAci, 7);
+
+        for (var row = 1; row < table.Rows.Count; row++)
+        {
+            for (var column = 0; column < table.Columns.Count; column++)
+            {
+                SetCellBorders(table.Cells[row, column], true, borderColor);
+            }
+        }
+    }
+
+    private static string FormatExistingWellTableHeadingText(string value)
+    {
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{{\\C{ExistingWellTableHeadingColorIndex};{EscapeMTextValue(value)}}}");
+    }
+
+    private static string EscapeMTextValue(string value)
+    {
+        return (value ?? string.Empty)
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("{", "\\{", StringComparison.Ordinal)
+            .Replace("}", "\\}", StringComparison.Ordinal);
     }
 
     private List<NativeCordsRow> BuildNativeCordsRows(

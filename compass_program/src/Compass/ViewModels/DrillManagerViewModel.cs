@@ -52,6 +52,7 @@ public class DrillManagerViewModel : INotifyPropertyChanged
     private readonly RelayCommand _headingsAllCommand;
     private readonly RelayCommand _createXlsCommand;
     private readonly RelayCommand _completeCordsCommand;
+    private readonly RelayCommand _existingWellTableCommand;
     private readonly RelayCommand _completeCordsArchiveCommand;
     private readonly RelayCommand _getUtmsCommand;
     private readonly RelayCommand _addDrillPointsCommand;
@@ -97,6 +98,7 @@ public class DrillManagerViewModel : INotifyPropertyChanged
         _headingsAllCommand = new RelayCommand(_ => RunHeadingsAll(), _ => DrillCount > 0);
         _createXlsCommand = new RelayCommand(_ => _drillCadToolService.CreateXlsFromTable());
         _completeCordsCommand = new RelayCommand(_ => RunCompleteCords(), _ => DrillCount > 0);
+        _existingWellTableCommand = new RelayCommand(_ => RunExistingWellTable());
         _completeCordsArchiveCommand = new RelayCommand(_ => RunCompleteCordsArchive(), _ => DrillCount > 0);
         _getUtmsCommand = new RelayCommand(_ => _drillCadToolService.GetUtms());
         _addDrillPointsCommand = new RelayCommand(_ => _drillCadToolService.AddDrillPoints());
@@ -145,6 +147,7 @@ public class DrillManagerViewModel : INotifyPropertyChanged
     public ICommand HeadingsAllCommand => _headingsAllCommand;
     public ICommand CreateXlsCommand => _createXlsCommand;
     public ICommand CompleteCordsCommand => _completeCordsCommand;
+    public ICommand ExistingWellTableCommand => _existingWellTableCommand;
     public ICommand CompleteCordsArchiveCommand => _completeCordsArchiveCommand;
     public ICommand GetUtmsCommand => _getUtmsCommand;
     public ICommand AddDrillPointsCommand => _addDrillPointsCommand;
@@ -500,6 +503,15 @@ public class DrillManagerViewModel : INotifyPropertyChanged
         _drillCadToolService.CompleteCords(GetCurrentDrillNames(), Heading);
     }
 
+    private void RunExistingWellTable()
+    {
+        var dialog = new ExistingWellTableWindow();
+        if (dialog.ShowDialog() == true && dialog.Result != null)
+        {
+            _drillCadToolService.CreateExistingWellTable(dialog.Result);
+        }
+    }
+
     private void RunCompleteCordsArchive()
     {
         _drillCadToolService.CompleteCordsArchive(GetCurrentDrillNames(), Heading);
@@ -507,6 +519,18 @@ public class DrillManagerViewModel : INotifyPropertyChanged
 
     private void RunBuildDrill()
     {
+        var utmConfirmation = MessageBox.Show(
+            "ARE YOU IN UTM?",
+            "Build a Drill",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question,
+            MessageBoxResult.Yes);
+        if (utmConfirmation != MessageBoxResult.Yes)
+        {
+            CompassStartupDiagnostics.Log("Build a Drill UTM confirmation declined.");
+            return;
+        }
+
         CompassStartupDiagnostics.Log("Build a Drill dialog opening from Drill Manager.");
         var dialog = new BuildDrillWindow(GetBuildableDrillNames());
         if (dialog.ShowDialog() == true && dialog.Result != null)

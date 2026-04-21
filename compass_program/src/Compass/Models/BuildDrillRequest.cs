@@ -42,6 +42,8 @@ public sealed class BuildDrillPointRequest
 
     public bool UseAtsFabric { get; init; }
 
+    public double CombinedScaleFactor { get; init; } = 1.0;
+
     public double NorthSouthDistance { get; init; }
 
     public BuildDrillNorthSouthReference NorthSouthReference { get; init; }

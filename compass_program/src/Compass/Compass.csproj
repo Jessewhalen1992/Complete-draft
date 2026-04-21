@@ -83,6 +83,9 @@
     <Compile Update="UI\BuildDrillWindow.xaml.cs">
       <DependentUpon>BuildDrillWindow.xaml</DependentUpon>
     </Compile>
+    <Compile Update="UI\ExistingWellTableWindow.xaml.cs">
+      <DependentUpon>ExistingWellTableWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Update="UI\DrillManagerControl.xaml.cs">
       <DependentUpon>DrillManagerControl.xaml</DependentUpon>
     </Compile>

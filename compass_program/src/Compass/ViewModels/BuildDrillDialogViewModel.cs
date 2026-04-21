@@ -15,9 +15,11 @@ public sealed class BuildDrillDialogViewModel : INotifyPropertyChanged
 {
     public const int MinimumPointCount = 2;
     public const int MaximumPointCount = 15;
+    private const string DefaultCombinedScaleFactor = "1.0";
 
     private readonly string[] _drillNames;
     private bool _isApplyingSourceCascade;
+    private bool _isApplyingCombinedScaleFactorSync;
     private int _pointCount = MinimumPointCount;
     private int _selectedZone = 12;
     private string _selectedDrillName;
@@ -166,7 +168,20 @@ public sealed class BuildDrillDialogViewModel : INotifyPropertyChanged
     {
         while (Points.Count < _pointCount)
         {
-            Points.Add(new BuildDrillPointViewModel(Points.Count + 1, HandlePointSourceChanged));
+            var point = new BuildDrillPointViewModel(
+                Points.Count + 1,
+                HandlePointSourceChanged,
+                HandleCombinedScaleFactorChanged);
+            if (Points.Count > 0)
+            {
+                point.ApplyCombinedScaleFactorFromSync(Points[0].CombinedScaleFactor);
+            }
+            else
+            {
+                point.ApplyCombinedScaleFactorFromSync(DefaultCombinedScaleFactor);
+            }
+
+            Points.Add(point);
         }
 
         while (Points.Count > _pointCount)
@@ -205,6 +220,32 @@ public sealed class BuildDrillDialogViewModel : INotifyPropertyChanged
         return source == BuildDrillSource.Nad83Utms || source == BuildDrillSource.Nad27Utms;
     }
 
+    private void HandleCombinedScaleFactorChanged(int pointIndex, string combinedScaleFactor)
+    {
+        if (_isApplyingCombinedScaleFactorSync)
+        {
+            return;
+        }
+
+        _isApplyingCombinedScaleFactorSync = true;
+        try
+        {
+            for (var i = 0; i < Points.Count; i++)
+            {
+                if (Points[i].Index == pointIndex)
+                {
+                    continue;
+                }
+
+                Points[i].ApplyCombinedScaleFactorFromSync(combinedScaleFactor);
+            }
+        }
+        finally
+        {
+            _isApplyingCombinedScaleFactorSync = false;
+        }
+    }
+
     private string GetSelectedDrillLetter()
     {
         var index = Array.FindIndex(_drillNames, name => string.Equals(name, SelectedDrillName, StringComparison.OrdinalIgnoreCase));
@@ -238,7 +279,9 @@ public sealed class BuildDrillDialogViewModel : INotifyPropertyChanged
 
 public sealed class BuildDrillPointViewModel : INotifyPropertyChanged
 {
+    private const string DefaultCombinedScaleFactor = "1.0";
     private readonly Action<int, BuildDrillSource>? _sourceChangedHandler;
+    private readonly Action<int, string>? _combinedScaleFactorChangedHandler;
     private readonly BuildDrillSourceOption[] _sourceOptions;
     private readonly DirectionOption<BuildDrillNorthSouthReference>[] _northSouthReferences;
     private readonly DirectionOption<BuildDrillEastWestReference>[] _eastWestReferences;
@@ -250,15 +293,20 @@ public sealed class BuildDrillPointViewModel : INotifyPropertyChanged
     private string _range = string.Empty;
     private string _meridian = string.Empty;
     private bool _useAtsFabric = true;
+    private string _combinedScaleFactor = DefaultCombinedScaleFactor;
     private string _northSouthDistance = string.Empty;
     private string _eastWestDistance = string.Empty;
     private DirectionOption<BuildDrillNorthSouthReference> _selectedNorthSouthReference;
     private DirectionOption<BuildDrillEastWestReference> _selectedEastWestReference;
 
-    public BuildDrillPointViewModel(int index, Action<int, BuildDrillSource>? sourceChangedHandler = null)
+    public BuildDrillPointViewModel(
+        int index,
+        Action<int, BuildDrillSource>? sourceChangedHandler = null,
+        Action<int, string>? combinedScaleFactorChangedHandler = null)
     {
         Index = index;
         _sourceChangedHandler = sourceChangedHandler;
+        _combinedScaleFactorChangedHandler = combinedScaleFactorChangedHandler;
         _sourceOptions = new[]
         {
             new BuildDrillSourceOption(BuildDrillSource.Nad83Utms, "NAD83 UTMS"),
@@ -358,6 +406,18 @@ public sealed class BuildDrillPointViewModel : INotifyPropertyChanged
         set => SetField(ref _useAtsFabric, value);
     }
 
+    public string CombinedScaleFactor
+    {
+        get => _combinedScaleFactor;
+        set
+        {
+            if (SetField(ref _combinedScaleFactor, value))
+            {
+                _combinedScaleFactorChangedHandler?.Invoke(Index, value);
+            }
+        }
+    }
+
     public string NorthSouthDistance
     {
         get => _northSouthDistance;
@@ -402,6 +462,17 @@ public sealed class BuildDrillPointViewModel : INotifyPropertyChanged
             ? "Y / Northing (NAD27)"
             : "Y / Northing";
 
+    public void ApplyCombinedScaleFactorFromSync(string combinedScaleFactor)
+    {
+        if (string.Equals(_combinedScaleFactor, combinedScaleFactor, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _combinedScaleFactor = combinedScaleFactor;
+        OnPropertyChanged(nameof(CombinedScaleFactor));
+    }
+
     public bool TryCreateRequest(int zone, out BuildDrillPointRequest? request, out string error)
     {
         request = null;
@@ -409,6 +480,12 @@ public sealed class BuildDrillPointViewModel : INotifyPropertyChanged
 
         if (SelectedSource.Value == BuildDrillSource.SectionOffsets)
         {
+            if (!TryParsePositiveNonZeroDouble(CombinedScaleFactor, out var combinedScaleFactor))
+            {
+                error = "Enter a valid combined scale factor.";
+                return false;
+            }
+
             if (!TryParsePositiveDouble(NorthSouthDistance, out var northSouthDistance))
             {
                 error = "Enter a valid north/south distance.";
@@ -443,6 +520,7 @@ public sealed class BuildDrillPointViewModel : INotifyPropertyChanged
                 Range = range,
                 Meridian = meridian,
                 UseAtsFabric = UseAtsFabric,
+                CombinedScaleFactor = combinedScaleFactor,
                 NorthSouthDistance = northSouthDistance,
                 NorthSouthReference = SelectedNorthSouthReference.Value,
                 EastWestDistance = eastWestDistance,
@@ -468,7 +546,10 @@ public sealed class BuildDrillPointViewModel : INotifyPropertyChanged
             Source = SelectedSource.Value,
             Zone = zone,
             X = x,
-            Y = y
+            Y = y,
+            CombinedScaleFactor = TryParsePositiveNonZeroDouble(CombinedScaleFactor, out var coordinateScaleFactor)
+                ? coordinateScaleFactor
+                : 1.0
         };
         return true;
     }
@@ -483,6 +564,17 @@ public sealed class BuildDrillPointViewModel : INotifyPropertyChanged
     private static bool TryParsePositiveDouble(string? value, out double parsed)
     {
         if (TryParseDouble(value, out parsed) && parsed >= 0.0)
+        {
+            return true;
+        }
+
+        parsed = 0.0;
+        return false;
+    }
+
+    private static bool TryParsePositiveNonZeroDouble(string? value, out double parsed)
+    {
+        if (TryParseDouble(value, out parsed) && parsed > 0.0)
         {
             return true;
         }

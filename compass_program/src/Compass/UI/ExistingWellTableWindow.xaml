@@ -1,0 +1,103 @@
+<Window x:Class="Compass.UI.ExistingWellTableWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Existing Well Table"
+        Width="560"
+        Height="250"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanMinimize"
+        Background="#FFF5F6FA">
+    <Border Padding="18">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0"
+                        Margin="0,0,0,16">
+                <TextBlock Text="Existing Well Table"
+                           FontSize="22"
+                           FontWeight="Bold"
+                           Foreground="#FF222B45" />
+                <TextBlock Text="Choose the coordinate display and zone first. After that, you will pick well-head points in AutoCAD and type a name for each picked point."
+                           Margin="0,4,0,0"
+                           Foreground="#FF6B7280"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="1">
+                <Border Background="White"
+                        BorderBrush="#FFE3E8EF"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="16"
+                        Margin="0,0,0,12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0"
+                                   Grid.Column="0"
+                                   Text="Coordinate display"
+                                   VerticalAlignment="Center"
+                                   Foreground="#FF374151" />
+                        <ComboBox Grid.Row="0"
+                                  Grid.Column="1"
+                                  ItemsSource="{Binding CoordinateFormatOptions}"
+                                  DisplayMemberPath="Label"
+                                  SelectedItem="{Binding SelectedCoordinateFormat, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <TextBlock Grid.Row="1"
+                                   Grid.Column="0"
+                                   Text="Zone"
+                                   Margin="0,12,0,0"
+                                   VerticalAlignment="Center"
+                                   Foreground="#FF374151" />
+                        <ComboBox Grid.Row="1"
+                                  Grid.Column="1"
+                                  Margin="0,12,0,0"
+                                  ItemsSource="{Binding ZoneOptions}"
+                                  DisplayMemberPath="Label"
+                                  SelectedItem="{Binding SelectedZone, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    </Grid>
+                </Border>
+
+                <TextBlock Foreground="#FF6B7280"
+                           TextWrapping="Wrap"
+                           Text="After you click Create, pick points one at a time. Press Enter when you have all the wells you need, then choose the top-left insertion point for the finished table."
+                           Margin="0,0,0,4" />
+            </StackPanel>
+
+            <Grid Grid.Row="2"
+                  Margin="0,16,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="1"
+                        Content="Create"
+                        MinWidth="110"
+                        Padding="16,6"
+                        Margin="0,0,10,0"
+                        Click="Create_Click" />
+                <Button Grid.Column="2"
+                        Content="Cancel"
+                        MinWidth="110"
+                        Padding="16,6"
+                        Click="Cancel_Click" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

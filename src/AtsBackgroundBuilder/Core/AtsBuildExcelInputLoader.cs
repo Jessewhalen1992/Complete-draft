@@ -33,6 +33,8 @@ namespace AtsBackgroundBuilder.Core
 
     internal static class AtsBuildExcelInputLoader
     {
+        private const string AtsFabricOnlyPresetEnvVar = "ATSBUILD_XLS_ATS_FABRIC_ONLY";
+
         private static readonly string[] PreferredWorksheetNames =
         {
             "ATSBUILD_Input",
@@ -143,16 +145,22 @@ namespace AtsBackgroundBuilder.Core
                         BuildParseFailureMessage(parseResult));
                 }
 
+                var presetOptions = BuildPresetOptions();
                 var input = AtsBuildInputFactory.Create(
                     client,
                     zone,
                     textHeight: 10.0,
                     maxOverlapAttempts: 25,
                     sectionRequests: parseResult.Requests,
-                    options: BuildPresetOptions());
+                    options: presetOptions);
 
                 logger.WriteLine(
                     $"ATSBUILD_XLS workbook parsed: path={resolvedPath}, sheet={worksheetName}, client={client}, zone={zone}, sourceRows={sourceRowCount}, requests={input.SectionRequests.Count}.");
+                if (IsAffirmativeToggle(Environment.GetEnvironmentVariable(AtsFabricOnlyPresetEnvVar)))
+                {
+                    logger.WriteLine(
+                        $"ATSBUILD_XLS preset override: {AtsFabricOnlyPresetEnvVar}=1 -> ATS fabric only (all shapefile/disposition imports disabled).");
+                }
 
                 return new AtsBuildExcelInputLoadResult(input, resolvedPath, worksheetName, sourceRowCount, string.Empty);
             }
@@ -175,21 +183,44 @@ namespace AtsBackgroundBuilder.Core
 
         private static AtsBuildOptionSelection BuildPresetOptions()
         {
+            var atsFabricOnly = IsAffirmativeToggle(Environment.GetEnvironmentVariable(AtsFabricOnlyPresetEnvVar));
             return new AtsBuildOptionSelection
             {
-                IncludeDispositionLinework = true,
-                IncludeDispositionLabels = true,
+                IncludeDispositionLinework = !atsFabricOnly,
+                IncludeDispositionLabels = !atsFabricOnly,
                 AllowMultiQuarterDispositions = false,
                 IncludeAtsFabric = true,
                 DrawLsdSubdivisionLines = true,
-                IncludeP3Shapefiles = true,
-                IncludeCompassMapping = true,
-                IncludeCrownReservations = true,
+                IncludeP3Shapefiles = !atsFabricOnly,
+                IncludeCompassMapping = !atsFabricOnly,
+                IncludeCrownReservations = !atsFabricOnly,
                 AutoCheckUpdateShapefilesAlways = false,
                 CheckPlsr = false,
                 IncludeSurfaceImpact = false,
                 IncludeQuarterSectionLabels = true,
             };
+        }
+
+        private static bool IsAffirmativeToggle(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            switch (raw.Trim())
+            {
+                case "1":
+                case "true":
+                case "TRUE":
+                case "yes":
+                case "YES":
+                case "on":
+                case "ON":
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         private static string BuildConnectionString(string workbookPath)

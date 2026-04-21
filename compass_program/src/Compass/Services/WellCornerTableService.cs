@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Windows;
+using Autodesk.AutoCAD.Colors;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
@@ -13,6 +15,40 @@ namespace Compass.Services;
 
 public class WellCornerTableService
 {
+    private const string NotesLayer = "CG-NOTES";
+    private const string TableStyleName = "induction Bend";
+    private const string TableTitle = "TABLE OF COORDINATES";
+    private const string BubbleBlockName = "Induction_Bend_No";
+    private const string BubbleAttributeTag = "BEND";
+    private const short TitleColorIndex = 14;
+    private const short HeaderShadeColorIndex = 254;
+    private const double TitleTextHeight = 14.0;
+    private const double BodyTextHeight = 10.0;
+    private const double RowHeight = 25.0;
+    private const double IdColumnWidth = 70.0;
+    private const double NorthingColumnWidth = 80.0;
+    private const double EastingColumnWidth = 80.0;
+    private const double ElevationColumnWidth = 80.0;
+    private const double BubbleBlockScale = 1.0;
+    private const double BubbleBlockRotationRadians = Math.PI / 2.0;
+    private const int BubbleContentIndex = 0;
+    private const CellProperties BubbleContentOverrides =
+        CellProperties.Rotation |
+        CellProperties.Scale |
+        CellProperties.AutoScale;
+
+    private static readonly Color TitleTextColor = Color.FromColorIndex(ColorMethod.ByAci, TitleColorIndex);
+    private static readonly Color HeaderShadeColor = Color.FromColorIndex(ColorMethod.ByAci, HeaderShadeColorIndex);
+    private static readonly Color TableTextColor = Color.FromColorIndex(ColorMethod.ByAci, 7);
+    private static readonly Color BorderColor = Color.FromColorIndex(ColorMethod.ByAci, 7);
+    private static readonly Color TableBlackColor = Color.FromRgb(0, 0, 0);
+    private static readonly string[] BubbleBlockSearchPaths =
+    {
+        @"C:\AUTOCAD-SETUP\BLOCKS\_CG BLOCKS\Induction_Bend_No.dwg",
+        @"C:\AUTOCAD-SETUP CG\BLOCKS\_CG BLOCKS\Updated Blocks\Induction_Bend_No.dwg",
+        @"C:\AUTOCAD-SETUP CG\BLOCKS\_CG BLOCKS\Induction_Bend_No.dwg"
+    };
+
     private readonly LayerService _layerService;
     private readonly ILog _log;
 
@@ -50,7 +86,7 @@ public class WellCornerTableService
                 return;
             }
 
-            var insertionResult = editor.GetPoint("\nSelect insertion point for the WELL CORNERS table:");
+            var insertionResult = editor.GetPoint("\nSelect top-left insertion point for the WELL CORNERS table:");
             if (insertionResult.Status != PromptStatus.OK)
             {
                 editor.WriteMessage("\nInsertion point cancelled.");
@@ -59,24 +95,33 @@ public class WellCornerTableService
 
             using (document.LockDocument())
             {
-                _layerService.EnsureLayer(database, "CG-NOTES");
+                _layerService.EnsureLayer(database, NotesLayer);
+
+                var bubbleBlockId = EnsureBlockDefinitionLoaded(database, BubbleBlockName, BubbleBlockSearchPaths);
+                if (bubbleBlockId.IsNull)
+                {
+                    throw new InvalidOperationException(
+                        $"Could not load the required block definition '{BubbleBlockName}' for the WELL CORNERS ID cells.");
+                }
 
                 using var transaction = database.TransactionManager.StartTransaction();
                 var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
                 var modelSpace = (BlockTableRecord)transaction.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
-                var table = BuildTable(database, transaction, vertices, insertionResult.Value);
+                var table = BuildTable(database, transaction, vertices, insertionResult.Value, bubbleBlockId);
                 modelSpace.AppendEntity(table);
                 transaction.AddNewlyCreatedDBObject(table, true);
 
+                table.MergeCells(CellRange.Create(table, 0, 0, 0, 3));
                 table.GenerateLayout();
-                UnmergeAllCells(table);
-                table.GenerateLayout();
+                ApplyTableBorders(table);
+                ApplyFinalBubbleCellOverrides(table, transaction, bubbleBlockId, vertices.Count);
+                table.RecomputeTableBlock(true);
 
                 transaction.Commit();
             }
 
-            MessageBox.Show("WELL CORNERS table created successfully on CG-NOTES, with unmerged cells.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show("WELL CORNERS coordinate table created successfully on CG-NOTES.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
@@ -117,37 +162,72 @@ public class WellCornerTableService
         return vertices;
     }
 
-    private Table BuildTable(Database database, Transaction transaction, IReadOnlyList<Point2d> vertices, Point3d insertionPoint)
+    private Table BuildTable(
+        Database database,
+        Transaction transaction,
+        IReadOnlyList<Point2d> vertices,
+        Point3d topLeftInsertionPoint,
+        ObjectId bubbleBlockId)
     {
-        const int columnCount = 2;
-        const double columnWidth = 89.41;
-        const double rowHeight = 25.0;
+        if (!TryGetBlockAttributeDefinitionId(transaction, bubbleBlockId, BubbleAttributeTag, out var bubbleAttributeId))
+        {
+            throw new InvalidOperationException(
+                $"Block '{BubbleBlockName}' does not contain the required '{BubbleAttributeTag}' attribute definition.");
+        }
+
+        var totalRows = vertices.Count + 2;
+        var totalHeight = RowHeight * totalRows;
+        var insertionPoint = new Point3d(
+            topLeftInsertionPoint.X,
+            topLeftInsertionPoint.Y - totalHeight,
+            topLeftInsertionPoint.Z);
 
         var table = new Table
         {
             Position = insertionPoint,
-            Layer = "CG-NOTES"
+            Layer = NotesLayer
         };
 
-        var styleId = GetTableStyleId(database, transaction, "induction Bend");
+        var styleId = GetTableStyleId(database, transaction, TableStyleName);
         if (!styleId.IsNull)
         {
             table.TableStyle = styleId;
         }
 
-        table.SetSize(vertices.Count, columnCount);
+        table.SetSize(totalRows, 4);
+        table.Columns[0].Width = IdColumnWidth;
+        table.Columns[1].Width = NorthingColumnWidth;
+        table.Columns[2].Width = EastingColumnWidth;
+        table.Columns[3].Width = ElevationColumnWidth;
 
-        for (var column = 0; column < columnCount; column++)
+        for (var row = 0; row < totalRows; row++)
         {
-            table.Columns[column].Width = columnWidth;
+            table.Rows[row].Height = RowHeight;
         }
 
-        for (var row = 0; row < vertices.Count; row++)
+        for (var row = 0; row < totalRows; row++)
         {
-            table.Rows[row].Height = rowHeight;
-            var vertex = vertices[row];
-            table.Cells[row, 0].TextString = vertex.Y.ToString("F2", CultureInfo.InvariantCulture);
-            table.Cells[row, 1].TextString = vertex.X.ToString("F2", CultureInfo.InvariantCulture);
+            for (var column = 0; column < table.Columns.Count; column++)
+            {
+                table.Cells[row, column].Alignment = CellAlignment.MiddleCenter;
+            }
+        }
+
+        ConfigureTextCell(table.Cells[0, 0], TableTitle, TitleTextHeight, TitleTextColor, TableBlackColor);
+
+        ConfigureTextCell(table.Cells[1, 0], "ID", BodyTextHeight, TableTextColor, HeaderShadeColor);
+        ConfigureTextCell(table.Cells[1, 1], "NORTHING", BodyTextHeight, TableTextColor, HeaderShadeColor);
+        ConfigureTextCell(table.Cells[1, 2], "EASTING", BodyTextHeight, TableTextColor, HeaderShadeColor);
+        ConfigureTextCell(table.Cells[1, 3], "ELEVATION", BodyTextHeight, TableTextColor, HeaderShadeColor);
+
+        for (var index = 0; index < vertices.Count; index++)
+        {
+            var tableRow = index + 2;
+            var vertex = vertices[index];
+            ConfigureBubbleCell(table, tableRow, 0, bubbleBlockId, bubbleAttributeId, (index + 1).ToString(CultureInfo.InvariantCulture));
+            ConfigureTextCell(table.Cells[tableRow, 1], vertex.Y.ToString("F2", CultureInfo.InvariantCulture), BodyTextHeight, TableTextColor, TableBlackColor);
+            ConfigureTextCell(table.Cells[tableRow, 2], vertex.X.ToString("F2", CultureInfo.InvariantCulture), BodyTextHeight, TableTextColor, TableBlackColor);
+            ConfigureTextCell(table.Cells[tableRow, 3], string.Empty, BodyTextHeight, TableTextColor, TableBlackColor);
         }
 
         return table;
@@ -167,18 +247,184 @@ public class WellCornerTableService
         return ObjectId.Null;
     }
 
-    private static void UnmergeAllCells(Table table)
+    private static void ConfigureTextCell(Cell cell, string text, double textHeight, Color contentColor, Color backgroundColor)
     {
-        for (var row = 0; row < table.Rows.Count; row++)
+        cell.TextString = text;
+        cell.TextHeight = textHeight;
+        cell.ContentColor = contentColor;
+        cell.BackgroundColor = backgroundColor;
+        cell.Alignment = CellAlignment.MiddleCenter;
+    }
+
+    private static void ConfigureBubbleCell(
+        Table table,
+        int row,
+        int column,
+        ObjectId blockDefinitionId,
+        ObjectId attributeDefinitionId,
+        string label)
+    {
+        var cell = table.Cells[row, column];
+        cell.BackgroundColor = TableBlackColor;
+        cell.Alignment = CellAlignment.MiddleCenter;
+        cell.ContentLayout = CellContentLayout.Flow;
+
+        table.SetCellType(row, column, TableCellType.BlockCell);
+        cell.BlockTableRecordId = blockDefinitionId;
+
+        if (cell.Contents.Count <= BubbleContentIndex)
+        {
+            throw new InvalidOperationException("The WELL CORNERS ID cell did not expose any table content entries for block styling.");
+        }
+
+        var content = cell.Contents[BubbleContentIndex];
+        content.BlockTableRecordId = blockDefinitionId;
+        content.Overrides = BubbleContentOverrides;
+        content.IsAutoScale = false;
+        content.Scale = BubbleBlockScale;
+        content.Rotation = BubbleBlockRotationRadians;
+        content.SetBlockAttributeValue(attributeDefinitionId, label);
+    }
+
+    private static void ApplyFinalBubbleCellOverrides(
+        Table table,
+        Transaction transaction,
+        ObjectId blockDefinitionId,
+        int bubbleCount)
+    {
+        if (!TryGetBlockAttributeDefinitionId(transaction, blockDefinitionId, BubbleAttributeTag, out var attributeDefinitionId))
+        {
+            throw new InvalidOperationException(
+                $"Block '{BubbleBlockName}' does not contain the required '{BubbleAttributeTag}' attribute definition.");
+        }
+
+        for (var index = 0; index < bubbleCount; index++)
+        {
+            var row = index + 2;
+            ConfigureBubbleCell(
+                table,
+                row,
+                0,
+                blockDefinitionId,
+                attributeDefinitionId,
+                (index + 1).ToString(CultureInfo.InvariantCulture));
+        }
+    }
+
+    private static void ApplyTableBorders(Table table)
+    {
+        ApplyCellBorders(table.Cells[0, 0], BorderColor);
+
+        for (var row = 1; row < table.Rows.Count; row++)
         {
             for (var column = 0; column < table.Columns.Count; column++)
             {
-                var range = table.Cells[row, column].GetMergeRange();
-                if (range != null && range.TopRow == row && range.LeftColumn == column)
-                {
-                    table.UnmergeCells(range);
-                }
+                ApplyCellBorders(table.Cells[row, column], BorderColor);
             }
         }
+    }
+
+    private static void ApplyCellBorders(Cell cell, Color color)
+    {
+        cell.Borders.Top.IsVisible = true;
+        cell.Borders.Bottom.IsVisible = true;
+        cell.Borders.Left.IsVisible = true;
+        cell.Borders.Right.IsVisible = true;
+
+        cell.Borders.Top.Color = color;
+        cell.Borders.Bottom.Color = color;
+        cell.Borders.Left.Color = color;
+        cell.Borders.Right.Color = color;
+    }
+
+    private static bool TryGetBlockAttributeDefinitionId(
+        Transaction transaction,
+        ObjectId blockDefinitionId,
+        string attributeTag,
+        out ObjectId attributeDefinitionId)
+    {
+        attributeDefinitionId = ObjectId.Null;
+        var blockDefinition = (BlockTableRecord)transaction.GetObject(blockDefinitionId, OpenMode.ForRead);
+        foreach (ObjectId entityId in blockDefinition)
+        {
+            if (transaction.GetObject(entityId, OpenMode.ForRead) is AttributeDefinition attributeDefinition &&
+                AutoCADBlockService.TagMatches(attributeDefinition.Tag, attributeTag))
+            {
+                attributeDefinitionId = attributeDefinition.ObjectId;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static ObjectId EnsureBlockDefinitionLoaded(Database destinationDatabase, string blockName, IReadOnlyList<string> searchPaths)
+    {
+        using (var transaction = destinationDatabase.TransactionManager.StartTransaction())
+        {
+            var blockTable = (BlockTable)transaction.GetObject(destinationDatabase.BlockTableId, OpenMode.ForRead);
+            if (blockTable.Has(blockName))
+            {
+                var blockId = blockTable[blockName];
+                transaction.Commit();
+                return blockId;
+            }
+
+            transaction.Commit();
+        }
+
+        foreach (var candidatePath in searchPaths)
+        {
+            if (!File.Exists(candidatePath))
+            {
+                continue;
+            }
+
+            var importedBlockId = ImportBlockDefinition(destinationDatabase, candidatePath, blockName);
+            if (!importedBlockId.IsNull)
+            {
+                return importedBlockId;
+            }
+        }
+
+        return ObjectId.Null;
+    }
+
+    private static ObjectId ImportBlockDefinition(Database destinationDatabase, string sourceDrawingPath, string blockName)
+    {
+        if (destinationDatabase == null || string.IsNullOrWhiteSpace(sourceDrawingPath) || !File.Exists(sourceDrawingPath))
+        {
+            return ObjectId.Null;
+        }
+
+        using var sourceDatabase = new Database(false, true);
+        sourceDatabase.ReadDwgFile(sourceDrawingPath, FileShare.Read, allowCPConversion: true, password: string.Empty);
+
+        using (var sourceTransaction = sourceDatabase.TransactionManager.StartTransaction())
+        {
+            var sourceBlockTable = (BlockTable)sourceTransaction.GetObject(sourceDatabase.BlockTableId, OpenMode.ForRead);
+            if (!sourceBlockTable.Has(blockName))
+            {
+                return ObjectId.Null;
+            }
+
+            var sourceBlockDefinitionId = sourceBlockTable[blockName];
+            var idsToClone = new ObjectIdCollection { sourceBlockDefinitionId };
+            sourceTransaction.Commit();
+
+            var mapping = new IdMapping();
+            destinationDatabase.WblockCloneObjects(idsToClone, destinationDatabase.BlockTableId, mapping, DuplicateRecordCloning.Replace, false);
+        }
+
+        using var destinationTransaction = destinationDatabase.TransactionManager.StartTransaction();
+        var destinationBlockTable = (BlockTable)destinationTransaction.GetObject(destinationDatabase.BlockTableId, OpenMode.ForRead);
+        if (!destinationBlockTable.Has(blockName))
+        {
+            return ObjectId.Null;
+        }
+
+        var blockDefinitionId = destinationBlockTable[blockName];
+        destinationTransaction.Commit();
+        return blockDefinitionId;
     }
 }
