@@ -1,22 +1,231 @@
+# Follow-up (Compass Well Corners ActiveX Cell Pivot, 2026-04-21)
+
+- [x] Capture the user's correction that the overlay insert workaround is not acceptable because the bubbles no longer behave like table content.
+- [x] Rework WELL CORNERS back to true `ID` block cells using the same ActiveX table pattern as the provided LISP (`RegenerateTableSuppressed` + `SetCellType` / `SetBlockTableRecordId` / `SetBlockAttributeValue`).
+- [x] Remove the overlay bubble insert path from the WELL CORNERS execution flow.
+- [x] Rebuild, redeploy, and document the result.
+
+## Review (Compass Well Corners ActiveX Cell Pivot, 2026-04-21)
+
+- User correction:
+- The overlay insert workaround was not acceptable because the bubbles no longer behaved like true table content and were too easy to move independently from the table.
+- Fix:
+- Reworked `WellCornerTableService` back to true `ID` block cells and mirrored the provided LISP pattern instead of keeping the overlay block-insert path.
+- The new WELL CORNERS flow now builds the table normally, commits it, then reopens the database-resident table and populates the `ID` cells through one ActiveX/COM table API family only.
+- The ActiveX pass suppresses table regeneration while it configures each bubble row, then applies `SetCellType`, `SetBlockTableRecordId`, `SetAutoScale`, `SetBlockScale`, `SetCellAlignment`, `SetBlockRotation`, and `SetBlockAttributeValue` before reenabling regeneration and updating the table.
+- Removed the overlay block insert / draw-order workaround from the execution flow entirely.
+- Refinement after user review:
+- Updated the managed table styling so only the header cells use explicit background fill `254`.
+- Title and data cells now use the cell-level no-fill state instead of explicit black background color, so the table carries fill only where it is intentionally shaded.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Only the pre-existing obsolete `Table.GetCellExtents` warnings in `DrillCadToolService` remain.
+- Deployment:
+- With AutoCAD closed, deployed the new build as `C:\AUTOCAD-SETUP CG\CG_LISP\Compass_20260421_230314.dll`.
+- Copied the matching `Compass_20260421_230314.deps.json`.
+- Updated `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` so AutoCAD now `NETLOAD`s `Compass_20260421_230314.dll`.
+- Verified the deployed DLL SHA256 matches the fresh build: `D5C5241D980953C3179CBA9771242D9EFA5FD976BC903EDE43E988657712084F`.
+
+# Follow-up (Compass Well Corners Overlay Bubble Inserts, 2026-04-21)
+
+- [x] Capture the new correction that the wrapper block still leaves the `BEND` text behaving wrong, even though the outer block rotation is correct.
+- [x] Remove WELL CORNERS dependence on table-cell block content for the `ID` column.
+- [x] Keep the `ID` cells visually blank and place normal `Induction_Bend_No` inserts centered over those cells after the table lays out.
+- [x] Rebuild, redeploy, and document the result.
+
+## Review (Compass Well Corners Overlay Bubble Inserts, 2026-04-21)
+
+- Fix:
+- WELL CORNERS no longer uses AutoCAD table-cell block content for the `ID` column.
+- The table now leaves the `ID` cells blank and inserts ordinary `Induction_Bend_No` block references centered over those cells after the table finishes `GenerateLayout()` / `RecomputeTableBlock(true)`.
+- Each inserted bubble block uses the same `90°` rotation that the user had already proven works when applied manually, and the `BEND` attribute is populated through ordinary `AttributeReference` creation instead of the table-cell block-content path.
+- The inserted bubbles are moved to the top of model-space draw order so they render above the table.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Deployment:
+- With AutoCAD closed, deployed the overlay-block version as `C:\AUTOCAD-SETUP CG\CG_LISP\Compass_20260421_220543.dll`.
+- Updated `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` so the next AutoCAD startup `NETLOAD`s that file.
+- Verified the deployed DLL hash matches the fresh build: `7ECFB7D33A3727D1EB2495CB07B9B5BA1AD44253DA51DF5C8DF67F1B95D5F328`.
+- Tradeoff:
+- The bubbles are now separate block inserts over the table cells instead of true table-cell block content, so if the table is moved later those bubbles will not automatically follow unless we add grouping or a move-together mechanism in a later pass.
+- Refinement after user feedback:
+- The user pointed out the drawing uses non-default angle settings (`north 270d`) and that the overlay bubbles were showing sideways text even though the visual bubble position was correct.
+- Updated the overlay-block path so the inserted bubble block rotation is derived from `ANGBASE` / `ANGDIR` rather than assuming world `90°` equals the `90d` shown in Properties.
+- Also forced the `BEND` attribute reference rotation to world-horizontal (`0`) after `SetAttributeFromBlock(...)` so the numeric label does not inherit the bubble spin.
+- Redeployed that angle-aware overlay version as `C:\AUTOCAD-SETUP CG\CG_LISP\Compass_20260421_221657.dll`.
+- Updated `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` to `NETLOAD` that DLL.
+- Verified the deployed DLL hash matches the fresh build: `AE809697CBAB312F38C8772CD7EDA75E2EDCE9EA668B72D3DCC207BF5D07115B`.
+
+# Follow-up (Compass Well Corners Rotated Wrapper Block Workaround, 2026-04-21)
+
+- [x] Confirm from the new generated table block diagnostics whether AutoCAD is actually generating the bubble block references at `90°`.
+- [x] Add a rotated WELL CORNERS wrapper block definition so the `90°` transform is baked into the block definition instead of relying on table-cell block-rotation persistence.
+- [x] Switch WELL CORNERS `ID` cells to the rotated wrapper block while keeping the cell rotation itself at `0d`.
+- [x] Rebuild, redeploy, and document the result.
+
+## Review (Compass Well Corners Rotated Wrapper Block Workaround, 2026-04-21)
+
+- Diagnostic conclusion:
+- The new generated-table-block diagnostics proved the direct child block references inside the generated table block were already being created at `rot=1.57079633` before commit, after commit, and after the managed post-commit restamp.
+- That means the remaining bug was no longer a failed rotation write. The table engine was already generating rotated block references, while the cell/property state still behaved as though the block was `0d`.
+- Workaround:
+- Added a WELL CORNERS-specific rotated wrapper block definition named `Induction_Bend_No_WellCorners90`.
+- The wrapper is created by cloning the source `Induction_Bend_No` block-definition entities into a new block definition with a baked-in `90°` transform around the source block origin.
+- WELL CORNERS `ID` cells now insert that rotated wrapper block at the table-cell's native `0d` state instead of asking the table engine to persist a separate block rotation on the cell content.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Deployment:
+- With AutoCAD closed, first deployed the wrapper-build version as `C:\AUTOCAD-SETUP CG\CG_LISP\Compass_20260421_213456.dll`.
+- After the user showed the wrapper block still left the `BEND` text behaving like unrotated text, refined the wrapper creation to rotate `AttributeDefinition` entities explicitly and force a fresh wrapper block name `Induction_Bend_No_WellCorners90_v2`.
+- Deployed that attribute-definition wrapper fix as `C:\AUTOCAD-SETUP CG\CG_LISP\Compass_20260421_214626.dll`.
+- Updated `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` so the next AutoCAD startup `NETLOAD`s that file.
+- Verified the deployed DLL hash matches the fresh build: `0DAC19041C78D08EE0E545267C62CFDF4373ED9D6F3091D0CE931B690044C0FB`.
+
+# Follow-up (Compass Well Corners Generated Table Block Diagnostics, 2026-04-21)
+
+- [x] Capture the new correction that WELL CORNERS should inspect the generated table block and try a managed post-commit content restamp instead of guessing another deprecated setter path.
+- [x] Add generated table block diagnostics around `RecomputeTableBlock(true)` / commit so the log can report the actual inserted block-reference state inside the table block.
+- [x] Add a managed post-commit bubble-content restamp on the database-resident table, then regenerate and recompute the table block again.
+- [x] Rebuild Compass and document the result.
+
+## Review (Compass Well Corners Generated Table Block Diagnostics, 2026-04-21)
+
+- Fix:
+- `WellCornerTableService` now logs the generated table block contents before commit, after commit, and after a managed post-commit bubble-content restamp.
+- The new `LogGeneratedTableBlockDiagnostics(...)` helper opens the table's generated block table record, inspects child `BlockReference` entities, and records the referenced block name, rotation, position, and scale.
+- Added `RestampBubbleRotationAfterCommit(...)`, which reopens the committed table for write, reapplies `Rotation | Scale | AutoScale` on the existing `CellContent`, then runs `GenerateLayout()` plus `RecomputeTableBlock(true)` again.
+- The restamp keeps the newer managed `Cell` / `CellContent` path and does not reintroduce the earlier deprecated managed setters or COM idle retry loop.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Deployment:
+- With AutoCAD closed, deployed the new build as `C:\AUTOCAD-SETUP CG\CG_LISP\Compass_20260421_212553.dll`.
+- Updated `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` so the next AutoCAD startup `NETLOAD`s that file.
+- Verified the deployed DLL hash matches the fresh build: `D49225A34BD3FBAF460E1FB56A74DE2261DF59FFB325493348E14071D6E08037`.
+
+# Follow-up (Compass Well Corners Single API Bubble Path, 2026-04-21)
+
+- [x] Capture the user correction that the WELL CORNERS bubble cell should use one AutoCAD table API path instead of mixing cell-content, deprecated table setters, and COM restamps.
+- [x] Refactor `WellCornerTableService` so the `ID` bubble cell is configured only through `Cell` / `CellContent`.
+- [x] Remove the post-commit COM override path, idle restamps, and deprecated table-level block setters from the WELL CORNERS flow.
+- [x] Rebuild Compass and document the result.
+
+## Review (Compass Well Corners Single API Bubble Path, 2026-04-21)
+
+- Fix:
+- `WellCornerTableService` now configures the WELL CORNERS `ID` bubble cell through one API path only: `Cell` plus `CellContent`.
+- Removed the mixed deprecated managed table setters (`SetCellType`, `SetOverrides`, `SetAutoScale`, `SetBlockScale`, `SetBlockRotation`), the post-commit COM restamp path, and the multi-idle retry loop.
+- Removed `cell.ContentLayout = CellContentLayout.Flow` so the single centered block is no longer being forced through flow layout.
+- Simplified table creation flow:
+- build the table, append it, merge the title cells, apply borders, `GenerateLayout()`, then `RecomputeTableBlock(true)` and commit.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Remaining proof gap:
+- I have compile proof for the simplified path, but I have not live-run this revised build inside AutoCAD yet, so the final visual/runtime result still needs a fresh retest.
+
+# Follow-up (Compass Well Corners Autodesk Research + Review Package, 2026-04-21)
+
+- [x] Search Autodesk official documentation for the latest guidance on AutoCAD table block rotation, table regeneration, and deprecated table-cell APIs.
+- [x] Compare that guidance against the current `WellCornerTableService` implementation and the live WELL CORNERS diagnostics log.
+- [x] Assemble a handoff package with the exact source files, load script, and latest runtime log for external review.
+
+## Review (Compass Well Corners Autodesk Research + Review Package, 2026-04-21)
+
+- Official Autodesk findings:
+- `Table.GenerateLayout()` computes in-memory table geometry only; Autodesk says the table block itself is created automatically when the table is posted to the database and closed.
+- `Table.RecomputeTableBlock(true)` updates the block table record referenced by the table to match the table object's current state.
+- Autodesk marks the older table block-cell setters as deprecated, including `SetBlockRotation`, `SetBlockScale`, `SetBlockTableRecordId`, `SetCellType`, and `SetOverrides`.
+- For those deprecated members, Autodesk repeatedly directs callers to the `Table.Cells[row,column]` and `Table.Cells[row,column].Contents[i]` object model instead, for example `.BlockTableRecordId`, `.Rotation`, `.Scale`, `.IsAutoScale`, and `.Overrides`.
+- Live proof:
+- `%TEMP%\Compass-netload.log` still shows the deployed build writing `cellRot=1.5708` / `comCellRot=1.5707963267948966` at `post-commit` and across `idle-1` through `idle-8`.
+- That means the code is successfully writing `90°` during the command and during multiple later idle passes, even though the AutoCAD Properties palette still ends up showing `0d`.
+- Root-cause direction:
+- The most likely remaining issue is not that we are failing to write the value once; it is that AutoCAD is rebuilding the final table/block state later from definition data, and our current implementation mixes the newer `Cell/Contents` API with deprecated managed setters and COM table setters.
+- Review package:
+- Assembled at `tasks\review-packages\well-corners-rotation\`.
+- Includes the current `WellCornerTableService.cs`, `CompassStartupDiagnostics.cs`, `DrillManagerViewModel.cs`, `DrillManagerControl.xaml`, the active `load jgw programs.lsp`, and the latest copied `Compass-netload` log.
+- Proof gap:
+- Autodesk's official docs describe the relevant API contracts and deprecations, but I did not find an official Autodesk note that explains this exact `Block rotation shows 0d in Properties after command completion` behavior. The docs were enough to narrow the likely failure mode, not to prove the final fix.
+
+# Follow-up (Compass Well Corners Idle Rotation Reapply, 2026-04-21)
+
+- [x] Confirm from the live log whether the deployed build is actually writing `90d` during the WELL CORNERS command.
+- [x] Add a one-shot AutoCAD idle-cycle reapply for bubble-cell rotation after commit if the log proves AutoCAD resets the property after the command returns.
+- [x] Rebuild Compass and redeploy the idle-reapply patch into `CG_LISP` for the next retest.
+
+## Review (Compass Well Corners Idle Rotation Reapply, 2026-04-21)
+
+- Log proof:
+- `%TEMP%\Compass-netload.log` now shows:
+- `WELL CORNERS managed bubble diagnostics (post-commit) => ... cellRot=1.5708 ...`
+- `WELL CORNERS COM bubble diagnostics (post-commit) => ... comCellRot=1.5707963267948966 ...`
+- That proves the current deployed build is successfully writing `90` degrees during the command through both the managed and COM paths.
+- Root-cause refinement:
+- since the user still sees `Block rotation = 0d` afterward, the remaining failure is timing: AutoCAD is resetting or rebuilding the table cell after the command finishes.
+- Fix:
+- `WellCornerTableService` now queues a one-shot `Application.Idle` handler that reapplies the COM block-cell rotation/scale/autoscale after AutoCAD finishes its own post-command table work, then forces a regen and writes a second diagnostics line tagged `(idle)`.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Redeployed DLL:
+- after AutoCAD was closed, copied the idle-reapply patch into `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll`.
+- confirmed deployed hash now matches the fresh build: `E95C3D18B6030B7A90FF2F6D7EA8EED719E0ECA4946FD73ADF3B44774A13EB54`.
+- confirmed deployed timestamp is `2026-04-21 3:18:49 PM`.
+- Follow-up proof:
+- `%TEMP%\Compass-netload.log` now shows both `(post-commit)` and `(idle)` diagnostics still reporting `1.5708` / `90°` for all bubble rows, yet the Properties palette in AutoCAD still shows `0d`. That narrows the remaining issue further: AutoCAD is resetting the table cell later than the first idle tick.
+- Next refinement:
+- the local source now widens the timing guard from a one-shot idle reapply to `8` idle passes so the command can keep restamping the bubble-cell rotation across later AutoCAD table refresh cycles.
+- New deployment blocker:
+- that multi-idle build now exists locally and compiles, but it has not been copied into `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` yet because the running AutoCAD process has the deployed DLL locked again.
+- Deployment workaround:
+- copied the newest multi-idle build to `C:\AUTOCAD-SETUP CG\CG_LISP\Compass_20260421_1601.dll` plus matching `Compass_20260421_1601.deps.json`.
+- updated `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` so the next AutoCAD startup `NETLOAD`s `Compass_20260421_1601.dll` instead of the locked `Compass.dll`.
+- confirmed the versioned DLL hash matches the newest build: `E6D8C669713AEF3002322E14914F4053768E49BC6070C35DAF2187C70160CE10`.
+
+# Follow-up (Compass Well Corners COM Rotation Persistence, 2026-04-21)
+
+- [x] Confirm that the April 21, 2026 `2:50:39 PM` DLL really was the one loaded for the user's retest and that the `0d` result is therefore a live bug in the latest managed fix.
+- [x] Add a post-commit AutoCAD COM `AcadTable.SetBlockRotation` pass plus startup-log diagnostics so the WELL CORNERS bubble cells can be pushed through the same property path as manual Properties-palette edits.
+- [x] Rebuild Compass, redeploy the COM-rotation patch, and verify it is the file AutoCAD will load next.
+
+## Review (Compass Well Corners COM Rotation Persistence, 2026-04-21)
+
+- Runtime proof:
+- `%TEMP%\Compass-netload.log` shows `CompassApplication.Initialize started` at `2026-04-21 14:53:04`, which is after the previously deployed `2:50:39 PM` DLL timestamp. That confirms the user's latest `0d` screenshot came from the newest available managed-only patch, not a stale session.
+- Fix:
+- `WellCornerTableService` now performs a second rotation pass after the table transaction commits by grabbing the table's `AcadObject` and calling AutoCAD COM methods `SetAutoScale`, `SetBlockScale`, and `SetBlockRotation` for each bubble row, followed by `Update()`.
+- WELL CORNERS diagnostics were also moved to `%TEMP%\Compass-netload.log` through `CompassStartupDiagnostics`, since that log is known to be active in the current AutoCAD session while `DrillNamer.log` was not showing the new entries.
+- Verification:
+- `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Redeployed DLL:
+- after AutoCAD was closed, copied the new build into `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll`.
+- confirmed deployed hash now matches the fresh build: `C2053BCC376ACB2F5A09EC1A59DD15B757A1BA0760A7CBDCAF50DC55F37B1C89`.
+- confirmed deployed timestamp is `2026-04-21 2:56:15 PM`.
+- Remaining proof gap:
+- I still cannot live-run the rebuilt DLL inside AutoCAD from this environment, so the final proof still needs one more user retest after reopening AutoCAD.
+
 # Follow-up (Compass Well Corners Content Override Rotation, 2026-04-21)
 
 - [x] Re-open the WELL CORNERS ID bubble issue after the rebuilt and redeployed DLL still produced cells with `Block rotation = 0d` in AutoCAD Properties.
 - [x] Switch the bubble-cell persistence path to the content-index override API so rotation/scale/autoscale are stored as explicit content overrides on the final table object.
-- [ ] Rebuild Compass, redeploy the DLL, and record the result below.
+- [x] Rebuild Compass, redeploy the DLL, and record the result below.
 
 ## Review (Compass Well Corners Content Override Rotation, 2026-04-21)
 
 - User proof: even after the prior redeploy, the generated ID cells still showed `Block rotation = 0d` in AutoCAD Properties and the bubbles rendered one row low/outside the table.
 - Root cause refinement: the earlier attempts still did not mark the final cell content with explicit rotation/scale/autoscale overrides on the content object itself. AutoCAD's table API metadata shows those persisted properties live on `CellContent`, not just the broader block-cell setter surface.
 - Fix:
-- `WellCornerTableService` now assigns the bubble block through the `Cell` / `CellContent` object path and explicitly sets `content.Overrides = CellProperties.Rotation | Scale | AutoScale` before writing `Rotation = 90d`, `Scale = 1.0`, and `IsAutoScale = false`.
-- The post-`GenerateLayout()` reapply step remains in place, so those override-backed content properties are stamped onto the final table object instead of only the pre-layout draft.
+- `WellCornerTableService` now assigns the bubble block through the `Cell` / `CellContent` object path, explicitly sets `content.Overrides = CellProperties.Rotation | Scale | AutoScale`, and then also stamps the matching cell-level override flag plus `SetBlockRotation(90d)`, `SetBlockScale(1.0)`, and `SetAutoScale(false)` on the final table cell.
+- The post-`GenerateLayout()` reapply step remains in place, so both the content-level and cell-level rotation/scale/autoscale state are written onto the finished table object instead of only the pre-layout draft.
+- Added runtime diagnostics to the WELL CORNERS path so the Compass log now records the in-memory block rotation/content rotation/override values that the command wrote for each ID row before commit.
+- Deployment proof:
+- confirmed the real AutoCAD autoload script is `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp`, which `NETLOAD`s `C:\AUTOCAD-SETUP CG\CG_LISP\compass.DLL`.
+- confirmed `C:\AUTOCAD-SETUP\Lisp_2000\COMPASS\Compass.dll` is a separate older historical copy and is not the DLL referenced by that current load script.
+- confirmed the current AutoCAD startup diagnostics log at `%TEMP%\Compass-netload.log` shows `CompassApplication.Initialize started` at `2026-04-21 14:43:55`, which is earlier than the newest deployed DLL timestamp below. That means the currently running AutoCAD session did not yet load the `2:50:39 PM` patch.
 - Verification:
 - `dotnet build .\compass_program\Compass.sln -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
-- Deployment blocker:
-- the freshly built DLL now has hash `1431221169AD94FCE033100FE8837B0E47BB8F16A8BC9685113ED34D48897359`, but `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` is still the older `2:10:18 PM` file with hash `86FD98A5D0B419F489993A606476F46E754781B6DEF12C0090E1F27F2D896C89` because Windows reported the deployed DLL is currently locked by another process.
+- redeployed DLL:
+- `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` now matches the freshly built DLL hash `E4BC9666BA892C94A4CDA5B5EDA1FD18058613C98D9BD164BDCFA14AA2DC01F1` and has timestamp `2026-04-21 2:50:39 PM`.
 - Remaining proof gap:
-- I could not replace the live AutoCAD deployment DLL while it was locked, so the newest content-override fix has not yet been exercised inside AutoCAD.
+- I still cannot live-run the rebuilt DLL inside AutoCAD from this environment, so the final proof still needs one more user retest plus, if needed, the new WELL CORNERS diagnostics line from the Compass log.
 
 # Follow-up (Compass Well Corners Bubble Rotation Persistence, 2026-04-21)
 
