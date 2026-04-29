@@ -48,12 +48,20 @@ namespace AtsBackgroundBuilder.Core
 
             try
             {
+                var snapshotPath = CreateTemporarySnapshot(xlsxPath, logger);
+                try
+                {
 #if NET8_0_WINDOWS
-                lookup.LoadWithOleDb(xlsxPath, logger);
+                    lookup.LoadWithOleDb(snapshotPath, logger, xlsxPath);
 #else
-                lookup.LoadWithOleDb(xlsxPath, logger);
+                    lookup.LoadWithOleDb(snapshotPath, logger, xlsxPath);
 #endif
-                lookup.IsLoaded = true;
+                    lookup.IsLoaded = true;
+                }
+                finally
+                {
+                    TryDeleteTemporarySnapshot(snapshotPath, logger);
+                }
             }
             catch (Exception ex)
             {
@@ -97,13 +105,67 @@ namespace AtsBackgroundBuilder.Core
                 .ToList();
         }
 
-        private void LoadWithOleDb(string xlsxPath, Logger logger)
+        private static string CreateTemporarySnapshot(string xlsxPath, Logger logger)
+        {
+            var tempFolder = Path.Combine(Path.GetTempPath(), "AtsBackgroundBuilderLookup");
+            Directory.CreateDirectory(tempFolder);
+
+            var extension = Path.GetExtension(xlsxPath);
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                extension = ".xlsx";
+            }
+
+            var tempPath = Path.Combine(
+                tempFolder,
+                $"{Path.GetFileNameWithoutExtension(xlsxPath)}-{Guid.NewGuid():N}{extension}");
+
+            using (var source = new FileStream(
+                       xlsxPath,
+                       FileMode.Open,
+                       FileAccess.Read,
+                       FileShare.ReadWrite | FileShare.Delete,
+                       bufferSize: 81920,
+                       options: FileOptions.SequentialScan))
+            using (var destination = new FileStream(
+                       tempPath,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None,
+                       bufferSize: 81920,
+                       options: FileOptions.SequentialScan))
+            {
+                source.CopyTo(destination);
+            }
+
+            logger.WriteLine("Lookup snapshot created: " + xlsxPath);
+            return tempPath;
+        }
+
+        private static void TryDeleteTemporarySnapshot(string snapshotPath, Logger logger)
+        {
+            try
+            {
+                File.Delete(snapshotPath);
+            }
+            catch (Exception ex)
+            {
+                logger.WriteLine("Lookup snapshot cleanup failed: " + ex.Message);
+            }
+        }
+
+        private void LoadWithOleDb(string xlsxPath, Logger logger, string displayPath)
         {
             // HDR=NO so first row is treated as data (lookup files are headerless)
-            var connString =
-                $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={xlsxPath};Extended Properties=\"Excel 12.0 Xml;HDR=NO;IMEX=1\";";
+            var builder = new OleDbConnectionStringBuilder
+            {
+                Provider = "Microsoft.ACE.OLEDB.12.0",
+                DataSource = xlsxPath
+            };
+            builder["Extended Properties"] = "Excel 12.0 Xml;HDR=NO;IMEX=1";
+            builder["Mode"] = "Read";
 
-            using (var conn = new OleDbConnection(connString))
+            using (var conn = new OleDbConnection(builder.ConnectionString))
             {
                 conn.Open();
 
@@ -111,20 +173,21 @@ namespace AtsBackgroundBuilder.Core
                 var schema = conn.GetOleDbSchemaTable(OleDbSchemaGuid.Tables, null);
                 if (schema == null || schema.Rows.Count == 0)
                 {
-                    logger.WriteLine("No worksheets found in: " + xlsxPath);
+                    logger.WriteLine("No worksheets found in: " + displayPath);
                     return;
                 }
 
                 var sheetName = schema.Rows[0]["TABLE_NAME"].ToString();
                 if (string.IsNullOrWhiteSpace(sheetName))
                 {
-                    logger.WriteLine("Could not determine worksheet name in: " + xlsxPath);
+                    logger.WriteLine("Could not determine worksheet name in: " + displayPath);
                     return;
                 }
 
                 using (var cmd = conn.CreateCommand())
                 {
                     cmd.CommandText = $"SELECT * FROM [{sheetName}]";
+                    cmd.CommandTimeout = 5;
 
                     using (var adapter = new OleDbDataAdapter(cmd))
                     {
@@ -133,7 +196,7 @@ namespace AtsBackgroundBuilder.Core
 
                         if (dt.Columns.Count < 2)
                         {
-                            logger.WriteLine("Lookup has fewer than 2 columns: " + xlsxPath);
+                            logger.WriteLine("Lookup has fewer than 2 columns: " + displayPath);
                             return;
                         }
 
@@ -167,7 +230,7 @@ namespace AtsBackgroundBuilder.Core
                 }
             }
 
-            logger.WriteLine($"Loaded lookup ({_lookup.Count} rows): {xlsxPath}");
+            logger.WriteLine($"Loaded lookup ({_lookup.Count} rows): {displayPath}");
         }
 
         private static bool IsHeaderRow(string key, string value)

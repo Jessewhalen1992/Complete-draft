@@ -128,6 +128,7 @@ internal static class Program
         TestPlsrMissingLabelCandidateSelectorSkipsBlankCandidates();
         TestPlsrMissingLabelSuppressionPolicyMatchesNonStandardLayerCandidate();
         TestPlsrMissingLabelSuppressionPolicyRejectsDifferentQuarter();
+        TestDispositionSourceGeometryTypePolicyRecognizesMapPolygons();
         TestPlsrQuarterPointMatcherMatchesLeaderPointInsideWhenTextOutside();
         TestPlsrQuarterPointMatcherRejectsWhenAllPointsAreOutside();
         TestPlsrQuarterPointMatcherRejectsWhenPointIsInsideBoundsButOutsideQuarter();
@@ -145,6 +146,7 @@ internal static class Program
         TestWidthAlignedDimensionPlacementKeepsMeasuredSpanAttachedWhenTextSitsOutside();
         TestDispositionLabelColorPolicyForcesGreenForVariableWidthLabels();
         TestDispositionLabelColorPolicyPreservesRequestedColorForNonVariableLabels();
+        TestWidthConfigPolicyMigratesAcceptedLabelWidths();
 
         TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes();
         TestPlsrSummaryComposerBuildsWarningWithSortedExamples();
@@ -1694,6 +1696,31 @@ internal static class Program
             "DRS220054");
         AssertEqual(false, result, nameof(TestPlsrMissingLabelSuppressionPolicyRejectsDifferentQuarter));
     }
+
+    private static void TestDispositionSourceGeometryTypePolicyRecognizesMapPolygons()
+    {
+        AssertEqual(
+            true,
+            DispositionSourceGeometryTypePolicy.IsMapPolygon("MPOLYGON", null, null),
+            nameof(TestDispositionSourceGeometryTypePolicyRecognizesMapPolygons) + "-dxf");
+        AssertEqual(
+            true,
+            DispositionSourceGeometryTypePolicy.IsMapPolygon(null, "AcDbMPolygon", null),
+            nameof(TestDispositionSourceGeometryTypePolicyRecognizesMapPolygons) + "-class");
+        AssertEqual(
+            true,
+            DispositionSourceGeometryTypePolicy.IsMapPolygon("POLYGON", "AcDbPolygon", null),
+            nameof(TestDispositionSourceGeometryTypePolicyRecognizesMapPolygons) + "-polygon");
+        AssertEqual(
+            true,
+            DispositionSourceGeometryTypePolicy.IsMapPolygon(null, null, "MPolygon"),
+            nameof(TestDispositionSourceGeometryTypePolicyRecognizesMapPolygons) + "-runtime");
+        AssertEqual(
+            false,
+            DispositionSourceGeometryTypePolicy.IsMapPolygon("LWPOLYLINE", "AcDbPolyline", "Polyline"),
+            nameof(TestDispositionSourceGeometryTypePolicyRecognizesMapPolygons) + "-polyline");
+    }
+
     private static void TestPlsrQuarterPointMatcherMatchesLeaderPointInsideWhenTextOutside()
     {
         var result = PlsrQuarterPointMatcher.MatchesAnyPoint(
@@ -1963,6 +1990,25 @@ internal static class Program
         var result = DispositionLabelColorPolicy.ResolveTextColorIndex("Owner\\P20.00 A/R\\P123", 256);
 
         AssertEqual(256, result, nameof(TestDispositionLabelColorPolicyPreservesRequestedColorForNonVariableLabels));
+    }
+
+    private static void TestWidthConfigPolicyMigratesAcceptedLabelWidths()
+    {
+        var result = WidthConfigPolicy.NormalizeAcceptableRowWidths(new[] { 30.17, 20.11, 6.00, 7.00, 12.00, 18.00, 19.81, 2.74, 20.12, 27.00, 30.18, 30.48, 32.00 });
+
+        AssertEqual(true, Array.Exists(result, value => Math.Abs(value - 2.74) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-274");
+        AssertEqual(true, Array.Exists(result, value => Math.Abs(value - 6.00) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-600");
+        AssertEqual(true, Array.Exists(result, value => Math.Abs(value - 7.00) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-700");
+        AssertEqual(true, Array.Exists(result, value => Math.Abs(value - 12.00) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-1200");
+        AssertEqual(true, Array.Exists(result, value => Math.Abs(value - 18.00) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-1800");
+        AssertEqual(true, Array.Exists(result, value => Math.Abs(value - 19.81) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-1981");
+        AssertEqual(true, Array.Exists(result, value => Math.Abs(value - 20.12) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-2012");
+        AssertEqual(true, Array.Exists(result, value => Math.Abs(value - 27.00) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-2700");
+        AssertEqual(true, Array.Exists(result, value => Math.Abs(value - 30.18) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-3018");
+        AssertEqual(true, Array.Exists(result, value => Math.Abs(value - 30.48) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-3048");
+        AssertEqual(true, Array.Exists(result, value => Math.Abs(value - 32.00) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-3200");
+        AssertEqual(false, Array.Exists(result, value => Math.Abs(value - 20.11) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-no2011");
+        AssertEqual(false, Array.Exists(result, value => Math.Abs(value - 30.17) < 0.001), nameof(TestWidthConfigPolicyMigratesAcceptedLabelWidths) + "-no3017");
     }
 
     private static void TestPlsrSummaryComposerBuildsSummaryWithSortedPrefixes()

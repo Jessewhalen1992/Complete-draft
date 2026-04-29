@@ -22,7 +22,11 @@ param(
 
     [string]$AutoCadLauncherRoot = "C:\AtsHarness",
 
+    [string]$FullAutoCadProfileName = "ATSBUILD_TEST",
+
     [int]$FullAutoCadTimeoutSeconds = 360,
+
+    [int]$FullAutoCadGracefulExitSeconds = 60,
 
     [string]$PluginDllPath = "",
 
@@ -96,6 +100,19 @@ function Try-RemovePathQuietly {
     }
 }
 
+function Join-ProcessArguments {
+    param([string[]]$Arguments)
+
+    return (($Arguments | ForEach-Object {
+        if ($_ -match '[\s"]') {
+            '"' + (($_ -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
+        }
+        else {
+            $_
+        }
+    }) -join ' ')
+}
+
 function Invoke-ExternalProcess {
     param(
         [Parameter(Mandatory = $true)]
@@ -118,14 +135,7 @@ function Invoke-ExternalProcess {
     }
 
     try {
-        $argumentString = (($Arguments | ForEach-Object {
-            if ($_ -match '[\s"]') {
-                '"' + (($_ -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
-            }
-            else {
-                $_
-            }
-        }) -join ' ')
+        $argumentString = Join-ProcessArguments -Arguments $Arguments
 
         $startInfo = @{
             FilePath = $FilePath
@@ -248,6 +258,79 @@ function Ensure-Junction {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
+function Get-FullAutoCadProfileRoot {
+    $autoCadRoot = "HKCU:\Software\Autodesk\AutoCAD"
+    if (-not (Test-Path -LiteralPath $autoCadRoot)) {
+        return $null
+    }
+
+    $roots = @()
+    foreach ($releaseKey in Get-ChildItem -LiteralPath $autoCadRoot -ErrorAction SilentlyContinue) {
+        foreach ($productKey in Get-ChildItem -LiteralPath $releaseKey.PSPath -ErrorAction SilentlyContinue) {
+            $profilesPath = Join-Path $productKey.PSPath "Profiles"
+            if (-not (Test-Path -LiteralPath $profilesPath)) {
+                continue
+            }
+
+            $productProperties = Get-ItemProperty -LiteralPath $productKey.PSPath -ErrorAction SilentlyContinue
+            $roots += [pscustomobject]@{
+                Path = $profilesPath
+                Release = $releaseKey.PSChildName
+                Product = $productKey.PSChildName
+                RoamableRootFolder = $productProperties.RoamableRootFolder
+            }
+        }
+    }
+
+    $preferred2025 = @($roots | Where-Object { $_.RoamableRootFolder -like "*2025*" -or $_.Release -eq "R25.0" })
+    if ($preferred2025.Count -gt 0) {
+        return ($preferred2025 | Sort-Object Release, Product -Descending | Select-Object -First 1)
+    }
+
+    return ($roots | Sort-Object Release, Product -Descending | Select-Object -First 1)
+}
+
+function Ensure-FullAutoCadHarnessProfile {
+    param([string]$ProfileName)
+
+    if ([string]::IsNullOrWhiteSpace($ProfileName)) {
+        return $null
+    }
+
+    $profileRoot = Get-FullAutoCadProfileRoot
+    if (-not $profileRoot) {
+        Write-Warning "Could not locate AutoCAD profile registry root; Full AutoCAD harness will launch without an isolated /p profile."
+        return $null
+    }
+
+    $destinationPath = Join-Path $profileRoot.Path $ProfileName
+    if (-not (Test-Path -LiteralPath $destinationPath)) {
+        $profiles = @(Get-ChildItem -LiteralPath $profileRoot.Path -ErrorAction SilentlyContinue)
+        $source = $profiles | Where-Object { $_.PSChildName -eq "COMPASS 2025" } | Select-Object -First 1
+        if (-not $source) {
+            $source = $profiles | Select-Object -First 1
+        }
+
+        if ($source) {
+            Copy-Item -LiteralPath $source.PSPath -Destination $destinationPath -Recurse -Force
+        }
+        else {
+            New-Item -Path $destinationPath -Force | Out-Null
+        }
+    }
+
+    $variablesPath = Join-Path $destinationPath "Variables"
+    if (-not (Test-Path -LiteralPath $variablesPath)) {
+        New-Item -Path $variablesPath -Force | Out-Null
+    }
+
+    New-ItemProperty -LiteralPath $variablesPath -Name "SECURELOAD" -Value "1" -PropertyType String -Force | Out-Null
+    New-ItemProperty -LiteralPath $variablesPath -Name "FILEDIA" -Value "1" -PropertyType String -Force | Out-Null
+    New-ItemProperty -LiteralPath $variablesPath -Name "CMDDIA" -Value "1" -PropertyType String -Force | Out-Null
+
+    return $ProfileName
+}
+
 function Initialize-FullAutoCadLauncherWorkspace {
     param(
         [Parameter(Mandatory = $true)]
@@ -305,13 +388,17 @@ function Initialize-FullAutoCadLauncherWorkspace {
         "ATSBUILD_XLS_BATCH"
     )
 
+    $scriptLines += @(
+        "SECURELOAD",
+        "1",
+        "FILEDIA",
+        "1",
+        "CMDDIA",
+        "1"
+    )
+
     if ($LeaveAutoCadOpen.IsPresent) {
-        $scriptLines += @(
-            "FILEDIA",
-            "1",
-            "CMDDIA",
-            "1"
-        )
+        # Leave the isolated harness profile in an interactive-safe state.
     }
     else {
         $scriptLines += @(
@@ -354,7 +441,9 @@ function Invoke-FullAutoCadBatch {
         [hashtable]$EnvironmentVariables,
         [string]$StdOutPath,
         [string]$StdErrPath,
-        [switch]$LeaveAutoCadOpen
+        [switch]$LeaveAutoCadOpen,
+        [string]$ProfileName,
+        [int]$GracefulExitSeconds = 60
     )
 
     $savedEnvironment = @{}
@@ -366,11 +455,19 @@ function Invoke-FullAutoCadBatch {
     }
 
     try {
+        $argumentParts = @("/nologo")
+        if (-not [string]::IsNullOrWhiteSpace($ProfileName)) {
+            $argumentParts += @("/p", $ProfileName)
+        }
+
+        $argumentParts += @($DwgPath, "/b", $ScriptPath)
+        $argumentString = Join-ProcessArguments -Arguments $argumentParts
+
         if ($StdOutPath) {
             $stdoutText = @(
                 "Full AutoCAD GUI runner."
                 ("Launched: " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss"))
-                ("Command: " + $AcadPath + " /nologo " + $DwgPath + " /b " + $ScriptPath)
+                ("Command: " + $AcadPath + " " + (Join-ProcessArguments -Arguments $argumentParts))
             ) -join [Environment]::NewLine
             [System.IO.File]::WriteAllText($StdOutPath, $stdoutText, [System.Text.Encoding]::UTF8)
         }
@@ -379,14 +476,15 @@ function Invoke-FullAutoCadBatch {
             [System.IO.File]::WriteAllText($StdErrPath, "", [System.Text.Encoding]::UTF8)
         }
 
-        $argumentString = "/nologo $DwgPath /b $ScriptPath"
         $process = Start-Process -FilePath $AcadPath -ArgumentList $argumentString -WorkingDirectory $WorkingDirectory -PassThru
         $deadline = (Get-Date).AddSeconds([Math]::Max(30, $TimeoutSeconds))
         $dxfExists = $false
         $batchCompleted = $false
         $timedOut = $false
+        $completionObservedAt = $null
 
         while ($true) {
+            $now = Get-Date
             $dxfExists = Test-Path -LiteralPath $ExpectedDxfPath
             $batchCompleted = Test-AppendedFileSegmentForMarker -SourcePath $PluginLogPath -Marker $CompletionMarker -StartOffset $PluginLogOffset
 
@@ -398,10 +496,21 @@ function Invoke-FullAutoCadBatch {
             }
 
             if (($dxfExists -and $batchCompleted) -or $process.HasExited) {
+                if (($dxfExists -and $batchCompleted) -and -not $LeaveAutoCadOpen.IsPresent -and -not $process.HasExited) {
+                    if ($null -eq $completionObservedAt) {
+                        $completionObservedAt = $now
+                    }
+
+                    if ($now -lt $completionObservedAt.AddSeconds([Math]::Max(0, $GracefulExitSeconds))) {
+                        Start-Sleep -Seconds ([Math]::Max(1, $PollSeconds))
+                        continue
+                    }
+                }
+
                 break
             }
 
-            if ((Get-Date) -ge $deadline) {
+            if ($now -ge $deadline) {
                 $timedOut = $true
                 break
             }
@@ -515,6 +624,7 @@ $dxfPath = Join-Path $artifactDirectory "output.dxf"
 $launcherWorkspace = $null
 $runnerResult = $null
 $launcherDirectorySummary = $null
+$resolvedFullAutoCadProfileName = $null
 
 $resolvedWorkbookPath = $null
 if (-not [string]::IsNullOrWhiteSpace($WorkbookPath)) {
@@ -536,6 +646,7 @@ else {
 }
 
 if ($Runner -eq "FullAutoCAD") {
+    $resolvedFullAutoCadProfileName = Ensure-FullAutoCadHarnessProfile -ProfileName $FullAutoCadProfileName
     $runTag = (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + [Guid]::NewGuid().ToString("N").Substring(0, 8)
     $launcherWorkspace = Initialize-FullAutoCadLauncherWorkspace `
         -RootPath $AutoCadLauncherRoot `
@@ -565,7 +676,9 @@ if ($Runner -eq "FullAutoCAD") {
         -EnvironmentVariables $environmentVariables `
         -StdOutPath $consoleStdOutPath `
         -StdErrPath $consoleStdErrPath `
-        -LeaveAutoCadOpen:$LeaveAutoCadOpen
+        -LeaveAutoCadOpen:$LeaveAutoCadOpen `
+        -ProfileName $resolvedFullAutoCadProfileName `
+        -GracefulExitSeconds $FullAutoCadGracefulExitSeconds
 
     if (Test-Path -LiteralPath $launcherWorkspace.DxfPath) {
         Copy-Item -LiteralPath $launcherWorkspace.DxfPath -Destination $dxfPath -Force
@@ -584,6 +697,12 @@ else {
         "NETLOAD",
         ('"' + $resolvedPluginDllPath + '"'),
         "ATSBUILD_XLS_BATCH",
+        "SECURELOAD",
+        "1",
+        "FILEDIA",
+        "1",
+        "CMDDIA",
+        "1",
         "QUIT",
         "N"
     )
@@ -670,6 +789,7 @@ $summary = [pscustomobject]@{
     runner = $Runner
     runDirectory = $runDirectory
     launcherDirectory = $launcherDirectorySummary
+    fullAutoCadProfile = $resolvedFullAutoCadProfileName
     workbook = $resolvedWorkbookPath
     dxf = $(if (Test-Path -LiteralPath $dxfPath) { $dxfPath } else { $null })
     pluginLog = $resolvedPluginSummaryPath

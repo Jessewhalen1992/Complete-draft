@@ -1695,6 +1695,10 @@ namespace AtsBackgroundBuilder
                             $"u={southAtMidU:0.###} v={southAtMidV:0.###} priority={snappedSouthMidPriority} dividerU={correctionSouthDividerU:0.###} dividerSource={dividerSource}");
                     }
 
+                    var quarterDisplaySouthMidU = southAtMidU;
+                    var quarterDisplaySouthMidV = southAtMidV;
+                    var preserveQuarterDisplaySouthMid = false;
+
                     if (hasSouthBoundarySegment)
                     {
                         // Final south-mid authority: extend the active 1/4 divider line
@@ -1718,12 +1722,17 @@ namespace AtsBackgroundBuilder
                                 out var dividerSouthMidV))
                         {
                             divextFound = true;
-                            const double maxDividerSouthMidMove = 20.0;
+                            var maxDividerSouthMidMove = IsQuarterSouthCorrectionCandidateLayer(southSource)
+                                ? RoadAllowanceUsecWidthMeters + CorrectionLineInsetMeters + 2.0
+                                : 20.0;
                             var currentSouthMid = new Point2d(southAtMidU, southAtMidV);
                             var dividerSouthMid = new Point2d(dividerSouthMidU, dividerSouthMidV);
                             divextMove = currentSouthMid.GetDistanceTo(dividerSouthMid);
                             if (currentSouthMid.GetDistanceTo(dividerSouthMid) <= maxDividerSouthMidMove)
                             {
+                                preserveQuarterDisplaySouthMid =
+                                    isCorrectionSouthBoundary &&
+                                    divextMove > (20.0 + 0.5);
                                 southAtMidU = dividerSouthMidU;
                                 southAtMidV = ClampQuarterSouthBoundaryV(
                                     dividerSouthMidV,
@@ -1735,6 +1744,15 @@ namespace AtsBackgroundBuilder
                                 logger?.WriteLine(
                                     $"VERIFY-QTR-SOUTHMID-DIVEXT sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
                                     $"u={southAtMidU:0.###} v={southAtMidV:0.###} dividerSource={dividerSource}");
+                                if (preserveQuarterDisplaySouthMid)
+                                {
+                                    logger?.WriteLine(
+                                        $"VERIFY-QTR-SOUTHMID-DISPLAY-PRESERVE sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                        $"display={QuarterViewLocalToWorld(frame, quarterDisplaySouthMidU, quarterDisplaySouthMidV).X:0.###}," +
+                                        $"{QuarterViewLocalToWorld(frame, quarterDisplaySouthMidU, quarterDisplaySouthMidV).Y:0.###} " +
+                                        $"divider={QuarterViewLocalToWorld(frame, southAtMidU, southAtMidV).X:0.###}," +
+                                        $"{QuarterViewLocalToWorld(frame, southAtMidU, southAtMidV).Y:0.###} move={divextMove:0.###}");
+                                }
                             }
                         }
 
@@ -2253,6 +2271,68 @@ namespace AtsBackgroundBuilder
 
                             if (!isCorrectionAdjoiningSection)
                             {
+                                if (!resolvedByHardNode &&
+                                    hasRawNorthEastIntersection &&
+                                    string.Equals(eastSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase) &&
+                                    string.Equals(northSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase) &&
+                                    TryResolveEastBandCornerFromHardBoundaries(
+                                        frame,
+                                        hardBoundaryCornerClusters,
+                                        neSnapPreferredU,
+                                        eastExpectedOffset,
+                                        northExpectedInset,
+                                        northBand: true,
+                                        new Point2d(neRawU, neRawV - 0.25),
+                                        maxMove: 8.0,
+                                        boundarySegments,
+                                        requireEndpointNode: false,
+                                        out var rawBandSnapLocal,
+                                        out var rawBandSnapPriority) &&
+                                    new Point2d(neRawU, neRawV).GetDistanceTo(rawBandSnapLocal) <= 8.0)
+                                {
+                                    northAtEastU = rawBandSnapLocal.X;
+                                    northAtEastV = rawBandSnapLocal.Y;
+                                    northEastLockedByApparentIntersection = true;
+                                    resolvedByHardNode = true;
+                                    if (emitQuarterVerify)
+                                    {
+                                        logger?.WriteLine(
+                                            $"VERIFY-QTR-NE-NE-SNAP sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                            $"u={northAtEastU:0.###} v={northAtEastV:0.###} priority={rawBandSnapPriority} note=raw-noncorrection-bandsnap");
+                                    }
+                                }
+
+                                if (!resolvedByHardNode &&
+                                    hasRawNorthEastIntersection &&
+                                    string.Equals(eastSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase) &&
+                                    string.Equals(northSource, LayerUsecZero, StringComparison.OrdinalIgnoreCase) &&
+                                    TryResolveNorthEastCornerFromEastHardNode(
+                                        frame,
+                                        boundarySegments,
+                                        hardBoundaryCornerClusters,
+                                        eastBoundarySegmentA,
+                                        eastBoundarySegmentB,
+                                        new Point2d(neRawU, neRawV - 0.25),
+                                        out var rawHardNodeLocal,
+                                        out var rawHardNodePriority,
+                                        out var rawHardNodeLayer,
+                                        out var rawHardNodeClusterDistance,
+                                        out var rawHardNodeReachGap) &&
+                                    new Point2d(neRawU, neRawV).GetDistanceTo(rawHardNodeLocal) <= 8.0)
+                                {
+                                    northAtEastU = rawHardNodeLocal.X;
+                                    northAtEastV = rawHardNodeLocal.Y;
+                                    northEastLockedByApparentIntersection = true;
+                                    resolvedByHardNode = true;
+                                    if (emitQuarterVerify)
+                                    {
+                                        logger?.WriteLine(
+                                            $"VERIFY-QTR-NE-NE-NODE sec={frame.SectionNumber} handle={frame.SectionId.Handle}: " +
+                                            $"u={northAtEastU:0.###} v={northAtEastV:0.###} priority={rawHardNodePriority} clusterDist={rawHardNodeClusterDistance:0.###} " +
+                                            $"reachGap={rawHardNodeReachGap:0.###} source={rawHardNodeLayer} note=raw-noncorrection-hardnode");
+                                    }
+                                }
+
                                 // Non-correction-adjoining NE corners must terminate at a real endpoint corner.
                                 // Do not fall back to apparent/projection-only solutions that require extension-only intersections.
                                 if (!resolvedByHardNode)
@@ -2534,7 +2614,9 @@ namespace AtsBackgroundBuilder
                     }
 
                     var quarterSouthWestLocal = new Point2d(westAtSouthU, westSouthV);
-                    var quarterSouthMidLocal = new Point2d(southAtMidU, southAtMidV);
+                    var quarterSouthMidLocal = preserveQuarterDisplaySouthMid
+                        ? new Point2d(quarterDisplaySouthMidU, quarterDisplaySouthMidV)
+                        : new Point2d(southAtMidU, southAtMidV);
                     var quarterSouthEastLocal = new Point2d(southAtEastU, eastSouthV);
                     var hasQuarterSouthDisplayOverride = TryResolveQuarterDisplaySouthCorrectionTrendFromEastCompanion(
                             frame,
@@ -3500,6 +3582,7 @@ namespace AtsBackgroundBuilder
                         quarterBoxInfo.Quarter,
                         quarterBox,
                         boundarySegments,
+                        quarterDividerSegments,
                         out var insertedWorldPoints))
                 {
                     continue;
@@ -3512,6 +3595,13 @@ namespace AtsBackgroundBuilder
                     $"quarter={quarterBoxInfo.Quarter} inserted={insertedWorldPoints.Count} " +
                     $"points={string.Join(" | ", insertedWorldPoints.Select(p => $"{p.X:0.###},{p.Y:0.###}"))}");
             }
+
+            var roadStepRetargetedQsecEndpoints = RetargetQuarterLinesAtRoadAllowanceStepEndpoints(
+                modelSpace,
+                transaction,
+                frames,
+                logger,
+                out var roadStepRetargetedQuarterVertices);
 
             foreach (var quarterBoxInfo in quarterBoxInfos)
             {
@@ -3551,6 +3641,7 @@ namespace AtsBackgroundBuilder
                 logger?.WriteLine($"Quarter view: south-correction east shared reconcile adjusted {reconciledCorrectionEastSharedVertices} corner(s).");
                 logger?.WriteLine($"Quarter view: south-correction display south-mid reconcile adjusted {reconciledCorrectionSouthDisplayMidVertices} vertex(s).");
                 logger?.WriteLine($"Quarter view: south-correction deflection reconcile adjusted {correctionSouthDeflectionVertices} vertex/vertices across {correctionSouthDeflectionBoxes} quarter box(es).");
+                logger?.WriteLine($"Quarter view: road-allowance step retarget adjusted {roadStepRetargetedQsecEndpoints} L-QSEC endpoint(s) and {roadStepRetargetedQuarterVertices} quarter box vertex/vertices.");
                 logger?.WriteLine($"Quarter view: endpoint snap adjusted {snappedVertices} vertex/vertices across {snappedBoxes} quarter box(es).");
                 transaction.Commit();
             }
@@ -3561,6 +3652,7 @@ namespace AtsBackgroundBuilder
             QuarterSelection quarter,
             Polyline quarterBox,
             IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            IReadOnlyList<(ObjectId Id, Point2d A, Point2d B)> quarterDividerSegments,
             out List<Point2d> insertedWorldPoints)
         {
             insertedWorldPoints = new List<Point2d>();
@@ -3575,6 +3667,7 @@ namespace AtsBackgroundBuilder
 
             const double maxCorrectionTouchDistance = 2.0;
             const double maxEdgeDistance = 12.0;
+            const double maxQuarterDividerEdgeDistance = 180.0;
             const double minEndpointSeparation = 1.0;
             const double maxSouthBandPadding = 40.0;
 
@@ -3639,25 +3732,33 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            var rawCandidates = new List<(double Station, Point2d World)>();
-            foreach (var boundarySegment in boundarySegments)
+            var existingVertices = new List<Point2d>();
+            for (var vertexIndex = 0; vertexIndex < quarterBox.NumberOfVertices; vertexIndex++)
             {
-                if (!IsQuarterCorrectionDeflectionVerticalCandidateLayer(boundarySegment.Layer) ||
-                    !TryConvertQuarterWorldToLocal(frame, boundarySegment.A, out var segAu, out var segAv) ||
-                    !TryConvertQuarterWorldToLocal(frame, boundarySegment.B, out var segBu, out var segBv))
+                existingVertices.Add(quarterBox.GetPoint2dAt(vertexIndex));
+            }
+
+            var rawCandidates = new List<(double Station, Point2d World)>();
+
+            void TryAddVerticalDeflectionCandidate(Point2d segmentA, Point2d segmentB, string layerName)
+            {
+                var isQuarterDivider = string.Equals(layerName, "L-QSEC", StringComparison.OrdinalIgnoreCase);
+                if ((!isQuarterDivider && !IsQuarterCorrectionDeflectionVerticalCandidateLayer(layerName)) ||
+                    !TryConvertQuarterWorldToLocal(frame, segmentA, out var segAu, out var segAv) ||
+                    !TryConvertQuarterWorldToLocal(frame, segmentB, out var segBu, out var segBv))
                 {
-                    continue;
+                    return;
                 }
 
                 if (Math.Abs(segBv - segAv) <= Math.Abs(segBu - segAu))
                 {
-                    continue;
+                    return;
                 }
 
                 var endpoints = new[]
                 {
-                    (World: boundarySegment.A, U: segAu, V: segAv),
-                    (World: boundarySegment.B, U: segBu, V: segBv),
+                    (World: segmentA, U: segAu, V: segAv),
+                    (World: segmentB, U: segBu, V: segBv),
                 };
                 for (var endpointIndex = 0; endpointIndex < endpoints.Length; endpointIndex++)
                 {
@@ -3668,19 +3769,37 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
+                    var alreadyPresent = false;
+                    for (var vertexIndex = 0; vertexIndex < existingVertices.Count; vertexIndex++)
+                    {
+                        if (existingVertices[vertexIndex].GetDistanceTo(endpoint.World) <= 0.25)
+                        {
+                            alreadyPresent = true;
+                            break;
+                        }
+                    }
+
+                    if (alreadyPresent)
+                    {
+                        continue;
+                    }
+
                     if (endpoint.V < edgeMinV || endpoint.V > edgeMaxV)
                     {
                         continue;
                     }
 
-                    if (IsQuarterCorrectionDeflectionSecLayer(boundarySegment.Layer) &&
+                    if (IsQuarterCorrectionDeflectionSecLayer(layerName) &&
                         endpoint.U > (frame.MidU + 1.0))
                     {
                         continue;
                     }
 
                     var edgeOffset = DistancePointToSegment(endpoint.World, edgeStartWorld, edgeEndWorld);
-                    if (edgeOffset > maxEdgeDistance)
+                    var allowedEdgeDistance = isQuarterDivider
+                        ? maxQuarterDividerEdgeDistance
+                        : maxEdgeDistance;
+                    if (edgeOffset > allowedEdgeDistance)
                     {
                         continue;
                     }
@@ -3710,6 +3829,19 @@ namespace AtsBackgroundBuilder
                     }
 
                     rawCandidates.Add((station, endpoint.World));
+                }
+            }
+
+            foreach (var boundarySegment in boundarySegments)
+            {
+                TryAddVerticalDeflectionCandidate(boundarySegment.A, boundarySegment.B, boundarySegment.Layer);
+            }
+
+            if (quarterDividerSegments != null)
+            {
+                foreach (var quarterDividerSegment in quarterDividerSegments)
+                {
+                    TryAddVerticalDeflectionCandidate(quarterDividerSegment.A, quarterDividerSegment.B, "L-QSEC");
                 }
             }
 
@@ -5658,6 +5790,18 @@ namespace AtsBackgroundBuilder
                     out _,
                     out _))
             {
+                if (TryResolveQuarterSouthWestPairedCorrectionZeroEndpoint(
+                        frame,
+                        boundarySegments,
+                        localCorrectionWestU,
+                        localCorrectionWestV,
+                        out var anchoredCorrectionWestU,
+                        out var anchoredCorrectionWestV))
+                {
+                    localCorrectionWestU = anchoredCorrectionWestU;
+                    localCorrectionWestV = anchoredCorrectionWestV;
+                }
+
                 westAtSouthU = localCorrectionWestU;
                 southAtWestV = localCorrectionWestV;
                 resolvedLocalCorrectionWest = true;
@@ -5670,7 +5814,8 @@ namespace AtsBackgroundBuilder
                 dividerLineB,
                 out var localCorrectionSouthMidU,
                 out var localCorrectionSouthMidV,
-                out _);
+                out _,
+                logger);
             if (resolvedLocalCorrectionSouthMid)
             {
                 southAtMidU = localCorrectionSouthMidU;
@@ -6241,6 +6386,7 @@ namespace AtsBackgroundBuilder
 
             var currentSouth = currentAv <= currentBv ? currentA : currentB;
             var currentNorth = currentAv <= currentBv ? currentB : currentA;
+            var currentSouthV = currentAv <= currentBv ? currentAv : currentBv;
             if (transaction.GetObject(dividerSegmentId, OpenMode.ForWrite, false) is not Entity writable ||
                 writable.IsErased ||
                 !TryReadOpenLinearSegment(writable, out var writableA, out var writableB))
@@ -6248,7 +6394,14 @@ namespace AtsBackgroundBuilder
                 return;
             }
 
-            if (TryResolveNearbyQuarterDividerCorrectionDrawingEndpoint(
+            var resolvedSouthOffset = frame.SouthEdgeV - resolvedSouthV;
+            var currentSouthOffset = frame.SouthEdgeV - currentSouthV;
+            var resolvedTargetsDeepCorrectionZero =
+                resolvedSouthOffset >= (RoadAllowanceUsecWidthMeters + CorrectionLineInsetMeters - 2.0) &&
+                currentSouthOffset <= (RoadAllowanceSecWidthMeters + CorrectionLineInsetMeters + 2.0);
+
+            if (!resolvedTargetsDeepCorrectionZero &&
+                TryResolveNearbyQuarterDividerCorrectionDrawingEndpoint(
                     transaction,
                     writable.OwnerId,
                     frame,
@@ -6978,6 +7131,418 @@ namespace AtsBackgroundBuilder
             }
 
             return Math.Min(fallbackWestBoundaryU, westBoundaryLimitU);
+        }
+
+        private static int RetargetQuarterLinesAtRoadAllowanceStepEndpoints(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            IReadOnlyList<QuarterViewSectionFrame> frames,
+            Logger? logger,
+            out int retargetedQuarterVertices)
+        {
+            retargetedQuarterVertices = 0;
+            if (frames == null || frames.Count == 0)
+            {
+                return 0;
+            }
+
+            var roadSegments = new List<(ObjectId Id, Point2d A, Point2d B, string Layer)>();
+            var qsecSegments = new List<(ObjectId Id, Point2d A, Point2d B)>();
+            foreach (ObjectId id in modelSpace)
+            {
+                if (transaction.GetObject(id, OpenMode.ForRead, false) is not Entity entity ||
+                    entity.IsErased ||
+                    !TryReadOpenLinearSegment(entity, out var a, out var b) ||
+                    !SegmentIntersectsAnyQuarterWindow(a, b, frames))
+                {
+                    continue;
+                }
+
+                var layerName = (entity.Layer ?? string.Empty).Trim();
+                if (string.Equals(layerName, "L-QSEC", StringComparison.OrdinalIgnoreCase))
+                {
+                    qsecSegments.Add((id, a, b));
+                    continue;
+                }
+
+                if (IsQuarterViewRoadAllowanceStepLayer(layerName))
+                {
+                    roadSegments.Add((id, a, b, layerName));
+                }
+            }
+
+            if (roadSegments.Count == 0 || qsecSegments.Count == 0)
+            {
+                return 0;
+            }
+
+            var roadEndpoints = new List<(ObjectId SegmentId, Point2d Point, Point2d Other, string Layer)>();
+            foreach (var segment in roadSegments)
+            {
+                if (segment.A.GetDistanceTo(segment.B) < 20.0)
+                {
+                    continue;
+                }
+
+                roadEndpoints.Add((segment.Id, segment.A, segment.B, segment.Layer));
+                roadEndpoints.Add((segment.Id, segment.B, segment.A, segment.Layer));
+            }
+
+            if (roadEndpoints.Count == 0)
+            {
+                return 0;
+            }
+
+            var endpointMoves = new List<(Point2d OldPoint, Point2d NewPoint)>();
+            var finalQsecEndpointPoints = new List<Point2d>();
+            var movedQsecEndpoints = 0;
+            foreach (var qsec in qsecSegments.OrderByDescending(q => q.A.GetDistanceTo(q.B)))
+            {
+                var qsecLength = qsec.A.GetDistanceTo(qsec.B);
+                if (qsecLength < 40.0)
+                {
+                    finalQsecEndpointPoints.Add(qsec.A);
+                    finalQsecEndpointPoints.Add(qsec.B);
+                    continue;
+                }
+
+                var newA = qsec.A;
+                var newB = qsec.B;
+                var pendingEndpointMoves = new List<(Point2d OldPoint, Point2d NewPoint)>();
+                var movedThisEntity = false;
+                if (TryResolveQuarterRoadAllowanceStepRetarget(
+                        qsec.A,
+                        qsec.B,
+                        roadEndpoints,
+                        out var retargetedA))
+                {
+                    newA = retargetedA;
+                    movedThisEntity = true;
+                    movedQsecEndpoints++;
+                    pendingEndpointMoves.Add((qsec.A, retargetedA));
+                }
+
+                if (TryResolveQuarterRoadAllowanceStepRetarget(
+                        qsec.B,
+                        qsec.A,
+                        roadEndpoints,
+                        out var retargetedB))
+                {
+                    newB = retargetedB;
+                    movedThisEntity = true;
+                    movedQsecEndpoints++;
+                    pendingEndpointMoves.Add((qsec.B, retargetedB));
+                }
+
+                if (!movedThisEntity || newA.GetDistanceTo(newB) < 10.0)
+                {
+                    finalQsecEndpointPoints.Add(qsec.A);
+                    finalQsecEndpointPoints.Add(qsec.B);
+                    continue;
+                }
+
+                if (transaction.GetObject(qsec.Id, OpenMode.ForRead, false) is not Entity qsecEntity ||
+                    qsecEntity.IsErased ||
+                    !TrySetOpenLinearSegmentEndpoints(qsecEntity, newA, newB))
+                {
+                    finalQsecEndpointPoints.Add(qsec.A);
+                    finalQsecEndpointPoints.Add(qsec.B);
+                    continue;
+                }
+
+                endpointMoves.AddRange(pendingEndpointMoves);
+                finalQsecEndpointPoints.Add(newA);
+                finalQsecEndpointPoints.Add(newB);
+
+                logger?.WriteLine(
+                    $"VERIFY-QTR-RA-STEP-QSEC old={qsec.A.X:0.###},{qsec.A.Y:0.###}->{qsec.B.X:0.###},{qsec.B.Y:0.###} " +
+                    $"new={newA.X:0.###},{newA.Y:0.###}->{newB.X:0.###},{newB.Y:0.###}");
+            }
+
+            if (endpointMoves.Count > 0)
+            {
+                retargetedQuarterVertices = RetargetQuarterBoxVerticesAtRoadAllowanceStepEndpoints(
+                    modelSpace,
+                    transaction,
+                    frames,
+                    endpointMoves,
+                    finalQsecEndpointPoints);
+            }
+
+            return movedQsecEndpoints;
+        }
+
+        private static bool TryResolveQuarterRoadAllowanceStepRetarget(
+            Point2d currentEndpoint,
+            Point2d oppositeEndpoint,
+            IReadOnlyList<(ObjectId SegmentId, Point2d Point, Point2d Other, string Layer)> roadEndpoints,
+            out Point2d retargetedEndpoint)
+        {
+            retargetedEndpoint = default;
+            const double endpointTouchTolerance = 2.5;
+            const double maxLineProjectionDistance = 2.5;
+            const double maxStationShiftAlongRoad = 5.0;
+            const double minInteriorImprovement = 2.0;
+            const double maxWidthError = 4.0;
+            var found = false;
+            var bestScore = double.MaxValue;
+            var currentDistanceToOpposite = currentEndpoint.GetDistanceTo(oppositeEndpoint);
+
+            for (var i = 0; i < roadEndpoints.Count; i++)
+            {
+                var touched = roadEndpoints[i];
+                if (currentEndpoint.GetDistanceTo(touched.Point) > endpointTouchTolerance)
+                {
+                    continue;
+                }
+
+                var touchedRoadDelta = touched.Other - touched.Point;
+                var touchedRoadLength = touchedRoadDelta.Length;
+                if (touchedRoadLength < 20.0)
+                {
+                    continue;
+                }
+
+                for (var j = 0; j < roadEndpoints.Count; j++)
+                {
+                    var candidate = roadEndpoints[j];
+                    if (candidate.SegmentId == touched.SegmentId)
+                    {
+                        continue;
+                    }
+
+                    var candidateRoadDelta = candidate.Other - candidate.Point;
+                    var candidateRoadLength = candidateRoadDelta.Length;
+                    if (candidateRoadLength < 20.0)
+                    {
+                        continue;
+                    }
+
+                    var parallelScore = Math.Abs(touchedRoadDelta.DotProduct(candidateRoadDelta) / (touchedRoadLength * candidateRoadLength));
+                    if (parallelScore < 0.93)
+                    {
+                        continue;
+                    }
+
+                    var roadAllowanceSpan = touched.Point.GetDistanceTo(candidate.Point);
+                    var secWidthError = Math.Abs(roadAllowanceSpan - RoadAllowanceSecWidthMeters);
+                    var usecWidthError = Math.Abs(roadAllowanceSpan - RoadAllowanceUsecWidthMeters);
+                    var widthError = Math.Min(secWidthError, usecWidthError);
+                    if (widthError > maxWidthError)
+                    {
+                        continue;
+                    }
+
+                    var crossRoadDelta = candidate.Point - touched.Point;
+                    var stationShiftAlongRoad = Math.Abs(crossRoadDelta.DotProduct(touchedRoadDelta) / touchedRoadLength);
+                    if (stationShiftAlongRoad > maxStationShiftAlongRoad)
+                    {
+                        continue;
+                    }
+
+                    var lineProjectionDistance = DistancePointToInfiniteLine(candidate.Point, currentEndpoint, oppositeEndpoint);
+                    if (lineProjectionDistance > maxLineProjectionDistance)
+                    {
+                        continue;
+                    }
+
+                    var candidateDistanceToOpposite = candidate.Point.GetDistanceTo(oppositeEndpoint);
+                    var movesTowardInterior =
+                        candidateDistanceToOpposite < currentDistanceToOpposite - minInteriorImprovement;
+                    if (!movesTowardInterior)
+                    {
+                        continue;
+                    }
+
+                    // When both the 20.12 and 30.18 road-boundary endpoints lie on
+                    // the same projection, quarter definitions stop at the inside
+                    // road boundary; the 30.18 edge is for the outer allowance linework.
+                    var insideBoundaryPenalty = secWidthError <= usecWidthError ? 0.0 : 50.0;
+                    var score =
+                        (widthError * 10.0) +
+                        (lineProjectionDistance * 20.0) +
+                        stationShiftAlongRoad +
+                        ((1.0 - parallelScore) * 5.0) +
+                        insideBoundaryPenalty;
+                    if (!found || score < bestScore)
+                    {
+                        found = true;
+                        bestScore = score;
+                        retargetedEndpoint = candidate.Point;
+                    }
+                }
+            }
+
+            return found;
+        }
+
+        private static int RetargetQuarterBoxVerticesAtRoadAllowanceStepEndpoints(
+            BlockTableRecord modelSpace,
+            Transaction transaction,
+            IReadOnlyList<QuarterViewSectionFrame> frames,
+            IReadOnlyList<(Point2d OldPoint, Point2d NewPoint)> endpointMoves,
+            IReadOnlyList<Point2d> finalQsecEndpointPoints)
+        {
+            var retargetedVertices = 0;
+            foreach (ObjectId id in modelSpace)
+            {
+                if (transaction.GetObject(id, OpenMode.ForRead, false) is not Polyline quarterBox ||
+                    quarterBox.IsErased ||
+                    !quarterBox.Closed ||
+                    !string.Equals(quarterBox.Layer, LayerQuarterView, StringComparison.OrdinalIgnoreCase) ||
+                    quarterBox.NumberOfVertices < 3)
+                {
+                    continue;
+                }
+
+                Extents3d extents;
+                try
+                {
+                    extents = quarterBox.GeometricExtents;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (!ExtentsIntersectAnyQuarterWindow(extents, frames))
+                {
+                    continue;
+                }
+
+                var upgraded = false;
+                for (var vertexIndex = 0; vertexIndex < quarterBox.NumberOfVertices; vertexIndex++)
+                {
+                    var vertex = quarterBox.GetPoint2dAt(vertexIndex);
+                    for (var moveIndex = 0; moveIndex < endpointMoves.Count; moveIndex++)
+                    {
+                        var move = endpointMoves[moveIndex];
+                        if (vertex.GetDistanceTo(move.OldPoint) > 0.75 ||
+                            QuarterRoadAllowanceStepOldPointStillHasQsecEndpoint(
+                                move.OldPoint,
+                                move.NewPoint,
+                                finalQsecEndpointPoints) ||
+                            !ShouldRetargetQuarterBoxVertexAcrossRoadAllowanceStep(
+                                quarterBox,
+                                vertexIndex,
+                                vertex,
+                                move.NewPoint))
+                        {
+                            continue;
+                        }
+
+                        if (!upgraded)
+                        {
+                            try
+                            {
+                                quarterBox.UpgradeOpen();
+                            }
+                            catch (Autodesk.AutoCAD.Runtime.Exception)
+                            {
+                                upgraded = false;
+                                break;
+                            }
+
+                            upgraded = true;
+                        }
+
+                        quarterBox.SetPointAt(vertexIndex, move.NewPoint);
+                        retargetedVertices++;
+                        break;
+                    }
+                }
+            }
+
+            return retargetedVertices;
+        }
+
+        private static bool QuarterRoadAllowanceStepOldPointStillHasQsecEndpoint(
+            Point2d oldPoint,
+            Point2d newPoint,
+            IReadOnlyList<Point2d> finalQsecEndpointPoints)
+        {
+            if (finalQsecEndpointPoints == null || finalQsecEndpointPoints.Count == 0)
+            {
+                return false;
+            }
+
+            const double endpointTolerance = 0.75;
+            for (var pointIndex = 0; pointIndex < finalQsecEndpointPoints.Count; pointIndex++)
+            {
+                var finalPoint = finalQsecEndpointPoints[pointIndex];
+                if (finalPoint.GetDistanceTo(oldPoint) <= endpointTolerance &&
+                    finalPoint.GetDistanceTo(newPoint) > endpointTolerance)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool ShouldRetargetQuarterBoxVertexAcrossRoadAllowanceStep(
+            Polyline quarterBox,
+            int vertexIndex,
+            Point2d currentVertex,
+            Point2d targetVertex)
+        {
+            var vertexCount = quarterBox.NumberOfVertices;
+            if (vertexCount < 3)
+            {
+                return false;
+            }
+
+            var previous = quarterBox.GetPoint2dAt((vertexIndex - 1 + vertexCount) % vertexCount);
+            var next = quarterBox.GetPoint2dAt((vertexIndex + 1) % vertexCount);
+            const double minImprovement = 2.0;
+            return targetVertex.GetDistanceTo(previous) + minImprovement < currentVertex.GetDistanceTo(previous) ||
+                   targetVertex.GetDistanceTo(next) + minImprovement < currentVertex.GetDistanceTo(next);
+        }
+
+        private static bool TrySetOpenLinearSegmentEndpoints(
+            Entity entity,
+            Point2d newA,
+            Point2d newB)
+        {
+            try
+            {
+                entity.UpgradeOpen();
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception)
+            {
+                return false;
+            }
+
+            if (entity is Line line)
+            {
+                line.StartPoint = new Point3d(newA.X, newA.Y, 0.0);
+                line.EndPoint = new Point3d(newB.X, newB.Y, 0.0);
+                return true;
+            }
+
+            if (entity is Polyline polyline && !polyline.Closed && polyline.NumberOfVertices >= 2)
+            {
+                polyline.SetPointAt(0, newA);
+                polyline.SetPointAt(polyline.NumberOfVertices - 1, newB);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsQuarterViewRoadAllowanceStepLayer(string? layerName)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+            {
+                return false;
+            }
+
+            return string.Equals(layerName, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layerName, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layerName, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layerName, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layerName, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(layerName, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
         }
 
         private static double ResolveQuarterNorthBoundaryVAtU(
@@ -8915,6 +9480,159 @@ namespace AtsBackgroundBuilder
                 out southOffset);
         }
 
+        private static bool TryResolveQuarterSouthWestPairedCorrectionZeroEndpoint(
+            QuarterViewSectionFrame frame,
+            IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
+            double currentU,
+            double currentV,
+            out double resolvedU,
+            out double resolvedV)
+        {
+            resolvedU = currentU;
+            resolvedV = currentV;
+            if (boundarySegments == null || boundarySegments.Count == 0)
+            {
+                return false;
+            }
+
+            var currentWorld = QuarterViewLocalToWorld(frame, currentU, currentV);
+            var currentSouthOffset = frame.SouthEdgeV - currentV;
+            if (currentSouthOffset < (RoadAllowanceSecWidthMeters + 4.0))
+            {
+                return false;
+            }
+
+            var found = false;
+            var bestScore = double.MaxValue;
+            var bestU = currentU;
+            var bestV = currentV;
+            const double maxCurrentToDeepDistance = 2.0;
+            const double minShallowToDeepGap = 15.0;
+            const double maxShallowToDeepGap = 25.5;
+            const double maxVerticalEndpointGap = 2.0;
+            const double maxResolvedMove = 3.0;
+
+            for (var di = 0; di < boundarySegments.Count; di++)
+            {
+                var deep = boundarySegments[di];
+                if (!string.Equals(deep.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var deepDelta = deep.B - deep.A;
+                var deepLength = deepDelta.Length;
+                if (deepLength <= 1e-6 ||
+                    Math.Abs(deepDelta.DotProduct(frame.EastUnit)) <= Math.Abs(deepDelta.DotProduct(frame.NorthUnit)) ||
+                    DistancePointToSegment(currentWorld, deep.A, deep.B) > maxCurrentToDeepDistance)
+                {
+                    continue;
+                }
+
+                var deepUnit = deepDelta / deepLength;
+                for (var si = 0; si < boundarySegments.Count; si++)
+                {
+                    var shallow = boundarySegments[si];
+                    if (!string.Equals(shallow.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
+                        (shallow.A.GetDistanceTo(deep.A) <= 1e-4 && shallow.B.GetDistanceTo(deep.B) <= 1e-4) ||
+                        (shallow.A.GetDistanceTo(deep.B) <= 1e-4 && shallow.B.GetDistanceTo(deep.A) <= 1e-4))
+                    {
+                        continue;
+                    }
+
+                    var shallowDelta = shallow.B - shallow.A;
+                    var shallowLength = shallowDelta.Length;
+                    if (shallowLength <= 1e-6 ||
+                        Math.Abs(deepUnit.DotProduct(shallowDelta / shallowLength)) < 0.985)
+                    {
+                        continue;
+                    }
+
+                    var shallowEndpoints = new[] { shallow.A, shallow.B };
+                    for (var endpointIndex = 0; endpointIndex < shallowEndpoints.Length; endpointIndex++)
+                    {
+                        var shallowEndpoint = shallowEndpoints[endpointIndex];
+                        var shallowGap = shallowEndpoint.GetDistanceTo(currentWorld);
+                        if (shallowGap < minShallowToDeepGap || shallowGap > maxShallowToDeepGap)
+                        {
+                            continue;
+                        }
+
+                        for (var vi = 0; vi < boundarySegments.Count; vi++)
+                        {
+                            var vertical = boundarySegments[vi];
+                            if (!IsQuarterCorrectionDeflectionVerticalCandidateLayer(vertical.Layer))
+                            {
+                                continue;
+                            }
+
+                            var verticalDelta = vertical.B - vertical.A;
+                            if (verticalDelta.Length <= 1e-6 ||
+                                Math.Abs(verticalDelta.DotProduct(frame.NorthUnit)) <= Math.Abs(verticalDelta.DotProduct(frame.EastUnit)))
+                            {
+                                continue;
+                            }
+
+                            var verticalEndpointGap = Math.Min(
+                                shallowEndpoint.GetDistanceTo(vertical.A),
+                                shallowEndpoint.GetDistanceTo(vertical.B));
+                            if (verticalEndpointGap > maxVerticalEndpointGap)
+                            {
+                                continue;
+                            }
+
+                            if (!TryIntersectLocalInfiniteLines(
+                                    frame,
+                                    vertical.A,
+                                    vertical.B,
+                                    deep.A,
+                                    deep.B,
+                                    out var candidateU,
+                                    out var candidateV))
+                            {
+                                continue;
+                            }
+
+                            var candidateWorld = QuarterViewLocalToWorld(frame, candidateU, candidateV);
+                            var move = candidateWorld.GetDistanceTo(currentWorld);
+                            if (move > maxResolvedMove ||
+                                DistancePointToSegment(candidateWorld, deep.A, deep.B) > 0.25)
+                            {
+                                continue;
+                            }
+
+                            var candidateWestOffset = frame.WestEdgeU - candidateU;
+                            if (candidateWestOffset < -6.0 || candidateWestOffset > 90.0)
+                            {
+                                continue;
+                            }
+
+                            var score =
+                                Math.Abs(shallowGap - RoadAllowanceSecWidthMeters) +
+                                verticalEndpointGap +
+                                (move * 0.10);
+                            if (!found || score < bestScore)
+                            {
+                                found = true;
+                                bestScore = score;
+                                bestU = candidateU;
+                                bestV = candidateV;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!found)
+            {
+                return false;
+            }
+
+            resolvedU = bestU;
+            resolvedV = bestV;
+            return true;
+        }
+
         private static bool TryResolveQuarterSouthCorrectionCornerOnBoundary(
             QuarterViewSectionFrame frame,
             IReadOnlyList<(Point2d A, Point2d B, string Layer)> boundarySegments,
@@ -8952,6 +9670,14 @@ namespace AtsBackgroundBuilder
             var insetSouthOffset = default(double);
             var bestInsetLayer = string.Empty;
 
+            var foundSouthSideInset = false;
+            var bestSouthSideInsetScore = double.MaxValue;
+            var bestSouthSideInsetBoundaryOffsetError = double.MaxValue;
+            var southSideInsetResolvedU = default(double);
+            var southSideInsetResolvedV = default(double);
+            var southSideInsetBoundaryOffset = default(double);
+            var southSideInsetSouthOffset = default(double);
+
             var foundHard = false;
             var bestHardScore = double.MaxValue;
             var bestHardBoundaryOffsetError = double.MaxValue;
@@ -8960,6 +9686,181 @@ namespace AtsBackgroundBuilder
             var hardBoundaryOffset = default(double);
             var hardSouthOffset = default(double);
             var bestHardLayer = string.Empty;
+
+            bool TryScoreSouthSideBoundaryCorrectionZero(
+                (Point2d A, Point2d B, string Layer) zeroSegment,
+                double candidateU,
+                double candidateV,
+                double candidateBoundaryOffset,
+                double candidateSouthOffset,
+                out double score,
+                out double adjustedU,
+                out double adjustedV,
+                out double adjustedBoundaryOffset,
+                out double adjustedSouthOffset)
+            {
+                score = double.MaxValue;
+                adjustedU = candidateU;
+                adjustedV = candidateV;
+                adjustedBoundaryOffset = candidateBoundaryOffset;
+                adjustedSouthOffset = candidateSouthOffset;
+
+                if (!string.Equals(zeroSegment.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
+                var zeroDelta = zeroSegment.B - zeroSegment.A;
+                var zeroLength = zeroDelta.Length;
+                if (zeroLength <= 1e-6)
+                {
+                    return false;
+                }
+
+                var zeroUnit = zeroDelta / zeroLength;
+                var found = false;
+                var bestScore = double.MaxValue;
+                const double maxBoundaryOffset = 90.0;
+                const double pairedZeroGapTolerance = 2.0;
+                var minRoadAllowanceDepth = RoadAllowanceSecWidthMeters - 2.0;
+                var maxShallowRoadAllowanceDepth = RoadAllowanceSecWidthMeters + 8.0;
+
+                for (var ci = 0; ci < boundarySegments.Count; ci++)
+                {
+                    var companion = boundarySegments[ci];
+                    if (!string.Equals(companion.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
+                        (companion.A.GetDistanceTo(zeroSegment.A) <= 1e-4 && companion.B.GetDistanceTo(zeroSegment.B) <= 1e-4) ||
+                        (companion.A.GetDistanceTo(zeroSegment.B) <= 1e-4 && companion.B.GetDistanceTo(zeroSegment.A) <= 1e-4))
+                    {
+                        continue;
+                    }
+
+                    var companionDelta = companion.B - companion.A;
+                    var companionLength = companionDelta.Length;
+                    if (companionLength <= 1e-6 ||
+                        Math.Abs(zeroUnit.DotProduct(companionDelta / companionLength)) < 0.985)
+                    {
+                        continue;
+                    }
+
+                    if (!TryIntersectLocalInfiniteLines(
+                            frame,
+                            boundarySegmentA,
+                            boundarySegmentB,
+                            companion.A,
+                            companion.B,
+                            out var companionU,
+                            out var companionV))
+                    {
+                        continue;
+                    }
+
+                    if ((eastSide && companionU < sideHalfLimitU) ||
+                        (!eastSide && companionU > sideHalfLimitU))
+                    {
+                        continue;
+                    }
+
+                    var companionBoundaryOffset = eastSide
+                        ? (companionU - frame.EastEdgeU)
+                        : (frame.WestEdgeU - companionU);
+                    if (companionBoundaryOffset < -maxBoundaryOffset ||
+                        companionBoundaryOffset > maxBoundaryOffset)
+                    {
+                        continue;
+                    }
+
+                    var companionSouthOffset = frame.SouthEdgeV - companionV;
+                    var shallowSouthOffset = Math.Min(candidateSouthOffset, companionSouthOffset);
+                    var deepSouthOffset = Math.Max(candidateSouthOffset, companionSouthOffset);
+                    var pairGap = deepSouthOffset - shallowSouthOffset;
+
+                    // Only promote to the deeper correction-zero row when the shallower row is
+                    // already a road-allowance-depth boundary. This preserves ordinary 5.02 m
+                    // inset companions while fixing correction-line corners that have two
+                    // south-side L-USEC-C-0 rows separated by the section road allowance.
+                    if (shallowSouthOffset < minRoadAllowanceDepth ||
+                        shallowSouthOffset > maxShallowRoadAllowanceDepth ||
+                        Math.Abs(pairGap - RoadAllowanceSecWidthMeters) > pairedZeroGapTolerance)
+                    {
+                        continue;
+                    }
+
+                    var candidateIsDeeper = candidateSouthOffset >= companionSouthOffset;
+                    var shallowU = candidateIsDeeper ? companionU : candidateU;
+                    var shallowV = candidateIsDeeper ? companionV : candidateV;
+                    var shallowSegment = candidateIsDeeper ? companion : zeroSegment;
+                    var deepSegment = candidateIsDeeper ? zeroSegment : companion;
+                    var pairedAdjustedU = candidateIsDeeper ? candidateU : companionU;
+                    var pairedAdjustedV = candidateIsDeeper ? candidateV : companionV;
+                    var pairedBoundaryOffset = candidateIsDeeper ? candidateBoundaryOffset : companionBoundaryOffset;
+                    var pairedSouthOffset = candidateIsDeeper ? candidateSouthOffset : companionSouthOffset;
+
+                    var shallowWorld = QuarterViewLocalToWorld(frame, shallowU, shallowV);
+                    var shallowEndpointAOffset = shallowWorld.GetDistanceTo(shallowSegment.A);
+                    var shallowEndpointBOffset = shallowWorld.GetDistanceTo(shallowSegment.B);
+                    const double maxShallowEndpointAnchorGap = 3.0;
+                    if (Math.Min(shallowEndpointAOffset, shallowEndpointBOffset) <= maxShallowEndpointAnchorGap)
+                    {
+                        shallowWorld = shallowEndpointAOffset <= shallowEndpointBOffset
+                            ? shallowSegment.A
+                            : shallowSegment.B;
+                    }
+
+                    var boundaryAnchor = shallowWorld.GetDistanceTo(boundarySegmentA) <= shallowWorld.GetDistanceTo(boundarySegmentB)
+                        ? boundarySegmentA
+                        : boundarySegmentB;
+                    if (TryIntersectLocalInfiniteLines(
+                            frame,
+                            shallowWorld,
+                            boundaryAnchor,
+                            deepSegment.A,
+                            deepSegment.B,
+                            out var anchoredU,
+                            out var anchoredV))
+                    {
+                        var anchoredBoundaryOffset = eastSide
+                            ? (anchoredU - frame.EastEdgeU)
+                            : (frame.WestEdgeU - anchoredU);
+                        if (anchoredBoundaryOffset >= -maxBoundaryOffset &&
+                            anchoredBoundaryOffset <= maxBoundaryOffset &&
+                            ((eastSide && anchoredU >= sideHalfLimitU) ||
+                             (!eastSide && anchoredU <= sideHalfLimitU)))
+                        {
+                            pairedAdjustedU = anchoredU;
+                            pairedAdjustedV = anchoredV;
+                            pairedBoundaryOffset = anchoredBoundaryOffset;
+                            pairedSouthOffset = frame.SouthEdgeV - anchoredV;
+                        }
+                    }
+
+                    var pairedBoundaryOffsetError = Math.Abs(pairedBoundaryOffset);
+                    var pairedScore =
+                        Math.Abs(pairGap - RoadAllowanceSecWidthMeters) +
+                        (Math.Abs(shallowSouthOffset - RoadAllowanceSecWidthMeters) * 0.10) +
+                        (pairedBoundaryOffsetError * 0.01);
+
+                    if (!found ||
+                        pairedScore < bestScore ||
+                        (Math.Abs(pairedScore - bestScore) <= 1e-6 && pairedSouthOffset > adjustedSouthOffset))
+                    {
+                        found = true;
+                        bestScore = pairedScore;
+                        adjustedU = pairedAdjustedU;
+                        adjustedV = pairedAdjustedV;
+                        adjustedBoundaryOffset = pairedBoundaryOffset;
+                        adjustedSouthOffset = pairedSouthOffset;
+                    }
+                }
+
+                if (!found)
+                {
+                    return false;
+                }
+
+                score = bestScore;
+                return true;
+            }
 
             for (var i = 0; i < boundarySegments.Count; i++)
             {
@@ -9041,6 +9942,37 @@ namespace AtsBackgroundBuilder
                 var layerPriority = GetQuarterSouthCorrectionLayerPriority(seg.Layer);
                 if (prefersInset)
                 {
+                    if (TryScoreSouthSideBoundaryCorrectionZero(
+                            seg,
+                            candidateU,
+                            candidateV,
+                            candidateResolvedBoundaryOffset,
+                            candidateResolvedSouthOffset,
+                            out var southSideInsetScore,
+                            out var southSideInsetCandidateU,
+                            out var southSideInsetCandidateV,
+                            out var southSideInsetCandidateBoundaryOffset,
+                            out var southSideInsetCandidateSouthOffset))
+                    {
+                        var southSideBoundaryOffsetError = Math.Abs(southSideInsetCandidateBoundaryOffset);
+                        if (!foundSouthSideInset ||
+                            southSideInsetScore < bestSouthSideInsetScore ||
+                            (Math.Abs(southSideInsetScore - bestSouthSideInsetScore) <= 1e-6 &&
+                             southSideInsetCandidateSouthOffset > southSideInsetSouthOffset) ||
+                            (Math.Abs(southSideInsetScore - bestSouthSideInsetScore) <= 1e-6 &&
+                             Math.Abs(southSideInsetCandidateSouthOffset - southSideInsetSouthOffset) <= 1e-6 &&
+                             southSideBoundaryOffsetError < bestSouthSideInsetBoundaryOffsetError))
+                        {
+                            foundSouthSideInset = true;
+                            bestSouthSideInsetScore = southSideInsetScore;
+                            bestSouthSideInsetBoundaryOffsetError = southSideBoundaryOffsetError;
+                            southSideInsetResolvedU = southSideInsetCandidateU;
+                            southSideInsetResolvedV = southSideInsetCandidateV;
+                            southSideInsetBoundaryOffset = southSideInsetCandidateBoundaryOffset;
+                            southSideInsetSouthOffset = southSideInsetCandidateSouthOffset;
+                        }
+                    }
+
                     if (!foundInset ||
                         layerPriority < GetQuarterSouthCorrectionLayerPriority(bestInsetLayer) ||
                         (layerPriority == GetQuarterSouthCorrectionLayerPriority(bestInsetLayer) && score < bestInsetScore) ||
@@ -9077,6 +10009,15 @@ namespace AtsBackgroundBuilder
                         bestHardLayer = seg.Layer;
                     }
                 }
+            }
+
+            if (foundSouthSideInset)
+            {
+                resolvedU = southSideInsetResolvedU;
+                resolvedV = southSideInsetResolvedV;
+                boundaryOffset = southSideInsetBoundaryOffset;
+                southOffset = southSideInsetSouthOffset;
+                return true;
             }
 
             if (foundHard)
@@ -9215,7 +10156,8 @@ namespace AtsBackgroundBuilder
             Point2d dividerLineB,
             out double resolvedU,
             out double resolvedV,
-            out double southOffset)
+            out double southOffset,
+            Logger? logger = null)
         {
             resolvedU = default;
             resolvedV = default;
@@ -9240,6 +10182,202 @@ namespace AtsBackgroundBuilder
             var hardResolvedV = default(double);
             var hardSouthOffset = default(double);
             var bestHardLayer = string.Empty;
+            var foundSouthSideInset = false;
+            var bestSouthSideInsetScore = double.MaxValue;
+            var southSideInsetResolvedU = default(double);
+            var southSideInsetResolvedV = default(double);
+            var southSideInsetSouthOffset = default(double);
+
+            bool TryScoreSouthSideCorrectionZero(
+                (Point2d A, Point2d B, string Layer) zeroSegment,
+                double candidateU,
+                double candidateV,
+                double candidateSouthOffset,
+                out double score,
+                out double adjustedU,
+                out double adjustedV,
+                out double adjustedSouthOffset)
+            {
+                score = double.MaxValue;
+                adjustedU = candidateU;
+                adjustedV = candidateV;
+                adjustedSouthOffset = candidateSouthOffset;
+                if (!string.Equals(zeroSegment.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
+                var minDeepInsetOffset = RoadAllowanceSecWidthMeters - 2.0;
+                const double maxDeepInsetOffset = 60.0;
+                if (candidateSouthOffset < minDeepInsetOffset ||
+                    candidateSouthOffset > maxDeepInsetOffset)
+                {
+                    return false;
+                }
+
+                var zeroDelta = zeroSegment.B - zeroSegment.A;
+                var zeroLength = zeroDelta.Length;
+                if (zeroLength <= 1e-6)
+                {
+                    return false;
+                }
+
+                var zeroUnit = zeroDelta / zeroLength;
+                var bestCompanionScore = double.MaxValue;
+                var bestPairedZeroScore = double.MaxValue;
+                var bestPairedZeroAdjustedU = candidateU;
+                var bestPairedZeroAdjustedV = candidateV;
+                var bestPairedZeroAdjustedSouthOffset = candidateSouthOffset;
+                var dividerNorthWorld = dividerLineA;
+                var dividerSouthWorld = dividerLineB;
+                if (TryConvertQuarterWorldToLocal(frame, dividerLineA, out _, out var dividerAV) &&
+                    TryConvertQuarterWorldToLocal(frame, dividerLineB, out _, out var dividerBV) &&
+                    dividerAV < dividerBV)
+                {
+                    dividerNorthWorld = dividerLineB;
+                    dividerSouthWorld = dividerLineA;
+                }
+
+                for (var ci = 0; ci < boundarySegments.Count; ci++)
+                {
+                    var companion = boundarySegments[ci];
+                    var companionLayer = companion.Layer ?? string.Empty;
+                    var isCorrectionOriginalCompanion =
+                        string.Equals(companionLayer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(companionLayer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(companionLayer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+                    if (!isCorrectionOriginalCompanion)
+                    {
+                        continue;
+                    }
+
+                    var companionDelta = companion.B - companion.A;
+                    var companionLength = companionDelta.Length;
+                    if (companionLength <= 1e-6 ||
+                        Math.Abs(zeroUnit.DotProduct(companionDelta / companionLength)) < 0.985)
+                    {
+                        continue;
+                    }
+
+                    if (!TryProjectBoundarySegmentVAtU(frame, companion.A, companion.B, candidateU, out var companionV))
+                    {
+                        continue;
+                    }
+
+                    // A south-side correction-zero definition is the offset line whose original
+                    // correction boundary is farther south/outward by the normal correction inset.
+                    var companionSouthOffset = frame.SouthEdgeV - companionV;
+                    var outwardGap = companionSouthOffset - candidateSouthOffset;
+                    if (!CorrectionSouthBoundaryPreference.IsPlausibleInsetOffset(
+                            outwardGap,
+                            CorrectionLineInsetMeters))
+                    {
+                        continue;
+                    }
+
+                    var companionScore =
+                        Math.Abs(outwardGap - CorrectionLineInsetMeters) +
+                        (Math.Abs(candidateSouthOffset - (RoadAllowanceSecWidthMeters + CorrectionLineInsetMeters)) * 0.05);
+                    if (companionScore < bestCompanionScore)
+                    {
+                        bestCompanionScore = companionScore;
+                    }
+                }
+
+                for (var ci = 0; ci < boundarySegments.Count; ci++)
+                {
+                    var companion = boundarySegments[ci];
+                    if (!string.Equals(companion.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
+                        (companion.A.GetDistanceTo(zeroSegment.A) <= 1e-4 && companion.B.GetDistanceTo(zeroSegment.B) <= 1e-4) ||
+                        (companion.A.GetDistanceTo(zeroSegment.B) <= 1e-4 && companion.B.GetDistanceTo(zeroSegment.A) <= 1e-4))
+                    {
+                        continue;
+                    }
+
+                    var companionDelta = companion.B - companion.A;
+                    var companionLength = companionDelta.Length;
+                    if (companionLength <= 1e-6 ||
+                        Math.Abs(zeroUnit.DotProduct(companionDelta / companionLength)) < 0.985)
+                    {
+                        continue;
+                    }
+
+                    if (!TryProjectBoundarySegmentVAtU(frame, companion.A, companion.B, candidateU, out var companionV))
+                    {
+                        continue;
+                    }
+
+                    var companionSouthOffset = frame.SouthEdgeV - companionV;
+                    var pairGap = candidateSouthOffset - companionSouthOffset;
+                    var expectedPairGap = RoadAllowanceUsecWidthMeters + CorrectionLineInsetMeters;
+                    var expectedDeepOffset = RoadAllowanceUsecWidthMeters + CorrectionLinePairGapMeters;
+                    if (!CorrectionSouthBoundaryPreference.IsPlausibleInsetOffset(
+                            companionSouthOffset,
+                            CorrectionLineInsetMeters) ||
+                        Math.Abs(pairGap - expectedPairGap) > 1.0 ||
+                        Math.Abs(candidateSouthOffset - expectedDeepOffset) > 1.25)
+                    {
+                        continue;
+                    }
+
+                    var pairedZeroScore =
+                        Math.Abs(pairGap - expectedPairGap) +
+                        (Math.Abs(candidateSouthOffset - expectedDeepOffset) * 0.25);
+                    var pairedAdjustedU = candidateU;
+                    var pairedAdjustedV = candidateV;
+                    var pairedAdjustedSouthOffset = candidateSouthOffset;
+                    var pivotToA = dividerSouthWorld.GetDistanceTo(companion.A);
+                    var pivotToB = dividerSouthWorld.GetDistanceTo(companion.B);
+                    const double maxShallowZeroPivotGap = 12.0;
+                    if (Math.Min(pivotToA, pivotToB) <= maxShallowZeroPivotGap)
+                    {
+                        var pairedPivot = pivotToA <= pivotToB ? companion.A : companion.B;
+                        if (TryIntersectLocalInfiniteLineWithBoundedSegmentExtension(
+                                frame,
+                                dividerNorthWorld,
+                                pairedPivot,
+                                zeroSegment.A,
+                                zeroSegment.B,
+                                maxSegmentExtension: 80.0,
+                                out var pivotAdjustedU,
+                                out var pivotAdjustedV))
+                        {
+                            var pivotAdjustedSouthOffset = frame.SouthEdgeV - pivotAdjustedV;
+                            if (Math.Abs(pivotAdjustedSouthOffset - candidateSouthOffset) <= 2.0)
+                            {
+                                pairedAdjustedU = pivotAdjustedU;
+                                pairedAdjustedV = pivotAdjustedV;
+                                pairedAdjustedSouthOffset = pivotAdjustedSouthOffset;
+                                pairedZeroScore += Math.Abs(pivotAdjustedSouthOffset - candidateSouthOffset) * 0.05;
+                            }
+                        }
+                    }
+
+                    if (pairedZeroScore < bestPairedZeroScore)
+                    {
+                        bestPairedZeroScore = pairedZeroScore;
+                        bestPairedZeroAdjustedU = pairedAdjustedU;
+                        bestPairedZeroAdjustedV = pairedAdjustedV;
+                        bestPairedZeroAdjustedSouthOffset = pairedAdjustedSouthOffset;
+                    }
+                }
+
+                var bestScore = Math.Min(bestCompanionScore, bestPairedZeroScore);
+                if (bestScore == double.MaxValue)
+                {
+                    return false;
+                }
+
+                if (bestPairedZeroScore < bestCompanionScore)
+                {
+                    adjustedU = bestPairedZeroAdjustedU;
+                    adjustedV = bestPairedZeroAdjustedV;
+                    adjustedSouthOffset = bestPairedZeroAdjustedSouthOffset;
+                }
+
+                score = bestScore;
+                return true;
+            }
 
             for (var i = 0; i < boundarySegments.Count; i++)
             {
@@ -9295,6 +10433,27 @@ namespace AtsBackgroundBuilder
                 var layerPriority = GetQuarterSouthCorrectionLayerPriority(seg.Layer);
                 if (prefersInset)
                 {
+                    if (TryScoreSouthSideCorrectionZero(
+                            seg,
+                            candidateU,
+                            candidateV,
+                            candidateSouthOffset,
+                            out var southSideInsetScore,
+                            out var southSideInsetCandidateU,
+                            out var southSideInsetCandidateV,
+                            out var southSideInsetCandidateSouthOffset) &&
+                        (!foundSouthSideInset ||
+                         southSideInsetScore < bestSouthSideInsetScore ||
+                         (Math.Abs(southSideInsetScore - bestSouthSideInsetScore) <= 1e-6 &&
+                          southSideInsetCandidateSouthOffset < southSideInsetSouthOffset)))
+                    {
+                        foundSouthSideInset = true;
+                        bestSouthSideInsetScore = southSideInsetScore;
+                        southSideInsetResolvedU = southSideInsetCandidateU;
+                        southSideInsetResolvedV = southSideInsetCandidateV;
+                        southSideInsetSouthOffset = southSideInsetCandidateSouthOffset;
+                    }
+
                     if (!foundInset ||
                         layerPriority < GetQuarterSouthCorrectionLayerPriority(bestInsetLayer) ||
                         (layerPriority == GetQuarterSouthCorrectionLayerPriority(bestInsetLayer) && score < bestInsetScore))
@@ -9321,6 +10480,14 @@ namespace AtsBackgroundBuilder
                         bestHardLayer = seg.Layer;
                     }
                 }
+            }
+
+            if (foundSouthSideInset)
+            {
+                resolvedU = southSideInsetResolvedU;
+                resolvedV = southSideInsetResolvedV;
+                southOffset = southSideInsetSouthOffset;
+                return true;
             }
 
             if (foundHard)
@@ -10035,7 +11202,27 @@ namespace AtsBackgroundBuilder
                 return false;
             }
 
-            quarterSouthWestLocal = westInsetLike ? bestWestLocal : currentSouthWestLocal;
+            var bestWestSouthOffset = frame.SouthEdgeV - bestWestLocal.Y;
+            var bestMidSouthOffset = frame.SouthEdgeV - bestMidLocal.Y;
+            var bestEastSouthOffset = frame.SouthEdgeV - bestEastLocal.Y;
+            const double minDisplayRoadAllowanceOffset = 12.0;
+            const double maxDisplayRoadAllowanceOffset = 35.0;
+            var bestWestRoadAllowanceLike =
+                bestWestSouthOffset >= minDisplayRoadAllowanceOffset &&
+                bestWestSouthOffset <= maxDisplayRoadAllowanceOffset;
+            var bestTrendRoadAllowanceLike =
+                bestMidSouthOffset >= minDisplayRoadAllowanceOffset &&
+                bestMidSouthOffset <= maxDisplayRoadAllowanceOffset &&
+                bestEastSouthOffset >= minDisplayRoadAllowanceOffset &&
+                bestEastSouthOffset <= maxDisplayRoadAllowanceOffset;
+            var currentWestLooksLikePairedDeepOffset =
+                currentWestSouthOffset >= (RoadAllowanceUsecWidthMeters + CorrectionLineInsetMeters - 2.0) &&
+                currentWestSouthOffset <= (RoadAllowanceUsecWidthMeters + CorrectionLineInsetMeters + 8.0);
+            var useBestWestFromCorrectionTrend =
+                westInsetLike ||
+                (currentWestLooksLikePairedDeepOffset && bestWestRoadAllowanceLike && bestTrendRoadAllowanceLike);
+
+            quarterSouthWestLocal = useBestWestFromCorrectionTrend ? bestWestLocal : currentSouthWestLocal;
             quarterSouthMidLocal = midInsetLike ? bestMidLocal : currentSouthMidLocal;
             quarterSouthEastLocal = eastInsetLike ? bestEastLocal : currentSouthEastLocal;
             sourceLayer = $"{LayerUsecCorrectionZero}-{bestDirection}-companion";

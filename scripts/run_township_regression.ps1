@@ -29,9 +29,41 @@ $correctedReferenceDxf = Resolve-RepoPath -RelativePath $manifest.corrected_refe
 $seedDwg = Resolve-RepoPath -RelativePath $manifest.seed_dwg
 $workbook = Resolve-RepoPath -RelativePath $manifest.workbook
 $runLabel = if ([string]::IsNullOrWhiteSpace($Label)) { Split-Path -Leaf $resolvedOutputDir } else { $Label }
+$fullAutoCadProfileName = if ($manifest.PSObject.Properties["full_autocad_profile"] -and -not [string]::IsNullOrWhiteSpace([string]$manifest.full_autocad_profile)) {
+    [string]$manifest.full_autocad_profile
+}
+else {
+    "ATSBUILD_TEST"
+}
 
-if ($manifest.ats_fabric_only) {
-    $env:ATSBUILD_XLS_ATS_FABRIC_ONLY = "1"
+function Get-ManifestBool {
+    param(
+        [Parameter(Mandatory = $true)][pscustomobject]$Object,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    if (-not $Object.PSObject.Properties[$Name]) {
+        return $false
+    }
+
+    return [bool]$Object.$Name
+}
+
+$harnessEnvironment = @{}
+if (Get-ManifestBool -Object $manifest -Name "ats_fabric_only") {
+    $harnessEnvironment["ATSBUILD_XLS_ATS_FABRIC_ONLY"] = "1"
+}
+if (Get-ManifestBool -Object $manifest -Name "quarter_view") {
+    $harnessEnvironment["ATSBUILD_QUATERVIEW"] = "1"
+}
+if (Get-ManifestBool -Object $manifest -Name "preserve_final_usec_variant_layers") {
+    $harnessEnvironment["ATSBUILD_PRESERVE_FINAL_USEC_VARIANT_LAYERS"] = "1"
+}
+
+$previousEnvironment = @{}
+foreach ($name in $harnessEnvironment.Keys) {
+    $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+    [Environment]::SetEnvironmentVariable($name, $harnessEnvironment[$name], "Process")
 }
 
 try {
@@ -39,11 +71,12 @@ try {
         -Runner FullAutoCAD `
         -DwgPath $seedDwg `
         -WorkbookPath $workbook `
-        -OutputDir $resolvedOutputDir | Out-Null
+        -OutputDir $resolvedOutputDir `
+        -FullAutoCadProfileName $fullAutoCadProfileName | Out-Null
 }
 finally {
-    if ($manifest.ats_fabric_only) {
-        Remove-Item Env:ATSBUILD_XLS_ATS_FABRIC_ONLY -ErrorAction SilentlyContinue
+    foreach ($name in $previousEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
     }
 }
 

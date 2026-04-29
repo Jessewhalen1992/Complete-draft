@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Diagnostics.CodeAnalysis;
+using AtsBackgroundBuilder.Core;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 
@@ -983,7 +984,7 @@ namespace AtsBackgroundBuilder.Geometry
             }
 
             // Map-imported polygons often arrive as MPOLYGON or old-style POLYLINE* entities.
-            if (ent is Polyline2d || ent is Polyline3d || string.Equals(ent.GetType().Name, "MPolygon", StringComparison.OrdinalIgnoreCase))
+            if (ent is Polyline2d || ent is Polyline3d || IsMapPolygonEntity(ent))
             {
                 var exploded = ExplodeToBestClosedPolyline(ent, out recoveredFromOpen);
                 if (exploded == null)
@@ -994,6 +995,34 @@ namespace AtsBackgroundBuilder.Geometry
             }
 
             return false;
+        }
+
+        private static bool IsMapPolygonEntity(Entity ent)
+        {
+            if (ent == null)
+            {
+                return false;
+            }
+
+            string? dxfName = null;
+            string? className = null;
+            try
+            {
+                if (!ent.ObjectId.IsNull)
+                {
+                    dxfName = ent.ObjectId.ObjectClass?.DxfName;
+                    className = ent.ObjectId.ObjectClass?.Name;
+                }
+            }
+            catch
+            {
+                // Some transient entities do not have stable ObjectClass metadata.
+            }
+
+            return DispositionSourceGeometryTypePolicy.IsMapPolygon(
+                dxfName,
+                className,
+                ent.GetType().Name);
         }
 
         private static Polyline? ExplodeToBestClosedPolyline(Entity ent, out bool recoveredFromOpen)

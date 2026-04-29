@@ -2213,6 +2213,7 @@ namespace AtsBackgroundBuilder
                     double MajorMax,
                     string Layer)>();
                 var correctionSegments = new List<(Point2d A, Point2d B, string Layer)>();
+                var supportVerticalSegments = new List<(Point2d A, Point2d B, string Layer)>();
 
                 void AddRoadSegment(
                     ObjectId id,
@@ -2274,8 +2275,9 @@ namespace AtsBackgroundBuilder
                     var isCorrection = string.Equals(layerName, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase);
                     var isUsec = IsUsecLayer(layerName);
                     var isSec = string.Equals(layerName, "L-SEC", StringComparison.OrdinalIgnoreCase);
+                    var isQsec = string.Equals(layerName, "L-QSEC", StringComparison.OrdinalIgnoreCase);
                     var isCorrectionZero = string.Equals(layerName, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase);
-                    if (!isUsec && !isSec && !isCorrection && !isCorrectionZero)
+                    if (!isUsec && !isSec && !isQsec && !isCorrection && !isCorrectionZero)
                     {
                         continue;
                     }
@@ -2286,6 +2288,11 @@ namespace AtsBackgroundBuilder
                     {
                         var start = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
                         var end = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                        if ((isUsec || isSec || string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase)) &&
+                            IsVerticalLikeForQuarterExtensionsConnectivity(start, end))
+                        {
+                            supportVerticalSegments.Add((start, end, layer));
+                        }
                         if (isCorrection || isCorrectionZero)
                         {
                             AddCorrectionSegment(start, end, layer);
@@ -2317,6 +2324,11 @@ namespace AtsBackgroundBuilder
                     {
                         var a = pl.GetPoint2dAt(vi);
                         var b = pl.GetPoint2dAt(vi + 1);
+                        if ((isUsec || isSec || string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase)) &&
+                            IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
+                        {
+                            supportVerticalSegments.Add((a, b, layer));
+                        }
                         if (isCorrection || isCorrectionZero)
                         {
                             AddCorrectionSegment(a, b, layer);
@@ -2700,6 +2712,423 @@ namespace AtsBackgroundBuilder
                     return Math.Abs(sourceDir.DotProduct(targetDir)) <= maxAbsDot;
                 }
 
+                bool TryFindMixedBlindInsetStop(
+                    int sourceIndex,
+                    Point2d endpoint,
+                    Point2d other,
+                    out Point2d stopPoint,
+                    out double stopAlong,
+                    out double stopScore)
+                {
+                    stopPoint = endpoint;
+                    stopAlong = double.MaxValue;
+                    stopScore = double.MaxValue;
+                    if (sourceIndex < 0 || sourceIndex >= roadSegments.Count)
+                    {
+                        return false;
+                    }
+
+                    var source = roadSegments[sourceIndex];
+                    if (!source.Vertical || source.IsSecLayer || source.IsCorrectionZeroLayer)
+                    {
+                        return false;
+                    }
+
+                    var sourceRole = GetEndpointRole(sourceIndex);
+                    if (sourceRole != endpointRoleZero && sourceRole != endpointRoleTwenty)
+                    {
+                        return false;
+                    }
+
+                    const double touchTol = 0.35;
+                    const double companionGapTarget = 20.11;
+                    const double companionGapTol = 1.25;
+                    const double sourceMoveMin = 18.0;
+                    const double sourceMoveMax = 22.5;
+                    const double overlapMin = 60.0;
+                    const double mixedTargetDistanceTol = 40.0;
+
+                    var outward = endpoint - other;
+                    var outwardLen = outward.Length;
+                    if (outwardLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var outwardUnit = outward / outwardLen;
+                    var touchedBlindThirtyTargetIndex = -1;
+                    for (var j = 0; j < roadSegments.Count; j++)
+                    {
+                        if (j == sourceIndex || !IsOppositeDirectionTarget(sourceIndex, j))
+                        {
+                            continue;
+                        }
+
+                        var target = roadSegments[j];
+                        if (!target.Horizontal ||
+                            target.IsSecLayer ||
+                            target.IsCorrectionZeroLayer ||
+                            DistancePointToSegment(endpoint, target.A, target.B) > touchTol ||
+                            !generatedThirtyHardAsTwentyList[j])
+                        {
+                            continue;
+                        }
+
+                        touchedBlindThirtyTargetIndex = j;
+                        break;
+                    }
+
+                    if (touchedBlindThirtyTargetIndex < 0)
+                    {
+                        return false;
+                    }
+
+                    var touchedTarget = roadSegments[touchedBlindThirtyTargetIndex];
+                    var found = false;
+                    for (var j = 0; j < roadSegments.Count; j++)
+                    {
+                        if (j == sourceIndex || j == touchedBlindThirtyTargetIndex || !IsOppositeDirectionTarget(sourceIndex, j))
+                        {
+                            continue;
+                        }
+
+                        var target = roadSegments[j];
+                        if (!target.Horizontal || target.IsSecLayer || target.IsCorrectionZeroLayer)
+                        {
+                            continue;
+                        }
+
+                        var targetRole = GetEndpointRole(j);
+                        if (targetRole != endpointRoleZero && targetRole != endpointRoleTwenty)
+                        {
+                            continue;
+                        }
+
+                        var overlap = Math.Min(touchedTarget.MajorMax, target.MajorMax) - Math.Max(touchedTarget.MajorMin, target.MajorMin);
+                        if (overlap < overlapMin)
+                        {
+                            continue;
+                        }
+
+                        var gap = Math.Abs(touchedTarget.Axis - target.Axis);
+                        if (Math.Abs(gap - companionGapTarget) > companionGapTol)
+                        {
+                            continue;
+                        }
+
+                        if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(source.A, source.B, target.A, target.B, out var intersection))
+                        {
+                            continue;
+                        }
+
+                        var along = (intersection - endpoint).DotProduct(outwardUnit);
+                        if (along < sourceMoveMin || along > sourceMoveMax)
+                        {
+                            continue;
+                        }
+
+                        if (!IsSameSideOfRoadAllowance(sourceIndex, endpoint, other, intersection))
+                        {
+                            continue;
+                        }
+
+                        var targetDistance = DistancePointToSegment(intersection, target.A, target.B);
+                        if (targetDistance > mixedTargetDistanceTol)
+                        {
+                            continue;
+                        }
+
+                        var score =
+                            Math.Abs(along - companionGapTarget) +
+                            (Math.Abs(gap - companionGapTarget) * 2.0) +
+                            (targetDistance * 4.0);
+                        if (score >= stopScore)
+                        {
+                            continue;
+                        }
+
+                        found = true;
+                        stopPoint = intersection;
+                        stopAlong = along;
+                        stopScore = score;
+                    }
+
+                    return found;
+                }
+
+                bool TryFindMixedBlindInsetRetreatStop(
+                    int sourceIndex,
+                    Point2d endpoint,
+                    Point2d other,
+                    out Point2d stopPoint,
+                    out double stopAlong,
+                    out double stopScore)
+                {
+                    stopPoint = endpoint;
+                    stopAlong = double.MaxValue;
+                    stopScore = double.MaxValue;
+                    if (sourceIndex < 0 || sourceIndex >= roadSegments.Count)
+                    {
+                        return false;
+                    }
+
+                    var source = roadSegments[sourceIndex];
+                    if (!source.Vertical || source.IsSecLayer || source.IsCorrectionZeroLayer)
+                    {
+                        return false;
+                    }
+
+                    var sourceRole = GetEndpointRole(sourceIndex);
+                    if (sourceRole != endpointRoleZero && sourceRole != endpointRoleTwenty)
+                    {
+                        return false;
+                    }
+
+                    const double fullGapTarget = 20.11;
+                    const double fullGapTol = 1.25;
+                    const double targetDistanceTol = 0.35;
+                    const double shortExtensionTarget = CorrectionLinePairGapMeters;
+                    const double shortExtensionTol = 1.25;
+                    var inward = other - endpoint;
+                    var inwardLen = inward.Length;
+                    if (inwardLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var inwardUnit = inward / inwardLen;
+                    var found = false;
+                    for (var j = 0; j < roadSegments.Count; j++)
+                    {
+                        if (j == sourceIndex)
+                        {
+                            continue;
+                        }
+
+                        if (!IsOppositeDirectionTarget(sourceIndex, j))
+                        {
+                            continue;
+                        }
+
+                        var target = roadSegments[j];
+                        if (!target.Horizontal || target.IsSecLayer || target.IsCorrectionZeroLayer || !target.IsUsecLayer)
+                        {
+                            continue;
+                        }
+
+                        if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(source.A, source.B, target.A, target.B, out var intersection))
+                        {
+                            continue;
+                        }
+
+                        var alongInward = (intersection - endpoint).DotProduct(inwardUnit);
+                        var targetDistance = DistancePointToSegment(intersection, target.A, target.B);
+                        var touchesHorizontalEndpoint =
+                            intersection.GetDistanceTo(target.A) <= targetDistanceTol ||
+                            intersection.GetDistanceTo(target.B) <= targetDistanceTol;
+                        var reachesShortExtendedEndpoint =
+                            Math.Abs(targetDistance - shortExtensionTarget) <= shortExtensionTol;
+                        if (alongInward < (fullGapTarget - fullGapTol) || alongInward > (fullGapTarget + fullGapTol))
+                        {
+                            continue;
+                        }
+
+                        if (targetDistance > targetDistanceTol && !reachesShortExtendedEndpoint)
+                        {
+                            continue;
+                        }
+
+                        if (!touchesHorizontalEndpoint && !reachesShortExtendedEndpoint)
+                        {
+                            continue;
+                        }
+
+                        var targetPenalty = touchesHorizontalEndpoint
+                            ? targetDistance
+                            : (1.0 + Math.Abs(targetDistance - shortExtensionTarget));
+                        var score = Math.Abs(alongInward - fullGapTarget) + (targetPenalty * 4.0);
+                        if (score >= stopScore)
+                        {
+                            continue;
+                        }
+
+                        found = true;
+                        stopPoint = intersection;
+                        stopAlong = alongInward;
+                        stopScore = score;
+                    }
+
+                    return found;
+                }
+
+                bool TryFindMixedBlindInsetPivotStop(
+                    int sourceIndex,
+                    Point2d endpoint,
+                    Point2d other,
+                    out Point2d stopPoint,
+                    out double stopMove,
+                    out double stopScore)
+                {
+                    stopPoint = endpoint;
+                    stopMove = double.MaxValue;
+                    stopScore = double.MaxValue;
+                    if (sourceIndex < 0 || sourceIndex >= roadSegments.Count)
+                    {
+                        return false;
+                    }
+
+                    var source = roadSegments[sourceIndex];
+                    if (!source.Horizontal || source.IsSecLayer || source.IsCorrectionZeroLayer)
+                    {
+                        return false;
+                    }
+
+                    var sourceRole = GetEndpointRole(sourceIndex);
+                    if (sourceRole == endpointRoleZero)
+                    {
+                        return false;
+                    }
+
+                    bool EndpointTouchesOrdinaryUsecVerticalEndpoint(Point2d candidateEndpoint)
+                    {
+                        const double ordinaryUsecEndpointTouchTol = 0.20;
+                        for (var j = 0; j < roadSegments.Count; j++)
+                        {
+                            if (j == sourceIndex)
+                            {
+                                continue;
+                            }
+
+                            var target = roadSegments[j];
+                            if (!target.Vertical ||
+                                !target.IsUsecLayer ||
+                                target.IsSecLayer ||
+                                target.IsCorrectionZeroLayer)
+                            {
+                                continue;
+                            }
+
+                            if (candidateEndpoint.GetDistanceTo(target.A) <= ordinaryUsecEndpointTouchTol ||
+                                candidateEndpoint.GetDistanceTo(target.B) <= ordinaryUsecEndpointTouchTol)
+                            {
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    }
+
+                    if (EndpointTouchesOrdinaryUsecVerticalEndpoint(endpoint))
+                    {
+                        return false;
+                    }
+
+                    const double supportTouchTol = 0.80;
+                    const double currentGapTarget = 20.11;
+                    const double currentGapTol = 1.25;
+                    const double anchorGapTarget = RoadAllowanceUsecWidthMeters;
+                    const double anchorGapTol = 1.60;
+                    const double moveTarget = CorrectionLinePairGapMeters;
+                    const double moveTol = 1.25;
+                    const double overlapMin = 60.0;
+                    const double parallelDotMin = 0.985;
+
+                    var sourceDir = source.B - source.A;
+                    var sourceLen = sourceDir.Length;
+                    if (sourceLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var sourceUnit = sourceDir / sourceLen;
+                    var found = false;
+                    for (var j = 0; j < supportVerticalSegments.Count; j++)
+                    {
+                        var support = supportVerticalSegments[j];
+                        if (DistancePointToSegment(endpoint, support.A, support.B) > supportTouchTol)
+                        {
+                            continue;
+                        }
+                        for (var k = 0; k < roadSegments.Count; k++)
+                        {
+                            if (k == sourceIndex)
+                            {
+                                continue;
+                            }
+
+                            var target = roadSegments[k];
+                            if (!target.Horizontal || target.IsSecLayer || target.IsCorrectionZeroLayer || !target.IsUsecLayer)
+                            {
+                                continue;
+                            }
+
+                            var targetDir = target.B - target.A;
+                            var targetLen = targetDir.Length;
+                            if (targetLen <= 1e-6)
+                            {
+                                continue;
+                            }
+
+                            var targetUnit = targetDir / targetLen;
+                            if (Math.Abs(targetUnit.DotProduct(sourceUnit)) < parallelDotMin)
+                            {
+                                continue;
+                            }
+
+                            var overlap = Math.Min(source.MajorMax, target.MajorMax) - Math.Max(source.MajorMin, target.MajorMin);
+                            if (overlap < overlapMin)
+                            {
+                                continue;
+                            }
+
+                            var currentGap = Math.Abs(DistancePointToInfiniteLine(endpoint, target.A, target.B));
+                            if (Math.Abs(currentGap - currentGapTarget) > currentGapTol)
+                            {
+                                continue;
+                            }
+
+                            var anchorGap = Math.Abs(DistancePointToInfiniteLine(other, target.A, target.B));
+                            if (Math.Abs(anchorGap - anchorGapTarget) > anchorGapTol)
+                            {
+                                continue;
+                            }
+
+                            var parallelPoint = other + targetUnit;
+                            if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(other, parallelPoint, support.A, support.B, out var candidate))
+                            {
+                                continue;
+                            }
+
+                            if (DistancePointToSegment(candidate, support.A, support.B) > supportTouchTol)
+                            {
+                                continue;
+                            }
+
+                            var moveDistance = endpoint.GetDistanceTo(candidate);
+                            if (Math.Abs(moveDistance - moveTarget) > moveTol)
+                            {
+                                continue;
+                            }
+
+                            var score =
+                                Math.Abs(currentGap - currentGapTarget) +
+                                Math.Abs(anchorGap - anchorGapTarget) +
+                                Math.Abs(moveDistance - moveTarget);
+                            if (score >= stopScore)
+                            {
+                                continue;
+                            }
+
+                            found = true;
+                            stopPoint = candidate;
+                            stopMove = moveDistance;
+                            stopScore = score;
+                        }
+                    }
+
+                    return found;
+                }
+
                 bool HasExistingOppositeConnection(int sourceIndex, Point2d endpoint, Point2d sourceOtherPoint)
                 {
                     const double touchTol = 0.35;
@@ -2861,6 +3290,124 @@ namespace AtsBackgroundBuilder
                     return true;
                 }
 
+                bool TryMoveSourceEndpointAnyDirection(int sourceIndex, Point2d oldEndpoint, Point2d newEndpoint)
+                {
+                    const double endpointTol = 0.35;
+                    const double minMove = 0.05;
+                    if (sourceIndex < 0 || sourceIndex >= roadSegments.Count)
+                    {
+                        return false;
+                    }
+
+                    if (newEndpoint.GetDistanceTo(oldEndpoint) <= minMove)
+                    {
+                        return false;
+                    }
+
+                    var source = roadSegments[sourceIndex];
+                    if (source.Id.IsNull)
+                    {
+                        return false;
+                    }
+
+                    if (!(tr.GetObject(source.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                    {
+                        return false;
+                    }
+
+                    var moved = false;
+                    var newA = source.A;
+                    var newB = source.B;
+                    if (writable is Line ln)
+                    {
+                        var p0 = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+                        var p1 = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+                        var d0 = p0.GetDistanceTo(oldEndpoint);
+                        var d1 = p1.GetDistanceTo(oldEndpoint);
+                        if (d0 > endpointTol && d1 > endpointTol)
+                        {
+                            return false;
+                        }
+
+                        var moveStart = d0 <= d1;
+                        if (moveStart)
+                        {
+                            ln.StartPoint = new Point3d(newEndpoint.X, newEndpoint.Y, ln.StartPoint.Z);
+                            newA = newEndpoint;
+                            newB = p1;
+                        }
+                        else
+                        {
+                            ln.EndPoint = new Point3d(newEndpoint.X, newEndpoint.Y, ln.EndPoint.Z);
+                            newA = p0;
+                            newB = newEndpoint;
+                        }
+
+                        moved = true;
+                    }
+                    else if (writable is Polyline pl && !pl.Closed && pl.NumberOfVertices >= 2)
+                    {
+                        var startIndex = 0;
+                        var endIndex = pl.NumberOfVertices - 1;
+                        var p0 = pl.GetPoint2dAt(startIndex);
+                        var p1 = pl.GetPoint2dAt(endIndex);
+                        var d0 = p0.GetDistanceTo(oldEndpoint);
+                        var d1 = p1.GetDistanceTo(oldEndpoint);
+                        if (d0 > endpointTol && d1 > endpointTol)
+                        {
+                            return false;
+                        }
+
+                        var moveStart = d0 <= d1;
+                        if (moveStart)
+                        {
+                            pl.SetPointAt(startIndex, newEndpoint);
+                            newA = newEndpoint;
+                            newB = p1;
+                        }
+                        else
+                        {
+                            pl.SetPointAt(endIndex, newEndpoint);
+                            newA = p0;
+                            newB = newEndpoint;
+                        }
+
+                        moved = true;
+                    }
+
+                    if (!moved || newA.GetDistanceTo(newB) <= minMove)
+                    {
+                        return false;
+                    }
+
+                    var horizontal = IsHorizontalLikeForQuarterExtensionsConnectivity(newA, newB);
+                    var vertical = IsVerticalLikeForQuarterExtensionsConnectivity(newA, newB);
+                    var axis = horizontal
+                        ? 0.5 * (newA.Y + newB.Y)
+                        : 0.5 * (newA.X + newB.X);
+                    var majorMin = horizontal
+                        ? Math.Min(newA.X, newB.X)
+                        : Math.Min(newA.Y, newB.Y);
+                    var majorMax = horizontal
+                        ? Math.Max(newA.X, newB.X)
+                        : Math.Max(newA.Y, newB.Y);
+                    roadSegments[sourceIndex] = (
+                        source.Id,
+                        newA,
+                        newB,
+                        horizontal,
+                        vertical,
+                        source.IsSecLayer,
+                        source.IsUsecLayer,
+                        source.IsCorrectionZeroLayer,
+                        source.Generated,
+                        axis,
+                        majorMin,
+                        majorMax,
+                        source.Layer);
+                    return true;
+                }
+
                 const double minExtend = 0.05;
                 const double maxExtend = 40.0;
                 const double targetApparentTol = 40.0;
@@ -2879,6 +3426,51 @@ namespace AtsBackgroundBuilder
                         }
 
                         if (DistancePointToSegment(endpoint, target.A, target.B) <= correctionStopTouchTol)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool EndpointTouchesOrdinaryUsecEndpointStop(int sourceIndex, Point2d endpoint)
+                {
+                    const double endpointTol = 0.35;
+                    if (sourceIndex < 0 || sourceIndex >= roadSegments.Count)
+                    {
+                        return false;
+                    }
+
+                    var sourceRole = GetEndpointRole(sourceIndex);
+                    if (sourceRole != endpointRoleZero && sourceRole != endpointRoleTwenty)
+                    {
+                        return false;
+                    }
+
+                    for (var j = 0; j < roadSegments.Count; j++)
+                    {
+                        if (j == sourceIndex)
+                        {
+                            continue;
+                        }
+
+                        var target = roadSegments[j];
+                        if (!target.IsUsecLayer ||
+                            target.IsSecLayer ||
+                            target.IsCorrectionZeroLayer ||
+                            !IsOppositeDirectionTarget(sourceIndex, j))
+                        {
+                            continue;
+                        }
+
+                        if (GetEndpointRole(j) != sourceRole)
+                        {
+                            continue;
+                        }
+
+                        if (endpoint.GetDistanceTo(target.A) <= endpointTol ||
+                            endpoint.GetDistanceTo(target.B) <= endpointTol)
                         {
                             return true;
                         }
@@ -3335,7 +3927,7 @@ namespace AtsBackgroundBuilder
                 {
                     var source = roadSegments[i];
                     var sourceRole = GetEndpointRole(i);
-                    if (sourceRole != endpointRoleZero && sourceRole != endpointRoleTwenty)
+                    if (sourceRole != endpointRoleZero && sourceRole != endpointRoleTwenty && !source.Horizontal)
                     {
                         continue;
                     }
@@ -3350,12 +3942,10 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    // Deterministic ownership: do not drive endpoint extension from horizontal 20.11 sources.
-                    // Their joins are resolved by moving the opposing vertical 20.11/0 boundaries.
-                    if (sourceRole == endpointRoleTwenty && source.Horizontal)
-                    {
-                        continue;
-                    }
+                    // Deterministic ownership: horizontal 20.11 sources can only use the
+                    // dedicated mixed pivot path below, never the broader legacy endpoint rules.
+                    var horizontalTwentySource = sourceRole == endpointRoleTwenty && source.Horizontal;
+                    var horizontalUnknownSource = sourceRole == endpointRoleUnknown && source.Horizontal;
 
                     if (sourceRole == endpointRoleZero)
                     {
@@ -3374,6 +3964,74 @@ namespace AtsBackgroundBuilder
                         var outward = endpoint - other;
                         if (outward.Length <= 1e-6)
                         {
+                            continue;
+                        }
+
+                        if (TryFindMixedBlindInsetRetreatStop(i, endpoint, other, out var mixedBlindInsetRetreatStop, out var mixedBlindInsetRetreatAlong, out var mixedBlindInsetRetreatScore))
+                        {
+                            if (TryExtendSourceEndpoint(i, endpoint, mixedBlindInsetRetreatStop))
+                            {
+                                extended++;
+                                extendedInPlace++;
+                                logger?.WriteLine(
+                                    $"Cleanup: mixed blind inset retreat normalize source={source.Layer} role={sourceRole} " +
+                                    $"seg={source.A.X:0.###},{source.A.Y:0.###}->{source.B.X:0.###},{source.B.Y:0.###} " +
+                                    $"endpoint={endpoint.X:0.###},{endpoint.Y:0.###} target={mixedBlindInsetRetreatStop.X:0.###},{mixedBlindInsetRetreatStop.Y:0.###} " +
+                                    $"along={mixedBlindInsetRetreatAlong:0.###} score={mixedBlindInsetRetreatScore:0.###}.");
+                                source = roadSegments[i];
+                            }
+                            else if (endpoint.GetDistanceTo(mixedBlindInsetRetreatStop) <= correctionStopTouchTol)
+                            {
+                                alreadyConnected++;
+                            }
+
+                            continue;
+                        }
+
+                        if (TryFindMixedBlindInsetPivotStop(i, endpoint, other, out var mixedBlindPivotStop, out var mixedBlindPivotMove, out var mixedBlindPivotScore))
+                        {
+                            if (TryMoveSourceEndpointAnyDirection(i, endpoint, mixedBlindPivotStop))
+                            {
+                                extended++;
+                                extendedInPlace++;
+                                logger?.WriteLine(
+                                    $"Cleanup: mixed blind inset pivot normalize source={source.Layer} role={sourceRole} " +
+                                    $"seg={source.A.X:0.###},{source.A.Y:0.###}->{source.B.X:0.###},{source.B.Y:0.###} " +
+                                    $"endpoint={endpoint.X:0.###},{endpoint.Y:0.###} target={mixedBlindPivotStop.X:0.###},{mixedBlindPivotStop.Y:0.###} " +
+                                    $"move={mixedBlindPivotMove:0.###} score={mixedBlindPivotScore:0.###}.");
+                                source = roadSegments[i];
+                            }
+                            else if (endpoint.GetDistanceTo(mixedBlindPivotStop) <= correctionStopTouchTol)
+                            {
+                                alreadyConnected++;
+                            }
+
+                            continue;
+                        }
+
+                        if (horizontalTwentySource || horizontalUnknownSource)
+                        {
+                            continue;
+                        }
+
+                        if (TryFindMixedBlindInsetStop(i, endpoint, other, out var mixedBlindStop, out var mixedBlindAlong, out var mixedBlindScore))
+                        {
+                            if (TryExtendSourceEndpoint(i, endpoint, mixedBlindStop))
+                            {
+                                extended++;
+                                extendedInPlace++;
+                                logger?.WriteLine(
+                                    $"Cleanup: mixed blind inset stop normalize source={source.Layer} role={sourceRole} " +
+                                    $"seg={source.A.X:0.###},{source.A.Y:0.###}->{source.B.X:0.###},{source.B.Y:0.###} " +
+                                    $"endpoint={endpoint.X:0.###},{endpoint.Y:0.###} target={mixedBlindStop.X:0.###},{mixedBlindStop.Y:0.###} " +
+                                    $"along={mixedBlindAlong:0.###} score={mixedBlindScore:0.###}.");
+                                source = roadSegments[i];
+                            }
+                            else if (endpoint.GetDistanceTo(mixedBlindStop) <= correctionStopTouchTol)
+                            {
+                                alreadyConnected++;
+                            }
+
                             continue;
                         }
 
@@ -3414,6 +4072,12 @@ namespace AtsBackgroundBuilder
 
                         var outwardUnit = outward / outward.Length;
                         if (HasExistingOppositeConnection(i, endpoint, other))
+                        {
+                            alreadyConnected++;
+                            continue;
+                        }
+
+                        if (EndpointTouchesOrdinaryUsecEndpointStop(i, endpoint))
                         {
                             alreadyConnected++;
                             continue;
@@ -5723,6 +6387,1008 @@ namespace AtsBackgroundBuilder
             // SE specific duplicate cleanup: equal-length blind-line twins can remain after SE connect.
             CleanupDuplicateBlindLineSegments(database, targetSectionIds, logger);
             return protectedBoundaryIds;
+        }
+
+        private static void RestoreMixedNorthRoadAllowanceBands(
+            Database database,
+            IEnumerable<QuarterLabelInfo> labelQuarterInfos,
+            IReadOnlyCollection<ObjectId> generatedRoadAllowanceIds,
+            Logger? logger)
+        {
+            if (database == null || labelQuarterInfos == null || generatedRoadAllowanceIds == null || generatedRoadAllowanceIds.Count == 0)
+            {
+                return;
+            }
+
+            var targetInfos = labelQuarterInfos
+                .Where(info =>
+                    info != null &&
+                    !info.SectionPolylineId.IsNull)
+                .GroupBy(info => info.SectionPolylineId)
+                .Select(g => g.First())
+                .ToList();
+            if (targetInfos.Count == 0)
+            {
+                logger?.WriteLine("Cleanup: mixed north band restore skipped (no north-row section info).");
+                return;
+            }
+
+            var sectionTargets = new List<(ObjectId SectionId, Point2d SwCorner, Vector2d EastUnit, Vector2d NorthUnit, double Height, Extents3d Window)>();
+            var clipWindows = new List<Extents3d>();
+            const double northWindowBuffer = 120.0;
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                foreach (var info in targetInfos)
+                {
+                    if (!(tr.GetObject(info.SectionPolylineId, OpenMode.ForRead, false) is Polyline section) || section.IsErased)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        var ext = section.GeometricExtents;
+                        if (!TryGetQuarterAnchors(section, out var sectionAnchors))
+                        {
+                            sectionAnchors = GetFallbackAnchors(section);
+                        }
+
+                        var eastUnit = GetUnitVector(sectionAnchors.Left, sectionAnchors.Right, new Vector2d(1.0, 0.0));
+                        var northUnit = GetUnitVector(sectionAnchors.Bottom, sectionAnchors.Top, new Vector2d(0.0, 1.0));
+                        var height = sectionAnchors.Bottom.GetDistanceTo(sectionAnchors.Top);
+                        if (height <= 1e-6)
+                        {
+                            height = Math.Abs(ext.MaxPoint.Y - ext.MinPoint.Y);
+                        }
+
+                        Point2d swCorner;
+                        if (!TryGetQuarterCorner(section, eastUnit, northUnit, QuarterCorner.SouthWest, out swCorner))
+                        {
+                            swCorner = new Point2d(ext.MinPoint.X, ext.MinPoint.Y);
+                        }
+
+                        var midY = 0.5 * (ext.MinPoint.Y + ext.MaxPoint.Y);
+                        var northWindow = new Extents3d(
+                            new Point3d(ext.MinPoint.X - northWindowBuffer, midY - northWindowBuffer, 0.0),
+                            new Point3d(ext.MaxPoint.X + northWindowBuffer, ext.MaxPoint.Y + northWindowBuffer, 0.0));
+                        clipWindows.Add(northWindow);
+                        sectionTargets.Add((info.SectionPolylineId, swCorner, eastUnit, northUnit, height, northWindow));
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            if (sectionTargets.Count == 0 || clipWindows.Count == 0)
+            {
+                logger?.WriteLine("Cleanup: mixed north band restore skipped (no north windows).");
+                return;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForQuarterExtensionsConnectivity(a, b, clipWindows);
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var modelSpace = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
+
+                bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) =>
+                    TryReadOpenSegmentForQuarterExtensionsConnectivity(ent, allowCollinearOpenPolyline: false, out a, out b);
+
+                bool TryMoveEndpoint(ObjectId id, bool moveStart, Point2d target, double moveTol)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                    {
+                        return false;
+                    }
+
+                    return TryMoveEndpointForQuarterExtensionsConnectivity(writable, moveStart, target, moveTol);
+                }
+
+                bool TryAddConnector(Point2d from, Point2d to, string layerName)
+                {
+                    if (from.GetDistanceTo(to) <= 0.10)
+                    {
+                        return false;
+                    }
+
+                    try
+                    {
+                        var connector = new Line(
+                            new Point3d(from.X, from.Y, 0.0),
+                            new Point3d(to.X, to.Y, 0.0))
+                        {
+                            Layer = layerName
+                        };
+
+                        modelSpace.AppendEntity(connector);
+                        tr.AddNewlyCreatedDBObject(connector, true);
+                        return true;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                }
+
+                var restoredNorthTwenty = 0;
+                var restoredNorthTwentyVerticals = 0;
+                var movedNorthZeroEndpoints = 0;
+                var movedNorthZeroRowEndpoints = 0;
+
+                foreach (var sectionTarget in sectionTargets)
+                {
+                    var sectionNumber = ParseSectionNumber(targetInfos.First(info => info.SectionPolylineId == sectionTarget.SectionId).SectionKey.Section);
+                    var swCorner = sectionTarget.SwCorner;
+                    var eastUnit = sectionTarget.EastUnit;
+                    var northUnit = sectionTarget.NorthUnit;
+                    var topV = sectionTarget.Height;
+
+                    var horizontals = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, bool IsSec, bool IsZero, bool IsTwenty, bool IsThirty, bool IsGenerated)>();
+                    var verticals = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, bool IsZero, bool IsTwenty)>();
+
+                    foreach (ObjectId id in modelSpace)
+                    {
+                        if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) || ent.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenSegment(ent, out var a, out var b) || !DoesSegmentIntersectAnyWindow(a, b))
+                        {
+                            continue;
+                        }
+
+                        if (!DoesSegmentIntersectWindowForQuarterExtensionsConnectivity(a, b, sectionTarget.Window))
+                        {
+                            continue;
+                        }
+
+                        var layerName = ent.Layer ?? string.Empty;
+                        var isSec = string.Equals(layerName, "L-SEC", StringComparison.OrdinalIgnoreCase);
+                        var isZero = string.Equals(layerName, LayerUsecZero, StringComparison.OrdinalIgnoreCase);
+                        var isTwenty =
+                            string.Equals(layerName, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(layerName, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+                        var isThirty = string.Equals(layerName, LayerUsecThirty, StringComparison.OrdinalIgnoreCase);
+                        if (!isSec && !isZero && !isTwenty && !isThirty)
+                        {
+                            continue;
+                        }
+
+                        if (IsHorizontalLikeForQuarterExtensionsConnectivity(a, b))
+                        {
+                            horizontals.Add((id, layerName, a, b, isSec, isZero, isTwenty, isThirty, generatedSet.Contains(id)));
+                        }
+                        else if (IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
+                        {
+                            verticals.Add((id, layerName, a, b, isZero, isTwenty));
+                        }
+                    }
+
+                    if (horizontals.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    double U(Point2d p) => ProjectPointToSectionU(swCorner, eastUnit, p);
+                    double V(Point2d p) => ProjectPointToSectionV(swCorner, northUnit, p);
+                    bool FirstPointIsWest(Point2d p0, Point2d p1) => U(p0) <= U(p1);
+                    Point2d TopBandEndpoint(Point2d p0, Point2d p1)
+                    {
+                        var d0 = Math.Abs(V(p0) - topV);
+                        var d1 = Math.Abs(V(p1) - topV);
+                        if (d0 < d1)
+                        {
+                            return p0;
+                        }
+
+                        if (d1 < d0)
+                        {
+                            return p1;
+                        }
+
+                        return V(p0) >= V(p1) ? p0 : p1;
+                    }
+
+                    var topHorizontals = horizontals
+                        .Where(h =>
+                        {
+                            var vLine = 0.5 * (V(h.A) + V(h.B));
+                            return vLine >= (topV - 45.0) && vLine <= (topV + 45.0);
+                        })
+                        .ToList();
+                    if (topHorizontals.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    bool HasNearSegment(string layerName, Point2d a, Point2d b, double endpointTol)
+                    {
+                        foreach (ObjectId id in modelSpace)
+                        {
+                            if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) || ent.IsErased)
+                            {
+                                continue;
+                            }
+
+                            if (!string.Equals(ent.Layer ?? string.Empty, layerName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+
+                            if (!TryReadOpenSegment(ent, out var segA, out var segB))
+                            {
+                                continue;
+                            }
+
+                            if (AreSegmentEndpointsNear(segA, segB, a, b, endpointTol))
+                            {
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    }
+
+                    const double thirtyToSecGapTarget = CorrectionLinePairGapMeters;
+                    const double thirtyToSecGapTol = 2.0;
+                    const double secToZeroGapTarget = RoadAllowanceSecWidthMeters;
+                    const double secToZeroGapTol = 2.0;
+                    const double thirtyToZeroGapTarget = RoadAllowanceSecWidthMeters + CorrectionLinePairGapMeters;
+                    const double thirtyToZeroGapTol = 2.0;
+                    const double northTwentyCreateMinLen = 20.0;
+                    const double northTwentyCreateMaxLen = 1200.0;
+                    const double northRowTol = 1.5;
+                    const double endpointSnapTol = 25.0;
+
+                    foreach (var secRow in topHorizontals.Where(h => h.IsSec).OrderBy(h => Math.Min(U(h.A), U(h.B))))
+                    {
+                        var secWest = FirstPointIsWest(secRow.A, secRow.B) ? secRow.A : secRow.B;
+                        var secEast = FirstPointIsWest(secRow.A, secRow.B) ? secRow.B : secRow.A;
+                        var secWestU = U(secWest);
+                        var secEastU = U(secEast);
+                        if ((secEastU - secWestU) < 40.0)
+                        {
+                            continue;
+                        }
+
+                        var thirtyRow = topHorizontals
+                            .Where(h => h.IsThirty)
+                            .Select(h =>
+                            {
+                                var eastPoint = FirstPointIsWest(h.A, h.B) ? h.B : h.A;
+                                var westPoint = FirstPointIsWest(h.A, h.B) ? h.A : h.B;
+                                var gapToSec = DistancePointToInfiniteLine(secWest, h.A, h.B);
+                                return new
+                                {
+                                    Row = h,
+                                    EastPoint = eastPoint,
+                                    WestPoint = westPoint,
+                                    GapToSec = gapToSec,
+                                    EndpointGap = eastPoint.GetDistanceTo(secWest),
+                                    Overlap = Math.Min(U(eastPoint), secEastU) - Math.Max(U(westPoint), secWestU - 900.0)
+                                };
+                            })
+                            .Where(c =>
+                                Math.Abs(c.GapToSec - thirtyToSecGapTarget) <= thirtyToSecGapTol &&
+                                c.EndpointGap <= endpointSnapTol &&
+                                c.Overlap >= 60.0)
+                            .OrderBy(c => c.EndpointGap)
+                            .ThenBy(c => Math.Abs(c.GapToSec - thirtyToSecGapTarget))
+                            .FirstOrDefault();
+                        if (thirtyRow == null)
+                        {
+                            continue;
+                        }
+
+                        var zeroRow = topHorizontals
+                            .Where(h => h.IsZero)
+                            .Select(h =>
+                            {
+                                var eastPoint = FirstPointIsWest(h.A, h.B) ? h.B : h.A;
+                                var westPoint = FirstPointIsWest(h.A, h.B) ? h.A : h.B;
+                                var gapToSec = DistancePointToInfiniteLine(secWest, h.A, h.B);
+                                var gapToThirty = DistancePointToInfiniteLine(h.A, thirtyRow.Row.A, thirtyRow.Row.B);
+                                return new
+                                {
+                                    Row = h,
+                                    EastPoint = eastPoint,
+                                    WestPoint = westPoint,
+                                    GapToSec = gapToSec,
+                                    GapToThirty = gapToThirty,
+                                    EastGap = Math.Abs(U(eastPoint) - secWestU),
+                                    Overlap = Math.Min(U(eastPoint), secWestU + 5.0) - Math.Max(U(westPoint), U(thirtyRow.WestPoint) - 50.0)
+                                };
+                            })
+                            .Where(c =>
+                                Math.Abs(c.GapToSec - secToZeroGapTarget) <= secToZeroGapTol &&
+                                Math.Abs(c.GapToThirty - thirtyToZeroGapTarget) <= thirtyToZeroGapTol &&
+                                c.EastGap <= endpointSnapTol &&
+                                c.Overlap >= 40.0)
+                            .OrderBy(c => c.EastGap)
+                            .ThenBy(c => Math.Abs(c.GapToSec - secToZeroGapTarget))
+                            .FirstOrDefault();
+                        if (zeroRow == null)
+                        {
+                            continue;
+                        }
+
+                        var twentyAnchor = verticals
+                            .Where(v => v.IsTwenty)
+                            .Select(v =>
+                            {
+                                var northPoint = TopBandEndpoint(v.A, v.B);
+                                var southPoint = northPoint.GetDistanceTo(v.A) <= northPoint.GetDistanceTo(v.B) ? v.B : v.A;
+                                var gapToSec = DistancePointToInfiniteLine(northPoint, secRow.A, secRow.B);
+                                var gapToThirty = DistancePointToInfiniteLine(northPoint, thirtyRow.Row.A, thirtyRow.Row.B);
+                                var gapToZero = DistancePointToInfiniteLine(northPoint, zeroRow.Row.A, zeroRow.Row.B);
+                                return new
+                                {
+                                    Vertical = v,
+                                    NorthPoint = northPoint,
+                                    SouthPoint = southPoint,
+                                    GapToSec = gapToSec,
+                                    GapToThirty = gapToThirty,
+                                    GapToZero = gapToZero,
+                                    WestGap = secWestU - U(northPoint)
+                                };
+                            })
+                            .Where(c =>
+                                c.WestGap >= 5.0 &&
+                                c.WestGap <= 1200.0 &&
+                                c.GapToSec <= northRowTol &&
+                                Math.Abs(c.GapToThirty - thirtyToSecGapTarget) <= thirtyToSecGapTol &&
+                                Math.Abs(c.GapToZero - secToZeroGapTarget) <= secToZeroGapTol)
+                            .OrderBy(c => c.WestGap)
+                            .ThenBy(c => c.GapToSec)
+                            .FirstOrDefault();
+                        if (twentyAnchor == null)
+                        {
+                            continue;
+                        }
+
+                        var connectorLength = twentyAnchor.NorthPoint.GetDistanceTo(secWest);
+                        if (connectorLength < northTwentyCreateMinLen || connectorLength > northTwentyCreateMaxLen)
+                        {
+                            continue;
+                        }
+
+                        if (HasNearSegment(LayerUsecTwenty, twentyAnchor.NorthPoint, secWest, 0.75) ||
+                            HasNearSegment("L-USEC-2012", twentyAnchor.NorthPoint, secWest, 0.75))
+                        {
+                            continue;
+                        }
+
+                        if (TryAddConnector(twentyAnchor.NorthPoint, secWest, LayerUsecTwenty))
+                        {
+                            restoredNorthTwenty++;
+                            logger?.WriteLine(
+                                $"Cleanup: restored mixed north L-USEC2012 connector sec={ParseSectionNumber(targetInfos.First(info => info.SectionPolylineId == sectionTarget.SectionId).SectionKey.Section)} " +
+                                $"from={twentyAnchor.NorthPoint.X:0.###},{twentyAnchor.NorthPoint.Y:0.###} " +
+                                $"to={secWest.X:0.###},{secWest.Y:0.###}.");
+                        }
+                    }
+
+                    const double zeroPairCollinearTol = 0.75;
+                    const double zeroGapMin = 0.5;
+                    const double zeroGapMax = 60.0;
+                    const double zeroJoinMoveMax = 40.0;
+                    const double splitGapTarget = CorrectionLinePairGapMeters;
+                    const double splitGapTol = 2.0;
+
+                    var zeroRows = topHorizontals.Where(h => h.IsZero).ToList();
+                    for (var i = 0; i < zeroRows.Count; i++)
+                    {
+                        var leftRow = zeroRows[i];
+                        var leftWest = FirstPointIsWest(leftRow.A, leftRow.B) ? leftRow.A : leftRow.B;
+                        var leftEast = FirstPointIsWest(leftRow.A, leftRow.B) ? leftRow.B : leftRow.A;
+                        var leftMaxU = U(leftEast);
+                        for (var j = i + 1; j < zeroRows.Count; j++)
+                        {
+                            var rightRow = zeroRows[j];
+                            var rightWest = FirstPointIsWest(rightRow.A, rightRow.B) ? rightRow.A : rightRow.B;
+                            var rightEast = FirstPointIsWest(rightRow.A, rightRow.B) ? rightRow.B : rightRow.A;
+                            if (U(rightWest) < U(leftWest))
+                            {
+                                (leftRow, rightRow) = (rightRow, leftRow);
+                                (leftWest, rightWest) = (rightWest, leftWest);
+                                (leftEast, rightEast) = (rightEast, leftEast);
+                                leftMaxU = U(leftEast);
+                            }
+
+                            if (DistancePointToInfiniteLine(rightWest, leftRow.A, leftRow.B) > zeroPairCollinearTol ||
+                                DistancePointToInfiniteLine(rightEast, leftRow.A, leftRow.B) > zeroPairCollinearTol)
+                            {
+                                continue;
+                            }
+
+                            var rightMinU = U(rightWest);
+                            var zeroGap = rightMinU - leftMaxU;
+                            if (zeroGap < zeroGapMin || zeroGap > zeroGapMax)
+                            {
+                                continue;
+                            }
+
+                            var zeroUpperVertical = verticals
+                                .Where(v => v.IsZero)
+                                .Select(v =>
+                                {
+                                    var northPoint = TopBandEndpoint(v.A, v.B);
+                                    if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(leftRow.A, leftRow.B, v.A, v.B, out var projected))
+                                    {
+                                        return new { Valid = false, Vertical = v, NorthPoint = northPoint, Projected = default(Point2d), Move = double.MaxValue };
+                                    }
+
+                                    return new
+                                    {
+                                        Valid = true,
+                                        Vertical = v,
+                                        NorthPoint = northPoint,
+                                        Projected = projected,
+                                        Move = northPoint.GetDistanceTo(projected)
+                                    };
+                                })
+                                .Where(c =>
+                                    c.Valid &&
+                                    c.Move >= 0.10 &&
+                                    c.Move <= zeroJoinMoveMax &&
+                                    c.NorthPoint.GetDistanceTo(rightWest) <= endpointSnapTol &&
+                                    U(c.Projected) >= (leftMaxU - 1.0) &&
+                                    U(c.Projected) <= (rightMinU + zeroJoinMoveMax))
+                                .OrderBy(c => c.Move)
+                                .FirstOrDefault();
+                            if (zeroUpperVertical == null)
+                            {
+                                continue;
+                            }
+
+                            var zeroJoin = zeroUpperVertical.Projected;
+
+                            var twentyVertical = verticals
+                                .Where(v => v.IsTwenty)
+                                .Select(v =>
+                                {
+                                    var northPoint = TopBandEndpoint(v.A, v.B);
+                                    if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(leftRow.A, leftRow.B, v.A, v.B, out var projected))
+                                    {
+                                        return new { Valid = false, Vertical = v, NorthPoint = northPoint, Projected = default(Point2d), GapToZeroJoin = double.MaxValue };
+                                    }
+
+                                    return new
+                                    {
+                                        Valid = true,
+                                        Vertical = v,
+                                        NorthPoint = northPoint,
+                                        Projected = projected,
+                                        GapToZeroJoin = zeroJoin.GetDistanceTo(projected)
+                                    };
+                                })
+                                .Where(c =>
+                                    c.Valid &&
+                                    c.NorthPoint.GetDistanceTo(c.Projected) > 20.0 &&
+                                    c.NorthPoint.GetDistanceTo(c.Projected) <= 1200.0 &&
+                                    U(c.Projected) >= (leftMaxU - 1.0) &&
+                                    U(c.Projected) <= (U(zeroJoin) + 1.0) &&
+                                    Math.Abs(c.GapToZeroJoin - splitGapTarget) <= splitGapTol)
+                                .OrderBy(c => Math.Abs(c.GapToZeroJoin - splitGapTarget))
+                                .ThenBy(c => c.NorthPoint.GetDistanceTo(c.Projected))
+                                .FirstOrDefault();
+                            if (twentyVertical == null)
+                            {
+                                continue;
+                            }
+
+                            var zeroMoveStart =
+                                zeroUpperVertical.NorthPoint.GetDistanceTo(zeroUpperVertical.Vertical.A) <=
+                                zeroUpperVertical.NorthPoint.GetDistanceTo(zeroUpperVertical.Vertical.B);
+                            if (TryMoveEndpoint(zeroUpperVertical.Vertical.Id, zeroMoveStart, zeroJoin, 0.05))
+                            {
+                                movedNorthZeroEndpoints++;
+                            }
+
+                            var rightRowMoveStart =
+                                rightWest.GetDistanceTo(rightRow.A) <=
+                                rightWest.GetDistanceTo(rightRow.B);
+                            if (TryMoveEndpoint(rightRow.Id, rightRowMoveStart, twentyVertical.Projected, 0.05))
+                            {
+                                movedNorthZeroRowEndpoints++;
+                            }
+
+                            if (!HasNearSegment(LayerUsecTwenty, twentyVertical.NorthPoint, twentyVertical.Projected, 0.75) &&
+                                !HasNearSegment("L-USEC-2012", twentyVertical.NorthPoint, twentyVertical.Projected, 0.75) &&
+                                TryAddConnector(twentyVertical.NorthPoint, twentyVertical.Projected, LayerUsecTwenty))
+                            {
+                                restoredNorthTwentyVerticals++;
+                                logger?.WriteLine(
+                                    $"Cleanup: restored mixed north vertical L-USEC2012 connector from={twentyVertical.NorthPoint.X:0.###},{twentyVertical.NorthPoint.Y:0.###} " +
+                                    $"to={twentyVertical.Projected.X:0.###},{twentyVertical.Projected.Y:0.###} with zeroJoin={zeroJoin.X:0.###},{zeroJoin.Y:0.###}.");
+                            }
+
+                            i = zeroRows.Count;
+                            break;
+                        }
+                    }
+                }
+
+                const double mixedNorthSplitCompanionGapMin = 0.5;
+                const double mixedNorthSplitCompanionGapMax = 60.0;
+                const double mixedNorthSplitCollinearTol = 0.75;
+                const double mixedNorthSplitMoveMax = 40.0;
+                const double mixedNorthSplitEndpointTol = 25.0;
+                const double mixedNorthSplitGapTarget = CorrectionLinePairGapMeters;
+                const double mixedNorthSplitGapTol = 2.0;
+
+                Point2d WestByX(Point2d p0, Point2d p1) => p0.X <= p1.X ? p0 : p1;
+                Point2d EastByX(Point2d p0, Point2d p1) => p0.X > p1.X ? p0 : p1;
+                Point2d NorthByY(Point2d p0, Point2d p1) => p0.Y >= p1.Y ? p0 : p1;
+                bool HasNearSegmentGlobal(string layerName, Point2d a, Point2d b, double endpointTol)
+                {
+                    foreach (ObjectId id in modelSpace)
+                    {
+                        if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) || ent.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!string.Equals(ent.Layer ?? string.Empty, layerName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenSegment(ent, out var segA, out var segB))
+                        {
+                            continue;
+                        }
+
+                        if (AreSegmentEndpointsNear(segA, segB, a, b, endpointTol))
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                var globalZeroRows = new List<(ObjectId Id, Point2d A, Point2d B)>();
+                var globalSecRows = new List<(ObjectId Id, Point2d A, Point2d B)>();
+                var globalZeroVerticals = new List<(ObjectId Id, Point2d A, Point2d B)>();
+                var globalTwentyVerticals = new List<(ObjectId Id, Point2d A, Point2d B)>();
+                var globalThirtyVerticals = new List<(ObjectId Id, Point2d A, Point2d B)>();
+
+                void RefreshGlobalMixedNorthSegments()
+                {
+                    globalZeroRows.Clear();
+                    globalSecRows.Clear();
+                    globalZeroVerticals.Clear();
+                    globalTwentyVerticals.Clear();
+                    globalThirtyVerticals.Clear();
+
+                    foreach (ObjectId id in modelSpace)
+                    {
+                        if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) || ent.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenSegment(ent, out var a, out var b) || !DoesSegmentIntersectAnyWindow(a, b))
+                        {
+                            continue;
+                        }
+
+                        var layerName = ent.Layer ?? string.Empty;
+                        if (string.Equals(layerName, LayerUsecZero, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (IsHorizontalLikeForQuarterExtensionsConnectivity(a, b))
+                            {
+                                globalZeroRows.Add((id, a, b));
+                            }
+                            else if (IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
+                            {
+                                globalZeroVerticals.Add((id, a, b));
+                            }
+                        }
+                        else if (string.Equals(layerName, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (IsHorizontalLikeForQuarterExtensionsConnectivity(a, b))
+                            {
+                                globalSecRows.Add((id, a, b));
+                            }
+                        }
+                        else if (
+                            string.Equals(layerName, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(layerName, "L-USEC-2012", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
+                            {
+                                globalTwentyVerticals.Add((id, a, b));
+                            }
+                        }
+                        else if (string.Equals(layerName, LayerUsecThirty, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (IsVerticalLikeForQuarterExtensionsConnectivity(a, b))
+                            {
+                                globalThirtyVerticals.Add((id, a, b));
+                            }
+                        }
+                    }
+
+                }
+
+                RefreshGlobalMixedNorthSegments();
+
+                foreach (var rightRow in globalZeroRows)
+                {
+                    var rightWest = WestByX(rightRow.A, rightRow.B);
+                    var rightEast = EastByX(rightRow.A, rightRow.B);
+                    var rowDirection = rightEast - rightWest;
+                    var rowLength = rowDirection.Length;
+                    if (rowLength <= 1e-6)
+                    {
+                        continue;
+                    }
+
+                    var rowUnit = rowDirection / rowLength;
+                    var hasWestCompanion = globalZeroRows.Any(candidate =>
+                    {
+                        if (candidate.Id == rightRow.Id)
+                        {
+                            return false;
+                        }
+
+                        var candidateEast = EastByX(candidate.A, candidate.B);
+                        if (DistancePointToInfiniteLine(candidateEast, rightRow.A, rightRow.B) > mixedNorthSplitCollinearTol)
+                        {
+                            return false;
+                        }
+
+                        var alongGap = (rightWest - candidateEast).DotProduct(rowUnit);
+                        return alongGap >= mixedNorthSplitCompanionGapMin && alongGap <= mixedNorthSplitCompanionGapMax;
+                    });
+                    if (!hasWestCompanion)
+                    {
+                        continue;
+                    }
+
+                    var thirtyUpperVertical = globalThirtyVerticals
+                        .Select(v =>
+                        {
+                            var northPoint = NorthByY(v.A, v.B);
+                            if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(rightRow.A, rightRow.B, v.A, v.B, out var projected))
+                            {
+                                return new { Valid = false, Vertical = v, NorthPoint = northPoint, Projected = default(Point2d), Rise = double.MaxValue, Along = double.MaxValue };
+                            }
+
+                            return new
+                            {
+                                Valid = true,
+                                Vertical = v,
+                                NorthPoint = northPoint,
+                                Projected = projected,
+                                Rise = northPoint.GetDistanceTo(projected),
+                                Along = (projected - rightWest).DotProduct(rowUnit)
+                            };
+                        })
+                        .Where(c =>
+                            c.Valid &&
+                            c.Rise > 20.0 &&
+                            c.Rise <= 1200.0 &&
+                            c.Along >= 0.10 &&
+                            c.Along <= (rowLength + mixedNorthSplitMoveMax))
+                        .OrderBy(c => c.Along)
+                        .FirstOrDefault();
+                    if (thirtyUpperVertical == null)
+                    {
+                        continue;
+                    }
+
+                    var zeroJoin = thirtyUpperVertical.Projected;
+                    var zeroJoinAlong = (zeroJoin - rightWest).DotProduct(rowUnit);
+                    var zeroUpperVertical = globalZeroVerticals
+                        .Select(v =>
+                        {
+                            var northPoint = NorthByY(v.A, v.B);
+                            var southPoint = northPoint.GetDistanceTo(v.A) <= northPoint.GetDistanceTo(v.B) ? v.B : v.A;
+                            return new
+                            {
+                                Vertical = v,
+                                NorthPoint = northPoint,
+                                SouthPoint = southPoint,
+                                MoveToJoin = northPoint.GetDistanceTo(zeroJoin)
+                            };
+                        })
+                        .Where(c =>
+                            c.NorthPoint.GetDistanceTo(rightWest) <= mixedNorthSplitEndpointTol &&
+                            c.SouthPoint.GetDistanceTo(thirtyUpperVertical.NorthPoint) <= mixedNorthSplitEndpointTol &&
+                            c.MoveToJoin >= 0.10 &&
+                            c.MoveToJoin <= mixedNorthSplitMoveMax)
+                        .OrderBy(c => c.MoveToJoin)
+                        .ThenBy(c => c.NorthPoint.GetDistanceTo(rightWest))
+                        .FirstOrDefault();
+                    if (zeroUpperVertical == null)
+                    {
+                        continue;
+                    }
+
+                    var twentyVertical = globalTwentyVerticals
+                        .Select(v =>
+                        {
+                            var northPoint = NorthByY(v.A, v.B);
+                            if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(rightRow.A, rightRow.B, v.A, v.B, out var projected))
+                            {
+                                return new { Valid = false, Vertical = v, NorthPoint = northPoint, Projected = default(Point2d), GapToZeroJoin = double.MaxValue, Along = double.MaxValue };
+                            }
+
+                            return new
+                            {
+                                Valid = true,
+                                Vertical = v,
+                                NorthPoint = northPoint,
+                                Projected = projected,
+                                GapToZeroJoin = zeroJoin.GetDistanceTo(projected),
+                                Along = (projected - rightWest).DotProduct(rowUnit)
+                            };
+                        })
+                        .Where(c =>
+                            c.Valid &&
+                            c.NorthPoint.GetDistanceTo(c.Projected) > 20.0 &&
+                            c.NorthPoint.GetDistanceTo(c.Projected) <= 1200.0 &&
+                            c.Along >= -1.0 &&
+                            c.Along <= (zeroJoinAlong + 1.0) &&
+                            Math.Abs(c.GapToZeroJoin - mixedNorthSplitGapTarget) <= mixedNorthSplitGapTol &&
+                            DistancePointToInfiniteLine(c.Projected, rightRow.A, rightRow.B) <= mixedNorthSplitCollinearTol)
+                        .OrderBy(c => Math.Abs(c.GapToZeroJoin - mixedNorthSplitGapTarget))
+                        .ThenBy(c => c.NorthPoint.GetDistanceTo(c.Projected))
+                        .FirstOrDefault();
+                    if (twentyVertical == null)
+                    {
+                        continue;
+                    }
+
+                    var zeroMoveStart =
+                        zeroUpperVertical.NorthPoint.GetDistanceTo(zeroUpperVertical.Vertical.A) <=
+                        zeroUpperVertical.NorthPoint.GetDistanceTo(zeroUpperVertical.Vertical.B);
+                    if (TryMoveEndpoint(zeroUpperVertical.Vertical.Id, zeroMoveStart, zeroJoin, 0.05))
+                    {
+                        movedNorthZeroEndpoints++;
+                    }
+
+                    var rightRowMoveStart =
+                        rightWest.GetDistanceTo(rightRow.A) <=
+                        rightWest.GetDistanceTo(rightRow.B);
+                    if (TryMoveEndpoint(rightRow.Id, rightRowMoveStart, twentyVertical.Projected, 0.05))
+                    {
+                        movedNorthZeroRowEndpoints++;
+                    }
+
+                    if (!HasNearSegmentGlobal(LayerUsecTwenty, twentyVertical.NorthPoint, twentyVertical.Projected, 0.75) &&
+                        !HasNearSegmentGlobal("L-USEC-2012", twentyVertical.NorthPoint, twentyVertical.Projected, 0.75) &&
+                        TryAddConnector(twentyVertical.NorthPoint, twentyVertical.Projected, LayerUsecTwenty))
+                    {
+                        restoredNorthTwentyVerticals++;
+                        logger?.WriteLine(
+                            $"Cleanup: restored mixed north vertical L-USEC2012 connector from={twentyVertical.NorthPoint.X:0.###},{twentyVertical.NorthPoint.Y:0.###} " +
+                            $"to={twentyVertical.Projected.X:0.###},{twentyVertical.Projected.Y:0.###} with zeroJoin={zeroJoin.X:0.###},{zeroJoin.Y:0.###}.");
+                    }
+
+                    if (restoredNorthTwentyVerticals > 0 || movedNorthZeroEndpoints > 0)
+                    {
+                        break;
+                    }
+                }
+
+                RefreshGlobalMixedNorthSegments();
+
+                const double mixedNorthHorizontalRetargetGapTarget = RoadAllowanceSecWidthMeters;
+                const double mixedNorthHorizontalRetargetGapTol = 2.0;
+                const double mixedNorthHorizontalRetargetMoveMax = 40.0;
+                const double mixedNorthSecToZeroTouchTol = 0.75;
+                foreach (var rightRow in globalZeroRows)
+                {
+                    var rightWest = WestByX(rightRow.A, rightRow.B);
+                    var rightEast = EastByX(rightRow.A, rightRow.B);
+                    var rowDirection = rightEast - rightWest;
+                    var rowLength = rowDirection.Length;
+                    if (rowLength <= 1e-6)
+                    {
+                        continue;
+                    }
+
+                    var rowUnit = rowDirection / rowLength;
+                    var hasWestCompanion = globalZeroRows.Any(candidate =>
+                    {
+                        if (candidate.Id == rightRow.Id)
+                        {
+                            return false;
+                        }
+
+                        var candidateEast = EastByX(candidate.A, candidate.B);
+                        if (DistancePointToInfiniteLine(candidateEast, rightRow.A, rightRow.B) > mixedNorthSplitCollinearTol)
+                        {
+                            return false;
+                        }
+
+                        var alongGap = (rightWest - candidateEast).DotProduct(rowUnit);
+                        return
+                            (alongGap >= mixedNorthSplitCompanionGapMin && alongGap <= mixedNorthSplitCompanionGapMax) ||
+                            candidateEast.GetDistanceTo(rightWest) <= mixedNorthSecToZeroTouchTol;
+                    });
+                    if (!hasWestCompanion)
+                    {
+                        continue;
+                    }
+
+                    var currentWestTouchesZeroVertical = globalZeroVerticals.Any(v => DistancePointToSegment(rightWest, v.A, v.B) <= mixedNorthSecToZeroTouchTol);
+                    if (!currentWestTouchesZeroVertical)
+                    {
+                        continue;
+                    }
+
+                    var twentyVertical = globalTwentyVerticals
+                        .Select(v =>
+                        {
+                            var northPoint = NorthByY(v.A, v.B);
+                            if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(rightRow.A, rightRow.B, v.A, v.B, out var projected))
+                            {
+                                return new
+                                {
+                                    Valid = false,
+                                    Vertical = v,
+                                    NorthPoint = northPoint,
+                                    Projected = default(Point2d),
+                                    TargetPoint = default(Point2d),
+                                    Move = double.MaxValue,
+                                    SplitGap = double.MaxValue
+                                };
+                            }
+
+                            var northPointOnRow =
+                                DistancePointToSegment(northPoint, rightRow.A, rightRow.B) <= mixedNorthSecToZeroTouchTol;
+                            var targetPoint = northPointOnRow ? northPoint : projected;
+                            var move = (targetPoint - rightWest).DotProduct(rowUnit);
+                            var splitGap = globalZeroVerticals
+                                .Select(z =>
+                                {
+                                    if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(rightRow.A, rightRow.B, z.A, z.B, out var splitProjected))
+                                    {
+                                        return double.MaxValue;
+                                    }
+
+                                    var alongGap = (splitProjected - targetPoint).DotProduct(rowUnit);
+                                    if (alongGap < -mixedNorthSecToZeroTouchTol)
+                                    {
+                                        return double.MaxValue;
+                                    }
+
+                                    if (DistancePointToSegment(splitProjected, rightRow.A, rightRow.B) > mixedNorthSecToZeroTouchTol)
+                                    {
+                                        return double.MaxValue;
+                                    }
+
+                                    return alongGap;
+                                })
+                                .Where(gap => gap < double.MaxValue * 0.5)
+                                .DefaultIfEmpty(double.MaxValue)
+                                .Min();
+
+                            return new
+                            {
+                                Valid = true,
+                                Vertical = v,
+                                NorthPoint = northPoint,
+                                Projected = projected,
+                                TargetPoint = targetPoint,
+                                Move = move,
+                                SplitGap = splitGap
+                            };
+                        })
+                        .Where(c =>
+                            c.Valid &&
+                            (
+                                (c.NorthPoint.GetDistanceTo(c.Projected) > 20.0 &&
+                                 c.NorthPoint.GetDistanceTo(c.Projected) <= 1200.0) ||
+                                Math.Abs(c.SplitGap - mixedNorthSplitGapTarget) <= mixedNorthSplitGapTol) &&
+                            c.Move >= 0.10 &&
+                            c.Move <= mixedNorthHorizontalRetargetMoveMax &&
+                            Math.Abs(c.Move - mixedNorthHorizontalRetargetGapTarget) <= mixedNorthHorizontalRetargetGapTol &&
+                            DistancePointToSegment(c.TargetPoint, rightRow.A, rightRow.B) <= mixedNorthSecToZeroTouchTol)
+                        .OrderBy(c => Math.Abs(c.Move - mixedNorthHorizontalRetargetGapTarget))
+                        .ThenBy(c => Math.Abs(c.SplitGap - mixedNorthSplitGapTarget))
+                        .ThenBy(c => c.NorthPoint.GetDistanceTo(c.Projected))
+                        .FirstOrDefault();
+                    if (twentyVertical == null)
+                    {
+                        continue;
+                    }
+
+                    var rightRowMoveStart =
+                        rightWest.GetDistanceTo(rightRow.A) <=
+                        rightWest.GetDistanceTo(rightRow.B);
+                    if (TryMoveEndpoint(rightRow.Id, rightRowMoveStart, twentyVertical.TargetPoint, 0.05))
+                    {
+                        movedNorthZeroRowEndpoints++;
+                    }
+                }
+
+                const double mixedNorthSecToZeroMoveMin = 18.0;
+                const double mixedNorthSecToZeroMoveMax = 25.5;
+                const double mixedNorthSecToZeroEndpointTol = 1.0;
+                foreach (var zeroVertical in globalZeroVerticals)
+                {
+                    var northPoint = NorthByY(zeroVertical.A, zeroVertical.B);
+                    var moveStart =
+                        northPoint.GetDistanceTo(zeroVertical.A) <=
+                        northPoint.GetDistanceTo(zeroVertical.B);
+                    var touchesSec = globalSecRows.Any(sec => DistancePointToSegment(northPoint, sec.A, sec.B) <= mixedNorthSecToZeroTouchTol);
+                    if (!touchesSec)
+                    {
+                        continue;
+                    }
+
+                    var candidate = globalZeroRows
+                        .Select(row =>
+                        {
+                            if (!TryIntersectInfiniteLinesForQuarterExtensionsConnectivity(row.A, row.B, zeroVertical.A, zeroVertical.B, out var projected))
+                            {
+                                return new
+                                {
+                                    Valid = false,
+                                    Row = row,
+                                    Projected = default(Point2d),
+                                    Move = double.MaxValue,
+                                    EndpointGap = double.MaxValue
+                                };
+                            }
+
+                            var rowWest = WestByX(row.A, row.B);
+                            var rowEast = EastByX(row.A, row.B);
+                            return new
+                            {
+                                Valid = true,
+                                Row = row,
+                                Projected = projected,
+                                Move = northPoint.GetDistanceTo(projected),
+                                EndpointGap = Math.Min(
+                                    projected.GetDistanceTo(rowWest),
+                                    projected.GetDistanceTo(rowEast))
+                            };
+                        })
+                        .Where(c =>
+                            c.Valid &&
+                            c.Move >= mixedNorthSecToZeroMoveMin &&
+                            c.Move <= mixedNorthSecToZeroMoveMax &&
+                            c.EndpointGap <= mixedNorthSecToZeroEndpointTol &&
+                            DistancePointToSegment(c.Projected, c.Row.A, c.Row.B) <= mixedNorthSecToZeroTouchTol)
+                        .OrderBy(c => c.Move)
+                        .ThenBy(c => c.EndpointGap)
+                        .FirstOrDefault();
+                    if (candidate == null)
+                    {
+                        continue;
+                    }
+
+                    if (TryMoveEndpoint(zeroVertical.Id, moveStart, candidate.Projected, 0.05))
+                    {
+                        movedNorthZeroEndpoints++;
+                    }
+                }
+
+                tr.Commit();
+
+                if (restoredNorthTwenty > 0 || restoredNorthTwentyVerticals > 0 || movedNorthZeroEndpoints > 0 || movedNorthZeroRowEndpoints > 0)
+                {
+                    logger?.WriteLine(
+                        $"Cleanup: mixed north band restore createdHorizontals={restoredNorthTwenty}, createdVerticals={restoredNorthTwentyVerticals}, movedZeroEndpoints={movedNorthZeroEndpoints}, movedZeroRowEndpoints={movedNorthZeroRowEndpoints}.");
+                }
+                else
+                {
+                    logger?.WriteLine("Cleanup: mixed north band restore found no candidate mixed north section rows.");
+                }
+            }
         }
 
         private static bool IsHorizontalLikeForQuarterExtensionsConnectivity(Point2d a, Point2d b)

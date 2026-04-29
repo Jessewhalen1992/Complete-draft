@@ -38,7 +38,11 @@ public class DrillCadToolService
     private const double ExistingWellTableRowHeight = 25.0;
     private const double ExistingWellTableNameColumnWidth = 85.0;
     private const double ExistingWellTableCoordinateColumnWidth = 120.0;
+    private const int NativeCordsOffsetMetesColumn = 2;
+    private const int NativeCordsOffsetBoundsColumn = 3;
     private static readonly Regex HeadingLabelRegex = new(@"\b(?:ICP|HEEL|LANDING)\b", RegexOptions.IgnoreCase);
+    private static readonly Color GeneratedOffsetHighlightColor = Color.FromRgb(255, 255, 0);
+    private static readonly Color OffsetErrorColor = Color.FromRgb(255, 0, 0);
     private static readonly string[] CordsExecutableSearchPaths =
     {
         @"C:\\AUTOCAD-SETUP CG\\CG_LISP\\COMPASS\\cords.exe",
@@ -47,6 +51,7 @@ public class DrillCadToolService
 
     private readonly ILog _log;
     private readonly LayerService _layerService;
+    private readonly BuildDrillService _buildDrillService;
     private readonly NaturalStringComparer _naturalComparer = new();
 
     private sealed class GridPointCoordinate
@@ -168,6 +173,7 @@ public class DrillCadToolService
     {
         _log = log ?? throw new ArgumentNullException(nameof(log));
         _layerService = layerService ?? throw new ArgumentNullException(nameof(layerService));
+        _buildDrillService = new BuildDrillService(_log, _layerService);
     }
 
     public DrillCheckSummary Check(IReadOnlyList<string> drillNames)
@@ -474,7 +480,7 @@ public class DrillCadToolService
 
             AdjustTableForClient(tableData, heading);
 
-            if (!InsertTablePipeline(document, tableData))
+            if (!InsertTablePipeline(document, tableData, highlightGeneratedOffsets: false))
             {
                 return;
             }
@@ -539,11 +545,11 @@ public class DrillCadToolService
                 return;
             }
 
-            var rows = BuildNativeCordsRows(gridPoints, zone, resolver, nad83Converter, nad27Converter);
+            var rows = BuildNativeCordsRows(document, gridPoints, zone, resolver, nad83Converter, nad27Converter);
             var tableData = BuildNativeCordsTableData(rows);
             AdjustTableForClient(tableData, heading);
 
-            if (!InsertTablePipeline(document, tableData))
+            if (!InsertTablePipeline(document, tableData, highlightGeneratedOffsets: true))
             {
                 return;
             }
@@ -595,11 +601,7 @@ public class DrillCadToolService
                 return;
             }
 
-            var gridPoints = pickedPoints
-                .Select(point => new GridPointCoordinate(point.Name, point.Point.Y, point.Point.X))
-                .ToList();
-
-            if (!TryResolveExistingWellZone(document, gridPoints, configuration.Zone, out var zone, out var zoneDetail))
+            if (!TryResolveExistingWellZone(document, configuration.Zone, out var zone, out var zoneDetail))
             {
                 ShowAlert(zoneDetail);
                 return;
@@ -652,11 +654,6 @@ public class DrillCadToolService
         resolver = null!;
         detail = string.Empty;
 
-        if (TryInferZoneFromResolver(document.Name, gridPoints, out zone, out resolver))
-        {
-            return true;
-        }
-
         if (!TryPromptForZone(document.Editor, out zone))
         {
             detail = "Complete CORDS cancelled before a UTM zone was selected.";
@@ -673,69 +670,17 @@ public class DrillCadToolService
         return true;
     }
 
-    private static bool TryInferZoneFromResolver(string? drawingPath, IReadOnlyList<GridPointCoordinate> gridPoints, out int zone, out AtsQuarterLocationResolver resolver)
-    {
-        zone = 0;
-        resolver = null!;
-
-        var candidates = new List<(int Zone, int Score, AtsQuarterLocationResolver Resolver)>();
-        foreach (var candidateZone in new[] { 11, 12 })
-        {
-            if (!AtsQuarterLocationResolver.TryCreate(candidateZone, drawingPath, out var candidateResolver) || candidateResolver == null)
-            {
-                continue;
-            }
-
-            var score = 0;
-            foreach (var point in gridPoints)
-            {
-                if (candidateResolver.TryResolveLsdMatch(new Point2d(point.Easting, point.Northing), out _))
-                {
-                    score++;
-                }
-            }
-
-            if (score > 0)
-            {
-                candidates.Add((candidateZone, score, candidateResolver));
-            }
-        }
-
-        if (candidates.Count == 0)
-        {
-            return false;
-        }
-
-        var bestScore = candidates.Max(candidate => candidate.Score);
-        var winners = candidates.Where(candidate => candidate.Score == bestScore).ToList();
-        if (winners.Count != 1)
-        {
-            return false;
-        }
-
-        zone = winners[0].Zone;
-        resolver = winners[0].Resolver;
-        return true;
-    }
-
     private static bool TryPromptForZone(Editor editor, out int zone)
     {
         zone = 0;
-        var options = new PromptKeywordOptions("\nSelect UTM zone [11/12] <12>: ")
+        var options = new PromptKeywordOptions("\nSelect UTM zone [11/12]: ")
         {
-            AllowNone = true
+            AllowNone = false
         };
         options.Keywords.Add("11");
         options.Keywords.Add("12");
-        options.Keywords.Default = "12";
 
         var result = editor.GetKeywords(options);
-        if (result.Status == PromptStatus.None)
-        {
-            zone = 12;
-            return true;
-        }
-
         if (result.Status != PromptStatus.OK)
         {
             return false;
@@ -746,7 +691,6 @@ public class DrillCadToolService
 
     private bool TryResolveExistingWellZone(
         Document document,
-        IReadOnlyList<GridPointCoordinate> gridPoints,
         int? configuredZone,
         out int zone,
         out string detail)
@@ -766,12 +710,12 @@ public class DrillCadToolService
             return false;
         }
 
-        if (TryInferZoneFromResolver(document.Name, gridPoints, out zone, out _))
+        if (TryPromptForZone(document.Editor, out zone))
         {
             return true;
         }
 
-        detail = "Could not automatically determine the UTM zone for the picked wells. Re-run EXISTING WELL TABLE and choose zone 11 or 12.";
+        detail = "Existing Well Table cancelled before a UTM zone was selected.";
         return false;
     }
 
@@ -1030,6 +974,7 @@ public class DrillCadToolService
     }
 
     private List<NativeCordsRow> BuildNativeCordsRows(
+        Document document,
         IReadOnlyList<GridPointCoordinate> gridPoints,
         int zone,
         AtsQuarterLocationResolver resolver,
@@ -1048,8 +993,39 @@ public class DrillCadToolService
 
             if (!resolver.TryResolveLsdMatch(point2d, out var lsdMatch))
             {
-                throw new InvalidOperationException(
-                    $"Could not resolve ATS location data for drill point {pointLabel}.");
+                if (!_buildDrillService.TryResolveNativeCordsAtsMatch(
+                        document.Database,
+                        document.Editor,
+                        document.Name,
+                        zone,
+                        point2d,
+                        out lsdMatch,
+                        out var atsDetail))
+                {
+                    throw new InvalidOperationException(
+                        $"Could not resolve ATS location data for drill point {pointLabel}. {atsDetail}".Trim());
+                }
+
+                _log.Info($"COMPLETE CORDS resolved {pointLabel} with ATS hard-boundary fallback: {atsDetail}");
+            }
+            else
+            {
+                if (!_buildDrillService.TryResolveNativeCordsAtsOffsets(
+                        document.Database,
+                        document.Editor,
+                        document.Name,
+                        zone,
+                        point2d,
+                        lsdMatch,
+                        out var atsOffsetMatch,
+                        out var atsDetail))
+                {
+                    throw new InvalidOperationException(
+                        $"Could not resolve ATS measurement offsets for drill point {pointLabel}. {atsDetail}".Trim());
+                }
+
+                lsdMatch = atsOffsetMatch;
+                _log.Info($"COMPLETE CORDS measured {pointLabel} offsets from hidden ATS fabric: {atsDetail}");
             }
 
             if (!nad83Converter.TryProject(nad83Point, out var nad83Latitude, out var nad83Longitude))
@@ -1968,13 +1944,14 @@ public class DrillCadToolService
                         {
                             table.Cells[row, col].TextString =
                                 distance.Value.ToString("F1", CultureInfo.InvariantCulture) + " " + direction.Value;
+                            SetCellBackgroundFill(table.Cells[row, col], useFill: false, OffsetErrorColor);
                             updatedCount++;
                         }
                         else
                         {
                             // keep original text, but mark as problem
                             table.Cells[row, col].TextString = originalText;
-                            table.Cells[row, col].BackgroundColor = Color.FromRgb(255, 0, 0);
+                            SetCellBackgroundFill(table.Cells[row, col], useFill: true, OffsetErrorColor);
                             noMatchCount++;
                         }
                     }
@@ -2772,7 +2749,7 @@ public class DrillCadToolService
             : "ICP";
     }
 
-    private bool InsertTablePipeline(Document document, string[,] tableData)
+    private bool InsertTablePipeline(Document document, string[,] tableData, bool highlightGeneratedOffsets)
     {
         var editor = document.Editor;
         ShowAlert("BACK TO CAD, PICK A POINT");
@@ -2787,13 +2764,13 @@ public class DrillCadToolService
         {
             var database = document.Database;
             _layerService.EnsureLayer(database, "CG-NOTES");
-            InsertAndFormatTable(database, pointResult.Value, tableData, "induction Bend");
+            InsertAndFormatTable(database, pointResult.Value, tableData, "induction Bend", highlightGeneratedOffsets);
         }
 
         return true;
     }
 
-    private void InsertAndFormatTable(Database database, Point3d insertionPoint, string[,] cellData, string tableStyleName)
+    private void InsertAndFormatTable(Database database, Point3d insertionPoint, string[,] cellData, string tableStyleName, bool highlightGeneratedOffsets)
     {
         using (var transaction = database.TransactionManager.StartTransaction())
         {
@@ -2836,6 +2813,11 @@ public class DrillCadToolService
                 {
                     var value = cellData[row, column] ?? string.Empty;
                     table.Cells[row, column].TextString = value;
+                    if (highlightGeneratedOffsets && ShouldHighlightGeneratedOffsetCell(columns, row, column, value))
+                    {
+                        SetCellBackgroundFill(table.Cells[row, column], useFill: true, GeneratedOffsetHighlightColor);
+                    }
+
                     if (string.IsNullOrWhiteSpace(value))
                     {
                         hasEmpty = true;
@@ -2876,6 +2858,30 @@ public class DrillCadToolService
         }
 
         return ObjectId.Null;
+    }
+
+    private static bool ShouldHighlightGeneratedOffsetCell(int totalColumns, int row, int column, string value)
+    {
+        if (totalColumns != 12 || row < 0)
+        {
+            return false;
+        }
+
+        if (column != NativeCordsOffsetMetesColumn && column != NativeCordsOffsetBoundsColumn)
+        {
+            return false;
+        }
+
+        return !string.IsNullOrWhiteSpace(value);
+    }
+
+    private static void SetCellBackgroundFill(Cell cell, bool useFill, Color fillColor)
+    {
+        cell.IsBackgroundColorNone = !useFill;
+        if (useFill)
+        {
+            cell.BackgroundColor = fillColor;
+        }
     }
 
     private static void UnmergeAllCells(Table table)

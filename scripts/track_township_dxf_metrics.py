@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import csv
 import datetime as dt
 import importlib.util
@@ -12,7 +13,18 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Tuple
 
 
-TARGET_LAYERS = ("L-SEC", "L-USEC", "L-USEC-0", "L-USEC2012", "L-USEC3018")
+TARGET_LAYERS = (
+    "L-SEC",
+    "L-USEC",
+    "L-USEC-0",
+    "L-USEC2012",
+    "L-USEC3018",
+    "L-USEC-C",
+    "L-USEC-C-0",
+    "L-QSEC",
+    "L-QUATER",
+    "L-SECTION-LSD",
+)
 DEFAULT_LAYER_DIFF_SCRIPT = Path(
     "src/AtsBackgroundBuilder/REFERENCE ONLY/dxf_layer_diff.py"
 )
@@ -108,6 +120,55 @@ def build_layer_compare(layer_diff_module, actual_path: Path, expected_path: Pat
     }
 
 
+def build_layer_compare_from_entity_compare(compare_module, actual_path: Path, expected_path: Path) -> Dict[str, Any]:
+    precision_summaries: Dict[str, Any] = {}
+
+    for ndigits in (3, 2, 1):
+        actual_fingerprints, _ = compare_module.parse_dxf_entities(str(actual_path), ndigits)
+        expected_fingerprints, _ = compare_module.parse_dxf_entities(str(expected_path), ndigits)
+
+        actual_counter = compare_module.counter_from_fingerprints(actual_fingerprints)
+        expected_counter = compare_module.counter_from_fingerprints(expected_fingerprints)
+
+        layer_rows: Dict[str, Dict[str, int]] = {}
+        total_extra = 0
+        total_missing = 0
+
+        for layer in TARGET_LAYERS:
+            actual_layer_counter = Counter(
+                {serialized: count for serialized, count in actual_counter.items() if json.loads(serialized).get("layer") == layer}
+            )
+            expected_layer_counter = Counter(
+                {serialized: count for serialized, count in expected_counter.items() if json.loads(serialized).get("layer") == layer}
+            )
+
+            missing_total, added_total = counter_delta_totals(expected_layer_counter, actual_layer_counter)
+            layer_rows[layer] = {
+                "actual": sum(actual_layer_counter.values()),
+                "expected": sum(expected_layer_counter.values()),
+                "extra": added_total,
+                "missing": missing_total,
+            }
+            total_extra += added_total
+            total_missing += missing_total
+
+        precision_summaries[f"{ndigits}dp"] = {
+            "layers": layer_rows,
+            "totalExtra": total_extra,
+            "totalMissing": total_missing,
+            "mismatchCount": max(total_extra, total_missing),
+        }
+
+    return {
+        "actual": str(actual_path),
+        "expected": str(expected_path),
+        "precisionSummaries": precision_summaries,
+        "detailedReport": None,
+        "rootcauseReport": None,
+        "fallback": "compare_dxf_entities",
+    }
+
+
 def flatten_history_row(summary: Dict[str, Any]) -> Dict[str, Any]:
     row: Dict[str, Any] = {
         "timestamp": summary["timestamp"],
@@ -188,7 +249,9 @@ def main() -> int:
     summary_json_path = (repo_root / args.summary_json).resolve() if args.summary_json else None
 
     compare_module = load_module(compare_script_path, "compare_dxf_entities_module")
-    layer_diff_module = load_module(layer_diff_script_path, "dxf_layer_diff_module")
+    layer_diff_module = None
+    if layer_diff_script_path.exists():
+        layer_diff_module = load_module(layer_diff_script_path, "dxf_layer_diff_module")
 
     summary: Dict[str, Any] = {
         "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -197,7 +260,11 @@ def main() -> int:
         "actual": str(actual_path),
         "expected": str(expected_path),
         "previous": str(previous_path) if previous_path else None,
-        "vsExpected": build_layer_compare(layer_diff_module, actual_path, expected_path),
+        "vsExpected": (
+            build_layer_compare(layer_diff_module, actual_path, expected_path)
+            if layer_diff_module is not None
+            else build_layer_compare_from_entity_compare(compare_module, actual_path, expected_path)
+        ),
     }
 
     if previous_path:

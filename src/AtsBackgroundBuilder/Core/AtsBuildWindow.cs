@@ -11,6 +11,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using Microsoft.Win32;
+using AutoCADApplication = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 
 namespace AtsBackgroundBuilder.Core
 {
@@ -62,6 +63,8 @@ namespace AtsBackgroundBuilder.Core
             MinHeight = 660;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             Background = new SolidColorBrush(Color.FromRgb(246, 248, 251));
+            TryAssignAutoCadOwner();
+            Loaded += (_, __) => Activate();
 
             if (TryGetPersistedPlsrXmlPaths(out var persistedPlsrXmlPaths))
             {
@@ -82,6 +85,25 @@ namespace AtsBackgroundBuilder.Core
                     _explicitCancelRequested = true;
                 }
             };
+        }
+
+        private void TryAssignAutoCadOwner()
+        {
+            try
+            {
+                var mainWindow = AutoCADApplication.MainWindow;
+                if (mainWindow != null && mainWindow.Handle != IntPtr.Zero)
+                {
+                    var helper = new WindowInteropHelper(this)
+                    {
+                        Owner = mainWindow.Handle
+                    };
+                }
+            }
+            catch
+            {
+                // Best-effort owner assignment only; the dialog can still open without it.
+            }
         }
 
         public AtsBuildInput? Result { get; private set; }

@@ -1,10 +1,13 @@
 {
   "scope": "twp43-8-5",
-  "accepted_label": "rerun311-short-buffer-owner1",
+  "accepted_label": "reference-refresh-20260428-se-lsd-companion-row",
   "accepted_dxf": "data/regression-baselines/twp43-8-5/accepted-output.dxf",
-  "corrected_reference_dxf": "src/AtsBackgroundBuilder/REFERENCE ONLY/43-8-5 corrected.dxf",
-  "seed_dwg": ".artifacts/march9nad27_proof/blank-seed.dwg",
+  "corrected_reference_dxf": "data/regression-baselines/twp43-8-5/accepted-output.dxf",
+  "seed_dwg": "data/regression-baselines/twp43-8-5/blank-seed.dwg",
   "workbook": "data/regression-baselines/twp43-8-5/accepted-input.xlsx",
   "ats_fabric_only": true,
-  "notes": "Accepted user-approved township baseline. Future section-logic changes should rerun this township and compare against accepted_dxf before sign-off."
+  "quarter_view": true,
+  "preserve_final_usec_variant_layers": true,
+  "full_autocad_profile": "ATSBUILD_TEST",
+  "notes": "Accepted user-approved township baseline refreshed from the current Full AutoCAD guard run after correcting three north-edge L-SECTION-LSD endpoints that crossed road allowances and two companion S.E. L-SECTION-LSD endpoints that needed to reach the paired road-allowance row in 43-8-5. Future section-logic changes must rerun this township with the same ATS-fabric-only, quarter-view, and preserved final layer settings and compare against accepted_dxf before sign-off."
 }

@@ -345,6 +345,12 @@ public sealed class BuildDrillPointViewModel : INotifyPropertyChanged
         {
             if (SetField(ref _selectedSource, value))
             {
+                if (value.Value == BuildDrillSource.SectionOffsets && !_useAtsFabric)
+                {
+                    _useAtsFabric = true;
+                    OnPropertyChanged(nameof(UseAtsFabric));
+                }
+
                 NotifySourcePresentationChanged();
                 _sourceChangedHandler?.Invoke(Index, value.Value);
             }
@@ -360,6 +366,12 @@ public sealed class BuildDrillPointViewModel : INotifyPropertyChanged
         }
 
         _selectedSource = option;
+        if (option.Value == BuildDrillSource.SectionOffsets && !_useAtsFabric)
+        {
+            _useAtsFabric = true;
+            OnPropertyChanged(nameof(UseAtsFabric));
+        }
+
         OnPropertyChanged(nameof(SelectedSource));
         NotifySourcePresentationChanged();
     }
@@ -403,7 +415,11 @@ public sealed class BuildDrillPointViewModel : INotifyPropertyChanged
     public bool UseAtsFabric
     {
         get => _useAtsFabric;
-        set => SetField(ref _useAtsFabric, value);
+        set
+        {
+            var normalized = SelectedSource.Value == BuildDrillSource.SectionOffsets ? true : value;
+            SetField(ref _useAtsFabric, normalized);
+        }
     }
 
     public string CombinedScaleFactor
@@ -519,7 +535,7 @@ public sealed class BuildDrillPointViewModel : INotifyPropertyChanged
                 Township = township,
                 Range = range,
                 Meridian = meridian,
-                UseAtsFabric = UseAtsFabric,
+                UseAtsFabric = true,
                 CombinedScaleFactor = combinedScaleFactor,
                 NorthSouthDistance = northSouthDistance,
                 NorthSouthReference = SelectedNorthSouthReference.Value,

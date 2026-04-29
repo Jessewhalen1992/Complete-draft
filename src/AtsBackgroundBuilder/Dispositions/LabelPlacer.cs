@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using AtsBackgroundBuilder.Core;
+using Autodesk.AutoCAD.Colors;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
@@ -1033,6 +1034,7 @@ namespace AtsBackgroundBuilder.Dispositions
             }
 
             dimension.DimensionText = dimText;
+            ApplyAlignedDimensionLabelColor(dimension, colorIndex);
 
             modelSpace.AppendEntity(dimension);
             tr.AddNewlyCreatedDBObject(dimension, true);
@@ -1053,6 +1055,50 @@ namespace AtsBackgroundBuilder.Dispositions
 
             collisions?.Add(textBox);
             return dimension;
+        }
+
+        private static void ApplyAlignedDimensionLabelColor(Dimension dimension, int colorIndex)
+        {
+            if (dimension == null)
+            {
+                return;
+            }
+
+            try
+            {
+                dimension.ColorIndex = colorIndex;
+            }
+            catch
+            {
+                // Best effort; dimension text color below is the important review signal.
+            }
+
+            if (colorIndex <= 0 || colorIndex >= 256)
+            {
+                return;
+            }
+
+            var color = Color.FromColorIndex(ColorMethod.ByAci, (short)colorIndex);
+            TrySetDimensionColorProperty(dimension, "Dimclrt", color);
+            TrySetDimensionColorProperty(dimension, "DimensionTextColor", color);
+        }
+
+        private static void TrySetDimensionColorProperty(Dimension dimension, string propertyName, Color color)
+        {
+            try
+            {
+                var property = dimension.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+                if (property == null || !property.CanWrite)
+                {
+                    return;
+                }
+
+                property.SetValue(dimension, color, null);
+            }
+            catch
+            {
+                // AutoCAD API surface varies by host version; ignore unsupported property names.
+            }
         }
 
         private static double ResolveWidthAlignedDimensionLineOffset(

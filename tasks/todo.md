@@ -1,3 +1,502 @@
+# Follow-up (Commit And Push Local Changes, 2026-04-29)
+
+- [x] Stage tracked local changes and relevant new source files while leaving loose data artifacts untracked.
+- [x] Run focused validation before commit.
+- [ ] Commit on a `codex/` branch and push to `origin`.
+- [ ] Document the pushed branch/commit and omitted artifacts.
+
+# Follow-up (Disposition Label Accepted Widths And Variable Green, 2026-04-29)
+
+- [x] Update accepted disposition label widths so the canonical list includes `2.74`, `6.00`, `7.00`, `12.00`, `18.00`, `19.81`, `20.12`, `27.00`, `30.18`, `30.48`, and `32.00`, replacing stale `20.11` / `30.17`.
+- [x] Trace why `Variable Width` labels are no longer rendering green even though final text policy exists.
+- [x] Patch the smallest reusable width/color path and deploy updated config/build artifacts.
+- [x] Run decision tests/build and document the result.
+
+## Review (Disposition Label Accepted Widths And Variable Green, 2026-04-29)
+
+- Root cause:
+- The built-in accepted-width defaults and deployed `Config.json` files still carried stale accepted label widths `20.11` and `30.17`, and did not include the full corrected accepted-width set.
+- `Variable Width` color policy still returned ACI `3` green, but aligned dimension labels only set the entity color. Dimension text can inherit/override text color separately from entity color, so variable-width dimension labels could stop appearing green.
+- Fix:
+- Added shared width normalization so old `20.11` / `30.17` entries migrate to `20.12` / `30.18`, with canonical accepted widths including `2.74`, `6.00`, `7.00`, `12.00`, `18.00`, `19.81`, `20.12`, `27.00`, `30.18`, `30.48`, and `32.00`.
+- Updated live CG_LISP configs, ATSBUILD_MANUAL configs, and Release bin config with the accepted-width list.
+- Applied the final label color to aligned dimension text color properties too, so `Variable Width` labels force ACI `3` green even when emitted as dimension labels.
+- Verification:
+- `dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release` passed.
+- The latest `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` compiled the Release DLL, then failed only on the project's final copy into `build\net8.0-windows` because AutoCAD PID `41772` has that DLL locked.
+- Confirmed deployed configs contain `2.74`, `6`, `6.1`, `7`, `7.62`, `12`, `18`, `19.81`, `20.12`, `27`, `30.18`, `30.48`, and `32`, and no `20.11` / `30.17`.
+- Deployment:
+- Refreshed `C:\AUTOCAD-SETUP CG\CG_LISP\AtsBackgroundBuilder.dll` and `C:\AUTOCAD-SETUP CG\CG_LISP\ATSBUILD_MANUAL\AtsBackgroundBuilder.dll`.
+- Both deployed DLLs match the latest Release build SHA256 `EB4ACF8031CF92C5B39A861AB2EA9AC3C735D999D7153242C15E854315CE8650`.
+- The locked repo-side `build\net8.0-windows\AtsBackgroundBuilder.dll` still has the previous SHA256 `A991D5AB5DED8011999C0D8FE233B57CDDC81147F18E3D79248796742097B236`.
+
+# Follow-up (PLSR Quarter Missing Labels, 2026-04-29)
+
+- [x] Trace why `PLSR Review` reports missing labels with `No source disposition geometry was found` even when the disposition linework is visible on `PLSR`.
+- [x] Confirm the label source lookup for examples like `PLA141981` across every intersected 1/4 and identify whether the issue is layer filtering, geometry type handling, quarter intersection, or source/result keying.
+- [x] Implement the smallest reusable fix so labels can be generated/reviewed from real PLSR linework in every touched quarter without enabling unsafe text-only fallback.
+- [x] Build and run targeted verification or the closest available PLSR harness, then document root cause and result.
+
+## Review (PLSR Quarter Missing Labels, 2026-04-29)
+
+- Root cause:
+- PLSR missing-label review looks for real source disposition geometry before offering `Create missing label`. In PLSR-only fallback mode the existing-source scanner only accepted OD `Polyline` / `Polyline2d` / `Polyline3d` entities, even though Map/PLSR disposition geometry can be stored as `MPOLYGON` / Map polygon. Those visible source geometries were therefore never indexed by DISP number, so rows like `PLA141981` fell through to the disabled text-only fallback path.
+- Fix:
+- Added a shared Map polygon type policy for `MPOLYGON`, `POLYGON`, `AcDbMPolygon`, `AcDbPolygon`, and runtime `MPolygon` names.
+- Updated the existing PLSR source scan to accept Map polygon source entities as valid OD disposition source geometry.
+- Updated `GeometryUtils.TryGetClosedBoundaryClone(...)` to recognize Map polygons through DXF/class metadata too, so accepted source entities can be exploded into usable closed boundary clones for label placement.
+- Verification:
+- `dotnet run --project .\src\AtsBackgroundBuilder.DecisionTests\AtsBackgroundBuilder.DecisionTests.csproj -c Release` passed.
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Deployment:
+- Refreshed `C:\AUTOCAD-SETUP CG\CG_LISP\AtsBackgroundBuilder.dll` and `C:\AUTOCAD-SETUP CG\CG_LISP\ATSBUILD_MANUAL\AtsBackgroundBuilder.dll`.
+- Both deployed DLLs match the Release build SHA256 `69C461BD3E094FD29A81F271E37AB1E24BF249A21D6BBD90641BA7EFE914D486`.
+
+# Follow-up (Complete CORDS Generated ATS Fabric Only, 2026-04-28)
+
+- [x] Remove the scratch scan that can re-admit original ATS/section linework after hidden ATS Builder runs.
+- [x] Collect CORDS measurement boundaries only from ATS Builder result object IDs (`GeneratedRoadAllowanceEntityIds`, `SectionPolylineIds`, `ContextSectionPolylineIds`).
+- [x] Fail loudly when generated ATS fabric does not provide `L-USEC-0`, `L-USEC-2012`, or `L-SEC` candidates; no section-index/original-line fallback.
+- [x] Build, deploy if possible, and document the result.
+
+## Review (Complete CORDS Generated ATS Fabric Only, 2026-04-28)
+
+- Root cause:
+- The hidden scratch ATS build path still collected candidate boundaries from all section-local linework after ATS Builder ran. Even in scratch, that could re-admit original/pre-calculation ATS or section geometry and let CORDS measure from the wrong authority.
+- Fix:
+- The measurement candidate set now comes only from object IDs returned by ATS Builder's scratch result: `GeneratedRoadAllowanceEntityIds`, `SectionPolylineIds`, and `ContextSectionPolylineIds`.
+- The old full scratch-database scan is removed from this path.
+- If those generated IDs do not yield usable `L-USEC-0`, `L-USEC-2012`, or `L-SEC` measurement boundary candidates, the command fails with a message instead of falling back.
+- Verification:
+- `dotnet build .\compass_program\src\Compass\Compass.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Existing warning remains: obsolete `Table.GetCellExtents(...)` in `DrillCadToolService.cs`.
+- Deployment note:
+- The fixed Release DLL hash is `0845D75AA1ADB7C818BDCCE1B2F064B845EF5F1DB4965FFB78674C971BBD6A5F`.
+- `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` could not be refreshed because `acad` PID `21784` has it locked; deployed DLL still hashes as `F5F03B7A13297554FECD8FF4332674CAABE88156DD43A2B8949FEEBA96E41DE4`.
+
+# Follow-up (Build FC711 Attached Drill From NAD83 UTM Zone 11, 2026-04-28)
+
+- [x] Parse the attached FC711 rows into NAD83 UTM Zone 11 point lists.
+- [x] Create Build a Drill request JSON for each row with unique drill letters.
+- [x] Run the headless Compass harness sequentially into one scratch output DWG.
+- [x] Verify the reports and return the final DWG path.
+
+## Review (Build FC711 Attached Drill From NAD83 UTM Zone 11, 2026-04-28)
+
+- Parsed the attached image as three FC711 NAD83 UTM Zone 11 drill rows.
+- Row 1 `12-5-64-22`: `(477909, 6043879)` to `(480719, 6040546)`.
+- Row 2 `2-8-64-22`: `(478385, 6044182)` to `(479881, 6042440)` to `(481297, 6041027)`.
+- Row 3 `8-8-64-22`: `(478956, 6044421)` to `(480293, 6042869)` to `(481853, 6041502)`.
+- Built row requests with drill letters `A`, `B`, and `C` and chained the headless harness through a scratch DWG seed.
+- Verification:
+- All three `COMPASSBUILDDRILL_HEADLESS` runs returned `success: true`, `accoreconsoleExitCode: 0`, and `geometryCreated: true`.
+- Final DWG:
+- `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\builddrill-fc711-20260428-dwg\FC711-builddrill-final.dwg`
+
+# Follow-up (Complete CORDS Scratch Locked Layer, 2026-04-28)
+
+- [x] Trace why hidden ATS scratch measurement failed with `eOnLockedLayer`.
+- [x] Unlock layers in the scratch database only before ATS cleanup/build so active DWG locks are preserved.
+- [x] Build, deploy if possible, and document the result.
+
+## Review (Complete CORDS Scratch Locked Layer, 2026-04-28)
+
+- Root cause:
+- The hidden scratch database is opened from the saved DWG, so it inherits locked layer state from the active drawing. ATS cleanup/build then attempted to erase or create measurement fabric on those locked scratch layers and failed with `eOnLockedLayer`.
+- Fix:
+- After opening the scratch database, Compass now unlocks layers in that scratch copy only before removing old ATS helper linework and running the hidden ATS section build. The active drawing's layer locks are not changed.
+- Verification:
+- `dotnet build .\compass_program\src\Compass\Compass.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Existing warning remains: obsolete `Table.GetCellExtents(...)` in `DrillCadToolService.cs`.
+- Deployment:
+- Refreshed `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll`; deployed hash matches the Release build: `F5F03B7A13297554FECD8FF4332674CAABE88156DD43A2B8949FEEBA96E41DE4`.
+
+# Follow-up (Complete CORDS Scratch ATS Measurement Fabric, 2026-04-28)
+
+- [x] Record the corrected offset authority: `L-USEC-0`, `L-USEC-2012`, and `L-SEC` from ATS Builder measurement fabric.
+- [x] Change Complete CORDS so offsets are measured from hidden/scratch ATS-built fabric, not visible drawing linework or section-index offsets.
+- [x] Add a clear warning/error when `AtsBackgroundBuilder.dll` is unavailable, because Complete CORDS must not guess offsets without it.
+- [x] Build, deploy if AutoCAD releases the DLL, and document the result.
+
+## Review (Complete CORDS Scratch ATS Measurement Fabric, 2026-04-28)
+
+- Root cause:
+- Complete CORDS still had paths where offsets came from section-index resolver data or visible/live boundary candidates. That violated the corrected rule that CORDS offsets must be measured from ATS Builder's calculated measurement fabric.
+- Fix:
+- Complete CORDS now remeasures METES/BOUNDS from hidden scratch ATS-built fabric for normal in-section resolver matches and for road-allowance resolver misses.
+- The accepted measurement layers now include `L-USEC-0`, `L-USEC2012` / `L-USEC-2012`, and `L-SEC` variants.
+- ATS Builder is loaded only as a runtime dependency for the hidden scratch database; the startup LISP still NETLOADs only `Compass.dll`, and CORDS does not visibly build sections or replace active drawing linework.
+- If `AtsBackgroundBuilder.dll` cannot be found, Complete CORDS stops with a clear message that ATS Builder is required for hidden measurement fabric and section-index offsets will not be used as a fallback.
+- Verification:
+- `dotnet build .\compass_program\src\Compass\Compass.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Existing warning remains: obsolete `Table.GetCellExtents(...)` in `DrillCadToolService.cs`.
+- Deployment:
+- Refreshed `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll`; deployed hash matches the Release build: `69408B43D818E056DEC88706571C7E2235960CA758E8EA6675502DA36563C1CF`.
+- Staged `AtsBackgroundBuilder.dll` and its runtime dependencies beside Compass so the hidden scratch measurement path can load it without adding an ATS Builder NETLOAD entry to startup.
+
+# Follow-up (Complete CORDS ATS Probe Crossing, 2026-04-28)
+
+- [x] Inspect the second D3 failure after the road-allowance fallback reached section `5-64-21-W5`.
+- [x] Patch the fallback so incomplete live hard-boundary candidates can be supplemented by scratch-built ATS boundaries.
+- [x] Patch CORDS hard-boundary measurement so a correct ATS hard line can be projected when its segment does not cross the exact drill-point probe.
+- [x] Build Compass and verify deployment status.
+
+## Review (Complete CORDS ATS Probe Crossing, 2026-04-28)
+
+- Root cause:
+- The first fallback found the nearby section, but it required the chosen ATS hard-boundary segment to physically cross the exact probe line through D3. It also accepted a partial live hard-boundary candidate set as final even when the required south side could not be measured.
+- Fix:
+- If live hard-boundary candidates exist but CORDS cannot measure METES/BOUNDS from them, the fallback now retries with scratch-built ATS boundaries and merges those candidates.
+- CORDS-only hard-boundary measurement now has a second pass that projects the correct same-side ATS hard-boundary line when the segment is the right layer/side but does not overlap the exact point probe.
+- Verification:
+- `dotnet build .\compass_program\src\Compass\Compass.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Existing warning remains: obsolete `Table.GetCellExtents(...)` in `DrillCadToolService.cs`.
+- Deployment note:
+- The current fixed Release DLL hash is `F75E483E036CBE10EBD7E777F888C0DB66D11A39D0EE0D6A0D4FB5AD4A360159`.
+- `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` could not be refreshed because `acad` PID `5776` has it locked; deployed DLL still hashes as `38550DBB4E15ED8415191DB1EFE10ABE2DAEB89849833CF9B4FF61897F132B91`.
+
+# Follow-up (Complete CORDS Road-Allowance Corridor Points, 2026-04-28)
+
+- [x] Trace why `Complete CORDS` fails on D3 when the point sits between the `20.12` and `30.18` road-allowance lines.
+- [x] Add a narrow CORDS-only road-allowance corridor fallback that measures offsets from ATS-built/calculated hard boundaries such as `L-USEC2012`, not from the section-index polygon edge.
+- [x] Build Compass and verify the deployed plugin status.
+
+## Review (Complete CORDS Road-Allowance Corridor Points, 2026-04-28)
+
+- Root cause:
+- `Complete CORDS` used `AtsQuarterLocationResolver.TryResolveLsdMatch(...)`, which only resolves a drill point after it is inside a section-index polygon. A point in the road-allowance corridor can be close to the right section but outside that polygon, so D3 failed before CORDS could measure from ATS-built hard lines.
+- Fix:
+- `Complete CORDS` now falls back only on resolver misses. The fallback finds the nearest section frame, resolves that section's live or scratch-built ATS hard-boundary candidates through the same Build Drill machinery, and measures METES/BOUNDS from the selected hard boundary candidate. South/west road-allowance sides prefer `L-USEC2012`/`L-USEC-2012`, so corridor points measure from the calculated 20.12 line instead of the section-index polygon edge. The fallback does not silently use the section-index edge if the ATS hard-line crossing is missing.
+- Verification:
+- `dotnet build .\compass_program\src\Compass\Compass.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Existing warning remains: obsolete `Table.GetCellExtents(...)` in `DrillCadToolService.cs`.
+- Deployment note:
+- The current fixed Release DLL hash is `38550DBB4E15ED8415191DB1EFE10ABE2DAEB89849833CF9B4FF61897F132B91`.
+- `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` was refreshed and now hashes as `38550DBB4E15ED8415191DB1EFE10ABE2DAEB89849833CF9B4FF61897F132B91`.
+
+# Follow-up (Existing Well Table Zone Prompt, 2026-04-27)
+
+- [x] Trace the Existing Well Table zone-selection path and confirm the default option still used automatic resolver inference.
+- [x] Replace the automatic inference path with an explicit UTM zone prompt when the dialog zone is not already 11 or 12.
+- [x] Build Compass and document the verification/deployment result.
+
+## Review (Existing Well Table Zone Prompt, 2026-04-27)
+
+- Root cause:
+- The Existing Well Table dialog defaulted to `Auto (match Complete CORDS)`, and that null zone path still called the same resolver-based auto-inference that could silently choose zone 12.
+- Fix:
+- The default zone option is now `Ask when creating`.
+- If the dialog zone is left on that default, `EXISTING WELL TABLE` now prompts `Select UTM zone [11/12]:` and does not accept Enter as zone 12.
+- If the user explicitly chooses `11` or `12` in the dialog, that selected zone is still respected.
+- The unused resolver-inference helper was removed from `DrillCadToolService` so this hidden auto-zone path cannot be reused accidentally.
+- Verification:
+- `dotnet build .\compass_program\src\Compass\Compass.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Existing warning remains: obsolete `Table.GetCellExtents(...)` in `DrillCadToolService.cs`.
+- Deployment note:
+- The current fixed Release DLL hash is `3B42317B062902BF0730FB33F22D1FF73DC19C90C1970381DBAF86048114B298`.
+- `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` still could not be refreshed because the running AutoCAD process `acad` PID `42536` has it locked; deployed DLL still hashes as `142A897A45C438163D16F098B546D762D4BC13B9E69D8E4877E25542F4226E25`.
+
+# Follow-up (Complete CORDS Zone Selection, 2026-04-27)
+
+- [x] Trace the live `Complete CORDS` zone-selection path and confirm why a zone 11 drawing can resolve as zone 12 without asking.
+- [x] Patch the smallest safe zone-selection fix so the command either derives the correct zone or explicitly prompts instead of silently defaulting to 12.
+- [x] Build Compass and verify the affected code path, then document the root cause and result.
+
+## Review (Complete CORDS Zone Selection, 2026-04-27)
+
+- Root cause:
+- `Complete CORDS` tried `TryInferZoneFromResolver(...)` before prompting. If the resolver score picked zone 12, the command never asked for a zone and continued with zone 12.
+- Fix:
+- `TryResolveNativeCordsContext(...)` now prompts for the UTM zone before creating the ATS resolver.
+- The zone prompt no longer has a silent `<12>` default; Enter is not accepted as zone 12.
+- Verification:
+- `dotnet build .\compass_program\src\Compass\Compass.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Existing warning remains: obsolete `Table.GetCellExtents(...)` in `DrillCadToolService.cs`.
+- Deployment note:
+- The fixed Release DLL hash is `4E934443C0D4D7C487A311EC47CD8E3961FC9C750F9941E2BD4B6DBAE71424DB`.
+- `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` could not be refreshed because the running AutoCAD process `acad` PID `42536` has it locked; deployed DLL still hashes as `142A897A45C438163D16F098B546D762D4BC13B9E69D8E4877E25542F4226E25`.
+- `Compass.deps.json` did refresh and hash-match the Release build.
+
+# Follow-up (Build a Drill Codex Skill, 2026-04-27)
+
+- [x] Inspect the current Compass Build a Drill request model, headless harness, and ATS constraints so the skill mirrors the real workflow.
+- [x] Create a reusable `build-a-drill` Codex skill with a strict required-input checklist for NAD83 UTMs, NAD27 UTMs, and section-offset points.
+- [x] Validate the new skill package and document how it should be used for real DWG builds versus scratch/headless proofs.
+
+## Review (Build a Drill Codex Skill, 2026-04-27)
+
+- Created a new Codex skill at `C:\Users\Jesse 2025\.codex\skills\build-a-drill`.
+- Added `SKILL.md` with a workflow-first guide, a hard required-input gate, ATS-only rules for section offsets, and the current Compass headless build path.
+- Added `references\workflow.md` with the live request-model, resolver, and harness paths plus the strict ATS / CSF rules.
+- Added `references\request-examples.md` with ready-to-copy NAD83, NAD27, section-offset, and mixed-source request JSON examples.
+- Updated `agents\openai.yaml` so the skill presents as `Build a Drill` with a more specific short description.
+- Validation:
+- `python C:\Users\Jesse 2025\.codex\skills\.system\skill-creator\scripts\quick_validate.py C:\Users\Jesse 2025\.codex\skills\build-a-drill`
+- Result: `Skill is valid!`
+
+# Follow-up (Build Real 5-64-21-5 Drill DWG, 2026-04-27)
+
+- [x] Verify the four prepared Build a Drill request JSON files and confirm they can be chained into one DWG without label collisions.
+- [x] Run the headless Build a Drill harness sequentially so rows 1-4 accumulate into one saved output drawing.
+- [x] Verify the final DWG exists on disk and record its path for reuse.
+
+## Review (Build Real 5-64-21-5 Drill DWG, 2026-04-27)
+
+- Built a real chained drill drawing from the four prepared requests:
+- `row1-sec33-tune.json`
+- `row2-nad83.json`
+- `row3-nad83.json`
+- `row4-sec5-tune.json`
+- Used the headless harness:
+- `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\scripts\compass_builddrill_harness.ps1`
+- Used the known-good ATS-capable plugin:
+- `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\build\compass\single-dll\Compass.dll`
+- Seed drawing:
+- `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\data\regression-baselines\twp43-8-5\blank-seed.dwg`
+- Final DWG:
+- `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\builddrill-564215-dwg\builddrill-564215-final.dwg`
+- Verification:
+- Each chained step succeeded with `Success = true` and `ExitCode = 0`.
+- The build sequence summary is saved at:
+- `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\.artifacts\builddrill-564215-dwg\build-sequence-summary.json`
+- The ATS rows still reported ATS hard-boundary resolution in their step reports.
+
+# Follow-up (Restore ATSBUILD UI Startup Load, 2026-04-27)
+
+- [x] Inspect the current AutoCAD startup script and confirm whether `AtsBackgroundBuilder.dll` is explicitly `NETLOAD`ed.
+- [x] Restore explicit startup loading for `AtsBackgroundBuilder.dll` so the `ATSBUILD` command/UI can register normally.
+- [x] Document the root cause and any restart requirement.
+
+## Review (Restore ATSBUILD UI Startup Load, 2026-04-27)
+
+- Root cause:
+- `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` was loading `Compass_20260427_122443.dll` but not `AtsBackgroundBuilder.dll`.
+- `ATSBUILD` is declared in `AtsBackgroundBuilder.dll` as an AutoCAD command, so copying that DLL beside Compass was not enough to make the regular ATS UI available.
+- Fix:
+- Added an explicit `NETLOAD` entry for `C:\AUTOCAD-SETUP CG\CG_LISP\AtsBackgroundBuilder.dll` to the active startup script.
+- Result:
+- The next AutoCAD launch should register the regular `ATSBUILD` UI command again.
+
+# Follow-up (Return Startup To Plain Compass Only, 2026-04-27)
+
+- [x] Remove `AtsBackgroundBuilder.dll` from the AutoCAD startup `NETLOAD` path.
+- [x] Retarget the startup script to plain `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` instead of a versioned Compass copy.
+- [x] Refresh the setup-folder `Compass.dll` and `Compass.deps.json` from the newest local Release build and align the drill skill docs to that policy.
+
+## Review (Return Startup To Plain Compass Only, 2026-04-27)
+
+- User preference:
+- Do not autoload `AtsBackgroundBuilder.dll` at startup for now.
+- Startup should load plain `Compass.dll`, not a versioned Compass filename.
+- Drill-skill runs should use the most current build path explicitly instead of depending on a setup-folder ATS deployment.
+- Fix:
+- Updated `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` so the final startup `NETLOAD` now targets only `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll`.
+- Removed the setup-root `AtsBackgroundBuilder.dll` and `AtsBackgroundBuilder.deps.json`.
+- Refreshed `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` and `Compass.deps.json` from the newest local Release build.
+- Updated the `build-a-drill` skill docs so setup references point at plain `Compass.dll` and the skill prefers the current workspace build for ATS-driven section-offset runs.
+- Verification:
+- `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` hash matches `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\compass_program\src\Compass\bin\x64\Release\net8.0-windows\Compass.dll`.
+- `build-a-drill` still passes `quick_validate.py`.
+
+# Follow-up (Prepare Manual ATSBUILD UI DLL, 2026-04-27)
+
+- [ ] Build a clean manual-load `AtsBackgroundBuilder.dll` for the regular `ATSBUILD` UI without adding it to AutoCAD startup.
+- [ ] Stage the DLL in a clear manual-load location and keep `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` pointed only at plain `Compass.dll`.
+- [ ] Verify the build output exists and document the exact `NETLOAD` path.
+
+# Follow-up (Require ATS Builder For Section Offsets, 2026-04-27)
+
+- [x] Remove the non-ATS fallback path for section-offset Build a Drill points so they fail fast without ATS hard boundaries.
+- [x] Update the Build a Drill UI/request path to communicate that section offsets require ATS hard boundaries and a saved DWG.
+- [x] Stage the ATS builder runtime beside the AutoCAD setup `Compass` deployment and verify the setup DLL can resolve a section-offset request headlessly.
+
+## Review (Require ATS Builder For Section Offsets, 2026-04-27)
+
+- Fix:
+- `BuildDrillService.ResolveSectionOffsetPoint(...)` now hard-stops if a section-offset request arrives with `UseAtsFabric = false`.
+- The error message is explicit: section offsets require ATS hard boundaries, a saved DWG, and `AtsBackgroundBuilder.dll`.
+- `BuildDrillPointViewModel` now coerces section-offset requests to `UseAtsFabric = true` and emits `UseAtsFabric = true` when creating the request model.
+- The Build a Drill UI now shows section offsets as ATS-required instead of presenting that toggle as an optional choice.
+- Deployment:
+- Deployed the latest Compass build to `C:\AUTOCAD-SETUP CG\CG_LISP\Compass_20260427_122443.dll`.
+- Updated `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` so the next AutoCAD launch `NETLOAD`s `Compass_20260427_122443.dll`.
+- Staged `AtsBackgroundBuilder.dll`, `AtsBackgroundBuilder.deps.json`, `ManagedMapApi.dll`, and the supporting managed runtime files beside the setup `Compass.dll` in `C:\AUTOCAD-SETUP CG\CG_LISP\`.
+- Verification:
+- `dotnet build .\compass_program\src\Compass\Compass.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Headless proof against the setup deploy succeeded for the `5-64-21-5` sec-5 offset row using `C:\AUTOCAD-SETUP CG\CG_LISP\Compass_20260427_122443.dll`.
+- That successful run resolved `section offsets from ATS-built hard boundaries (Resolved ATS probe crossings from S:L-USEC2012, W:L-USEC2012. Computed exact ATS offset-line intersection.)`.
+- A second headless proof with the same row but `UseAtsFabric = false` now fails with `Point 2 failed: Section offsets require ATS hard boundaries. Run from a saved DWG and make sure AtsBackgroundBuilder.dll is available.`
+
+# Follow-up (Build Drills For 5-64-21-5 Using 20.12 Lines, 2026-04-27)
+
+- [x] Inspect the current Build a Drill workflow and identify the exact input/output path for the requested `5-64-21-5` drills.
+- [x] Verify how the current ATS/Compass logic resolves the relevant `20.12` versus `30.18` boundaries for this township.
+- [x] Generate or patch the drill build path so these drills land on the `20.12` lines, then verify the resulting coordinates/output.
+
+## Review (Build Drills For 5-64-21-5 Using 20.12 Lines, 2026-04-27)
+
+- User inputs:
+- `ZONE11`
+- datum is `NAD83`
+- section-offset distances must use `offset * 0.999481460`
+- the section-based rows must use the `20.12` family, not `30.18`
+- Workflow proof:
+- Verified the headless `Build a Drill` harness works from `scripts\compass_builddrill_harness.ps1`.
+- A numeric-only NAD83 smoke run succeeded using `data\regression-baselines\twp43-8-5\blank-seed.dwg`.
+- The deployed AutoCAD setup `Compass.dll` could not resolve `AtsBackgroundBuilder.dll` in headless mode because its probe path was outside the workspace build tree.
+- Re-ran the section-offset requests with `build\compass\single-dll\Compass.dll`, which successfully discovered `build\net8.0-windows\AtsBackgroundBuilder.dll`.
+- Final resolved drill rows:
+- Row 1: `491705,6042416 -> 491881,6047534.584`
+- Row 2: `491216,6042419 -> 491374,6038295`
+- Row 3: `490733,6042423 -> 490847,6038933`
+- Row 4: `490231,6042418 -> 490357,6039360.453`
+- Boundary proof for the section-based rows:
+- Row 1 resolved through `section offsets from ATS-built hard boundaries` with `S:SECTION-INDEX-0, W:L-USEC2012`.
+- Row 4 resolved through `section offsets from ATS-built hard boundaries` with `S:L-USEC2012, W:L-USEC2012`.
+- Artifacts:
+- request files in `.artifacts\builddrill-564215-requests\`
+- successful headless reports in:
+- `.artifacts\compass-builddrill-headless-20260427-121227`
+- `.artifacts\compass-builddrill-headless-20260427-121512`
+- `.artifacts\compass-builddrill-headless-20260427-121524`
+
+# Follow-up (Deploy Latest Compass Build To AutoCAD Setup, 2026-04-23)
+
+- [x] Verify the latest local `Compass` build and the active AutoCAD `NETLOAD` target.
+- [x] Copy the latest build into `C:\AUTOCAD-SETUP CG\CG_LISP` with the matching `.deps.json`.
+- [x] Update `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` and verify the deployed hash/load path.
+
+## Review (Deploy Latest Compass Build To AutoCAD Setup, 2026-04-23)
+
+- Fix:
+- The active startup script had drifted: `load jgw programs.lsp` still pointed at `Compass_20260422_125957.dll`, but that versioned DLL was no longer present in `C:\AUTOCAD-SETUP CG\CG_LISP`.
+- Deployed the latest local Release build to `C:\AUTOCAD-SETUP CG\CG_LISP\Compass_20260423_115856.dll`.
+- Copied the matching dependency file to `C:\AUTOCAD-SETUP CG\CG_LISP\Compass_20260423_115856.deps.json`.
+- Refreshed the plain fallback copies `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` and `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.deps.json` to the same build.
+- Updated `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` so AutoCAD now `NETLOAD`s `Compass_20260423_115856.dll`.
+- Verification:
+- AutoCAD was closed during deployment, so the copy completed cleanly.
+- Verified the deployed versioned DLL SHA256 matches the latest local build: `9B315B82D28DEA7B4C32BDB064318D9D85E906BB27A2F9CE95A719EDDE58FA49`.
+- Verified the load script now targets the real on-disk file at line `23`.
+
+# Follow-up (Complete CORDS Offset Cell Highlighting, 2026-04-22)
+
+- [x] Trace the non-archive `Complete CORDS` table insertion path and the `Update Offsets` rewrite flow.
+- [x] Make generated offset cells yellow in the non-archive `Complete CORDS` table only.
+- [x] Make `Update Offsets` clear existing cell fill on successful updates, while preserving red for no-match/error cells.
+- [x] Build Compass and record the result.
+
+## Review (Complete CORDS Offset Cell Highlighting, 2026-04-22)
+
+- Fix:
+- The non-archive `Complete CORDS` path now calls the table insertion pipeline with generated-offset highlighting enabled.
+- During table insertion, the generated offset columns (`C` and `D`, zero-based `2` and `3`) are filled yellow for non-empty cells on the native 12-column CORDS table.
+- The archive `Complete CORDS (Archive)` path does not enable that highlight, so this styling change only affects the non-archived version the user called out.
+- `Update Offsets` now clears any existing cell fill when a row updates successfully and only applies explicit red fill when the row still has no matching offset/error state.
+- Verification:
+- `dotnet build .\compass_program\src\Compass\Compass.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal` passed.
+- Remaining warning:
+- The existing `Table.GetCellExtents(...)` obsolete warning in `DrillCadToolService.cs` remains unchanged.
+- Deployment:
+- With AutoCAD closed, deployed the updated build as `C:\AUTOCAD-SETUP CG\CG_LISP\Compass_20260422_125957.dll`.
+- Copied the matching `Compass_20260422_125957.deps.json`.
+- Updated `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` so AutoCAD now `NETLOAD`s `Compass_20260422_125957.dll`.
+- Verified the deployed DLL SHA256 matches the fresh local build: `9B315B82D28DEA7B4C32BDB064318D9D85E906BB27A2F9CE95A719EDDE58FA49`.
+
+# Follow-up (ATS 43-9-5 Mixed North 30.18/20.12 Correction Issues, 2026-04-22)
+
+- [x] Identify the reproducible `43-9-5` township build input and the likely mixed north `30.18 / 20.12` rule families involved.
+- [x] Create a fresh ATS-only `43-9-5` proof run that reproduces the three requested issues.
+- [x] Implement a narrow reusable fix for mixed north correction/corner handling without section-specific case logic.
+- [x] Verify the requested `43-9-5` correction-line and `L-QUATER` points in AutoCAD output.
+- [x] Rerun the permanent `43-8-5` township regression baseline and reject the change if it drifts unrelated geometry.
+- [x] Record the accepted fix and the new reusable lesson once the proof is clean.
+
+## Review (ATS 43-9-5 Mixed North 30.18/20.12 Correction Issues, 2026-04-22)
+
+- User correction:
+- In `43-9-5`, `N.W. 31` has a mixed north road-allowance pattern where the `N.W.` side is `30.18` but the `N.E.` side is `20.12`, and the current build is mis-handling both correction lines and the `N.E. N.E. 31` quarter corner.
+- Required proof gate:
+- Any fix for `43-9-5` must also pass the permanent accepted `43-8-5` regression baseline before it can be kept.
+- Initial investigation:
+- The accepted `43-8-5` workbook format is just the township selector row (`ALL`, blank `Sec`, `Twp`, `Rge`, `M`), so a clean `43-9-5` repro can be created by copying that workbook and switching the township selector rather than inventing a new input format.
+- Likely live rule families:
+- `Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` still owns the mixed `20.12`/`30.18` correction cleanup and blind join trimming.
+- `Plugin.RoadAllowance.EndpointEnforcement.cs` still owns the late hard-boundary endpoint scoring for blind / `20.12` / `30.18` interactions.
+- `Plugin.Sections.SectionDrawingLsd.cs` still owns the visible quarter-corner settlement that can jump badly when the wrong north owner wins.
+- Accepted reusable fix:
+- `Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs` now handles the mixed north blind pair with two generic helpers instead of a sec31 case rule:
+- `TryFindMixedBlindInsetRetreatStop(...)` accepts the real one-band retreat target even when the source endpoint still sits one correction-gap north of the stop.
+- `TryFindMixedBlindInsetPivotStop(...)` handles the mixed `30.18 -> 20.12` horizontal pivot by requiring a touched vertical support, a current gap near `20.11`, an anchor gap near `RoadAllowanceUsecWidthMeters`, and a move near `CorrectionLinePairGapMeters`.
+- Verified clean `43-9-5` proof:
+- `data\twp43-9-5-proof-rerun28\artifacts\output.dxf`
+- `data\twp43-9-5-proof-rerun28\artifacts\AtsBackgroundBuilder.run.log`
+- `Imported dispositions: 0`
+- Requested coordinates from the accepted proof:
+- `614265.779936, 5846504.424498 -> 615060.881831, 5846523.802825`
+- the next south ordinary row is present at `615061.603570, 5846493.648455 -> 615866.761204, 5846513.273931`, which is the requested mixed `20.11` companion family south of the corrected north row
+- `614275.064474, 5845669.764366 -> 614256.445578, 5846474.025040`
+- `N.E. N.E. 31 = 615866.761204, 5846513.273931`
+- Permanent `43-8-5` regression gate repair:
+- added `data\regression-baselines\twp43-8-5\blank-seed.dwg`
+- updated `data\regression-baselines\twp43-8-5\baseline.json` so the saved regression uses the real blank seed and the accepted DXF as the expected reference
+- `scripts\track_township_dxf_metrics.py` now falls back to `compare_dxf_entities.py` layer counts when the old `REFERENCE ONLY\dxf_layer_diff.py` helper is missing
+- Regression proof:
+- `scripts\run_township_regression.ps1 -OutputDir data\regression-checks\twp43-8-5-after-43-9-5-cleaned-rerun2`
+- `data\regression-checks\twp43-8-5-after-43-9-5-cleaned-rerun2\artifacts\compare-metrics.json`
+- Result: at the user-approved tolerance gate, `43-8-5` stayed clean enough to keep:
+- `1dp`: `L-SEC 0 extra / 0 missing`, `L-USEC 0 extra / 0 missing`
+- `2dp`: only `1` `L-USEC` extra / `1` missing, caused by a `0.01 m` endpoint drift (`624206.25` vs `624206.24`)
+- Follow-up correction after user review:
+- The sec31/sec32 mixed north cluster also had a vertical zero-row endpoint that was correct immediately after mixed-band restoration, but the later ordinary tie-in trim pass was still promoting it one full `20.12 m` band north onto an `L-SEC` row.
+- Accepted narrow fix:
+- `Plugin.RoadAllowance.CorrectionLinePostProcessing.cs` now preserves a vertical ordinary `L-USEC` tie endpoint when the selected trim target is a generic `SEC` row one band away but the current endpoint is already sitting on a live same-band non-hard horizontal row from the raw pre-ghost target set.
+- This is intentionally a post-selection veto, not a blanket `canTrim` suppression, so normal vertical tie trimming still works elsewhere.
+- Verified preserved-layer proof:
+- `data\twp43-9-5-proof-rerun54-variants-narrowsecguard1\artifacts\output.dxf`
+- `data\twp43-9-5-proof-rerun54-variants-narrowsecguard1\artifacts\AtsBackgroundBuilder.run.log`
+- Requested sec32 west/top zero line now stays at `615886.384, 5845709.065 -> 615866.761, 5846513.274`
+- `N.E. N.E. 31` still verifies at `615866.761, 5846513.274`
+- LSD guard `886` still verifies at `615464.182, 5846503.461 -> 615483.553, 5845699.246`
+- Clean proof:
+- `data\twp43-9-5-proof-rerun55-clean-narrowsecguard1\artifacts\output.dxf`
+- `data\twp43-9-5-proof-rerun55-clean-narrowsecguard1\artifacts\AtsBackgroundBuilder.run.log`
+- `Imported dispositions: 0`
+- Regression gate:
+- `scripts\run_township_regression.ps1 -OutputDir data\regression-checks\twp43-8-5-after-43-9-5-narrowsecguard1`
+- `data\regression-checks\twp43-8-5-after-43-9-5-narrowsecguard1\artifacts\compare-metrics.json`
+- Result: `43-8-5` stayed at the same accepted tolerance as before:
+- `1dp`: `L-SEC 0 extra / 0 missing`, `L-USEC 0 extra / 0 missing`
+- `2dp` / `3dp`: the same single tiny `L-USEC` drift only (`mismatchCount = 1`)
+
+# Follow-up (ATS 43-9-5 Mixed North Top Zero Row Endpoint, 2026-04-22)
+
+- [ ] Inspect the preserved-layer sec31/sec32 mixed north proof and isolate why the top `L-USEC-0` row still ends at the shared quarter node instead of the live `L-USEC2012` join.
+- [ ] Implement a reusable mixed north fix so the top zero row terminates at the true `L-USEC2012` top join without section-specific case logic.
+- [ ] Verify the requested `43-9-5` endpoint in preserved-layer and clean AutoCAD proofs, then rerun the permanent `43-8-5` baseline and reject the change if it drifts beyond accepted tolerance.
+
+# Follow-up (Rebuild Three DLLs, 2026-04-22)
+
+- [x] Confirm which three local DLL projects to rebuild.
+- [x] Rebuild `Compass`, `AtsBackgroundBuilder`, and `WildlifeSweeps` in Release.
+- [x] Capture the output DLL paths and note any warnings or failures.
+
+## Review (Rebuild Three DLLs, 2026-04-22)
+
+- Rebuilt:
+- `compass_program\src\Compass\Compass.csproj`
+- `src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj`
+- `wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj`
+- Output DLLs:
+- `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\compass_program\src\Compass\bin\x64\Release\net8.0-windows\Compass.dll`
+- `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\src\AtsBackgroundBuilder\bin\x64\Release\net8.0-windows\AtsBackgroundBuilder.dll`
+- `C:\Users\Jesse 2025\Desktop\COMPLETE DRAFT\wls_program\src\WildlifeSweeps\bin\x64\Release\net8.0-windows\WildlifeSweeps.dll`
+- Result:
+- All three builds succeeded.
+- Warnings:
+- `Compass` still shows the existing `Table.GetCellExtents(...)` obsolete warning from `DrillCadToolService.cs`.
+- `AtsBackgroundBuilder` and `WildlifeSweeps` built clean with no warnings.
+
 # Follow-up (Compass Well Corners ActiveX Cell Pivot, 2026-04-21)
 
 - [x] Capture the user's correction that the overlay insert workaround is not acceptable because the bubbles no longer behave like table content.
@@ -8081,11 +8580,14 @@ Regression follow-up:
 
 ## Review (WLS Bunny Tracks + Photo Label Green, 2026-03-16)
 
-- Root cause: the findings lookup workbook recognizes abbit|hare tracks, but not unny, so Bunny Tracks was falling through to the generic unidentified-track fallback.
+- Root cause: the findings lookup workbook recognizes 
+abbit|hare tracks, but not unny, so Bunny Tracks was falling through to the generic unidentified-track fallback.
 - Fix: updated FindingsDescriptionStandardizer so preprocessing and canonicalization normalize unny / unnies through the existing rabbit-hare rule path, which resolves to Snowshoe Hare Tracks.
 - Fix: updated PhotoLayoutHelper so photo labels use AutoCAD ACI 3 (GREEN) instead of a raw RGB green value.
 - Verification: dotnet build wls_program\src\WildlifeSweeps\WildlifeSweeps.csproj -c Release --no-restore -p:OutDir=C:\Users\Work Test 2\Desktop\COMPLETE DRAFT 2.0\wls_program\artifacts\verify\WildlifeSweeps\ succeeded with 0 warnings / 0 errors. A normal Release build was blocked only because the live in\Release\net8.0-windows\WildlifeSweeps.dll is currently locked by another process.
-- Verification: targeted checks confirmed Bunny Tracks now normalizes to abbit tracks, and the lookup workbook already contains the abbit tracks -> Rabbit Tracks rule that canonicalizes to Snowshoe Hare Tracks.
+- Verification: targeted checks confirmed Bunny Tracks now normalizes to 
+abbit tracks, and the lookup workbook already contains the 
+abbit tracks -> Rabbit Tracks rule that canonicalizes to Snowshoe Hare Tracks.
 
 
 ## 2026-03-16 - Make blind BLIND/SEC LSD ownership explicit
@@ -9776,3 +10278,882 @@ Review 2026-04-21 (Restore west short buffered seam row as original correction o
 - `compare-baseline.json` showed exactly one supported-entity swap:
 - removed `L-USEC-C-0 624157.735,5837040.319 -> 624267.742,5837045.590`
 - added `L-USEC-C 624157.735,5837040.319 -> 624267.742,5837045.590`
+
+## 2026-04-22 - Fix 43-9-5 sec31 mixed north road allowance split without regressing 43-8-5
+
+- [x] Reconfirm the live sec31 mixed north topology in the preserved-variant proof and identify which final-stage rows/joins are still missing or on the wrong layer.
+- [x] Move or retime the mixed north restore so it runs on the final mixed blind geometry, generalize it away from hardcoded `31-36` filtering, and restore the missing west `L-USEC2012` row plus the east split vertical joins without a section-specific rule.
+- [x] Rebuild, rerun fresh `43-9-5` proof(s), rerun the permanent `43-8-5` township regression baseline, and document only the accepted geometry changes.
+
+Review 2026-04-22 (Fix 43-9-5 sec31 mixed north road allowance split without regressing 43-8-5):
+- User correction:
+- In `43-9-5` sec31, the mixed north road allowance still missed the west `L-USEC-2012` bridge, missed the east `20.12` vertical, and kept the east zero join on the wrong top split point where `30.18` and `20.12` meet.
+- Root cause:
+- The late mixed-north global restore was modeling the east split from the current zero vertical instead of from the lower `30.18` / `20.12` companion pair. It filtered the lower `30.18` vertical as if its north endpoint should already sit near the top row, so the restore never ran on the real mixed join.
+- Fix:
+- In `Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs`, the late mixed-north east split restore now computes the zero-row split from the projected join of the lower `L-USEC3018` vertical onto the top zero row, then restores the companion `L-USEC2012` vertical from the projected join of the lower `20.12` vertical onto that same row.
+- The helper still runs generically on final mixed blind geometry and no longer depends on section-number filtering.
+- Verification:
+- `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release /m:1 -v:minimal`
+- `dotnet test src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build`
+- Preserved-layer proof: `data\\twp43-9-5-proof-rerun38-variants-eastsplit3\\artifacts\\output.dxf`
+- Clean proof: `data\\twp43-9-5-proof-rerun39-clean-eastsplit3\\artifacts\\output.dxf`
+- `43-9-5` preserved-layer proof now contains:
+- `L-USEC2012 614255.969,5846494.098 -> 615061.122,5846513.752`
+- `L-USEC2012 615906.488,5845709.556 -> 615886.869,5846513.766`
+- `L-USEC-0 615896.919,5846514.012 -> 615916.538,5845709.799`
+- `43-9-5` quarter verification stayed correct for the requested point: `VERIFY-QTR-EAST-CORNERS sec=31 ... ne_ne=615866.761,5846513.274`
+- `43-8-5` regression gate: `data\\regression-checks\\twp43-8-5-after-43-9-5-eastsplit3\\artifacts\\compare-metrics.json`
+- Regression stayed clean at the user tolerance gate: `1dp mismatchCount = 0`; only one sub-centimeter `L-USEC` family drift remains at `2dp/3dp` around the accepted `624041.11 -> 624850.763` cluster.
+
+## 2026-04-22 - Fix 43-9-5 sec31 mixed north LSD north over-extension
+
+- [x] Reproduce the bad `L-SECTION-LSD` ray that was extending from `615464.182,5846503.461` up onto the north `SEC` row.
+- [x] Implement a reusable rule-matrix guard so live-qsec vertical LSD rays already anchored on a lower non-`SEC` road row are not re-extended onto a farther `SEC` row one band north.
+- [x] Rebuild, rerun `43-9-5`, rerun the permanent `43-8-5` regression gate, and keep the change only if the baseline stays within the accepted tolerance.
+
+Review 2026-04-22 (Fix 43-9-5 sec31 mixed north LSD north over-extension):
+- User correction:
+- The vertical LSD ray `615463.699,5846523.565 -> 615483.553,5845699.246` was wrong; it should stop at `615464.182,5846503.461` instead of extending north over the `L-SEC` row.
+- Root cause:
+- In `Plugin.RoadAllowance.EndpointEnforcement.cs`, the rule-matrix outer pass was seeing the live-qsec inner anchor correctly, but then still promoting the outer endpoint onto a `station-kind ZERO/SEC` target on the north `SEC` row. The current outer endpoint was already sitting on the correct lower mixed zero row, so that extra promotion was creating the over-extension.
+- Fix:
+- Added a reusable preserve rule in the rule-matrix outer selector for vertical LSDs: when the inner endpoint is coming from `live-qsec`, the current outer endpoint already lies on a live non-`SEC` horizontal road row, and the proposed station target lands one band outward on a `SEC` row, the pass keeps the current outer endpoint instead of re-extending it.
+- Verification:
+- `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release /m:1 -v:minimal`
+- `dotnet test src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build`
+- Fresh proof: `data\\twp43-9-5-proof-rerun42-clean-lsdguard3\\artifacts\\output.dxf`
+- Fresh log: `data\\twp43-9-5-proof-rerun42-clean-lsdguard3\\artifacts\\AtsBackgroundBuilder.run.log`
+- Final proof line: `L-SECTION-LSD 615464.182,5846503.461 -> 615483.553,5845699.246`
+- Log confirmation: `outer source=preserve-zero-live-qsec moved=False target=(615464.182,5846503.461)`
+- `43-8-5` regression gate: `data\\regression-checks\\twp43-8-5-after-43-9-5-lsdguard2\\artifacts\\compare-metrics.json`
+- Regression stayed within the same accepted tolerance as the earlier `43-9-5` fix: `1dp mismatchCount = 0`, with only the same tiny sub-centimeter `L-USEC` drift still visible at `2dp/3dp`.
+
+## 2026-04-22 - Fix 43-9-5 sec32 mixed north top zero vertical ending on SEC row
+
+- [ ] Reconfirm the preserved-layer `L-USEC-0 4A3` vertical is still ending on the top `L-SEC` row instead of the adjacent top zero-row split node.
+- [ ] Implement a reusable mixed-north restore/final-target rule so preserved top zero verticals terminate on the adjacent zero-row split when a neighboring `20.12 / 30.18` mixed join already defines that node.
+- [ ] Rebuild, rerun preserved and clean `43-9-5` AutoCAD proofs, rerun the permanent `43-8-5` regression gate, and keep the fix only if the baseline stays within the accepted tolerance.
+
+## 2026-04-22 - Fix 43-9-5 sec32 mixed north top zero row endpoint after late ordinary trim
+
+- [x] Reconfirm the preserved-layer sec32 north `L-USEC-0` row is correct during mixed-north restore but gets pulled back onto the wrong zero vertical during the late ordinary tie-in trim.
+- [x] Implement a reusable post-trim mixed-north row retarget so collapsed mixed split rows can reattach to an already-connected `20.12` endpoint when the companion zero split still exists one correction-gap away on the same row.
+- [x] Rebuild, rerun preserved and clean `43-9-5` AutoCAD proofs, rerun the permanent `43-8-5` regression gate, and verify the result does not widen the accepted `43-8-5` drift family.
+
+Review 2026-04-22 (Fix 43-9-5 sec32 mixed north top zero row endpoint after late ordinary trim):
+- User correction:
+- The top sec32 north row `616692.246, 5846533.457 -> 615866.761, 5846513.275` should end at the mixed split node `615886.869, 5846513.766`.
+- Root cause:
+- `RestoreMixedNorthRoadAllowanceBands(...)` was already putting the row on the correct `20.12` split node, but `TrimOrdinaryUsecTieInOverhangsToVerticalBoundaries(...)` later collapsed it back onto the neighboring zero vertical.
+- The first rerestore hook helped, but the final ordinary tie-in trim pass still reintroduced the wrong endpoint after the correction-postbuild cleanup.
+- Fix:
+- In `Plugin.RoadAllowance.QuarterExtensionsConnectivity.cs`, the mixed-north horizontal retarget phase now accepts an already-connected `20.12` vertical endpoint as a valid post-trim target when a zero split vertical still lands one correction-gap east on the same row and the west companion has collapsed to the current endpoint.
+- In `Plugin.RoadAllowance.CleanupPipeline.cs`, the mixed-north rerestore is now rerun after the final ordinary USEC tie-in trim as well, so the last persisted geometry keeps the mixed split node.
+- Verification:
+- `dotnet build src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release /m:1 -v:minimal`
+- `dotnet test src\\AtsBackgroundBuilder.DecisionTests\\AtsBackgroundBuilder.DecisionTests.csproj -c Release --no-build`
+- Preserved-layer proof: `data\\twp43-9-5-proof-rerun67-variants-topzerorow-connected-retarget3\\artifacts\\output.dxf`
+- Clean proof: `data\\twp43-9-5-proof-rerun68-clean-topzerorow-connected-retarget3\\artifacts\\output.dxf`
+- `43-9-5` preserved-layer verification now shows:
+- `VERIFY-QTR-NORTH-SELECT sec=32 ... seg=616692.246,5846533.457->615886.869,5846513.766 source=L-USEC-0`
+- `VERIFY-QTR-WEST-SELECT sec=32 ... seg=615886.384,5845709.065->615866.761,5846513.274 source=L-USEC-0`
+- `43-8-5` regression gate remains within the accepted tolerance:
+- `data\\regression-checks\\twp43-8-5-after-43-9-5-topzerorow-connected-retarget3\\artifacts\\compare-metrics.json`
+- `1dp mismatchCount = 0`
+- Exact compare against the earlier accepted post-`43-9-5` checkpoint stayed clean:
+- `data\\regression-checks\\twp43-8-5-after-43-9-5-lsdguard2\\artifacts\\output.dxf` vs `...topzerorow-connected-retarget3...` returned `passed = true` at `3dp`
+
+## 2026-04-23 - Fix 43-9-5 south of sections 1 and 2 correction corridor ownership and offset direction
+
+- [x] Reconfirm the three reported south-correction issues in the current preserved-layer `43-9-5` proof and identify which cleanup/restore stage owns each one.
+- [x] Implement a reusable correction-corridor fix so the original `L-USEC-C` / `L-USEC-C-0` ownership and offset direction stay consistent for the south `100 m` buffered corridor.
+- [x] Rebuild, rerun preserved and clean `43-9-5` AutoCAD proofs, rerun the permanent `43-8-5` regression gate, and keep the fix only if the accepted `43-8-5` tolerance does not widen.
+
+Review 2026-04-23 (Fix 43-9-5 south of sections 1 and 2 correction corridor ownership and offset direction):
+- User correction:
+- The `L-USEC-C` segment `624088.215,5837000.426 -> 623287.792,5836964.269` needed to stop at the `30.18` split around `623297.837,5836964.269`, and the `624367/624088` `L-USEC-C-0` companion needed to be on the north side instead of the south side.
+- Root cause:
+- The early correction companion pass selected the correct outer row, but its side-choice evidence only looked inside the narrow correction seam strip. The adjacent surveyed/correction row that proves the north side was outside that strip, so the pass had no side hint and fell back to the default south offset.
+- Fix:
+- Kept actual companion matching narrow, but changed the side-choice evidence to use the broader live correction corridor segment set. This lets the reusable offset-side rule see adjacent corridor rows without turning broad side evidence into broad companion matching.
+- Verification:
+- `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal`
+- Fresh preserved-layer AutoCAD proof: `data\\twp43-9-5-proof-rerun103-variants-westcorr-broadside-clean\\artifacts\\output.dxf`
+- Endpoint proof: `L-USEC-C 624088.214940,5837000.426171 -> 623297.837499,5836964.248551`, score `0.0206 m` against the requested `623297.837,5836964.269`.
+- North companion proof: `L-USEC-C-0 624367.062,5837018.054 -> 624087.988,5837005.441` and continuing `624087.988,5837005.441 -> 623287.665,5836969.269`.
+- The earlier requested original `L-USEC-C` spans remain present:
+- `621675.985958,5836924.083660 -> 622466.814698,5836943.596665`
+- `622466.814698,5836943.596665 -> 623267.698496,5836943.596665`
+- `43-8-5` regression guard: `data\\regression-checks\\twp43-8-5-after-43-9-5-westcorr-broadside-clean\\artifacts\\output.dxf`
+- The final `43-8-5` DXF is geometry-identical at `3dp` to `data\\regression-checks\\twp43-8-5-after-43-9-5-westcorr-retarget-clean\\artifacts\\output.dxf`.
+- The stored `43-8-5` accepted-output baseline still reports the pre-existing `L-USEC` drift family (`expected3dpMismatchCount = 8`, `baselineAdded = 28`, `baselineMissing = 28`); this fix did not widen it.
+
+## 2026-04-23 - Fix 43-9-5 south correction corridor vertical tie-in and quarter endpoints
+
+- [x] Reproduce the four reported issues in the latest preserved-layer `43-9-5` proof: the `622466.815 -> 623267.698` original row ending too low, the stray `624268.754 -> 624088.413` `L-USEC-C-0`, the section 1 `S.W. S.E.` / `S.E. S.W.` quarter node, and the vertical `624088.413 -> 624091.770` tie-in endpoint.
+- [x] Trace which correction-line stage creates or keeps those wrong endpoints and identify the reusable topology pattern that should drive them to the vertical `L-USEC2012` / live correction-zero nodes.
+- [x] Implement the smallest reusable fix with no section-coordinate fallback, then rebuild and rerun `43-9-5` plus the permanent `43-8-5` guard.
+
+Review 2026-04-23 (Fix 43-9-5 south correction corridor vertical tie-in and quarter endpoints):
+- User correction:
+- The original `L-USEC-C 622466.815,5836943.597 -> 623267.698,5836943.597` needed to deflect to `623267.698,5836963.360`, the short `624268.754 -> 624088.413` zero companion was bogus, the section 1 shared south quarter node needed to land on the lower correction-zero projection, and the vertical tie at `624088.413 -> 624091.770` needed to finish at `624087.988,5837005.441`.
+- Root cause:
+- The correction-zero split cleanup was flattening the deflected original endpoint to the wrong Y station, and the quarter resolver only trusted original correction companions that were already present in the quarter boundary list. In this corridor, the decisive proof available during quarter resolution is the paired shallow/deep `L-USEC-C-0` rows; the original companion is restored later.
+- Fix:
+- `TryFindZeroEndpointForOffsetDiagonal(...)` now preserves the recovered original far endpoint instead of flattening it.
+- The section south-quarter correction resolver now accepts the reusable paired-zero pattern: a deep `L-USEC-C-0` can win only when a shallower parallel `L-USEC-C-0` at the same station proves the expected `30.16 + 5.03` paired corridor relationship.
+- The vertical QSEC endpoint preservation guard no longer vetoes that deeper paired correction-zero target by snapping back to the stale near correction endpoint.
+- A final reusable pivot adjustment uses the nearby shallow correction-zero endpoint only as topology evidence, so the section 1 quarter divider follows the same projected divider trajectory instead of a section-coordinate exception.
+- Removed stale coordinate-specific debug gates in mixed correction cleanup before final acceptance.
+- Verification:
+- `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false /m:1 -v:minimal`
+- Clean AutoCAD proof: `data\\twp43-9-5-proof-rerun118-clean-pairedzero-pivot-nodebug\\artifacts\\output.dxf`
+- Log proof: `Imported dispositions: 0` and no `DEBUG-` markers.
+- `rerun118` is entity-identical to the accepted pivot proof `data\\twp43-9-5-proof-rerun117-clean-pairedzero-pivot\\artifacts\\output.dxf` at `3dp`.
+- Requested corridor checks:
+- `L-USEC-C 622466.817069,5836943.596724 -> 623267.700866,5836963.359255`, score about `0.005 m`.
+- `L-USEC-C-0 622466.690843,5836948.616049 -> 623267.574637,5836968.378580`, score about `0.001 m`.
+- The short wrong `L-USEC-C-0 624268.754,5836998.105 -> 624088.413,5836993.655` is absent.
+- Vertical tie: `L-QSEC 624087.988280,5837005.441051 -> 624091.769826,5836878.900054`, score about `0.0005 m`.
+- Section 1 shared south quarter/QSEC endpoint now lands on the lower correction-zero row at `623462.749,5836977.182`; this is `0.062 m` from the manually supplied `623462.811,5836977.185`.
+- `43-9-5` before/after check versus `rerun116` is intentionally limited to the section 1 `L-QSEC` endpoint and dependent LSD subdivision geometry that follows that quarter divider; it does not add correction-line entities.
+- `43-8-5` guard: `data\\regression-checks\\twp43-8-5-after-43-9-5-pairedzero-pivot-nodebug\\artifacts\\output.dxf`
+- The cleaned guard is entity-identical at `3dp` to `data\\regression-checks\\twp43-8-5-after-43-9-5-pairedzero-pivot\\artifacts\\output.dxf`.
+- Full line/polyline compare against the earlier protected `43-8-5` south-correction guard has `0` added/missing entities at `0.1 m` precision; remaining `3dp/2dp` differences are sub-decimeter endpoint noise, not changed linework at the user's accepted drafting tolerance.
+
+## 2026-04-23 - Remove overlong 43-9-5 south correction-zero span and restore missing original L-USEC-C spans
+
+- [x] Trace the latest preserved-layer `43-9-5` proof around `621023.859,5836918.035 -> 624088.413,5836993.655` and identify which source row creates the overlong `L-USEC-C-0`.
+- [x] Restore the missing original `L-USEC-C` spans `621033.541,5836933.255 -> 621829.684,5836955.217` and `622666.013,5836978.900 -> 623461.626,5837017.019` with reusable correction-corridor topology logic.
+- [x] Rebuild, rerun preserved-layer `43-9-5` AutoCAD proof, and rerun the permanent `43-8-5` regression guard before accepting the fix.
+
+Review 2026-04-23 (Remove overlong 43-9-5 south correction-zero span and restore missing original L-USEC-C spans):
+- User correction:
+- The generated `L-USEC-C-0 624088.413,5836993.655 -> 621023.859,5836918.035` bridge was useless, while the original `L-USEC-C` spans `621033.541,5836933.255 -> 621829.684,5836955.217` and `622666.013,5836978.900 -> 623461.626,5837017.019` were missing.
+- Root cause:
+- The local zero-companion restore skipped cases where the companion sat almost directly under the `30.18` endpoint, and the later split pass could leave a synthetic `L-USEC-C-0` bridge spanning multiple vertical breakpoints instead of keeping the local correction chunks.
+- Fix:
+- Relaxed the final correction-topology restore gate so local zero companions can restore original rows at direct `30.18` offsets, added an already-represented companion-layer veto to avoid duplicating valid `43-8-5` rows, and erased only overlong post-split correction-zero bridges that cross multiple interior breakpoints.
+- Verification:
+- `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal`
+- Fresh preserved-layer AutoCAD proof: `data\\twp43-9-5-proof-rerun107-variants-southcorr-localbridge-veto\\artifacts\\output.dxf`
+- Log proof: `ATSBUILD_XLS_ATS_FABRIC_ONLY=1`, final variant layers preserved, and `Imported dispositions: 0`.
+- Requested line 1 best match: `L-USEC-C 621033.540526,5836933.254622 -> 621829.684072,5836955.216928`, score `0.0007 m`.
+- Requested line 2 best match: `L-USEC-C 622666.013000,5836978.900054 -> 623461.626299,5837017.018754`, score `0.0004 m`.
+- The exact overlong `L-USEC-C-0` bridge is gone; the nearest remaining `L-USEC-C-0` candidate scores `2259.157 m` away, and there are `0` `L-USEC-C-0` segments longer than `1200 m`.
+- `43-9-5` before/after compare is intentionally corridor-local: it removes the overlong zero bridge, adds the two requested originals, and adjusts adjacent section-3 labels/lines because that west correction row now resolves from the corrected local corridor instead of the ghost bridge.
+- Permanent `43-8-5` guard: `data\\regression-checks\\twp43-8-5-after-43-9-5-southcorr-localbridge-veto\\artifacts\\output.dxf`
+- Exact `43-8-5` compare against `data\\regression-checks\\twp43-8-5-after-43-9-5-westcorr-broadside-clean\\artifacts\\output.dxf` passed at `3dp` with `1744` supported entities before and after, and no added or missing supported entities.
+
+## 2026-04-23 - Restore 43-9-5 south original L-USEC-C spans west of sections 1 and 2
+
+- [x] Inspect the current preserved-layer `43-9-5` proof around `621675.986,5836924.084`, `622466.815,5836943.598`, and `623267.698,5836943.598` to confirm whether the original correction segments are relayered, over-trimmed, or never restored.
+- [x] Implement the smallest reusable correction-line restoration rule so the original `L-USEC-C` spans survive alongside the needed offset companions without adding section-coordinate exceptions.
+- [x] Rebuild and rerun the `43-9-5` AutoCAD proof, confirm the two requested `L-USEC-C` spans, then rerun the permanent `43-8-5` regression guard before accepting the fix.
+
+Review 2026-04-23 (Restore 43-9-5 south original L-USEC-C spans west of sections 1 and 2):
+- User correction:
+- The original correction-line row needed visible `L-USEC-C` spans at `621675.986,5836924.084 -> 622466.815,5836943.598` and `622466.815,5836943.598 -> 623267.698,5836943.598`.
+- Root cause:
+- The raw correction row was available earlier in the pipeline, but the late correction outer/zero cleanup kept the offset companion and did not restore the original outer row across a `30.18` vertical gap and same-side zero-boundary split.
+- Fix:
+- Added a reusable final correction-topology restore that looks for the paired pattern of an existing correction outer anchor, a vertical `30.18` gap endpoint, a section/quarter split on the same row, and the diagonal offset companion. It restores the original `L-USEC-C` row in two spans and retargets the stale diagonal companion onto `L-USEC-C-0`, without section-coordinate fallbacks.
+- Verification:
+- `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal`
+- Fresh preserved-layer AutoCAD proof: `data\\twp43-9-5-proof-rerun100-variants-westcorr-retarget-clean\\artifacts\\output.dxf`
+- Requested line 1 best match: `L-USEC-C 621675.985958,5836924.083660 -> 622466.814698,5836943.596665`, score `0.0017 m`.
+- Requested line 2 best match: `L-USEC-C 622466.814698,5836943.596665 -> 623267.698496,5836943.596665`, score `0.0028 m`.
+- The stale diagonal companion in that corridor is now on `L-USEC-C-0`: `622466.691,5836948.616 -> 623267.575,5836948.616`.
+- `43-8-5` regression guard: `data\\regression-checks\\twp43-8-5-after-43-9-5-westcorr-retarget-clean\\artifacts\\output.dxf`
+- The final `43-8-5` DXF is geometry-identical at `3dp` to the two previous guard outputs (`laterestore3` and `retarget1`), and the new restore/retarget helper did not fire in the `43-8-5` log.
+- The stored `43-8-5` accepted-output baseline still reports the pre-existing `L-USEC` drift family (`expected3dpMismatchCount = 8`, `baselineAdded = 28`, `baselineMissing = 28`); this fix did not widen it.
+
+Current checkpoint 2026-04-23:
+
+- Clean working proof after backing out the dead-end passes: `data\\twp43-9-5-proof-rerun90-variants-current-cleanbase\\artifacts\\output.dxf`
+- Confirmed progress in that preserved-layer proof:
+- `L-USEC-C 623461.626,5837017.019 -> 624267.288,5837055.620`
+- south companion still correct:
+  `L-USEC-C-0 623461.867,5837012.005 -> 624267.529,5837050.605`
+- the extra stray south-corridor row is gone
+- the west mixed `20.12 / 30.18` split now preserves the correct `30.18` endpoint X:
+  `L-USEC-C 624088.215,5837000.426 -> 623297.837,5836963.855`
+- Remaining live misses before acceptance:
+- west split Y is still low; target is `623297.837,5836964.269`
+- the companion rows are still on the wrong south side:
+  `624367.288,5837008.014 -> 624088.442,5836995.411`
+  `624088.441,5836995.411 -> 623287.919,5836959.249`
+- No `43-8-5` regression run yet for this family because the `43-9-5` candidate is not clean enough to keep.
+
+## 2026-04-24 - Fix 43-9-5 south correction far-end buffer and SW quarter corner
+
+- [x] Reproduce the reported `43-9-5` misses in the latest clean proof: `S.W. S.W.` quarter corner, the extra correction-line span around `615979.658,5836779.595`, and the far-end 100m buffer correction-line behavior.
+- [x] Trace the reusable topology rule that should select the lower correction-zero / buffer edge without adding section-specific coordinate fallbacks.
+- [x] Implement the smallest reusable fix and remove any stale debug/specific coordinate gates found during the investigation.
+- [x] Rebuild, rerun clean AutoCAD `43-9-5`, compare against the prior clean proof, and verify the requested targets.
+- [x] Rerun the protected `43-8-5` guard before accepting the change.
+
+Review 2026-04-24 (Fix 43-9-5 south correction far-end buffer and SW quarter corner):
+- User correction:
+- The section 1 / 2 south correction corridor had the `S.W. S.W.` quarter endpoint landing at `622636.002,5836972.436` instead of `622636.487,5836952.809`; a far-west `L-USEC-C` was split into a good first span plus an extra bad span `615979.658,5836779.595 -> 616780.492,5836799.356`; and the first span needed to terminate at the clipped 100m-buffer endpoint `615979.568,5836783.522`.
+- Root cause:
+- The quarter-corner resolver treated the upper trimmed `L-USEC-C-0` segment as the south corner owner when a lower paired correction-zero row was the real buffer boundary, and the late correction-outer restore treated a far-end clipped buffer like a normal 5.02m interior companion. That produced both the wrong quarter corner and the unwanted extra correction-line continuation.
+- Fix:
+- Added reusable paired correction-zero selection for south correction quarter corners, including a west-corner vertical-anchor path so the lower paired row is resolved from the actual shallow correction-zero endpoint and vertical `L-USEC*` boundary rather than a trimmed segment. Updated the correction-outer restore to distinguish standard 5.02m interior gaps from nonstandard clipped far-end buffer gaps, restoring only the requested clipped span in the latter case.
+- Verification:
+- `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Fresh normal AutoCAD proof: `data\\twp43-9-5-proof-rerun122-farend-pairzero-verticalanchor\\artifacts\\output.dxf`.
+- Fresh preserved-layer AutoCAD proof: `data\\twp43-9-5-proof-rerun123-preserve-farend-pairzero-verticalanchor\\artifacts\\output.dxf`.
+- Log proof: `ATSBUILD_XLS_ATS_FABRIC_ONLY=1`, final variant layers preserved for review, and `Imported dispositions: 0`.
+- Final quarter proof: `VERIFY-QTR-FINAL sec=1 ... quarter=SW ... sw_sw=622636.487,5836952.806`, which is within `0.003 m` of the requested `622636.487,5836952.809`.
+- Requested clipped line exists: `L-USEC-C 615188.790525,5836764.006911 -> 615979.568031,5836783.521734`, score about `0.0008 m`.
+- Bad extra line is absent: no `L-USEC-C 615979.658,5836779.595 -> 616780.492,5836799.356`; closest remaining candidate is over `300 m` away.
+- Prior-clean to new-preserved `43-9-5` compare changes only the intended local cluster: removes the bad extra correction span, retargets the clipped span, and moves the dependent local `L-QSEC` / `L-USEC-0` endpoints that tie to that buffer corner.
+- Protected `43-8-5` guard: `data\\regression-checks\\twp43-8-5-after-43-9-5-farend-pairzero-verticalanchor\\artifacts\\output.dxf`.
+- Exact `43-8-5` compare against `data\\regression-checks\\twp43-8-5-after-43-9-5-pairedzero-pivot-nodebug\\artifacts\\output.dxf` passed at `3dp` with `1744` supported entities before and after, and no added or missing supported entities.
+
+## 2026-04-24 - Isolate Full AutoCAD harness from normal user profile
+
+- [x] Inspect recent Full AutoCAD harness launch scripts and logs for profile/workspace mutations.
+- [x] Patch the harness so GUI tests run under a dedicated ATS test profile instead of the user's normal `COMPASS 2025` profile.
+- [x] Stop force-killing AutoCAD immediately after the DXF marker; allow the script to restore test variables and exit cleanly first.
+- [x] Document the leaked-profile cause and the manual recovery point for the current AutoCAD profile.
+
+Review 2026-04-24 (Isolate Full AutoCAD harness from normal user profile):
+- User correction:
+- Natural AutoCAD runs looked like the user's workspace/profile had been damaged after repeated Full AutoCAD township proofs.
+- Root cause:
+- The Full AutoCAD harness launched `acad.exe` without a `/p` test profile, so it reused the active/default AutoCAD profile. Its run script set `SECURELOAD=0`, `FILEDIA=0`, and `CMDDIA=0`, then the harness often force-stopped AutoCAD immediately after the DXF/log completion marker instead of waiting for the script to restore state and quit. The current AutoCAD 2025 `COMPASS 2025` profile shows `SECURELOAD=0`, matching the leaked harness setting.
+- Fix:
+- Added a dedicated `ATSBUILD_TEST` Full AutoCAD profile path for future GUI harness runs, restore `SECURELOAD/FILEDIA/CMDDIA` to interactive-safe values after `ATSBUILD_XLS_BATCH`, and wait up to `60` seconds for clean AutoCAD exit before force-stopping.
+- Verification:
+- PowerShell parser check passed for `scripts\\atsbuild_harness.ps1`.
+- Future Full AutoCAD stdout will include `/p ATSBUILD_TEST`, and the harness summary now reports `fullAutoCadProfile`.
+- Manual recovery note:
+- Do not mutate the user's live profile automatically without confirmation. Current observed profile values: `COMPASS 2025` has `SECURELOAD=0`; `WorkspaceNameAtProfileSave` is blank, while the other AutoCAD 2025 profile records `CG-WORKSPACE2025`.
+- Follow-up finding:
+- `WSCURRENT=CG-WORKSPACE2025` failed because the active roaming `Support\\Map.cuix` was rewritten at `2026-04-24 09:22` and no longer contains `CG-WORKSPACE2025`. Known-good CUI sources containing that workspace are `C:\\AUTOCAD-SETUP CG\\PROFILE\\Map.cuix`, `C:\\AUTOCAD-SETUP CG\\WORKSPACE\\Map.cuix`, and `C:\\AUTOCAD-SETUP CG\\WORKSPACE\\COMPASS2025.cuix`; the current `Support\\map.bak.cuix` also still contains it.
+- Safety backup created before restore: `.artifacts\\autocad-profile-recovery-20260424-103746\\current-Map.cuix` and `.artifacts\\autocad-profile-recovery-20260424-103746\\COMPASS-2025-profile.reg`.
+- Recovery applied:
+- Backed up the invalid active `Support\\Map.cuix` to `.artifacts\\autocad-profile-recovery-20260424-103746\\Map-before-restore-20260424-105426.cuix`, copied `C:\\AUTOCAD-SETUP CG\\PROFILE\\Map.cuix` into the roaming `Support\\Map.cuix`, and verified the restored CUIX opens as a valid zip containing `CG-WORKSPACE2025`. Also restored `COMPASS 2025` registry values for `WorkspaceNameAtProfileSave`, `WSCURRENT`, `SECURELOAD`, `FILEDIA`, and `CMDDIA`.
+
+## 2026-04-24 - Restore AutoCAD Map CUI from default folder
+
+- [x] Locate default-folder `Map.cuix` / `Map.cui` candidates and verify which one should replace the active roaming support file.
+- [x] Back up the current active `Support\\Map.cuix` before replacing it.
+- [x] Copy the selected default-folder CUI into the active roaming support path and verify it is valid.
+- [x] Record the exact source path used for future recovery.
+
+Review 2026-04-24 (Restore AutoCAD Map CUI from default folder):
+- User correction:
+- The previously restored `C:\\AUTOCAD-SETUP CG\\PROFILE\\Map.cuix` was not the desired Map CUI; user asked for the one in the default folder.
+- Findings:
+- No literal `default` directory containing `Map.cuix` was found under the inspected Autodesk roots. Valid CG workspace CUI candidates were `C:\\AUTOCAD-SETUP CG\\PROFILE\\Map.cuix`, `C:\\AUTOCAD-SETUP CG\\WORKSPACE\\Map.cuix`, and `C:\\AUTOCAD-SETUP CG\\WORKSPACE\\backup\\Map.cuix`.
+- Recovery applied:
+- Treated `C:\\AUTOCAD-SETUP CG\\WORKSPACE\\Map.cuix` as the requested default/workspace source, backed up the active support file to `.artifacts\\autocad-profile-recovery-20260424-103746\\Map-before-workspace-default-restore-20260424-105754.cuix`, and copied the workspace source into `C:\\Users\\Jesse 2025\\AppData\\Roaming\\Autodesk\\Autodesk AutoCAD Map 3D 2025\\R25.0\\enu\\Support\\Map.cuix`.
+- Verification:
+- Restored `Support\\Map.cuix` opens as a valid CUIX zip with `127` entries and contains both `CG-WORKSPACE2025` and `Planning and Analysis Workspace`.
+- `COMPASS 2025` profile `WorkspaceNameAtProfileSave` and `General\\WSCURRENT` remain set to `CG-WORKSPACE2025`.
+
+## 2026-04-24 - Restore AutoCAD Map CUI from active Support folder backup
+
+- [x] Inspect the active roaming `Support` folder for the user's actual CUI source.
+- [x] Back up the current active `Map.cuix`.
+- [x] Restore `Map.cuix` from the in-folder `map.bak.cuix`.
+- [x] Verify the restored active CUI is valid and contains the expected workspace.
+
+Review 2026-04-24 (Restore AutoCAD Map CUI from active Support folder backup):
+- User correction:
+- The intended CUI was in `C:\\Users\\Jesse 2025\\AppData\\Roaming\\Autodesk\\Autodesk AutoCAD Map 3D 2025\\R25.0\\enu\\Support`, not the external profile/workspace folders.
+- Recovery applied:
+- Treated `Support\\map.bak.cuix` as the in-folder prior CUI, backed up the current active `Map.cuix` to `.artifacts\\autocad-profile-recovery-20260424-103746\\Map-before-support-bak-restore-20260424-110522.cuix`, and copied `Support\\map.bak.cuix` to `Support\\Map.cuix`.
+- Verification:
+- The restored active `Support\\Map.cuix` opens as a valid CUIX zip with `144` entries, contains `CG-WORKSPACE2025` with count `3`, and contains `Planning and Analysis Workspace`.
+- `COMPASS 2025` profile values were reset to `WorkspaceNameAtProfileSave=CG-WORKSPACE2025`, `SECURELOAD=1`, `FILEDIA=1`, and `CMDDIA=1`.
+
+## 2026-04-24 - Restore AutoCAD Map CUI from newest valid pre-damage support copy
+
+- [x] Re-check the user report that the in-folder `map.bak.cuix` restored an old workspace version.
+- [x] Search available valid `Map.cuix` candidates by CUIX validity, `CG-WORKSPACE2025` presence, and last-write time.
+- [x] Back up the current active `Support\\Map.cuix`.
+- [x] Restore the newest valid pre-damage support copy found before today's corrupted/live restore attempts.
+- [x] Verify CUIX validity and set the active AutoCAD 2025 profile registry values under the correct product key.
+
+Review 2026-04-24 (Restore AutoCAD Map CUI from newest valid pre-damage support copy):
+- User correction:
+- The `Support\\map.bak.cuix` restore was valid but old; the user's current workspace was not like that before the harness/profile incident.
+- Root cause:
+- I treated the in-folder backup name as authoritative, but it was dated `2025-12-03`, making it older than several valid isolated support copies. The first registry reset also targeted `ACAD-9102:409`, while the live AutoCAD Map 3D 2025 product key is `ACAD-8102:409`.
+- Recovery applied:
+- Backed up the active file to `.artifacts\\autocad-profile-recovery-20260424-103746\\Map-before-apr2-isolate-restore-20260424-111028.cuix`.
+- Restored `C:\\Users\\Jesse 2025\\Desktop\\COMPLETE DRAFT - may need later\\data\\twp59-19-5-fix-verified\\accore-isolate\\Roaming\\Support\\Map.cuix` to `C:\\Users\\Jesse 2025\\AppData\\Roaming\\Autodesk\\Autodesk AutoCAD Map 3D 2025\\R25.0\\enu\\Support\\Map.cuix`.
+- Verification:
+- Restored active `Support\\Map.cuix` opens as a valid CUIX zip with `144` entries, size `973343`, last write `2026-04-02 16:13:29`, and contains `CG-WORKSPACE2025`.
+- Registry values under `HKCU:\\Software\\Autodesk\\AutoCAD\\R25.0\\ACAD-8102:409\\Profiles` were set for both `COMPASS 2025` and `<<Unnamed Profile>>`: `WorkspaceNameAtProfileSave=CG-WORKSPACE2025`, `SECURELOAD=1`, `FILEDIA=1`, and `CMDDIA=1`.
+
+Follow-up correction:
+- User reported this Apr 2 CUI candidate is still not the right current workspace and will restore it manually.
+- Stop making further live `Support\\Map.cuix` swaps from guessed candidates. The safe completed fix is the harness isolation (`/p ATSBUILD_TEST` plus variable restoration); profile/CUI recovery must be driven by a user-provided known-good CUI or a confirmed AutoCAD export.
+
+## 2026-04-24 - Fix 43-9-5 south quarter endpoints over correction lines
+
+- [x] Reproduce the current `43-9-5` quarter endpoint misses:
+- `S.W.S.W.` of section 2 lands at `621004.332,5836894.259` but should land at `621003.878,5836912.521`.
+- `S.W.S.W.` of section 3 lands at `619374.707,5836852.151` but should land at `619374.157,5836872.342`.
+- The quarter line ending at `623462.749,5836977.182` should land at `623461.867,5837012.005`.
+- [x] Trace the owning reusable correction-line / quarter-corner selection rule.
+- [x] Implement the smallest general fix with no township/section coordinate fallback.
+- [x] Build and run a fresh AutoCAD proof for `43-9-5`.
+- [x] Run the protected `43-8-5` regression proof/compare before accepting the change.
+- [x] Document final coordinates, output paths, and any intentionally changed related linework.
+
+Review 2026-04-24 (Fix 43-9-5 south quarter endpoints over correction lines):
+- User correction:
+- `S.W.S.W.` of section 2 was still landing at `621004.332,5836894.259` instead of `621003.878,5836912.521`; `S.W.S.W.` of section 3 was landing at `619374.707,5836852.151` instead of `619374.157,5836872.342`; and the section 1 south quarter divider ending at `623462.749,5836977.182` needed to land on `623461.867,5837012.005`.
+- Root cause:
+- The south-correction display override already found the correct 20 m correction-line trend, but it only replaced west corners that were still shallow/inset-like. If the west corner had drifted down onto the deeper paired correction-zero row, the override left it behind. The section 1 quarter divider also found the correct `L-USEC-C-0` intersection, but a fixed 20 m divider-extension cap blocked the legitimate `30.18 + 5.02` move to the paired correction-zero node.
+- Fix:
+- Allowed correction-boundary divider extensions to move by the reusable `30.18 + 5.02` correction companion gap instead of the ordinary 20 m cap.
+- Allowed the south-correction display override to replace a west corner that looks like the deeper paired correction-zero offset when the companion trend proves a normal road-allowance-depth correction boundary for west/mid/east.
+- Verification:
+- `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Fast preserved-layer proof: `data\\twp43-9-5-proof-rerun124-preserve-quarter-southwest\\artifacts\\output.dxf`.
+- Full isolated AutoCAD proof: `data\\twp43-9-5-proof-rerun125-full-quarter-southwest\\artifacts\\output.dxf`, launched with `/p ATSBUILD_TEST`; `Imported dispositions: 0`.
+- Verified log targets in the full proof:
+- Section 1 `L-QSEC` south endpoint moved to `623461.753,5837011.999`, within `0.114 m` of the requested `623461.867,5837012.005` and on the same corrected `L-USEC-C-0` node.
+- Section 2 final `S.W.S.W.` is `621003.883,5836912.521`, within `0.005 m` of target.
+- Section 3 final `S.W.S.W.` is `619374.158,5836872.305`, within `0.037 m` of target.
+- Fast proof compared to the previous preserved proof changed only `1` `L-QSEC` line and `8` dependent local `L-SECTION-LSD` segments in the section 1 quarter grid; section 2/3 final quarter-corner corrections are internal quarter-box vertex corrections.
+- Full proof line/path geometry matched the fast proof exactly at `3dp`; only AutoCAD/Accore text-width metadata differed.
+- Protected `43-8-5` guard: `data\\regression-checks\\twp43-8-5-after-43-9-5-quarter-southwest\\artifacts\\output.dxf`.
+- Exact `43-8-5` compare against the prior guard `data\\regression-checks\\twp43-8-5-after-43-9-5-farend-pairzero-verticalanchor\\artifacts\\output.dxf` passed at `3dp` with `1744` supported entities before and after, and no added or missing supported entities.
+
+## 2026-04-24 - Restore 43-9-5 section 1 SW.SE / SE.SW quarter edge behavior
+
+- [x] Reproduce the regression where `S.W.S.E.` 1 and `S.E.S.W.` 1 changed after the previous correction-line quarter fix.
+- [x] Compare `rerun123` and `rerun125` section 1 quarter vertices/deflection points, especially `L-USEC-2012` intersections.
+- [x] Refine the reusable logic so section 2/3 `S.W.S.W.` correction remains fixed without moving section 1's shared south quarter edge onto the wrong construction point.
+- [x] Build and run a fresh `43-9-5` proof.
+- [x] Run the protected `43-8-5` guard before accepting the change.
+
+Review 2026-04-24 (Restore 43-9-5 section 1 SW.SE / SE.SW quarter edge behavior):
+- User correction:
+- The previous fix corrected the section 1 physical `L-QSEC` endpoint but also moved `S.W.S.E.` 1 and `S.E.S.W.` 1 off their prior correct correction-line display point, losing the section 1 `L-USEC-2012` deflection behavior.
+- Root cause:
+- The previous patch used the extended correction-zero divider endpoint for both the physical `L-QSEC` divider and the quarter-definition display edge. Those are not always the same construction point on a south correction line: the divider can extend to the zero node while the quarter definition still follows the prior correction-line display boundary with deflection vertices at `L-USEC-2012` intersections.
+- Fix:
+- Decoupled the physical divider endpoint from the quarter display midpoint when a south correction divider extension moves by more than the ordinary 20 m cap. The `L-QSEC` line can still extend to the correction-zero node, while the quarter box keeps the pre-extension display midpoint for `S.W.S.E.` / `S.E.S.W.` and deflection insertion.
+- Verification:
+- `dotnet build .\\src\\AtsBackgroundBuilder\\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Fast preserved-layer proof: `data\\twp43-9-5-proof-rerun126-preserve-section1-mid-restore\\artifacts\\output.dxf`.
+- Full isolated AutoCAD proof: `data\\twp43-9-5-proof-rerun127-full-section1-mid-restore\\artifacts\\output.dxf`, launched with `/p ATSBUILD_TEST`; `Imported dispositions: 0`.
+- Full proof section 1: `S.W.S.E.` and `S.E.S.W.` both restored to `623462.749,5836977.182`; section 1 deflection restored at `623267.574,5836968.379`; physical `L-QSEC` endpoint remains extended to `623461.753,5837011.999`.
+- Full proof section 2/3 targets remain fixed: section 2 `S.W.S.W.=621003.883,5836912.521`; section 3 `S.W.S.W.=619374.158,5836872.305`.
+- Protected `43-8-5` guard: `data\\regression-checks\\twp43-8-5-after-43-9-5-section1-mid-restore\\artifacts\\output.dxf`.
+- Exact `43-8-5` compare against the previous guard `data\\regression-checks\\twp43-8-5-after-43-9-5-quarter-southwest\\artifacts\\output.dxf` passed at `3dp` with `1744` supported entities before and after, and no added or missing supported entities.
+
+## 2026-04-24 - Restore 43-9-5 correction-line 100m buffer end spans
+
+- [x] Reproduce the missing east 100m buffer line near `624287.508,5837051.563 -> 624367.288,5837053.698`.
+- [x] Reproduce the missing far-west 100m buffer/end lines near:
+- `614357.273,5836764.610 -> 614466.417,5836767.072`.
+- `614357.503,5836752.348 -> 614466.752,5836754.521`.
+- `614357.603,5836747.329 -> 614466.852,5836749.502`.
+- [x] Reproduce the nearby quarter line whose north end should land at `614356.448,5836747.306`.
+- Current DXF confirmed the east missing span is the `20.12` companion of a short `30.18` clipped end span.
+- Current DXF confirmed the far-west missing spans are correction-family rows clipped/paired at the merged 100m buffer boundary, not disposition/import shapes.
+- [x] Implement the reusable correction-buffer / quarter endpoint fix without section-coordinate fallbacks.
+- [x] Build and run fresh `43-9-5` proof plus protected `43-8-5` guard.
+
+Review 2026-04-24 (Restore 43-9-5 correction-line 100m buffer end spans):
+- User correction:
+- Missing clipped 100m buffer spans at the east correction end near `624287.508,5837051.563 -> 624367.288,5837053.698`, and far-west correction-buffer spans near `614357.*` to `614466.*`. The nearby vertical quarter/QSEC line also needed its north end moved from `614357.160,5836716.962` to `614356.448,5836747.306`.
+- Root cause:
+- The existing final correction topology restored interior correction companions and ordinary `20.12/30.18` joins, but did not recover clipped 100m-buffer end companions when the offset row/vertical evidence existed only at the merged buffer boundary. The vertical QSEC retarget pass also trusted only correction-zero rows, so it missed the valid outer correction row at the clipped buffer edge.
+- Fix:
+- Added a reusable correction-buffer end-span restoration pass that restores missing correction outer companions, missing `20.12` companions beside short `30.18` clipped spans, and clipped correction-row extensions only when there is no existing same-layer continuation/deflection already representing that buffer projection.
+- Added a late, constrained QSEC retarget pass for vertical `L-QSEC` endpoints that should terminate on a correction-buffer end row at a 100m clipped boundary.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Fast preserved-layer proof: `data\twp43-9-5-proof-rerun130-preserve-100m-buffer-endspans-qsec-guarded\artifacts\output.dxf`.
+- Full isolated AutoCAD proof: `data\twp43-9-5-proof-rerun131-full-100m-buffer-endspans-qsec-guarded\artifacts\output.dxf`; launched under `fullAutoCadProfile=ATSBUILD_TEST`, batch completed, dispositions imported `0`.
+- Full AutoCAD coordinate checks passed:
+- `L-USEC2012` covers `624287.508,5837051.563 -> 624367.288,5837053.698`.
+- `L-USEC-C` covers `614357.273,5836764.610 -> 614466.417,5836767.072`.
+- `L-USEC-C-0` covers `614357.503,5836752.348 -> 614466.752,5836754.521`.
+- `L-USEC-C` covers `614357.603,5836747.329 -> 614466.852,5836749.502`.
+- `L-QSEC` covers `614356.448,5836747.306 -> 614358.194,5836672.832`.
+- Protected `43-8-5` guard: `data\regression-checks\twp43-8-5-after-43-9-5-100m-buffer-endspans-qsec-guarded\artifacts\output.dxf`.
+- Exact `43-8-5` compare against prior guard `data\regression-checks\twp43-8-5-after-43-9-5-section1-mid-restore\artifacts\output.dxf` passed at `3dp` with `1744` supported entities before and after, and no added or missing supported entities.
+
+## 2026-04-25 - Add quarter-line deflections to L-QUATER south correction boundaries
+
+- [x] Record requested rule: when an `L-QUATER` south boundary follows a correction line, add endpoint/deflection vertices at intersecting quarter lines, not only `L-USEC-0` / road-boundary lines.
+- Example: S.E. S.E. 4 currently has `618544.729,5837685.975 -> 619374.158,5836872.305`; it should include an intermediate point at `619223.005,5836868.575`.
+- [x] Trace where correction-line south boundary deflection vertices are assembled.
+- [x] Implement reusable QSEC/quarter-line deflection insertion without coordinate-specific fallback.
+- [x] Rebuild and run fresh `43-9-5` proof plus protected `43-8-5` guard.
+
+Review 2026-04-25 (Add quarter-line deflections to L-QUATER south correction boundaries):
+- User correction:
+- South correction-line `L-QUATER` boundaries already inserted deflection vertices at road-boundary/`L-USEC-0` style verticals, but missed the same deflection when the crossing evidence was a quarter divider. Example: S.E. S.E. 4 needed the south boundary to include `619223.005,5836868.575` between `618544.729,5837685.975` and `619374.158,5836872.305`.
+- Root cause:
+- The final quarter-box deflection reconciler received only road-boundary segments, while `L-QSEC` divider linework was collected separately and never passed into the correction-south deflection candidate set. The reconciler also used a tight distance-to-current-edge gate that is right for ordinary road-boundary verticals but too strict for a skipped quarter-divider bend, where the current straight edge is the geometry being corrected.
+- Fix:
+- Extended the reusable correction-south deflection reconciler to consider vertical `L-QSEC` divider endpoints when they touch the same correction south row, are inside the south boundary band, are not already present on the quarter box, and fall within the active south-edge span. Existing road-boundary candidates keep the tighter edge-distance gate; the wider gate is only for proven `L-QSEC` divider evidence.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Fast quarter-view proof: `data\twp43-9-5-proof-rerun138-preserve-qsec-deflection\artifacts\output.dxf`.
+- Full isolated AutoCAD proof: `data\twp43-9-5-proof-rerun139-full-qsec-deflection\artifacts\output.dxf`, launched under `fullAutoCadProfile=ATSBUILD_TEST` with `ATSBUILD_QUATERVIEW=1`; batch completed and `Imported dispositions: 0`.
+- Full AutoCAD coordinate checks passed: `L-QUATER`, `L-QSEC`, and `L-USEC-C-0` all contain the requested `619223.005,5836868.575` node; section 4 log reports `VERIFY-QTR-CORR-DEFLECT-POST ... quarter=SouthEast inserted=1 points=619223.005,5836868.575`.
+- `43-9-5` ATS fabric guard: comparing rerun137 to rerun139 at `3dp`, excluding the intentionally visible `L-QUATER` layer, passed with `894` `L-*` fabric entities before and after and no added/missing fabric.
+- Protected `43-8-5` guard: `data\regression-checks\twp43-8-5-after-43-9-5-qsec-deflection-collapse\artifacts\output.dxf`.
+- `43-8-5` ATS fabric compare against the prior guard `data\regression-checks\twp43-8-5-after-43-9-5-qsec-south-correction-zero-gated\artifacts\output.dxf` passed at `3dp` with `887` `L-*` fabric entities before and after and no added/missing fabric. Whole-DXF compare is currently noisy because the local seed includes unrelated non-ATS `T-COMPASS-MAPPING`/`C-SYMBOL` differences, so the accepted guard for this change is the ATS-fabric-layer compare.
+
+## 2026-04-25 - Fix 43-9-5 correction-line end trims and east buffer layer classification
+
+- [x] Record reported west correction-line issues:
+- Segment from `614466.852,5836749.502` toward `614446.528,5837586.623` should terminate at `614466.417,5836767.072`.
+- Segment `615180.894,5836672.832 -> 615178.740,5836763.740` should terminate near `615178.621,5836768.758`.
+- Segment `615979.568,5836783.522 -> 615178.740,5836763.740` should be `L-USEC-C`, should terminate at `615188.791,5836764.007`, and should have a north `L-USEC-C-0` offset companion.
+- [x] Record reported east correction-line issues:
+- Segment `624287.508,5837051.563 -> 624367.288,5837053.698` appears to be on the wrong layer.
+- Also inspect `624297.442,5837056.427 -> 624367.288,5837058.296`.
+- [x] Inspect current full DXF and logs around the west/east correction ends.
+- [x] Implement reusable correction-line endpoint/layer restoration fix without coordinate-specific fallback.
+- [x] Rebuild and run fresh `43-9-5` proof plus protected `43-8-5` guard.
+
+Review 2026-04-25 (Fix 43-9-5 correction-line end trims and east buffer layer classification):
+- User correction:
+- West correction-buffer end linework had an `L-USEC-0` vertical running through the next original correction row, a `20.12` vertical stopping on the original correction axis instead of the north `L-USEC-C-0` offset, and a same-axis `L-USEC-C-0` duplicate where the original `L-USEC-C` plus north offset companion were required. The east clipped `20.12/30.18` spans were also on ordinary layers instead of `L-USEC-C-0` / `L-USEC-C`.
+- Root cause:
+- The late correction-buffer repair could restore missing buffer spans, but it did not normalize `L-USEC-C-0` rows that sat directly on an already-restored `L-USEC-C` original axis. Short clipped ordinary connectors also kept `L-USEC2012` / `L-USEC3018` even when their geometry was a continuation of correction-zero/correction projections. A first broad vertical retarget would have shortened normal interior correction verticals in the protected `43-8-5` township, so the final rule had to be narrowed to buffer-end evidence only.
+- Fix:
+- Added reusable final cleanup rules that:
+- Move same-axis `L-USEC-C-0` duplicates onto the existing correction-zero offset side only when an existing offset continuation proves the side.
+- Retarget short 20/30 vertical endpoints only to correction-zero rows normalized by that same pass.
+- Trim long `L-USEC-0` overruns only when the target is a short original `L-USEC-C` buffer-end row.
+- Relayer short clipped `20.12/30.18` ordinary spans to `L-USEC-C-0` / `L-USEC-C` when they are projected continuations of correction-family rows.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Fast preserved-layer proof: `data\twp43-9-5-proof-rerun144-correction-buffer-end-trims-narrow\artifacts\output.dxf`.
+- Full isolated AutoCAD proof: `data\twp43-9-5-proof-rerun146-full-correction-buffer-end-trims-narrow\artifacts\output.dxf`, launched under `fullAutoCadProfile=ATSBUILD_TEST` with `ATSBUILD_QUATERVIEW=1`; batch completed and exported at `2026-04-25 21:08:34`.
+- Full AutoCAD coordinate checks passed:
+- `L-USEC-0` covers `614466.852,5836749.502 -> 614466.425,5836767.073` (`0.009 m` from requested end `614466.417,5836767.072`).
+- `L-USEC2012` covers `615180.894,5836672.832 -> 615178.621,5836768.758`.
+- `L-USEC-C` covers `615188.791,5836764.007 -> 615979.568,5836783.522`.
+- `L-USEC-C-0` covers `615979.444,5836788.540 -> 615178.616,5836768.758`.
+- `L-USEC-C-0` covers `624287.508,5837051.563 -> 624367.288,5837053.698`.
+- `L-USEC-C` covers `624297.442,5837056.427 -> 624367.288,5837058.296`.
+- Accore old/new layer diff from rerun138 to rerun144 was limited to the requested correction-buffer family plus dependent quarter boxes: `L-USEC-0` `1/1`, `L-USEC-C` `0/1`, `L-USEC-C-0` `1/2`, `L-USEC2012` `2/1`, `L-USEC3018` `2/1`, `L-QUATER` `3/3`.
+- Protected `43-8-5` full AutoCAD guard: `data\twp43-8-5-guard-rerun147-full-correction-buffer-end-trims-narrow\artifacts\output.dxf`, exported at `2026-04-25 21:11:29`. The correction-buffer end-span restoration did not activate in this township (no `correction-line 100m buffer` / `restored 100m buffer` log lines), preventing the broad interior-vertical regression caught during the first attempt.
+- Note: The repository's current branch output still does not exactly match `data\regression-baselines\twp43-8-5\accepted-output.dxf` (`190` ATS-fabric added/missing at `3dp` in the no-preserve proof), but that drift is outside this specific correction-buffer pass because the pass is inactive on `43-8-5`.
+
+## 2026-04-25 - Remove floating out-of-buffer QSEC and retarget south correction quarters to L-USEC-C-0
+
+- [x] Record correction that the detached far-west `L-QSEC`/quarter line should not show because it is outside the 100m buffer.
+- [x] Inspect why quarter lines south of the correction line are ending on `L-USEC-C` instead of `L-USEC-C-0`.
+- [x] Implement reusable line cleanup / endpoint preference fix with no coordinate-specific fallback.
+- [x] Rebuild and run fresh `43-9-5` proof plus protected `43-8-5` guard.
+
+Review 2026-04-25 (Remove floating out-of-buffer QSEC and retarget south correction quarters to L-USEC-C-0):
+- User correction:
+- The detached lower `L-QSEC`/quarter helper near the west end should not show at all because it is outside the 100m buffer and floating. The short QSEC/quarter helpers south of the correction line were also landing on the original `L-USEC-C` row instead of the correction offset `L-USEC-C-0` row.
+- Root cause:
+- Removing the prior QSEC buffer retarget preserved the floating helper instead of erasing it. The remaining south-side short QSEC helpers were generated against the original correction line and had no late pass that prefers the matching `5.02 m` offset `L-USEC-C-0` companion. A first broad attempt would also alter the protected `43-8-5` reference, so the rule needed to activate only when this bad topology is present.
+- Fix:
+- Added a late, reusable south-correction QSEC normalization pass. It activates only when the correction-line family has a detached/floating short vertical `L-QSEC` near correction rows. When active, it moves QSEC endpoints that touch `L-USEC-C` onto the matching parallel `L-USEC-C-0` offset row, including junction cases where the offset row starts at the corrected endpoint. It erases short vertical QSEC lines near correction rows when neither endpoint touches a hard boundary.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Fast preserved-layer proof: `data\twp43-9-5-proof-rerun136-preserve-qsec-south-correction-zero-gated\artifacts\output.dxf`.
+- Full isolated AutoCAD proof: `data\twp43-9-5-proof-rerun137-full-qsec-south-correction-zero-gated\artifacts\output.dxf`, launched under `fullAutoCadProfile=ATSBUILD_TEST`, batch completed, dispositions imported `0`.
+- Full AutoCAD checks:
+- `12` QSEC endpoints in the south correction band were checked; all land on `L-USEC-C-0` within `0.2 m`.
+- Floating QSEC `614357.160,5836716.962 -> 614358.194,5836672.832` is absent.
+- Retargeted floating variant `614356.448,5836747.306 -> 614358.194,5836672.832` is absent.
+- Required 100m buffer spans from the previous fix remain present.
+- Full-DXF compare from rerun133 to rerun137 changed only intended supported entities: removed the floating `L-QSEC` and moved the south correction-band `L-QSEC` endpoints from `L-USEC-C` to `L-USEC-C-0`.
+- Protected `43-8-5` guard: `data\regression-checks\twp43-8-5-after-43-9-5-qsec-south-correction-zero-gated\artifacts\output.dxf`.
+- Exact `43-8-5` compare against prior guard `data\regression-checks\twp43-8-5-after-43-9-5-section1-mid-restore\artifacts\output.dxf` passed at `3dp` with `1744` supported entities before and after, and no added or missing supported entities.
+
+## 2026-04-25 - Tighten 43-9-5 100m buffer restoration overreach
+
+- [x] Record correction that the far-west `L-QSEC`/quarter retarget may be unnecessary because the line is outside the 100m buffer.
+- [x] Confirm and remove the extra correction-family line `615158.436,5836773.302 -> 614357.060,5836757.360` without coordinate-specific fallback logic.
+- [x] Keep the required 100m buffer lines while preventing out-of-buffer quarter/QSEC changes.
+- [x] Rebuild and run fresh `43-9-5` proof plus protected `43-8-5` guard.
+
+Review 2026-04-25 (Tighten 43-9-5 100m buffer restoration overreach):
+- User correction:
+- The previous pass pulled a nearby `L-QSEC`/quarter line up to the correction buffer even though it appears to sit outside the 100m buffer purpose, and it introduced an extra correction-family line at `615158.436,5836773.302 -> 614357.060,5836757.360`.
+- Root cause:
+- The extra line was a double-offset correction companion. The zero row already had a normal `5.02 m` `L-USEC-C` companion below it, but the buffer restoration pass ignored that close existing companion and created another `L-USEC-C` on the opposite side. The late QSEC buffer-edge retarget was also too broad for this purpose because it treated a nearby correction-row/buffer-edge hit as permission to move visible quarter/QSEC linework.
+- Fix:
+- Added a reusable companion-existence veto: if an `L-USEC-C-0` row already has an overlapping, parallel `L-USEC-C` companion at the normal `5.02 m` inset, the buffer restoration pass does not create another outer companion.
+- Removed the QSEC correction-buffer retarget from the active cleanup pipeline; the 100m buffer restoration now restores correction/USEC buffer linework only, not out-of-buffer quarter/QSEC linework.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Fast preserved-layer proof: `data\twp43-9-5-proof-rerun132-preserve-100m-buffer-no-qsec-overreach\artifacts\output.dxf`.
+- Full isolated AutoCAD proof: `data\twp43-9-5-proof-rerun133-full-100m-buffer-no-qsec-overreach\artifacts\output.dxf`, launched under `fullAutoCadProfile=ATSBUILD_TEST`, batch completed, dispositions imported `0`.
+- Full AutoCAD coordinate checks passed: required east `L-USEC2012` and far-west `L-USEC-C` / `L-USEC-C-0` buffer spans remain present; extra `615158.436,5836773.302 -> 614357.060,5836757.360` is absent; retargeted QSEC `614356.448,5836747.306 -> 614358.194,5836672.832` is absent; original QSEC `614357.160,5836716.962 -> 614358.194,5836672.832` is preserved.
+- Full-DXF compare from rerun131 to rerun133 changed only the intended supported entities: removed the extra `L-USEC-C`, removed the retargeted `L-QSEC`, and restored the original `L-QSEC`.
+- Protected `43-8-5` guard: `data\regression-checks\twp43-8-5-after-43-9-5-100m-buffer-no-qsec-overreach\artifacts\output.dxf`.
+- Exact `43-8-5` compare against prior guard `data\regression-checks\twp43-8-5-after-43-9-5-section1-mid-restore\artifacts\output.dxf` passed at `3dp` with `1744` supported entities before and after, and no added or missing supported entities.
+## 2026-04-26 - Fix 43-8-5 west L-USEC endpoints choosing 20.12 instead of 30.18
+
+- [x] Record user correction: the west starts of repeated `L-USEC` spans on the same north-south road allowance are landing on the `L-USEC2012` side instead of the `L-USEC3018` side, for example `624041.110,5846713.288` should be used instead of `624051.150,5846713.985`.
+- [x] Trace the generic endpoint anchor selection for long ordinary `L-USEC` spans at north-south road allowances.
+- [x] Implement a reusable fix so the spans land on the outer `30.18` boundary where that full RA side is the controlling boundary.
+- [x] Rebuild and verify `43-8-5` against the accepted reference, then guard `43-9-5` so recent correction-line fixes do not regress.
+
+Review 2026-04-26 (Fix 43-8-5 west L-USEC endpoints choosing 20.12 instead of 30.18):
+- User correction:
+- Repeated west-side ordinary `L-USEC` spans along the same full north-south road allowance were ending on the `L-USEC2012` side, for example `624051.150,5846713.985`, instead of the true `30.18` boundary node at `624041.110,5846713.288`.
+- Root cause:
+- The local open-T resolver only accepted pairs where both the horizontal and vertical `20.12` endpoints moved. In this topology the vertical `20.12` endpoint was already sitting on the correct `30.18` boundary node, so the horizontal span was left anchored on the inner `20.12` node. A first broad one-sided rule also moved unrelated one-sided same-band pairs, so the final rule had to require an adjacent `30.18` bridge and no alternate perpendicular ownership at the moving endpoint.
+- Fix:
+- Allowed one-sided local `20.12` open-T closure only when the exact endpoint is proven by an adjacent `30.18` perpendicular bridge, while leaving ordinary one-sided same-band tie-ins unchanged.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Normal Accore proof: `data\twp43-8-5-proof-rerun153-normal-noqv-west-usec-anchor-thirty-only\artifacts\output.dxf`.
+- Preserved-layer Accore proof: `data\twp43-8-5-proof-rerun154-preserve-west-usec-anchor-thirty-only\artifacts\output.dxf`.
+- Full isolated AutoCAD proof: `data\twp43-8-5-proof-rerun156-full-west-usec-anchor-thirty-only\artifacts\output.dxf`, launched under `fullAutoCadProfile=ATSBUILD_TEST`; batch completed and exported.
+- Full AutoCAD coordinate checks passed:
+- `L-USEC` covers `624041.110,5846713.288 -> 624850.763,5846769.422` with `0.001 m` delta.
+- `L-USEC` covers `624123.704,5843476.677 -> 624933.907,5843532.809` with `0.001 m` delta.
+- `L-USEC` covers `624206.245,5840240.046 -> 625017.026,5840296.184` with `0.001 m` delta.
+- Old wrong starts at `624051.150`, `624133.744`, and `624216.286` are now about `10.064 m` from the nearest matching span.
+- The previous over-broad one-sided regression is absent: `624074.764,5840256.016 -> 624185.651,5840258.761` is present and the bad `624074.764,5840256.016 -> 624205.756,5840259.259` candidate is `20.111 m` away.
+- Protected `43-9-5` guard: `data\twp43-9-5-proof-rerun155-preserve-west-usec-anchor-guard\artifacts\output.dxf`. Compared to rerun144, entity counts stayed identical and the only geometry changes were the same reusable family: `6` `L-USEC2012` endpoint shifts plus `5` dependent `L-SECTION-LSD` endpoint shifts; no correction-line-family entities were added or removed.
+
+## 2026-04-26 - Fix quarter lines crossing west N-S road allowance after 30.18 anchor repair
+
+- [x] Record user correction: quarter lines coming from the east along the same north-south road allowance are crossing through the road allowance and ending on the left/inner side. Example current endpoint `624041.555,5845907.778` should terminate at `624061.625,5845909.610`.
+- [x] Inspect the latest `43-8-5` proof around the reported endpoint and identify the line/layer being retargeted.
+- [x] Implement a reusable quarter endpoint preference so quarter/LSD lines stop at the controlling road allowance boundary instead of crossing to the opposite side.
+- [x] Rebuild and verify `43-8-5`, then guard `43-9-5` for same-family changes.
+
+Review 2026-04-26 (Fix quarter lines crossing west N-S road allowance):
+- User correction:
+- Quarter/QSEC lines coming from the east were crossing through the west north-south road allowance and ending on the left/outside endpoint. Example: the line ending at `624041.555,5845907.778` needed to terminate at `624061.625,5845909.610`.
+- Root cause:
+- The earlier road-anchor repair correctly restored the road allowance linework, but the visible/stored quarter definitions still kept the opposite-side QSEC endpoint. The quarter pass did not do a late topology check to detect when a QSEC endpoint sat on one road-boundary endpoint while a matching parallel road-boundary endpoint across the road allowance width lay on the same QSEC projection and closer to the interior endpoint.
+- Fix:
+- Added a reusable post-draw QSEC/quarter retarget pass. It scans actual drawn topology, finds QSEC endpoints on road-boundary endpoints, accepts only a matching parallel road-boundary endpoint across a plausible `20.12 m` or `30.18 m` allowance width, requires the target to lie on the QSEC projection and be closer to the QSEC's opposite endpoint, and prefers the inside `20.12 m` stop when both widths are present. Matching `L-QUATER` vertices are moved only when their adjacent quarter-box edge also improves toward the new endpoint.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Preserved-layer Accore proof: `data\twp43-8-5-proof-rerun163-preserve-west-quarter-ra-step-post-inside\artifacts\output.dxf`. `L-QSEC` target `624061.625,5845909.610 -> 625681.228,5846021.434` matched within `0.001 m`; old crossing endpoint was `20.154 m` away. The same rule retargeted `6` QSEC endpoints and `12` quarter vertices along that road-allowance family.
+- Normal Accore proof: `data\twp43-8-5-proof-rerun164-normal-west-quarter-ra-step-post-inside\artifacts\output.dxf`. Reported QSEC target matched within `0.001 m`; previous west `L-USEC` anchor checks stayed within about `0.001 m`.
+- Full isolated AutoCAD proof: `data\twp43-8-5-proof-rerun165-full-west-quarter-ra-step-post-inside\artifacts\output.dxf`, launched with `fullAutoCadProfile=ATSBUILD_TEST`; batch completed and exported. The same QSEC and prior `L-USEC` coordinate checks matched the normal proof.
+- Protected `43-9-5` guard: `data\twp43-9-5-proof-rerun166-preserve-west-quarter-ra-step-guard\artifacts\output.dxf`. Entity counts stayed identical versus rerun155; only the same reusable QSEC endpoint family moved from the outside endpoint to the inside `20.12 m` road-boundary endpoint, with no correction-line-family additions/removals.
+
+## 2026-04-26 - Fix remaining L-QUATER/blind-line endpoints along west N-S road allowance
+
+- [x] Record user correction: after the QSEC endpoint fix, some `L-QUATER` definitions along the same north-south road allowance are still wrong, and some blind/dependent lines are ending on the `30.18` edge instead of the `20.12` edge.
+- [x] Inspect latest `43-8-5` output around the west road allowance by `L-QSEC`, `L-QUATER`, and dependent/blind line layers.
+- [x] Implement reusable ownership cleanup so quarter definitions and dependent blind lines terminate on the correct inside road-boundary edge.
+- [x] Rebuild and verify `43-8-5`, then guard `43-9-5` for same-family changes.
+
+Review 2026-04-26 (Fix remaining L-QUATER/blind-line endpoints along west N-S road allowance):
+- User correction:
+- After the long QSEC road-allowance retarget, short/blind quarter-definition stubs along the same north-south road allowance still ended on the `30.18`/outside edge instead of sharing the inside `20.12` stop. Example: `623951.150,5845905.612 -> 624041.555,5845907.778` needed to end at `624061.625,5845909.610`.
+- Root cause:
+- The road-step retarget pass handled the long quarter definitions that crossed the road allowance, but it only accepted endpoint moves that shortened the QSEC toward the interior. Short blind QSEC stubs need the opposite move: extend across the road allowance to the same inside stop already proven by the matching long QSEC line.
+- Fix:
+- Process long `L-QSEC` lines first and record their retargeted inside road-boundary stops.
+- Allow short horizontal-ish blind `L-QSEC` stubs to extend only one plausible road-width to a parallel road-boundary endpoint, preferring a recorded long-line inside stop when present.
+- Keep the blind-stub rule gated by length and orientation so vertical/top QSEC stubs are not pulled down to unrelated road allowance endpoints.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Normal proof: `data\r171\artifacts\output.dxf`. Target long `L-QSEC` `624061.625,5845909.610 -> 625681.228,5846021.434` matched within `0.001 m`; target blind `L-QSEC` `623951.150,5845905.612 -> 624061.625,5845909.610` matched within `0.001 m`; old blind endpoint `624041.555,5845907.778` is now about `20.154 m` away.
+- Full isolated AutoCAD proof: `data\r172\artifacts\output.dxf`, launched under `fullAutoCadProfile=ATSBUILD_TEST`. The same coordinate checks matched within `0.001 m`, and filtered ATS linework compare versus the normal proof passed for `887` `L-*` line/polyline entities with `0` added and `0` missing.
+- Before/after Full AutoCAD compare versus rerun165 changed exactly `6` `L-QSEC` horizontal blind stubs on 43-8-5 and left all other `L-*` linework unchanged.
+- Protected `43-9-5` guard: `data\r173\artifacts\output.dxf`. Entity counts stayed identical versus rerun166; differences were the same reusable `L-QSEC`/`L-QUATER` endpoint-ownership family, with no added correction-line or road-allowance entities.
+
+## 2026-04-27 - Revert over-broad west-side blind QSEC crossing at road allowance
+
+- [x] Record user correction: the long east-side `L-QSEC` landing at `624144.206,5842672.983` is correct, but west-side short quarter/definition stubs must not cross the road allowance to that `20.12` side. Example short `L-QSEC` should end at `624124.136,5842671.153`.
+- [x] Remove the reusable but over-broad blind-stub extension path while preserving the long QSEC road-allowance retarget.
+- [x] Rebuild and verify the corrected `43-8-5` geometry in normal/preserved and Full AutoCAD outputs.
+- [x] Guard related township output so the fix does not add/remove unrelated section fabric.
+
+Review 2026-04-27 (Revert over-broad west-side blind QSEC crossing at road allowance):
+- User correction:
+- The east/interior long `L-QSEC` ending at `624144.206,5842672.983 -> 625764.923,5842784.812` is correct, but the west-side short quarter/definition stub must stop at `624124.136,5842671.153` and must not cross the road allowance to the `20.12` side.
+- Root cause:
+- The previous blind-stub extension rule treated all short horizontal QSEC stubs near a proven long retarget as dependent pieces that should share the inside `20.12` stop. That was wrong for the west/outside stub: it is its own side of the road allowance and should remain on the `30.18`-side node while only the long line from the east is retargeted inward.
+- Fix:
+- Removed the blind-stub extension path entirely. The road-allowance retarget pass now only moves QSEC endpoints when the candidate road-boundary node is closer to the QSEC's opposite/interior endpoint, preserving the intended long-line retarget while leaving west-side stubs and their quarter-box vertices on their own side.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Normal proof: `data\r174\artifacts\output.dxf`. Short `L-QSEC` `624033.744,5842668.947 -> 624124.136,5842671.153` matched within `0.001 m`; bad crossing to `624144.206,5842672.983` is absent by about `20.153 m`; good long east `L-QSEC` `624144.206,5842672.983 -> 625764.923,5842784.812` matched within `0.001 m`.
+- Quarter-view preserved proof: `data\r175\artifacts\output.dxf` matched the same coordinate checks.
+- Full isolated AutoCAD proof: `data\r176\artifacts\output.dxf`, launched under `fullAutoCadProfile=ATSBUILD_TEST`, matched the same coordinate checks. Filtered ATS linework compare normal vs Full AutoCAD passed with `887` `L-*` line/polyline entities before and after, `0` added and `0` missing.
+- Current Full AutoCAD output compares exactly to the prior good Full AutoCAD proof `data\twp43-8-5-proof-rerun165-full-west-quarter-ra-step-post-inside\artifacts\output.dxf` on filtered `L-*` linework.
+- Protected `43-9-5` guard: `data\r177\artifacts\output.dxf` compares exactly to `data\twp43-9-5-proof-rerun166-preserve-west-quarter-ra-step-guard\artifacts\output.dxf` on filtered `L-*` linework.
+
+## 2026-04-27 - Preserve L-QUATER vertices when live QSEC endpoint still owns old road-side node
+
+- [x] Record user correction: the `L-QSEC` linework is now better, but `L-QUATER` quarter-definition corners such as the shared `S.W. N.W.` / `N.W. S.W.` point of section 19 still moved to the wrong side; that corner should be `624124.136,5842671.153`.
+- [x] Implement a reusable guard so quarter-box vertices are not moved from an old road-side node when a surviving `L-QSEC` endpoint still proves that old node.
+- [x] Rebuild and verify preserved quarter-view output, normal output, and isolated Full AutoCAD output.
+- [x] Run protected guard compare for related township output and update lessons.
+
+Review 2026-04-27 (Preserve L-QUATER vertices when live QSEC endpoint still owns old road-side node):
+- User correction:
+- The `L-QSEC` lines were correct, but visible/stored `L-QUATER` quarter-definition corners still followed the moved long-QSEC endpoint. The shared `S.W. N.W.` / `N.W. S.W.` point of section 19 needed to remain at `624124.136,5842671.153`, not at `624144.206,5842672.983`.
+- Root cause:
+- The QSEC retarget pass moved the long east-side QSEC endpoint from the outside road-boundary node to the inside `20.12` node, then blindly applied that same endpoint move to all matching `L-QUATER` vertices. That was unsafe because a surviving short `L-QSEC` still terminated at the original old node, proving that old node was still a valid quarter-definition corner.
+- Fix:
+- Track final QSEC endpoint locations after retargeting. When retargeting `L-QUATER` vertices, skip any old endpoint move if another final/live QSEC endpoint still occupies that old point. This keeps quarter boxes on their own road-side anchor while preserving the long QSEC retarget.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.sln -c Release --no-restore /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Normal proof: `data\r178\artifacts\output.dxf` stayed exact versus `data\r174\artifacts\output.dxf` on filtered `L-*` linework.
+- Quarter-view proof: `data\r179\artifacts\output.dxf`. Two `L-QUATER` polygons now share vertex `624124.136,5842671.153`; no `L-QUATER` vertices remain at `624144.206,5842672.983`; short `L-QSEC` and good long east `L-QSEC` both match within `0.001 m`.
+- Full isolated AutoCAD quarter-view proof: `data\r180\artifacts\output.dxf`, launched under `fullAutoCadProfile=ATSBUILD_TEST`. It matched the same coordinate checks, and filtered `L-*` linework compare versus `data\r179\artifacts\output.dxf` passed with `1031` entities before and after, `0` added and `0` missing.
+- Protected `43-9-5` guard: `data\r181\artifacts\output.dxf` compares exactly to `data\r177\artifacts\output.dxf` on filtered `L-*` linework.
+
+## 2026-04-27 - Rebuild manual ATSBUILD UI DLL
+
+- [x] Force rebuild `AtsBackgroundBuilder` Release x64.
+- [x] Restore the regular ATSBUILD UI lookup reader to the existing local-file/OleDb path after the ClosedXML detour blanked the client list.
+- [x] Stage the rebuilt DLL and runtime dependencies in a manual NETLOAD folder that is not referenced by startup LISP.
+- [x] Verify startup LISP still loads `Compass.dll` only, with no `AtsBackgroundBuilder.dll` autoload.
+- [x] Verify the manual copy hash matches the rebuilt output DLL.
+- [x] Verify the local company lookup file exists and contains client rows.
+
+Review 2026-04-27 (Rebuild manual ATSBUILD UI DLL):
+- Build:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false -t:Rebuild /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Fix:
+- Reverted the unintended `ClosedXML` UI lookup change. The regular ATSBUILD UI again reads the configured local lookup files through the existing `ExcelLookup` path.
+- Manual NETLOAD target:
+- `C:\AUTOCAD-SETUP CG\CG_LISP\ATSBUILD_MANUAL\AtsBackgroundBuilder.dll`
+- Verification:
+- Source, workspace build, and manual copy SHA256 matched: `6457F4BA62CC92E4EE0506320477ACB54D676F45A297369E71A5476D53AC2DB5`.
+- `C:\AUTOCAD-SETUP CG\CG_LISP\AUTO UPDATE LABELS\CompanyLookup.xlsx` exists and contains `37` client rows flagged `C`.
+- `C:\AUTOCAD-SETUP CG\CG_LISP\load jgw programs.lsp` still loads `Compass.dll` and does not load ATSBUILD.
+
+## 2026-04-27 - Keep section-offset Build a Drill ATS-only
+
+- [x] Confirm Compass section-offset points stop instead of falling back to non-ATS boundaries when `UseAtsFabric` is false or ATS hard boundaries cannot be resolved.
+- [x] Confirm the Build a Drill UI forces ATS hard boundaries for section offsets.
+- [x] Confirm the skill-driven plugin path resolves the workspace ATS builder from `build\net8.0-windows`, not from the AutoCAD setup startup path.
+- [x] Rebuild and redeploy `Compass.dll`.
+
+Review 2026-04-27 (Keep section-offset Build a Drill ATS-only):
+- Scope:
+- Regular `ATSBUILD` UI behavior is not part of this change and should remain on the local lookup files.
+- Compass `BuildDrillService.ResolveSectionOffsetPoint(...)` now throws instead of calling the old non-ATS fallback when section offsets are requested without ATS fabric.
+- `BuildDrillDialogViewModel` forces `UseAtsFabric = true` for `SectionOffsets`, and the UI disables the old toggle.
+- Verification:
+- `dotnet build .\compass_program\src\Compass\Compass.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false -t:Rebuild /m:1 -v:minimal` passed with `0` errors and `2` existing obsolete-API warnings.
+- `C:\AUTOCAD-SETUP CG\CG_LISP\Compass.dll` was refreshed from the Release build and hash-matched the source output.
+- Fail-fast smoke: `.artifacts\builddrill-ats-required-smoke` returned `success: False` for a section-offset point with `UseAtsFabric=false` and the expected message: `Section offsets require ATS hard boundaries`.
+- ATS-load smoke: `.artifacts\builddrill-ats-load-smoke` returned `success: True`; point 1 reported `section offsets from ATS-built hard boundaries`, proving the skill path can use the workspace ATS builder when ATS fabric is enabled.
+
+## 2026-04-27 - Repair manual ATSBUILD NETLOAD deployment
+
+- [x] Confirm the deployed ATS builder is not a UI-less build; it contains `ATSBUILD`, `ATSBUILD_XLS`, and `ATSBUILD_XLS_BATCH`.
+- [x] Rebuild `AtsBackgroundBuilder` with package runtime DLLs copied local.
+- [x] Refresh `C:\AUTOCAD-SETUP CG\CG_LISP\ATSBUILD_MANUAL` as a full DLL/deps manual NETLOAD drop.
+- [x] Verify the manual DLL hash matches the workspace build and the workspace `build\net8.0-windows` DLL.
+- [x] Smoke-test NETLOAD from a no-spaces `accoreconsole` path.
+
+Review 2026-04-27 (Repair manual ATSBUILD NETLOAD deployment):
+- Root cause:
+- The manual folder was a partial deployment. The regular interactive ATSBUILD assembly depends on `System.Data.OleDb.dll` for the configured local Excel lookup files, but that runtime DLL was missing from `ATSBUILD_MANUAL`.
+- Fix:
+- Added package-runtime copy-local behavior to `AtsBackgroundBuilder.csproj`.
+- Rebuilt Release x64 and copied the full DLL/deps set into `C:\AUTOCAD-SETUP CG\CG_LISP\ATSBUILD_MANUAL`.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false -t:Rebuild /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Source, workspace build, and manual DLL hashes matched: `6457F4BA62CC92E4EE0506320477ACB54D676F45A297369E71A5476D53AC2DB5`.
+- Manual folder now contains `System.Data.OleDb.dll` alongside `AtsBackgroundBuilder.dll` / `.deps.json`.
+- `accoreconsole` NETLOAD smoke from `C:\AtsBuildNetloadSmoke` exited `0` with no load/error text.
+
+## 2026-04-27 - Fix ATSBUILD apparent freeze before/at UI launch
+
+- [x] Inspect live AutoCAD process and ATSBUILD logs after the freeze report.
+- [x] Add flushed startup stage breadcrumbs around config, lookup, and UI construction/show.
+- [x] Assign the ATSBUILD WPF window an AutoCAD main-window owner and activate it on load so the dialog does not hide behind AutoCAD.
+- [x] Rebuild and deploy to `build\net8.0-windows` and `ATSBUILD_MANUAL`.
+- [x] Smoke-test the build-folder DLL through `ATSBUILD` until `ui_show_dialog`.
+
+Review 2026-04-27 (Fix ATSBUILD apparent freeze before/at UI launch):
+- Investigation:
+- The latest build-folder runs logged only through `ATSBUILD stage: startup`, which was insufficient because later messages were buffered. The process still reported as responding, consistent with a hidden/ownerless modal WPF dialog or another early UI handoff issue.
+- Fix:
+- `AtsBuildWindow` now best-effort assigns AutoCAD's main window as owner and calls `Activate()` after load.
+- `ATSBUILD` now flushes stage breadcrumbs for `config_load`, `lookup_paths`, `company_lookup`, `purpose_lookup`, `ui_construct`, and `ui_show_dialog`.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false -t:Rebuild /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Source, workspace build, and manual DLL hashes matched: `CB9914ADA549A8C720654D510D68B43E027CDD3C0766229B4D794337A4DB5729`.
+- `C:\AtsBuildUiSmoke` accore smoke reached `ATSBUILD stage: ui_show_dialog` from the build-folder DLL.
+
+## 2026-04-27 - Stop ATSBUILD Excel lookup startup hangs
+
+- [x] Confirm whether the latest AutoCAD hang points at Excel/lookup startup.
+- [x] Change lookup loading to read a temporary snapshot of the configured local `.xlsx` files instead of letting OleDb touch the live workbook path.
+- [x] Rebuild and redeploy `AtsBackgroundBuilder.dll` to the normal build folder and manual NETLOAD folder.
+- [x] Verify lookup rows still load from the local files and `ATSBUILD` reaches the UI handoff.
+
+Review 2026-04-27 (Stop ATSBUILD Excel lookup startup hangs):
+- Investigation:
+- Windows Application log recorded AutoCAD hangs at `2026-04-27 2:23 PM` / `2:24 PM` with `AppHangXProcB1` and `P6: EXCEL.EXE`, matching the lookup-reader startup path.
+- Fix:
+- `ExcelLookup.Load(...)` now copies each configured local `.xlsx` lookup workbook to a temporary snapshot before opening it with OleDb, so AutoCAD no longer asks ACE/OleDb to read the live workbook path that Excel may have open.
+- `AtsBackgroundBuilder.csproj` no longer copies stale `.log` files from the source build output into `build\net8.0-windows`.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false -t:Rebuild /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Source, workspace build, and manual NETLOAD DLLs hash-match: `211F116BCC10C2019D9925FDDB59486D62021D74A5164F79062C48C040D4B878`.
+- No-spaces `accoreconsole` smoke loaded `CompanyLookup.xlsx` from a snapshot with `116` rows and `PurposeLookup.xlsx` from a snapshot with `35` rows, reached `ATSBUILD stage: ui_show_dialog`, and cancelled normally.
+
+## 2026-04-27 - Promote 43-8-5 guard and fix 43-9-5 mixed-width roads
+
+- [x] Refresh the accepted `43-8-5` DXF reference from the latest approved Full AutoCAD output.
+- [x] Make the township regression wrapper always run `43-8-5` with the same ATS-fabric-only, quarter-view, and final-layer preservation settings used for approval.
+- [x] Inspect the current `43-9-5` output around the reported 20.12 road allowance and south-section correction-line coordinates.
+- [x] Confirm the normal final-output `43-8-5` layer regression separately from the preserve-layer guard.
+- [x] Patch final-output relayer logic so standalone `20.12` road allowances can become `L-SEC` without promoting `30.18` road stacks.
+- [ ] Fix the reusable road allowance / section-definition logic without coordinate-specific fallbacks.
+- [x] Rebuild and rerun `43-9-5`, then verify the reported coordinates/layers.
+- [x] Rerun the `43-8-5` guard and prove it still matches the accepted reference before sign-off.
+
+Review 2026-04-27 (Promote 43-8-5 guard and partial 43-9-5 mixed-width proof):
+- 43-8-5 accepted DXF is now `data/regression-baselines/twp43-8-5/accepted-output.dxf`, and the regression wrapper applies ATS-fabric-only, quarter-view, preserve-USEC-variant layers, and the isolated `ATSBUILD_TEST` AutoCAD profile from the manifest.
+- `43-8-5` guard after the 43-9 changes passed exactly: `baselineComparePassed=true`, `baselineAdded=0`, `baselineMissing=0`, and `expected3dpMismatchCount=0` in `data/regression-checks/twp43-8-5-after-43-9-trim-threshold-v2`.
+- Current `43-9-5` AutoCAD proof fixed the requested 20.12 row classification and offset projection around `615138/614331`: the normal output emits those rows as `L-SEC`, the missing north offset is within `0.011 m`, and the lower vertical endpoint lands at `614331.362,5843237.012`.
+- Remaining blocker before sign-off: `616850.387,5840079.013 -> 617676.638,5840098.754` still needs to stop at `617656.533,5840098.274`, but the same geometric stop rule would also trim the already-approved `615138.073,5843276.712 -> 615965.336,5843296.829` row unless a drafting distinction is added.
+
+Review 2026-04-28 (Repair normal-output 43-8-5 layer regression):
+- Confirmation:
+- Normal final-output `43-8-5` in `data/r194-43-8-normal-layer-check` had `64` approved road-allowance variant segments promoted to `L-SEC`. Exact LSD geometry/text comparison was `0` missing and `0` added, so the visible LSD concern was caused by nearby road layer/linework context rather than changed LSD entities in that run.
+- Fix:
+- `FindFinalTwentyRoadAllowanceSecVariantIds(...)` now vetoes `0`/`20.12` promotion to final `L-SEC` when a matching parallel `30.18` companion covers the same span. That preserves normal `30.18` road-allowance stacks as collapsed `L-USEC` while still allowing true standalone `20.12` section roads to emit as `L-SEC`.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false -t:Rebuild /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Normal `43-8-5` output in `data/r195-43-8-normal-layer-fix/artifacts/output.dxf` matched the old normal-output contract exactly: `0` missing, `0` added, and `0` variant rows promoted to `L-SEC`.
+- LSD verification against the accepted `43-8-5` reference remained exact: `0` missing and `0` added.
+- Preserve-layer permanent guard in `data/regression-checks/twp43-8-5-after-layer-fix` passed with `baselineComparePassed=true`, `baselineAdded=0`, `baselineMissing=0`, and `expected3dpMismatchCount=0`.
+- Normal `43-9-5` output in `data/r196-43-9-normal-after-layer-fix/artifacts/output.dxf` still emits the requested mixed-width rows around `615138/614331` as `L-SEC`; the requested offset row is within `0.011 m`.
+
+## 2026-04-28 - Stop 43-8-5 LSDs crossing road allowances
+
+- [x] Reproduce the reported LSD crossing in `43-8-5` around `N.E. 31`, `N.E. 19`, and `N.E. 7`.
+- [x] Find the reusable clipping rule that lets a vertical `L-SECTION-LSD` pass through a road allowance.
+- [x] Patch the LSD endpoint selection without coordinate-specific fallbacks.
+- [x] Rebuild, run Full AutoCAD proof, and verify targeted coordinates plus protected `43-8-5` regression output.
+- [x] Deploy the verified ATSBUILD build to the AutoCAD setup folder for user checking.
+
+Review 2026-04-28 (Stop 43-8-5 LSDs crossing road allowances):
+- Root cause:
+- Deferred LSD construction initially found the correct near-side road-boundary endpoint, but the later station-target outer endpoint pass moved that endpoint outward to the next parallel `0`/`20.12` road row. The regular midpoint pass then snapped labels/linework to that farther row, making the LSD cross the road allowance.
+- Fix:
+- `TryFindBoundaryStationTarget(...)` now preserves an LSD endpoint already sitting on the primary `ZERO`/`TWENTY` boundary when the proposed station target would walk more than a meaningful road-width fraction outward across the road allowance. This is a topology rule, not a section-coordinate fallback.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false -t:Rebuild /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Full AutoCAD normal proof `data\r197-43-8-lsd-road-stop-normal\artifacts\output.dxf` changed exactly three `L-SECTION-LSD` endpoints and no other 3dp `L-*` linework versus the prior normal proof.
+- Corrected LSD endpoints are `625255.598,5846797.490 -> 625276.326,5845993.478`, `625339.018,5843560.875 -> 625359.743,5842756.855`, and `625422.427,5840324.252 -> 625443.148,5839520.231`.
+- The accepted `43-8-5` reference was refreshed from the approved proof, then the permanent guard `data\regression-checks\twp43-8-5-after-lsd-road-stop-accepted` passed with `baselineComparePassed=true`, `baselineAdded=0`, `baselineMissing=0`, and `expected3dpMismatchCount=0`.
+- Related `43-9-5` Full AutoCAD smoke `data\r198-43-9-after-lsd-road-stop-normal\artifacts\output.dxf` passed. It changed only three analogous `L-SECTION-LSD` endpoints, while the known mixed-width `615138/614331` `L-SEC` checks remained unchanged.
+- Deployment:
+- `C:\AUTOCAD-SETUP CG\CG_LISP\AtsBackgroundBuilder.dll` and `C:\AUTOCAD-SETUP CG\CG_LISP\ATSBUILD_MANUAL\AtsBackgroundBuilder.dll` match the workspace build hash `08DAF837B25884A3B369E17CF954C50EBC4FB848A11748218CCF894820590941`.
+- The deployed ATSBUILD DLL timestamp is `2026-04-28 13:26:59 -03:00`, and the startup LISP still NETLOADs `Compass.dll` only.
+
+## 2026-04-28 - Preserve S.E. LSD reach to 20.12 road row
+
+- [x] Reproduce the reported S.E. LSD endpoint ending on the `30.18` row instead of the intended `20.12` row, including the example that should land at `625422.126,5840344.389`.
+- [x] Compare the failed S.E. topology against the fixed N.E. topology so the endpoint rule keeps the near-boundary stop only where it is the correct construction line.
+- [x] Refine the endpoint enforcement without coordinate-specific fallbacks.
+- [x] Rebuild, run Full AutoCAD `43-8-5`, and verify both the new S.E. endpoint and the previous N.E. road-allowance stops.
+- [x] Rerun the protected `43-8-5` guard and update the accepted reference only after the output is internally consistent.
+
+Review 2026-04-28 (Preserve S.E. LSD reach to paired road row):
+- User correction:
+- The N.E. LSDs should stop at the near road-allowance boundary, but the S.E. LSDs on the adjacent sections still need to reach the paired road row. Example: `625401.188,5841148.595 -> 625421.649,5840354.435` should land at `625422.126,5840344.389`.
+- Root cause:
+- The S.E. line requested a `TWENTY/SEC` outer target, but no `TWENTY` station target was available at that station, so the rule-matrix pass fell back to the stale quarter anchor instead of trying the paired `ZERO` road row. The prior N.E. fix was correct for the lower-side LSD but did not cover this adjacent upper-side construction.
+- Fix:
+- `TryFindCompanionRoadAllowanceStationTarget(...)` now retries the paired `ZERO`/`TWENTY` road-boundary kind when the preferred road-row kind cannot resolve, before falling back to section or quarter anchors. This is a reusable road-allowance topology rule, not a coordinate-specific section workaround.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false -t:Rebuild /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Full AutoCAD normal proof `data\r199-43-8-se-lsd-companion-row-normal\artifacts\output.dxf` corrected `625401.188,5841148.595 -> 625422.126,5840344.389` and preserved the prior N.E. stops including `625422.427,5840324.252 -> 625443.148,5839520.231`.
+- Old-vs-new normal `43-8-5` 3dp `L-*` diff changed exactly two `L-SECTION-LSD` endpoints and no other linework layers.
+- The protected `43-8-5` guard initially showed only those two stale-reference LSD differences, then the accepted DXF was refreshed and `data\regression-checks\twp43-8-5-after-se-lsd-companion-row-accepted` passed with `baselineComparePassed=true`, `baselineAdded=0`, `baselineMissing=0`, and `expected3dpMismatchCount=0`.
+- Related `43-9-5` Full AutoCAD smoke `data\r200-43-9-after-se-lsd-companion-row-normal\artifacts\output.dxf` changed exactly one analogous `L-SECTION-LSD` endpoint onto a live road-boundary row and left the known mixed-width coordinates present.
+- Deployment:
+- `C:\AUTOCAD-SETUP CG\CG_LISP\AtsBackgroundBuilder.dll` and `C:\AUTOCAD-SETUP CG\CG_LISP\ATSBUILD_MANUAL\AtsBackgroundBuilder.dll` match the workspace build hash `0397AD435A189D876D78578833FF1F37AF60154E55A1B8D425EFD0745F25198F`.
+- The deployed ATSBUILD DLL timestamp is `2026-04-28 13:44:14 -03:00`, and startup still NETLOADs `Compass.dll` only.
+
+## 2026-04-28 - Repair remaining 43-9-5 road allowance endpoints while preserving 43-8-5
+
+- [x] Reproduce the reported `43-9-5` road-allowance issues at `615138/615965`, `615965/615945`, `617578/617557`, and `614466`.
+- [x] Identify the reusable endpoint/offset rule that distinguishes the correct `20.12` side from the wrong road-allowance side.
+- [x] Patch the logic without section-specific coordinate fallbacks.
+- [x] Rebuild and run Full AutoCAD `43-9-5` proof with targeted coordinate checks and old-vs-new DXF compare.
+- [x] Rerun the protected `43-8-5` reference guard and confirm it remains exact before deployment.
+
+Review 2026-04-28 (Repair remaining 43-9-5 road allowance endpoints):
+- Root cause:
+- Mixed-width ordinary road allowance endpoints could be retargeted to the correct inner `20.12` stop while related `L-QUATER` quarter-box vertices stayed on the stale outer point. Separately, vertical `L-SEC` endpoints already on a valid `20.12` boundary could make one extra hop to a `0` row when a different vertical section line continued on the far side of the road allowance.
+- Fix:
+- Added a reusable vertical `L-SEC` continuation guard: do not hop from a `20.12` road boundary to a `0` row when that target is the endpoint of a different vertical `L-SEC` continuation across the road allowance.
+- Carried ordinary-road inner-band retarget maps forward and applied them after quarter-view drawing so matching closed `L-QUATER` box vertices follow the same corrected stop.
+- Kept the missing short `20.12` cap generation tied to proven inner-band retargets instead of broad coordinate or section-specific fallbacks.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false -t:Rebuild /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Protected `43-8-5` reference guard `data\regression-checks\twp43-8-5-after-quarter-vertex-inner-band-r216` passed with `baselineComparePassed=true`, `baselineAdded=0`, `baselineMissing=0`, and `expected3dpMismatchCount=0`.
+- Full AutoCAD `43-9-5` proof `data\r217-43-9-quarter-vertex-inner-band-normal\artifacts\output.dxf` passed all targeted coordinate checks: shortened `615138.073,5843276.712 -> 615945.232,5843296.340`, cap `615965.330,5842471.998 -> 615945.722,5842471.998`, road and `L-QUATER` retarget `617577.504,5843335.563 -> 617557.542,5844139.963`, and long north line `614466.852,5836749.502 -> 614446.528,5837586.623`.
+- DXF diff versus the previous `43-9-5` proof changed only the intended `L-QUATER` quarter-box vertex around `617578.003,5843315.459 -> 617577.504,5843335.563`.
+- Deployment:
+- Release/manual build hash: `6EB812F567188CF52DEF08DCB67DCC7BECAEAEFFB929A632163165BA3D21272F`.
+- `C:\AUTOCAD-SETUP CG\CG_LISP\ATSBUILD_MANUAL\AtsBackgroundBuilder.dll` was refreshed and hash-matched the Release build.
+- `C:\AUTOCAD-SETUP CG\CG_LISP\AtsBackgroundBuilder.dll` could not be refreshed because running AutoCAD PID `21784` has the DLL locked; it remains at hash `0397AD435A189D876D78578833FF1F37AF60154E55A1B8D425EFD0745F25198F` from `2026-04-28 13:44:14`.
+
+## 2026-04-28 - Repair 43-9-5 N.W. 20 road and south correction endpoints
+
+- [x] Reproduce the reported 43-9-5 N.W. 20 north-south road allowance lines and weird short stubs in the latest proof.
+- [x] Identify reusable topology rules for missing 20.12/30.18 vertical companions, over-extended south correction endpoints, and correction-line classification.
+- [x] Patch the logic without coordinate-specific fallbacks.
+- [x] Rebuild and run the protected 43-8-5 reference guard to confirm zero differences.
+- [x] Run Full AutoCAD 43-9-5 proof and targeted coordinate/layer checks.
+
+Review 2026-04-28 (Repair 43-9-5 N.W. 20 road and south correction endpoints):
+- Root cause:
+- Mixed-band vertical road rows could carry `L-USEC-0` at cleanup time even when geometrically acting as a crossed `20.12`/`30.18` companion. The existing repair only accepted non-zero candidates and also could not see the short cap evidence because cap collection was accidentally behind the vertical-only gate.
+- The short 20.12 cap restore was also too broad: it accepted retargets produced from zero-line repair evidence, which generated the extra `617597.964,5842511.057 -> 617578.003,5842511.057` stub.
+- Fix:
+- `RepairMixedBandVerticalRoadAllowanceCompanions(...)` now recognizes a base row either from an explicit zero layer or from an existing short ordinary road-corner cap, and allows a zero-layer mixed candidate only when that cap-based base evidence exists.
+- Short 20.12 cap restoration is now tied only to inner-band retargets that originated on the actual `L-USEC2012` / `20.12` row, not generic zero-row retargets.
+- The existing correction-outer trim remains gated to meaningful overshoots so accepted `43-8-5` correction-line `5.02` rows are not pulled back.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false -t:Rebuild /m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Protected `43-8-5` guard `data\regression-checks\twp43-8-5-after-43-9-nw20-correction-r233-final` passed with `baselineComparePassed=true`, `baselineAdded=0`, `baselineMissing=0`, and `expected3dpMismatchCount=0`.
+- Full AutoCAD `43-9-5` proof `data\r234-43-9-nw20-correction-final\artifacts\output.dxf` passed targeted checks: the `20.12` vertical is `615985.433,5842472.475 -> 615965.824,5843276.720`, the `30.18` vertical is `615995.484,5842472.720 -> 615975.875,5843276.965`, the old crossed line is absent, and the `617597.964 -> 617578.003` stub is absent.
+- The south vertical trim remains at `614466.417,5836767.072 -> 614446.528,5837586.623`, the `L-USEC-3016` endpoint lands at `615188.795,5836764.007`, and the `615866.761,5846513.274 -> 615061.604,5846493.648` classification check is present on `L-USEC`.
+- Deployment:
+- `C:\AUTOCAD-SETUP CG\CG_LISP\AtsBackgroundBuilder.dll` and `C:\AUTOCAD-SETUP CG\CG_LISP\ATSBUILD_MANUAL\AtsBackgroundBuilder.dll` were refreshed and match the Release build hash `616BC308C8FBC258008845458139FC5578F9A3D4FEE145EEFC7308857B8735B9`.
+- The deployed DLL timestamp is `2026-04-28 17:53:38 -03:00`.
+
+## 2026-04-29 - Repair 62-18-5 shared S.W./N.W. quarter definitions
+
+- [x] Locate or create the focused `62-18-5` ATS fabric input for a Full AutoCAD proof.
+- [x] Reproduce the `L-QUATER` shared corner miss where `S.W. S.W. 13` / `N.W. N.W. 12` lands at `527517.177,6023216.305` instead of `527517.299,6023196.196`.
+- [x] Trace the reusable quarter-corner/road-boundary selection rule causing the 20.11 m north-side miss.
+- [x] Patch the logic without township/section coordinate fallbacks.
+- [x] Rebuild, run the protected `43-8-5` guard, and verify the `62-18-5` target in Full AutoCAD.
+
+Review 2026-04-29 (Repair 62-18-5 shared S.W./N.W. quarter definitions):
+- Root cause:
+- The canonical endpoint pass correctly moved the shared `S.W. S.W. 13` / `N.W. N.W. 12` zero-row endpoint to `527517.298,6023196.196`, and the quarter resolver selected that point. A later inner-band retarget pass then treated the pure `L-USEC-0` move as if it were mixed-width `20.12` road-corner evidence and pulled the road endpoint plus visible `L-QUATER` vertices back north to `527517.177,6023216.305`.
+- Fix:
+- `RetargetOrdinaryRoadAllowanceEndpointsToInnerBand(...)` now lets zero-row endpoint retargets run only when the same cleanup batch also contains actual `20.12` / `L-USEC2012` retarget evidence. This keeps the reusable mixed-width road-corner repair that `43-9-5` needs, but stops pure zero-row canonical corners from being overwritten.
+- Verification:
+- `dotnet msbuild .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -t:CoreBuild -p:Configuration=Release -p:Platform=x64 -p:NuGetAudit=false -v:minimal` passed. A full `dotnet build ... -t:Rebuild` compiled the DLL but the post-build copy into `build\net8.0-windows` was blocked by an already-running AutoCAD PID `29372`.
+- Full AutoCAD `62-18-5` proof `data\r236-62-18-5-lquater-fix\artifacts\output.dxf` has the nearest `L-QUATER` vertex to the expected point at `527517.299,6023196.196` within `0.001 m`, and no `L-QUATER` vertex remains at the wrong `527517.177,6023216.305` point.
+- Full AutoCAD `43-9-5` smoke `data\r237-43-9-after-62-zero-gate\artifacts\output.dxf` is an exact 3dp entity match to `data\r234-43-9-nw20-correction-final\artifacts\output.dxf`, preserving the prior mixed-width quarter retarget at `617577.504,5843335.563`.
+- Protected `43-8-5` guard `data\regression-checks\twp43-8-5-after-62-18-zero-gate-r238` passed with `baselineComparePassed=true`, `baselineAdded=0`, `baselineMissing=0`, and `expected3dpMismatchCount=0`.
+- Deployment:
+- `C:\AUTOCAD-SETUP CG\CG_LISP\AtsBackgroundBuilder.dll` and `C:\AUTOCAD-SETUP CG\CG_LISP\ATSBUILD_MANUAL\AtsBackgroundBuilder.dll` were refreshed from the tested Release build and match SHA256 `5B511CE3C783D39DE03EECD374D94C9A9FD5FF77C60F76605092FF373139E994`, timestamp `2026-04-29 09:50:03 -03:00`.

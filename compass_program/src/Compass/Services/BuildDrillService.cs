@@ -38,17 +38,23 @@ public sealed class BuildDrillService
     private const double BoundaryProbeExtensionTolerance = 30.0;
     private const double BoundarySideTolerance = 1e-3;
     private const double VisibleBoundaryFamilyTolerance = 2.5;
+    private const double CordsSectionSearchDistance = 45.0;
     private static readonly string[] HardBoundaryLayers =
     {
         "L-USEC-C-0",
         "L-USEC-0",
         "L-USEC2012",
-        "L-USEC-2012"
+        "L-USEC-2012",
+        "L-SEC",
+        "L-SEC-0",
+        "L-SEC2012",
+        "L-SEC-2012"
     };
     private static readonly HashSet<string> AtsScratchIsolationLayers = new(StringComparer.OrdinalIgnoreCase)
     {
         "L-SEC",
         "L-SEC-0",
+        "L-SEC2012",
         "L-SEC-2012",
         "L-QSEC",
         "L-QSEC-BOX",
@@ -371,6 +377,135 @@ public sealed class BuildDrillService
     }
 
     private sealed record LabeledDrillPoint(string Label, Point3d Point);
+
+    internal bool TryResolveNativeCordsAtsMatch(
+        Database database,
+        Editor editor,
+        string? drawingPath,
+        int zone,
+        Point2d point,
+        out AtsQuarterLocationResolver.LsdMatch match,
+        out string detail)
+    {
+        match = default;
+        detail = string.Empty;
+
+        if (!TryLoadNearestCordsSectionFrame(zone, drawingPath, point, out var section, out detail))
+        {
+            return false;
+        }
+
+        var request = CreateCordsSectionRequest(zone, section.Key);
+        if (!TryResolveAtsScratchHardBoundaries(
+                editor,
+                database,
+                drawingPath,
+                section.Frame,
+                request,
+                out var candidates,
+                out var boundaryDetail))
+        {
+            detail =
+                $"Nearest section {section.Key.Section}-{section.Key.Township}-{section.Key.Range}-W{section.Key.Meridian} was found, but Complete CORDS could not build hidden ATS measurement fabric. {boundaryDetail}".Trim();
+            return false;
+        }
+
+        if (!TryBuildNativeCordsAtsMatch(
+                section.Key,
+                section.Frame,
+                point,
+                candidates,
+                out match,
+                out var offsetDetail))
+        {
+            detail =
+                $"Nearest section {section.Key.Section}-{section.Key.Township}-{section.Key.Range}-W{section.Key.Meridian} was found, but CORDS offsets could not be measured from hidden ATS measurement fabric. {offsetDetail}".Trim();
+            return false;
+        }
+
+        detail = $"CORDS offsets from hidden ATS measurement fabric; {offsetDetail} ({boundaryDetail})";
+        return true;
+    }
+
+    internal bool TryResolveNativeCordsAtsOffsets(
+        Database database,
+        Editor editor,
+        string? drawingPath,
+        int zone,
+        Point2d point,
+        AtsQuarterLocationResolver.LsdMatch baseMatch,
+        out AtsQuarterLocationResolver.LsdMatch match,
+        out string detail)
+    {
+        match = default;
+        detail = string.Empty;
+        var key = new SectionKey(zone, baseMatch.Section, baseMatch.Township, baseMatch.Range, baseMatch.Meridian);
+        var request = CreateCordsSectionRequest(zone, key);
+        if (!TryLoadSectionFrame(request, drawingPath, out var frame))
+        {
+            detail =
+                $"Could not load ATS section {key.Section}-{key.Township}-{key.Range}-W{key.Meridian} in zone {zone} from the section index search path.";
+            return false;
+        }
+
+        if (!TryResolveAtsScratchHardBoundaries(
+                editor,
+                database,
+                drawingPath,
+                frame,
+                request,
+                out var candidates,
+                out var boundaryDetail))
+        {
+            detail =
+                $"Complete CORDS could not build hidden ATS measurement fabric for {key.Section}-{key.Township}-{key.Range}-W{key.Meridian}. {boundaryDetail}".Trim();
+            return false;
+        }
+
+        if (!TryResolveCordsAtsOffsets(
+                frame,
+                point,
+                candidates,
+                out var metes,
+                out var bounds,
+                out var offsetDetail))
+        {
+            detail =
+                $"Complete CORDS could not measure offsets from hidden ATS measurement fabric for {key.Section}-{key.Township}-{key.Range}-W{key.Meridian}. {offsetDetail}".Trim();
+            return false;
+        }
+
+        match = new AtsQuarterLocationResolver.LsdMatch(
+            baseMatch.Location,
+            baseMatch.Lsd,
+            baseMatch.QuarterToken,
+            baseMatch.Section,
+            baseMatch.Township,
+            baseMatch.Range,
+            baseMatch.Meridian,
+            metes,
+            bounds,
+            baseMatch.QuarterVertices);
+        detail = $"CORDS offsets from hidden ATS measurement fabric; {offsetDetail} ({boundaryDetail})";
+        return true;
+    }
+
+    private static BuildDrillPointRequest CreateCordsSectionRequest(int zone, SectionKey key)
+    {
+        return new BuildDrillPointRequest
+        {
+            Source = BuildDrillSource.SectionOffsets,
+            Zone = zone,
+            Section = key.Section,
+            Township = key.Township,
+            Range = key.Range,
+            Meridian = key.Meridian,
+            UseAtsFabric = true,
+            CombinedScaleFactor = 1.0,
+            NorthSouthReference = BuildDrillNorthSouthReference.NorthOfSouth,
+            EastWestReference = BuildDrillEastWestReference.EastOfWest
+        };
+    }
 
     private Point3d ResolveTargetPoint(
         BuildDrillPointRequest request,
@@ -823,18 +958,10 @@ public sealed class BuildDrillService
 
         ValidateDistancesAgainstFrame(request, sectionFrame);
 
-        var sectionIndexBoundaries = CreateFrameBoundaries(sectionFrame);
         if (!request.UseAtsFabric)
         {
-            return ResolveSectionOffsetPointWithoutAtsFabric(
-                request,
-                database,
-                editor,
-                drawingPath,
-                sectionFrame,
-                sectionIndexBoundaries,
-                sectionBoundaryCache,
-                out sourceDescription);
+            throw new InvalidOperationException(
+                "Section offsets require ATS hard boundaries. Run from a saved DWG and make sure AtsBackgroundBuilder.dll is available.");
         }
 
         if (!TryGetOrResolveSectionHardBoundaryCandidates(
@@ -1004,7 +1131,8 @@ public sealed class BuildDrillService
 
         if (!TryLoadAtsBackgroundBuilderAssembly(database, out var atsAssembly, out var assemblySource))
         {
-            detail = "AtsBackgroundBuilder.dll was not found in the current probe paths.";
+            detail =
+                "AtsBackgroundBuilder.dll was not found in the current probe paths. ATS measurement requires hidden ATS Builder fabric (`L-USEC-0`, `L-USEC-2012`, and `L-SEC`) and cannot fall back to section-index offsets.";
             return false;
         }
 
@@ -1091,6 +1219,7 @@ public sealed class BuildDrillService
 
             using (scratchDb)
             {
+                var unlockedScratchLayers = UnlockScratchLayers(scratchDb);
                 var removedScratchEntities = RemoveScratchAtsLinework(scratchDb);
                 object? sectionDrawResult;
                 var previousWorkingDb = HostApplicationServices.WorkingDatabase;
@@ -1112,19 +1241,23 @@ public sealed class BuildDrillService
                     return false;
                 }
 
-                var generatedIds = GetObjectIdsFromReflectionProperty(sectionDrawResult, "GeneratedRoadAllowanceEntityIds");
-                var generatedCandidates = CollectBoundaryCandidates(scratchDb, frame, generatedIds);
-                var sectionCandidates = CollectBoundaryCandidates(scratchDb, frame, null);
-                candidates = MergeBoundaryCandidates(generatedCandidates, sectionCandidates);
+                var generatedRoadAllowanceIds = GetObjectIdsFromReflectionProperty(sectionDrawResult, "GeneratedRoadAllowanceEntityIds");
+                var generatedSectionIds = GetObjectIdsFromReflectionProperty(sectionDrawResult, "SectionPolylineIds");
+                var generatedContextSectionIds = GetObjectIdsFromReflectionProperty(sectionDrawResult, "ContextSectionPolylineIds");
+                var generatedMeasurementIds = MergeObjectIds(
+                    generatedRoadAllowanceIds,
+                    generatedSectionIds,
+                    generatedContextSectionIds);
+                candidates = CollectBoundaryCandidates(scratchDb, frame, generatedMeasurementIds);
                 if (candidates.Count == 0)
                 {
                     detail =
-                        "The ATS scratch build completed but did not produce any hard 0/20.12 boundary candidates for this section.";
+                        $"The ATS scratch build completed but did not produce any usable generated `L-USEC-0`, `L-USEC-2012`, or `L-SEC` measurement boundary candidates for this section (generated IDs: {generatedRoadAllowanceIds.Count} road-allowance/correction, {generatedSectionIds.Count} section, {generatedContextSectionIds.Count} context-section). Refusing to scan original scratch linework.";
                     return false;
                 }
 
                 detail =
-                    $"Derived {candidates.Count} hard ATS boundary candidate segment(s) from a scratch ATS section build after removing {removedScratchEntities} pre-existing ATS helper entity(ies) ({generatedCandidates.Count} generated-id/local matches, {sectionCandidates.Count} section-local matches; {assemblySource}).";
+                    $"Derived {candidates.Count} ATS measurement boundary candidate segment(s) from generated ATS Builder entity IDs only after unlocking {unlockedScratchLayers} scratch layer(s) and removing {removedScratchEntities} pre-existing ATS helper entity(ies) from the scratch database ({generatedRoadAllowanceIds.Count} road-allowance/correction IDs, {generatedSectionIds.Count} section IDs, {generatedContextSectionIds.Count} context-section IDs; no original scratch linework scan; {assemblySource}).";
                 return true;
             }
         }
@@ -1191,6 +1324,415 @@ public sealed class BuildDrillService
         }
 
         return false;
+    }
+
+    private static bool TryLoadNearestCordsSectionFrame(
+        int zone,
+        string? drawingPath,
+        Point2d point,
+        out CordsSectionFrame section,
+        out string detail)
+    {
+        section = default;
+        detail = string.Empty;
+        var logger = new Logger();
+        var searchedFolders = 0;
+        var consideredSections = 0;
+        var bestOutsideDistance = double.MaxValue;
+        var bestInsideMargin = double.NegativeInfinity;
+
+        foreach (var folder in BuildSectionIndexSearchFolders(drawingPath))
+        {
+            if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+            {
+                continue;
+            }
+
+            searchedFolders++;
+            if (!SectionIndexReader.TryLoadSectionOutlinesForZone(folder, zone, logger, out var outlines) ||
+                outlines.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var outline in outlines)
+            {
+                if (!TryBuildCordsSectionFrame(outline, out var candidate))
+                {
+                    continue;
+                }
+
+                consideredSections++;
+                var outsideDistance = MeasureFrameOutsideDistance(candidate.Frame, point, out var insideMargin);
+                if (outsideDistance > CordsSectionSearchDistance)
+                {
+                    continue;
+                }
+
+                if (outsideDistance < bestOutsideDistance - 1e-6 ||
+                    (Math.Abs(outsideDistance - bestOutsideDistance) <= 1e-6 && insideMargin > bestInsideMargin))
+                {
+                    section = candidate;
+                    bestOutsideDistance = outsideDistance;
+                    bestInsideMargin = insideMargin;
+                }
+            }
+
+            if (bestOutsideDistance < double.MaxValue)
+            {
+                detail =
+                    $"Nearest section {section.Key.Section}-{section.Key.Township}-{section.Key.Range}-W{section.Key.Meridian} was {bestOutsideDistance:0.###}m from the section frame in {folder}.";
+                return true;
+            }
+        }
+
+        detail =
+            $"No section index outline in zone {zone} was found within {CordsSectionSearchDistance:0.#}m of the CORDS point (folders searched: {searchedFolders}, sections considered: {consideredSections}).";
+        return false;
+    }
+
+    private static bool TryBuildCordsSectionFrame(
+        SectionIndexReader.SectionOutlineEntry entry,
+        out CordsSectionFrame section)
+    {
+        section = default;
+        if (entry.Outline.Vertices.Count < 3 ||
+            !AtsPolygonFrameBuilder.TryBuildFrame(entry.Outline.Vertices, out var southWest, out var eastUnit, out var northUnit, out var width, out var height))
+        {
+            return false;
+        }
+
+        var frame = new SectionFrame(
+            southWest,
+            southWest + (eastUnit * width),
+            southWest + (northUnit * height),
+            southWest + (eastUnit * width) + (northUnit * height),
+            eastUnit.GetNormal(),
+            northUnit.GetNormal(),
+            width,
+            height);
+        section = new CordsSectionFrame(entry.Key, frame);
+        return true;
+    }
+
+    private static double MeasureFrameOutsideDistance(SectionFrame frame, Point2d point, out double insideMargin)
+    {
+        var local = point - frame.SouthWest;
+        var easting = ProjectAlongAxis(local, frame.EastUnit);
+        var northing = ProjectAlongAxis(local, frame.NorthUnit);
+
+        var outsideEasting = easting < 0.0 ? -easting : easting > frame.Width ? easting - frame.Width : 0.0;
+        var outsideNorthing = northing < 0.0 ? -northing : northing > frame.Height ? northing - frame.Height : 0.0;
+        var outsideDistance = Math.Sqrt((outsideEasting * outsideEasting) + (outsideNorthing * outsideNorthing));
+
+        insideMargin = outsideDistance <= 1e-6
+            ? Math.Min(Math.Min(easting, frame.Width - easting), Math.Min(northing, frame.Height - northing))
+            : -outsideDistance;
+        return outsideDistance;
+    }
+
+    private static bool TryBuildNativeCordsAtsMatch(
+        SectionKey key,
+        SectionFrame frame,
+        Point2d point,
+        IReadOnlyList<StraightBoundary> candidates,
+        out AtsQuarterLocationResolver.LsdMatch match,
+        out string detail)
+    {
+        match = default;
+        detail = string.Empty;
+        if (!TryResolveCordsAtsOffsets(
+                frame,
+                point,
+                candidates,
+                out var metes,
+                out var bounds,
+                out detail))
+        {
+            return false;
+        }
+
+        var quarter = ResolveCordsQuarterBounds(frame, point);
+        var lsd = ResolveCordsLsdNumber(frame, point);
+        var location = $"{lsd}-{key.Section}-{key.Township}-{key.Range}-W{key.Meridian}";
+
+        match = new AtsQuarterLocationResolver.LsdMatch(
+            location,
+            lsd,
+            quarter.Token,
+            key.Section,
+            key.Township,
+            key.Range,
+            key.Meridian,
+            metes,
+            bounds,
+            BuildCordsQuarterVertices(frame, quarter));
+
+        return true;
+    }
+
+    private static bool TryResolveCordsAtsOffsets(
+        SectionFrame frame,
+        Point2d point,
+        IReadOnlyList<StraightBoundary> candidates,
+        out string metes,
+        out string bounds,
+        out string detail)
+    {
+        metes = string.Empty;
+        bounds = string.Empty;
+        detail = string.Empty;
+        var allCandidates = new List<StraightBoundary>(candidates.Count);
+        allCandidates.AddRange(candidates);
+
+        var metesSide = ResolveCordsNorthSouthSide(frame, point);
+        if (!TryFindCordsBoundaryIntersection(
+                frame,
+                allCandidates,
+                point,
+                metesSide,
+                out var metesIntersection,
+                out var metesBoundary,
+                out var metesDetail))
+        {
+            detail = metesDetail;
+            return false;
+        }
+
+        var boundsSide = ResolveCordsEastWestSide(frame, point);
+        if (!TryFindCordsBoundaryIntersection(
+                frame,
+                allCandidates,
+                point,
+                boundsSide,
+                out var boundsIntersection,
+                out var boundsBoundary,
+                out var boundsDetail))
+        {
+            detail = boundsDetail;
+            return false;
+        }
+
+        metes = FormatCordsOffset(point, metesIntersection, frame.NorthUnit, "N", "S");
+        bounds = FormatCordsOffset(point, boundsIntersection, frame.EastUnit, "E", "W");
+        detail =
+            $"CORDS offsets measured from ATS measurement fabric ({metesSide}: {metesBoundary.Layer}, {boundsSide}: {boundsBoundary.Layer}; {metesDetail} {boundsDetail})";
+        return true;
+    }
+
+    private static BoundarySide ResolveCordsNorthSouthSide(SectionFrame frame, Point2d point)
+    {
+        var northing = ProjectAlongAxis(point - frame.SouthWest, frame.NorthUnit);
+        if (northing <= 0.0)
+        {
+            return BoundarySide.South;
+        }
+
+        if (northing >= frame.Height)
+        {
+            return BoundarySide.North;
+        }
+
+        return northing <= frame.Height - northing ? BoundarySide.South : BoundarySide.North;
+    }
+
+    private static BoundarySide ResolveCordsEastWestSide(SectionFrame frame, Point2d point)
+    {
+        var easting = ProjectAlongAxis(point - frame.SouthWest, frame.EastUnit);
+        if (easting <= 0.0)
+        {
+            return BoundarySide.West;
+        }
+
+        if (easting >= frame.Width)
+        {
+            return BoundarySide.East;
+        }
+
+        return easting <= frame.Width - easting ? BoundarySide.West : BoundarySide.East;
+    }
+
+    private static bool TryFindCordsBoundaryIntersection(
+        SectionFrame frame,
+        IReadOnlyList<StraightBoundary> candidates,
+        Point2d probePoint,
+        BoundarySide side,
+        out Point2d intersection,
+        out StraightBoundary boundary,
+        out string detail)
+    {
+        intersection = default;
+        boundary = default;
+        detail = string.Empty;
+
+        var sideAxis = side is BoundarySide.South or BoundarySide.North ? frame.NorthUnit : frame.EastUnit;
+        var boundaryAxis = side is BoundarySide.South or BoundarySide.North ? frame.EastUnit : frame.NorthUnit;
+        var probeAxis = side is BoundarySide.South or BoundarySide.North ? frame.NorthUnit : frame.EastUnit;
+
+        var bestPriority = int.MaxValue;
+        var bestExtensionDistance = double.MaxValue;
+        var bestOffsetDistance = double.MaxValue;
+        var sameSideParallelMatches = 0;
+        var boundedCrossings = 0;
+
+        foreach (var candidate in candidates)
+        {
+            if (candidate.Side != side || !IsBoundaryParallelToAxis(candidate, boundaryAxis))
+            {
+                continue;
+            }
+
+            sameSideParallelMatches++;
+            if (!TryIntersectProbeWithBoundaryCandidate(
+                    probePoint,
+                    probeAxis,
+                    candidate,
+                    out var candidateIntersection,
+                    out var extensionDistance))
+            {
+                continue;
+            }
+
+            boundedCrossings++;
+            var priority = GetBoundaryLayerPriority(side, candidate.Layer);
+            var offsetDistance = Math.Abs(ProjectAlongAxis(probePoint - candidateIntersection, sideAxis));
+            if (offsetDistance < bestOffsetDistance - 1e-6 ||
+                (Math.Abs(offsetDistance - bestOffsetDistance) <= 1e-6 && priority < bestPriority) ||
+                (Math.Abs(offsetDistance - bestOffsetDistance) <= 1e-6 &&
+                 priority == bestPriority &&
+                 extensionDistance < bestExtensionDistance))
+            {
+                bestPriority = priority;
+                bestExtensionDistance = extensionDistance;
+                bestOffsetDistance = offsetDistance;
+                intersection = candidateIntersection;
+                boundary = new StraightBoundary(side, candidate.OrderedStart(side), candidate.OrderedEnd(side), candidate.Layer);
+            }
+        }
+
+        if (bestPriority < int.MaxValue)
+        {
+            detail = bestExtensionDistance <= BoundaryProbeSegmentTolerance
+                ? $"{side} CORDS boundary measured from {boundary.Layer}."
+                : $"{side} CORDS boundary measured from {boundary.Layer} using {bestExtensionDistance:0.###}m bounded extension.";
+            return true;
+        }
+
+        var projectionLimit = Math.Max(frame.Width, frame.Height) + BoundaryProbeExtensionTolerance;
+        bestPriority = int.MaxValue;
+        bestExtensionDistance = double.MaxValue;
+        bestOffsetDistance = double.MaxValue;
+        var projectedCrossings = 0;
+
+        foreach (var candidate in candidates)
+        {
+            if (candidate.Side != side || !IsBoundaryParallelToAxis(candidate, boundaryAxis))
+            {
+                continue;
+            }
+
+            if (!TryIntersectProjectedProbeWithBoundaryCandidate(
+                    probePoint,
+                    probeAxis,
+                    candidate,
+                    projectionLimit,
+                    out var candidateIntersection,
+                    out var extensionDistance))
+            {
+                continue;
+            }
+
+            projectedCrossings++;
+            var priority = GetBoundaryLayerPriority(side, candidate.Layer);
+            var offsetDistance = Math.Abs(ProjectAlongAxis(probePoint - candidateIntersection, sideAxis));
+            if (offsetDistance < bestOffsetDistance - 1e-6 ||
+                (Math.Abs(offsetDistance - bestOffsetDistance) <= 1e-6 && priority < bestPriority) ||
+                (Math.Abs(offsetDistance - bestOffsetDistance) <= 1e-6 &&
+                 priority == bestPriority &&
+                 extensionDistance < bestExtensionDistance))
+            {
+                bestPriority = priority;
+                bestExtensionDistance = extensionDistance;
+                bestOffsetDistance = offsetDistance;
+                intersection = candidateIntersection;
+                boundary = new StraightBoundary(side, candidate.OrderedStart(side), candidate.OrderedEnd(side), candidate.Layer);
+            }
+        }
+
+        if (bestPriority < int.MaxValue)
+        {
+            detail = $"{side} CORDS boundary measured from projected {boundary.Layer} using {bestExtensionDistance:0.###}m extension.";
+            return true;
+        }
+
+        detail =
+            $"Could not find a {side.ToString().ToLowerInvariant()} ATS hard boundary crossing the CORDS point probe line (same-side parallel candidates: {sameSideParallelMatches}, bounded crossings: {boundedCrossings}, projected crossings: {projectedCrossings}, total candidates: {candidates.Count}).";
+        return false;
+    }
+
+    private static string FormatCordsOffset(Point2d point, Point2d boundaryIntersection, Vector2d axis, string positiveDirection, string negativeDirection)
+    {
+        var signedDistance = ProjectAlongAxis(point - boundaryIntersection, axis);
+        var direction = signedDistance >= 0.0 ? positiveDirection : negativeDirection;
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{Math.Abs(signedDistance):0.0} {direction}");
+    }
+
+    private static CordsQuarterBounds ResolveCordsQuarterBounds(SectionFrame frame, Point2d point)
+    {
+        var (u, t) = ResolveCordsFractions(frame, point);
+        var east = u >= 0.5;
+        var north = t >= 0.5;
+        if (north && !east) return new CordsQuarterBounds("NW", 0.0, 0.5, 0.5, 1.0);
+        if (north && east) return new CordsQuarterBounds("NE", 0.5, 1.0, 0.5, 1.0);
+        if (!north && !east) return new CordsQuarterBounds("SW", 0.0, 0.5, 0.0, 0.5);
+        return new CordsQuarterBounds("SE", 0.5, 1.0, 0.0, 0.5);
+    }
+
+    private static int ResolveCordsLsdNumber(SectionFrame frame, Point2d point)
+    {
+        var (u, t) = ResolveCordsFractions(frame, point);
+        var col = (int)Math.Floor(u * 4.0);
+        var row = (int)Math.Floor(t * 4.0);
+        col = Math.Max(0, Math.Min(3, col));
+        row = Math.Max(0, Math.Min(3, row));
+        return LsdNumberingHelper.GetLsdNumber(row, col);
+    }
+
+    private static (double U, double T) ResolveCordsFractions(SectionFrame frame, Point2d point)
+    {
+        var vector = point - frame.SouthWest;
+        var u = ProjectAlongAxis(vector, frame.EastUnit) / frame.Width;
+        var t = ProjectAlongAxis(vector, frame.NorthUnit) / frame.Height;
+        return (ClampCordsFraction(u), ClampCordsFraction(t));
+    }
+
+    private static double ClampCordsFraction(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+        {
+            return 0.0;
+        }
+
+        return Math.Max(0.0, Math.Min(0.999999, value));
+    }
+
+    private static IReadOnlyList<Point2d> BuildCordsQuarterVertices(SectionFrame frame, CordsQuarterBounds quarter)
+    {
+        return new[]
+        {
+            CordsLocalToWorld(frame, quarter.UMin, quarter.TMin),
+            CordsLocalToWorld(frame, quarter.UMax, quarter.TMin),
+            CordsLocalToWorld(frame, quarter.UMax, quarter.TMax),
+            CordsLocalToWorld(frame, quarter.UMin, quarter.TMax)
+        };
+    }
+
+    private static Point2d CordsLocalToWorld(SectionFrame frame, double u, double t)
+    {
+        var localOffset = (frame.EastUnit * (u * frame.Width)) + (frame.NorthUnit * (t * frame.Height));
+        return frame.SouthWest + localOffset;
     }
 
     private static IReadOnlyList<string> BuildSectionIndexSearchFolders(string? drawingPath)
@@ -1388,7 +1930,10 @@ public sealed class BuildDrillService
 
     private static bool IsHardBoundaryLayer(string layer)
     {
-        return IsCorrectionUsecZeroLayer(layer) || IsActualUsecZeroLayer(layer) || IsUsecTwentyLayer(layer);
+        return IsCorrectionUsecZeroLayer(layer) ||
+               IsActualUsecZeroLayer(layer) ||
+               IsUsecTwentyLayer(layer) ||
+               IsSectionBoundaryLayer(layer);
     }
 
     private static List<StraightBoundary> MergeBoundaryCandidates(params IReadOnlyList<StraightBoundary>[] sets)
@@ -1453,6 +1998,34 @@ public sealed class BuildDrillService
         }
     }
 
+    private static int UnlockScratchLayers(Database database)
+    {
+        if (database == null)
+        {
+            return 0;
+        }
+
+        var unlocked = 0;
+        using var transaction = database.TransactionManager.StartTransaction();
+        var layerTable = (LayerTable)transaction.GetObject(database.LayerTableId, OpenMode.ForRead);
+        foreach (ObjectId layerId in layerTable)
+        {
+            if (transaction.GetObject(layerId, OpenMode.ForRead, false) is not LayerTableRecord layer ||
+                layer.IsErased ||
+                !layer.IsLocked)
+            {
+                continue;
+            }
+
+            layer.UpgradeOpen();
+            layer.IsLocked = false;
+            unlocked++;
+        }
+
+        transaction.Commit();
+        return unlocked;
+    }
+
     private static int RemoveScratchAtsLinework(Database database)
     {
         if (database == null)
@@ -1515,6 +2088,31 @@ public sealed class BuildDrillService
         return ids;
     }
 
+    private static List<ObjectId> MergeObjectIds(params IReadOnlyList<ObjectId>[] sets)
+    {
+        var ids = new List<ObjectId>();
+        var seen = new HashSet<ObjectId>();
+        foreach (var set in sets)
+        {
+            if (set == null)
+            {
+                continue;
+            }
+
+            foreach (var id in set)
+            {
+                if (id.IsNull || !seen.Add(id))
+                {
+                    continue;
+                }
+
+                ids.Add(id);
+            }
+        }
+
+        return ids;
+    }
+
     private static bool TryLoadAtsBackgroundBuilderAssembly(Database database, out Assembly atsAssembly, out string source)
     {
         atsAssembly = AppDomain.CurrentDomain
@@ -1556,6 +2154,7 @@ public sealed class BuildDrillService
         for (var i = 0; i < 8 && !string.IsNullOrWhiteSpace(probe); i++)
         {
             AddCandidate(candidates, seen, probe);
+            AddCandidate(candidates, seen, Path.Combine(probe, "ATSBUILD_MANUAL"));
             AddCandidate(candidates, seen, Path.Combine(probe, "build", "net8.0-windows"));
             probe = Path.GetDirectoryName(probe);
         }
@@ -2306,12 +2905,17 @@ public sealed class BuildDrillService
             return side is BoundarySide.South or BoundarySide.West ? 0 : 1;
         }
 
-        if (IsSyntheticSectionIndexZeroLayer(layer))
+        if (IsSectionBoundaryLayer(layer))
         {
             return 2;
         }
 
-        return 3;
+        if (IsSyntheticSectionIndexZeroLayer(layer))
+        {
+            return 3;
+        }
+
+        return 4;
     }
 
     private static bool IsActualUsecZeroLayer(string layer)
@@ -2333,6 +2937,14 @@ public sealed class BuildDrillService
     {
         return string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSectionBoundaryLayer(string layer)
+    {
+        return string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(layer, "L-SEC2012", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsBoundaryParallelToAxis(StraightBoundary boundary, Vector2d axis)
@@ -2358,6 +2970,47 @@ public sealed class BuildDrillService
         }
 
         return TryMeasureBoundaryProbeExtension(intersection, boundary.Start, boundary.End, out extensionDistance);
+    }
+
+    private static bool TryIntersectProjectedProbeWithBoundaryCandidate(
+        Point2d probePoint,
+        Vector2d probeAxis,
+        StraightBoundary boundary,
+        double projectionLimit,
+        out Point2d intersection,
+        out double extensionDistance)
+    {
+        intersection = default;
+        extensionDistance = double.MaxValue;
+        var probeStart = probePoint - (probeAxis * 10000.0);
+        var probeEnd = probePoint + (probeAxis * 10000.0);
+        if (!TryIntersectInfiniteLines(probeStart, probeEnd, boundary.Start, boundary.End, out intersection))
+        {
+            return false;
+        }
+
+        extensionDistance = MeasureBoundaryProbeExtensionDistance(intersection, boundary.Start, boundary.End);
+        return extensionDistance <= projectionLimit;
+    }
+
+    private static double MeasureBoundaryProbeExtensionDistance(Point2d point, Point2d start, Point2d end)
+    {
+        var dx = end.X - start.X;
+        var dy = end.Y - start.Y;
+        var lengthSquared = (dx * dx) + (dy * dy);
+        if (lengthSquared <= 1e-12)
+        {
+            return point.GetDistanceTo(start);
+        }
+
+        var parameter = (((point.X - start.X) * dx) + ((point.Y - start.Y) * dy)) / lengthSquared;
+        if (parameter >= -BoundaryProbeSegmentTolerance && parameter <= 1.0 + BoundaryProbeSegmentTolerance)
+        {
+            return 0.0;
+        }
+
+        var nearestEndpoint = parameter < 0.0 ? start : end;
+        return point.GetDistanceTo(nearestEndpoint);
     }
 
     private static bool TryMeasureBoundaryProbeExtension(
@@ -2470,6 +3123,15 @@ public sealed class BuildDrillService
         Vector2d NorthUnit,
         double Width,
         double Height);
+
+    private readonly record struct CordsSectionFrame(SectionKey Key, SectionFrame Frame);
+
+    private readonly record struct CordsQuarterBounds(
+        string Token,
+        double UMin,
+        double UMax,
+        double TMin,
+        double TMax);
 
     private readonly record struct StraightBoundary(BoundarySide Side, Point2d Start, Point2d End, string Layer)
     {

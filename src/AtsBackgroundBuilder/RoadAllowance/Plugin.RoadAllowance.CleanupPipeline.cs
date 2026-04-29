@@ -426,6 +426,13 @@ namespace AtsBackgroundBuilder
                 context.Logger);
             TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-correction-postbuild-final", context.Logger);
 
+            RestoreMixedNorthRoadAllowanceBands(
+                context.Database,
+                context.QuarterInfosForRoadAllowanceRules,
+                context.GeneratedRoadAllowanceIds,
+                context.Logger);
+            TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-mixed-north-band-restore-final", context.Logger);
+
             var ordinaryUsecTieInsTrimmed = TrimOrdinaryUsecTieInOverhangsToVerticalBoundaries(
                 context.Database,
                 context.RequestedScopeIds,
@@ -433,6 +440,12 @@ namespace AtsBackgroundBuilder
             if (ordinaryUsecTieInsTrimmed)
             {
                 context.Logger?.WriteLine("Cleanup: rerunning final 100m trim after ordinary USEC tie-in overhang trim.");
+                context.Logger?.WriteLine("Cleanup: rerunning mixed north band restore after ordinary USEC tie-in trim.");
+                RestoreMixedNorthRoadAllowanceBands(
+                    context.Database,
+                    context.QuarterInfosForRoadAllowanceRules,
+                    context.GeneratedRoadAllowanceIds,
+                    context.Logger);
             }
             TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-ordinary-usec-tiein-trim", context.Logger);
 
@@ -524,6 +537,12 @@ namespace AtsBackgroundBuilder
                         protectRequestedCore: false);
                 }
                 TrimLateCorrectionSegments("after final ordinary USEC tie-in overhang trim.");
+                context.Logger?.WriteLine("Cleanup: rerunning mixed north band restore after final ordinary USEC tie-in trim.");
+                RestoreMixedNorthRoadAllowanceBands(
+                    context.Database,
+                    context.QuarterInfosForRoadAllowanceRules,
+                    context.GeneratedRoadAllowanceIds,
+                    context.Logger);
             }
             TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-final-ordinary-usec-tiein-trim", context.Logger);
             TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-final-correction-outer-consistency", context.Logger);
@@ -567,6 +586,85 @@ namespace AtsBackgroundBuilder
             {
                 context.Logger?.WriteLine("Cleanup: correction outer blind-30 join trim adjusted final correction geometry.");
             }
+            var mixedThirtyTwentyOrdinaryNormalized = NormalizeMixedThirtyTwentyOrdinaryEndpoints(
+                context.Database,
+                context.RequestedScopeIds,
+                context.Logger);
+            if (mixedThirtyTwentyOrdinaryNormalized)
+            {
+                context.Logger?.WriteLine("Cleanup: mixed 30.16/20.11 ordinary endpoint normalize adjusted final road geometry.");
+            }
+            if (RestoreCorrectionLineBufferEndSpans(
+                    context.Database,
+                    context.RequestedScopeIds,
+                    context.Logger))
+            {
+                context.Logger?.WriteLine("Cleanup: correction-line 100m buffer end-span restoration adjusted final road geometry.");
+            }
+            if (ProjectMisbandedTwentyRowsToTwentyOffset(
+                    context.Database,
+                    context.RequestedScopeIds,
+                    context.Logger))
+            {
+                context.Logger?.WriteLine("Cleanup: projected misbanded 20.11 rows back to the 20.11 offset.");
+            }
+            if (TrimUsecTwentyEndpointsToZeroTerminators(
+                    context.Database,
+                    context.RequestedScopeIds,
+                    context.GeneratedRoadAllowanceIds,
+                    context.Logger))
+            {
+                context.Logger?.WriteLine("Cleanup: trimmed 20.11 ordinary endpoints to zero/surveyed terminators.");
+            }
+            if (RepairMixedBandVerticalRoadAllowanceCompanions(
+                    context.Database,
+                    context.RequestedScopeIds,
+                    context.Logger))
+            {
+                context.Logger?.WriteLine("Cleanup: repaired mixed-band vertical ordinary road companions.");
+            }
+            var innerBandRetargets = new List<Point2d>();
+            var innerBandCapRetargets = new List<Point2d>();
+            var innerBandEndpointRetargets = new List<(Point2d Original, Point2d Target)>();
+            if (RetargetOrdinaryRoadAllowanceEndpointsToInnerBand(
+                    context.Database,
+                    context.RequestedScopeIds,
+                    context.Logger,
+                    innerBandRetargets,
+                    innerBandCapRetargets,
+                    innerBandEndpointRetargets))
+            {
+                context.Logger?.WriteLine("Cleanup: retargeted ordinary road endpoints to the inner 20.11 band stop.");
+            }
+            if (ExtendShortOrdinaryRoadBoundaryStubsToAnchoredContinuation(
+                    context.Database,
+                    context.RequestedScopeIds,
+                    context.Logger))
+            {
+                context.Logger?.WriteLine("Cleanup: extended short ordinary road-boundary stubs to anchored continuations.");
+            }
+            if (AddMissingShortTwentyBandCapsAtRoadCorners(
+                    context.Database,
+                    context.RequestedScopeIds,
+                    context.Logger,
+                    innerBandCapRetargets))
+            {
+                context.Logger?.WriteLine("Cleanup: added missing short 20.11 road-corner cap line(s).");
+            }
+            if (TrimOrdinaryVerticalEndpointsToCorrectionOuterRows(
+                    context.Database,
+                    context.RequestedScopeIds,
+                    context.Logger))
+            {
+                context.Logger?.WriteLine("Cleanup: trimmed ordinary vertical endpoints to correction outer rows.");
+            }
+            if (RepairMixedBandVerticalRoadAllowanceCompanions(
+                    context.Database,
+                    context.RequestedScopeIds,
+                    context.Logger))
+            {
+                context.Logger?.WriteLine("Cleanup: repaired mixed-band vertical ordinary road companions after retargeting.");
+            }
             TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-late-correction-companion-snap", context.Logger);
             ExtendQuarterLinesFromUsecWestSouthToNextUsec(
                 context.Database,
@@ -574,6 +672,13 @@ namespace AtsBackgroundBuilder
                 context.GeneratedRoadAllowanceIds,
                 context.Logger);
             TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-quarter-qsec-extension", context.Logger);
+            if (RetargetVerticalQsecEndpointsToCorrectionZeroIntersections(
+                    context.Database,
+                    context.RequestedScopeIds,
+                    context.Logger))
+            {
+                TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-quarter-qsec-correction-zero-retarget", context.Logger);
+            }
             context.Logger?.WriteLine("Cleanup: rerunning 1/4 endpoint-on-section rule after final correction geometry and quarter extension.");
             EnforceQuarterLineEndpointsOnSectionBoundaries(
                 context.Database,
@@ -584,6 +689,13 @@ namespace AtsBackgroundBuilder
                 context.RequestedScopeIds,
                 "after-quarter-endpoint-hard-post-final-correction",
                 context.Logger);
+            if (NormalizeSouthCorrectionQsecEndpoints(
+                    context.Database,
+                    context.RequestedScopeIds,
+                    context.Logger))
+            {
+                TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-south-correction-qsec-normalize", context.Logger);
+            }
             if (context.DrawQuarterView)
             {
                 DrawQuarterViewFromFinalRoadAllowanceGeometry(
@@ -591,6 +703,26 @@ namespace AtsBackgroundBuilder
                     context.SectionIds,
                     context.SectionNumberById,
                     context.Logger);
+                if (RepairMixedBandVerticalRoadAllowanceCompanions(
+                        context.Database,
+                        context.RequestedScopeIds,
+                        context.Logger))
+                {
+                    context.Logger?.WriteLine("Cleanup: repaired mixed-band vertical ordinary road companions after quarter view; redrawing quarter view.");
+                    DrawQuarterViewFromFinalRoadAllowanceGeometry(
+                        context.Database,
+                        context.SectionIds,
+                        context.SectionNumberById,
+                        context.Logger);
+                }
+                if (RetargetQuarterDefinitionEndpointsToAdjustedInnerBand(
+                        context.Database,
+                        context.RequestedScopeIds,
+                        context.Logger,
+                        innerBandEndpointRetargets))
+                {
+                    context.Logger?.WriteLine("Cleanup: retargeted quarter endpoints to adjusted inner-band road stops.");
+                }
             }
             if (context.DrawLsds)
             {

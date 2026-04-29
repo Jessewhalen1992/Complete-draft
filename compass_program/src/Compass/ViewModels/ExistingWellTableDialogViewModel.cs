@@ -48,7 +48,7 @@ public sealed class ExistingWellTableDialogViewModel : INotifyPropertyChanged
         };
         ZoneOptions = new[]
         {
-            new ZoneOption("Auto (match Complete CORDS)", null),
+            new ZoneOption("Ask when creating", null),
             new ZoneOption("11", 11),
             new ZoneOption("12", 12)
         };

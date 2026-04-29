@@ -463,9 +463,85 @@ namespace AtsBackgroundBuilder
                     IReadOnlyList<CorrectionSegment> searchSegments,
                     Func<Point2d, double> getCenterSignedOffset,
                     bool allowCreateNew,
-                    out CorrectionSegment companion)
+                    out CorrectionSegment companion,
+                    IReadOnlyList<CorrectionSegment>? sideSearchSegments = null)
                 {
                     companion = default;
+                    bool TryResolveNearbyCorridorSide(
+                        out int preferredOffsetSign)
+                    {
+                        preferredOffsetSign = 0;
+                        var dir = outer.B - outer.A;
+                        var len = dir.Length;
+                        var corridorSideSegments = sideSearchSegments ?? searchSegments;
+                        if (len <= 1e-6 || corridorSideSegments == null || corridorSideSegments.Count == 0)
+                        {
+                            return false;
+                        }
+
+                        var u = dir / len;
+                        var positiveIntervals = new List<(double Min, double Max)>();
+                        var negativeIntervals = new List<(double Min, double Max)>();
+                        for (var si = 0; si < corridorSideSegments.Count; si++)
+                        {
+                            var candidate = corridorSideSegments[si];
+                            if (candidate.Id == outer.Id || !candidate.IsHorizontalLike)
+                            {
+                                continue;
+                            }
+
+                            var candidateDir = candidate.B - candidate.A;
+                            var candidateLen = candidateDir.Length;
+                            if (candidateLen <= 1e-6 || Math.Abs((candidateDir / candidateLen).DotProduct(u)) < 0.985)
+                            {
+                                continue;
+                            }
+
+                            var overlap = GetCorrectionHorizontalOverlap(candidate, outer.MinX, outer.MaxX);
+                            if (overlap < Math.Max(20.0, outer.Length * 0.20))
+                            {
+                                continue;
+                            }
+
+                            var signedOffset =
+                                ((candidate.Mid.X - outer.A.X) * (outer.B.Y - outer.A.Y)) -
+                                ((candidate.Mid.Y - outer.A.Y) * (outer.B.X - outer.A.X));
+                            var sign = Math.Sign(signedOffset);
+                            if (sign == 0)
+                            {
+                                continue;
+                            }
+
+                            var s0 = (candidate.A - outer.A).DotProduct(u);
+                            var s1 = (candidate.B - outer.A).DotProduct(u);
+                            var minS = Math.Max(0.0, Math.Min(s0, s1));
+                            var maxS = Math.Min(len, Math.Max(s0, s1));
+                            if (maxS <= minS)
+                            {
+                                continue;
+                            }
+
+                            if (sign > 0)
+                            {
+                                positiveIntervals.Add((minS, maxS));
+                            }
+                            else
+                            {
+                                negativeIntervals.Add((minS, maxS));
+                            }
+                        }
+
+                        var positiveCoverage = GetMergedCoverageLength(positiveIntervals);
+                        var negativeCoverage = GetMergedCoverageLength(negativeIntervals);
+                        if (positiveCoverage <= 0.0 && negativeCoverage <= 0.0)
+                        {
+                            return false;
+                        }
+
+                        preferredOffsetSign = positiveCoverage >= negativeCoverage ? 1 : -1;
+                        return true;
+                    }
+
                     if (TryFindCorrectionInnerCompanion(
                         outer,
                         searchSegments,
@@ -473,6 +549,102 @@ namespace AtsBackgroundBuilder
                         getCenterSignedOffset,
                         out var existingInner))
                     {
+                        bool HasWrongSideExistingInner(
+                            CorrectionSegment existing,
+                            out int preferredOffsetSign)
+                        {
+                            preferredOffsetSign = 0;
+                            if (!allowCreateNew ||
+                                !string.Equals(existing.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) ||
+                                !TryResolveNearbyCorridorSide(out preferredOffsetSign))
+                            {
+                                return false;
+                            }
+
+                            var cross =
+                                ((existing.Mid.X - outer.A.X) * (outer.B.Y - outer.A.Y)) -
+                                ((existing.Mid.Y - outer.A.Y) * (outer.B.X - outer.A.X));
+                            var existingOffsetSign = Math.Sign(cross);
+                            if (existingOffsetSign == 0 || existingOffsetSign == preferredOffsetSign)
+                            {
+                                return false;
+                            }
+
+                            var existingSignedOffset = DistancePointToInfiniteLine(existing.Mid, outer.A, outer.B);
+                            return Math.Abs(existingSignedOffset - CorrectionLinePostInsetMeters) <= 1.25;
+                        }
+
+                        bool TryEraseWrongSideSyntheticInner(CorrectionSegment existing)
+                        {
+                            Entity? writable = null;
+                            try
+                            {
+                                writable = tr.GetObject(existing.Id, OpenMode.ForWrite, false) as Entity;
+                            }
+                            catch (Autodesk.AutoCAD.Runtime.Exception)
+                            {
+                                return false;
+                            }
+
+                            if (writable == null || writable.IsErased)
+                            {
+                                return false;
+                            }
+
+                            if (!TryReadOpenLinearSegment(writable, out var existingA, out var existingB))
+                            {
+                                return false;
+                            }
+
+                            if (!existingA.IsEqualTo(existing.A, new Tolerance(0.25, 0.25)) ||
+                                !existingB.IsEqualTo(existing.B, new Tolerance(0.25, 0.25)))
+                            {
+                                // Polyline order can be reversed; allow reversed match too.
+                                if (!existingA.IsEqualTo(existing.B, new Tolerance(0.25, 0.25)) ||
+                                    !existingB.IsEqualTo(existing.A, new Tolerance(0.25, 0.25)))
+                                {
+                                    return false;
+                                }
+                            }
+
+                            writable.Erase();
+                            segments.RemoveAll(s => s.Id == existing.Id);
+                            return true;
+                        }
+
+                        if (HasWrongSideExistingInner(existingInner, out var preferredOffsetSign))
+                        {
+                            var direction = outer.B - outer.A;
+                            var length = direction.Length;
+                            if (length > 1e-6)
+                            {
+                                var normal = new Vector2d(direction.Y / length, -direction.X / length);
+                                var offset = normal * (preferredOffsetSign > 0 ? CorrectionLinePostInsetMeters : -CorrectionLinePostInsetMeters);
+                                var preferredA = outer.A + offset;
+                                var preferredB = outer.B + offset;
+                                if (!HasMatchingCorrectionSegment(segments, preferredA, preferredB))
+                                {
+                                    var line = new Line(
+                                        new Point3d(preferredA.X, preferredA.Y, 0.0),
+                                        new Point3d(preferredB.X, preferredB.Y, 0.0))
+                                    {
+                                        Layer = LayerUsecCorrectionZero,
+                                        ColorIndex = 256
+                                    };
+
+                                    var preferredId = ms.AppendEntity(line);
+                                    tr.AddNewlyCreatedDBObject(line, true);
+                                    if (!preferredId.IsNull)
+                                    {
+                                        companion = new CorrectionSegment(preferredId, LayerUsecCorrectionZero, preferredA, preferredB);
+                                        segments.Add(companion);
+                                        TryEraseWrongSideSyntheticInner(existingInner);
+                                        return (FoundExisting: false, RelayeredExisting: false, CreatedNew: true);
+                                    }
+                                }
+                            }
+                        }
+
                         if (string.Equals(existingInner.Layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase))
                         {
                             companion = existingInner;
@@ -495,6 +667,38 @@ namespace AtsBackgroundBuilder
                     if (!allowCreateNew)
                     {
                         return (FoundExisting: false, RelayeredExisting: false, CreatedNew: false);
+                    }
+
+                    if (TryResolveNearbyCorridorSide(out var preferredCreateOffsetSign))
+                    {
+                        var direction = outer.B - outer.A;
+                        var length = direction.Length;
+                        if (length > 1e-6)
+                        {
+                            var normal = new Vector2d(direction.Y / length, -direction.X / length);
+                            var offset = normal * (preferredCreateOffsetSign > 0 ? CorrectionLinePostInsetMeters : -CorrectionLinePostInsetMeters);
+                            var preferredA = outer.A + offset;
+                            var preferredB = outer.B + offset;
+                            if (!HasMatchingCorrectionSegment(segments, preferredA, preferredB))
+                            {
+                                var line = new Line(
+                                    new Point3d(preferredA.X, preferredA.Y, 0.0),
+                                    new Point3d(preferredB.X, preferredB.Y, 0.0))
+                                {
+                                    Layer = LayerUsecCorrectionZero,
+                                    ColorIndex = 256
+                                };
+
+                                var preferredId = ms.AppendEntity(line);
+                                tr.AddNewlyCreatedDBObject(line, true);
+                                if (!preferredId.IsNull)
+                                {
+                                    companion = new CorrectionSegment(preferredId, LayerUsecCorrectionZero, preferredA, preferredB);
+                                    segments.Add(companion);
+                                    return (FoundExisting: false, RelayeredExisting: false, CreatedNew: true);
+                                }
+                            }
+                        }
                     }
 
                     if (!TryCreateCorrectionInnerCompanion(
@@ -933,7 +1137,8 @@ namespace AtsBackgroundBuilder
                             horizontalCandidates,
                             point => seam.GetCenterSignedOffset(point),
                             outerEntry.AllowSyntheticCompanion,
-                            out var companion);
+                            out var companion,
+                            segments);
                         if (companionResult.FoundExisting)
                         {
                             if (companionResult.RelayeredExisting)
@@ -1921,6 +2126,8 @@ namespace AtsBackgroundBuilder
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                 var horizontalSources = new List<(ObjectId Id, string Layer, Point2d A, Point2d B)>();
                 var verticalSources = new List<(ObjectId Id, string Layer, Point2d A, Point2d B)>();
+                var thirtyHorizontalAnchors = new List<(ObjectId Id, string Layer, Point2d A, Point2d B)>();
+                var thirtyVerticalAnchors = new List<(ObjectId Id, string Layer, Point2d A, Point2d B)>();
                 var verticalTargets = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double MinY, double MaxY, double AxisX)>();
                 var horizontalTargets = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double MinX, double MaxX, double AxisY)>();
                 var horizontalAnchors = new List<(ObjectId Id, Point2d A, Point2d B)>();
@@ -1931,15 +2138,30 @@ namespace AtsBackgroundBuilder
                 {
                     var layer = ent.Layer ?? string.Empty;
                     var isOuterUsecLayer = IsOrdinaryUsecOuterLayer(layer);
+                    var isThirtyUsecLayer =
+                        string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
                     var isTrimSourceLayer = IsOrdinaryUsecTieInLayer(layer) || isOuterUsecLayer;
-                    if (!IsOrdinaryUsecTieInLayer(layer) &&
-                        !IsHardVerticalTieInTargetLayer(layer) &&
-                        !isOuterUsecLayer)
+
+                    if (!TryReadOpenSegment(ent, out var a, out var b) || !DoesSegmentIntersectAnyWindow(a, b))
                     {
                         return;
                     }
 
-                    if (!TryReadOpenSegment(ent, out var a, out var b) || !DoesSegmentIntersectAnyWindow(a, b))
+                    if (isThirtyUsecLayer && IsHorizontalLike(a, b))
+                    {
+                        thirtyHorizontalAnchors.Add((id, layer, a, b));
+                    }
+
+                    if (isThirtyUsecLayer && IsVerticalLike(a, b))
+                    {
+                        thirtyVerticalAnchors.Add((id, layer, a, b));
+                    }
+
+                    if (!IsOrdinaryUsecTieInLayer(layer) &&
+                        !IsHardVerticalTieInTargetLayer(layer) &&
+                        !isOuterUsecLayer)
                     {
                         return;
                     }
@@ -2088,6 +2310,7 @@ namespace AtsBackgroundBuilder
                     return ghostHorizontalIds.Count;
                 }
 
+                var rawHorizontalTargets = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double MinX, double MaxX, double AxisY)>(horizontalTargets);
                 var ghostHorizontalRowsIgnored = IgnoreGhostHorizontalRows();
 
                 if ((horizontalSources.Count == 0 || verticalTargets.Count == 0) &&
@@ -2171,11 +2394,17 @@ namespace AtsBackgroundBuilder
                     bool canTrimStart,
                     bool canTrimEnd,
                     out bool bestMoveStart,
-                    out Point2d bestTarget)
+                    out Point2d bestTarget,
+                    out string bestTargetLayer,
+                    out Point2d bestTargetA,
+                    out Point2d bestTargetB)
                 {
                     var bestFound = false;
                     bestMoveStart = false;
                     bestTarget = default;
+                    bestTargetLayer = string.Empty;
+                    bestTargetA = default;
+                    bestTargetB = default;
                     var bestMoveDistance = double.MaxValue;
                     var bestTargetPriority = int.MaxValue;
                     for (var ti = 0; ti < targets.Count; ti++)
@@ -2250,6 +2479,9 @@ namespace AtsBackgroundBuilder
                             bestMoveDistance = candidateScore;
                             bestTargetPriority = targetPriority;
                             bestTarget = intersection;
+                            bestTargetLayer = targetLayer;
+                            bestTargetA = targetA;
+                            bestTargetB = targetB;
                         }
                     }
 
@@ -2343,6 +2575,52 @@ namespace AtsBackgroundBuilder
                         anchor => anchor.B);
                 }
 
+                bool TryGetRawNonHardHorizontalTieConnection(
+                    Point2d endpoint,
+                    string sourceLayer,
+                    ObjectId sourceId,
+                    out (ObjectId Id, string Layer, Point2d A, Point2d B, double MinX, double MaxX, double AxisY) rawTie)
+                {
+                    rawTie = default;
+                    var found = false;
+                    var bestAxisGap = double.MaxValue;
+                    var bestEndpointGap = double.MaxValue;
+                    for (var i = 0; i < rawHorizontalTargets.Count; i++)
+                    {
+                        var target = rawHorizontalTargets[i];
+                        if (target.Id == sourceId || EndpointTouchesHardAnchorLayer(target.Layer))
+                        {
+                            continue;
+                        }
+
+                        if (!AreMatchingTieInBands(sourceLayer, target.Layer) &&
+                            !IsOuterToOuterTieInTargetLayer(sourceLayer, target.Layer) &&
+                            !(IsOrdinaryUsecOuterLayer(sourceLayer) && IsOrdinaryUsecTieInLayer(target.Layer)))
+                        {
+                            continue;
+                        }
+
+                        if (DistancePointToSegment(endpoint, target.A, target.B) <= endpointTouchTol)
+                        {
+                            var axisGap = Math.Abs(endpoint.Y - target.AxisY);
+                            var endpointGap = Math.Min(
+                                endpoint.GetDistanceTo(target.A),
+                                endpoint.GetDistanceTo(target.B));
+                            if (!found ||
+                                axisGap < bestAxisGap - 1e-6 ||
+                                (Math.Abs(axisGap - bestAxisGap) <= 1e-6 && endpointGap < bestEndpointGap - 1e-6))
+                            {
+                                rawTie = target;
+                                found = true;
+                                bestAxisGap = axisGap;
+                                bestEndpointGap = endpointGap;
+                            }
+                        }
+                    }
+
+                    return found;
+                }
+
                 bool TryTrimTieInSource<TTarget>(
                     List<(ObjectId Id, string Layer, Point2d A, Point2d B)> sources,
                     int sourceIndex,
@@ -2367,6 +2645,24 @@ namespace AtsBackgroundBuilder
                     sources[sourceIndex] = (source.Id, source.Layer, a, b);
                     var startAnchorState = getEndpointAnchorState(a, source.Layer, source.Id);
                     var endAnchorState = getEndpointAnchorState(b, source.Layer, source.Id);
+                    var startHasRawHorizontalTie = false;
+                    var endHasRawHorizontalTie = false;
+                    var startRawHorizontalTie = default((ObjectId Id, string Layer, Point2d A, Point2d B, double MinX, double MaxX, double AxisY));
+                    var endRawHorizontalTie = default((ObjectId Id, string Layer, Point2d A, Point2d B, double MinX, double MaxX, double AxisY));
+                    if (IsVerticalLike(a, b))
+                    {
+                        startHasRawHorizontalTie = TryGetRawNonHardHorizontalTieConnection(a, source.Layer, source.Id, out startRawHorizontalTie);
+                        endHasRawHorizontalTie = TryGetRawNonHardHorizontalTieConnection(b, source.Layer, source.Id, out endRawHorizontalTie);
+                        if (!startAnchorState.Connected && startHasRawHorizontalTie)
+                        {
+                            startAnchorState = (true, false);
+                        }
+
+                        if (!endAnchorState.Connected && endHasRawHorizontalTie)
+                        {
+                            endAnchorState = (true, false);
+                        }
+                    }
                     var startOnBoundary = IsPointOnAnyWindowBoundaryForPlugin(a, outerBoundaryTol, clipWindows);
                     var endOnBoundary = IsPointOnAnyWindowBoundaryForPlugin(b, outerBoundaryTol, clipWindows);
 
@@ -2438,10 +2734,14 @@ namespace AtsBackgroundBuilder
                         HasInteriorCorrectionZeroTrimCandidate(b);
                     var canTrimStart =
                         startCorrectionZeroTrimCandidate ||
-                        (!startAnchorState.HardConnected && !startOnBoundary && (endAnchorState.Connected || endOnBoundary));
+                        (!startAnchorState.HardConnected &&
+                         !startOnBoundary &&
+                         (endAnchorState.Connected || endOnBoundary));
                     var canTrimEnd =
                         endCorrectionZeroTrimCandidate ||
-                        (!endAnchorState.HardConnected && !endOnBoundary && (startAnchorState.Connected || startOnBoundary));
+                        (!endAnchorState.HardConnected &&
+                         !endOnBoundary &&
+                         (startAnchorState.Connected || startOnBoundary));
                     if (!canTrimStart && !canTrimEnd)
                     {
                         return false;
@@ -2468,7 +2768,64 @@ namespace AtsBackgroundBuilder
                             canTrimStart,
                             canTrimEnd,
                             out var bestMoveStart,
-                            out var bestTarget))
+                            out var bestTarget,
+                            out var bestTargetLayer,
+                            out var bestTargetA,
+                            out var bestTargetB))
+                    {
+                        return false;
+                    }
+
+                    bool IsSecTieInBoundaryLayer(string layer)
+                    {
+                        return string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
+                    }
+
+                    bool ShouldPreserveRawHorizontalTieInsteadOfSecPromotion(
+                        Point2d movingEndpoint,
+                        (ObjectId Id, string Layer, Point2d A, Point2d B, double MinX, double MaxX, double AxisY) rawTie)
+                    {
+                        if (!IsVerticalLike(a, b) ||
+                            !IsOrdinaryUsecTieInLayer(source.Layer) ||
+                            rawTie.Id.IsNull ||
+                            !IsSecTieInBoundaryLayer(bestTargetLayer))
+                        {
+                            return false;
+                        }
+
+                        var moveDistance = movingEndpoint.GetDistanceTo(bestTarget);
+                        if (Math.Abs(moveDistance - RoadAllowanceSecWidthMeters) > 2.0)
+                        {
+                            return false;
+                        }
+
+                        var targetGapFromRawTie = Math.Abs(DistancePointToInfiniteLine(bestTarget, rawTie.A, rawTie.B));
+                        if (Math.Abs(targetGapFromRawTie - RoadAllowanceSecWidthMeters) > 2.0)
+                        {
+                            return false;
+                        }
+
+                        var endpointGapFromTarget = Math.Abs(DistancePointToInfiniteLine(movingEndpoint, bestTargetA, bestTargetB));
+                        if (Math.Abs(endpointGapFromTarget - RoadAllowanceSecWidthMeters) > 2.0)
+                        {
+                            return false;
+                        }
+
+                        return true;
+                    }
+
+                    if (bestMoveStart &&
+                        startHasRawHorizontalTie &&
+                        ShouldPreserveRawHorizontalTieInsteadOfSecPromotion(a, startRawHorizontalTie))
+                    {
+                        return false;
+                    }
+
+                    if (!bestMoveStart &&
+                        endHasRawHorizontalTie &&
+                        ShouldPreserveRawHorizontalTieInsteadOfSecPromotion(b, endRawHorizontalTie))
                     {
                         return false;
                     }
@@ -2555,13 +2912,69 @@ namespace AtsBackgroundBuilder
                         return false;
                     }
 
+                    bool EndpointTouchesAlternateOuterPerpendicularLocalSource(
+                        Point2d endpoint,
+                        bool sourceIsHorizontal,
+                        ObjectId sourceId,
+                        ObjectId pairedSourceId)
+                    {
+                        var perpendicularSources = sourceIsHorizontal ? verticalSources : horizontalSources;
+                        for (var pi = 0; pi < perpendicularSources.Count; pi++)
+                        {
+                            var other = perpendicularSources[pi];
+                            if (other.Id == sourceId || other.Id == pairedSourceId)
+                            {
+                                continue;
+                            }
+
+                            if (!IsOrdinaryUsecOuterLayer(other.Layer))
+                            {
+                                continue;
+                            }
+
+                            if (endpoint.GetDistanceTo(other.A) <= endpointTouchTol ||
+                                endpoint.GetDistanceTo(other.B) <= endpointTouchTol)
+                            {
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    }
+
+                    bool EndpointTouchesAlternateThirtyPerpendicularLocalSource(
+                        Point2d endpoint,
+                        bool sourceIsHorizontal,
+                        ObjectId sourceId,
+                        ObjectId pairedSourceId)
+                    {
+                        var perpendicularSources = sourceIsHorizontal ? thirtyVerticalAnchors : thirtyHorizontalAnchors;
+                        for (var pi = 0; pi < perpendicularSources.Count; pi++)
+                        {
+                            var other = perpendicularSources[pi];
+                            if (other.Id == sourceId || other.Id == pairedSourceId)
+                            {
+                                continue;
+                            }
+
+                            if (DistancePointToSegment(endpoint, other.A, other.B) <= endpointTouchTol)
+                            {
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    }
+
                     var pairCandidates = new List<(
                         int HorizontalIndex,
                         bool HorizontalMoveStart,
                         Point2d HorizontalEndpoint,
+                        bool MoveHorizontal,
                         int VerticalIndex,
                         bool VerticalMoveStart,
                         Point2d VerticalEndpoint,
+                        bool MoveVertical,
                         Point2d Target,
                         double Score)>();
 
@@ -2619,7 +3032,8 @@ namespace AtsBackgroundBuilder
                             var horizontalMoveStart = intersection.GetDistanceTo(horizontal.A) <= intersection.GetDistanceTo(horizontal.B);
                             var horizontalEndpoint = horizontalMoveStart ? horizontal.A : horizontal.B;
                             var horizontalMoveDistance = horizontalEndpoint.GetDistanceTo(intersection);
-                            if (horizontalMoveDistance <= minMove || horizontalMoveDistance > maxTrim)
+                            var horizontalNeedsMove = horizontalMoveDistance > minMove;
+                            if (horizontalNeedsMove && horizontalMoveDistance > maxTrim)
                             {
                                 continue;
                             }
@@ -2627,7 +3041,13 @@ namespace AtsBackgroundBuilder
                             var verticalMoveStart = intersection.GetDistanceTo(vertical.A) <= intersection.GetDistanceTo(vertical.B);
                             var verticalEndpoint = verticalMoveStart ? vertical.A : vertical.B;
                             var verticalMoveDistance = verticalEndpoint.GetDistanceTo(intersection);
-                            if (verticalMoveDistance <= minMove || verticalMoveDistance > maxTrim)
+                            var verticalNeedsMove = verticalMoveDistance > minMove;
+                            if (verticalNeedsMove && verticalMoveDistance > maxTrim)
+                            {
+                                continue;
+                            }
+
+                            if (!horizontalNeedsMove && !verticalNeedsMove)
                             {
                                 continue;
                             }
@@ -2654,6 +3074,37 @@ namespace AtsBackgroundBuilder
                                 EndpointTouchesAlternatePerpendicularLocalSource(horizontalEndpoint, sourceIsHorizontal: true, horizontal.Id, vertical.Id);
                             var verticalHasAlternatePerpendicular =
                                 EndpointTouchesAlternatePerpendicularLocalSource(verticalEndpoint, sourceIsHorizontal: false, vertical.Id, horizontal.Id);
+                            var horizontalTouchesOuterPerpendicular =
+                                EndpointTouchesAlternateOuterPerpendicularLocalSource(horizontalEndpoint, sourceIsHorizontal: true, horizontal.Id, vertical.Id);
+                            var verticalTouchesOuterPerpendicular =
+                                EndpointTouchesAlternateOuterPerpendicularLocalSource(verticalEndpoint, sourceIsHorizontal: false, vertical.Id, horizontal.Id);
+                            if (horizontalTouchesOuterPerpendicular || verticalTouchesOuterPerpendicular)
+                            {
+                                continue;
+                            }
+
+                            var horizontalTouchesThirtyPerpendicular =
+                                EndpointTouchesAlternateThirtyPerpendicularLocalSource(horizontalEndpoint, sourceIsHorizontal: true, horizontal.Id, vertical.Id);
+                            var verticalTouchesThirtyPerpendicular =
+                                EndpointTouchesAlternateThirtyPerpendicularLocalSource(verticalEndpoint, sourceIsHorizontal: false, vertical.Id, horizontal.Id);
+                            var oneSidedThirtyBridge =
+                                horizontalNeedsMove != verticalNeedsMove &&
+                                (horizontalTouchesThirtyPerpendicular || verticalTouchesThirtyPerpendicular) &&
+                                !(horizontalNeedsMove && horizontalHasAlternatePerpendicular) &&
+                                !(verticalNeedsMove && verticalHasAlternatePerpendicular) &&
+                                ((horizontalNeedsMove && verticalMoveDistance <= endpointTouchTol) ||
+                                 (verticalNeedsMove && horizontalMoveDistance <= endpointTouchTol));
+                            if (horizontalNeedsMove != verticalNeedsMove && !oneSidedThirtyBridge)
+                            {
+                                continue;
+                            }
+
+                            if ((horizontalTouchesThirtyPerpendicular || verticalTouchesThirtyPerpendicular) &&
+                                !oneSidedThirtyBridge)
+                            {
+                                continue;
+                            }
+
                             if (horizontalHasAlternatePerpendicular && verticalHasAlternatePerpendicular)
                             {
                                 continue;
@@ -2680,6 +3131,33 @@ namespace AtsBackgroundBuilder
                                 }
                             }
 
+                            // If a candidate target is only justified by the same side that already
+                            // has another nearby perpendicular continuation, treat it as a false
+                            // local open-T collapse and keep the split node instead.
+                            var intersectionAnchoredByHorizontalOnly =
+                                (intersectionHorizontalAnchorState.Connected ||
+                                 intersectionHorizontalAnchorState.HardConnected) &&
+                                !(intersectionVerticalAnchorState.Connected ||
+                                  intersectionVerticalAnchorState.HardConnected);
+                            var intersectionAnchoredByVerticalOnly =
+                                (intersectionVerticalAnchorState.Connected ||
+                                 intersectionVerticalAnchorState.HardConnected) &&
+                                !(intersectionHorizontalAnchorState.Connected ||
+                                  intersectionHorizontalAnchorState.HardConnected);
+                            if (horizontalHasNearbyAlternatePerpendicular &&
+                                !verticalHasNearbyAlternatePerpendicular &&
+                                intersectionAnchoredByHorizontalOnly)
+                            {
+                                continue;
+                            }
+
+                            if (verticalHasNearbyAlternatePerpendicular &&
+                                !horizontalHasNearbyAlternatePerpendicular &&
+                                intersectionAnchoredByVerticalOnly)
+                            {
+                                continue;
+                            }
+
                             var score =
                                 horizontalEndpoint.GetDistanceTo(verticalEndpoint) +
                                 horizontalMoveDistance +
@@ -2690,9 +3168,11 @@ namespace AtsBackgroundBuilder
                                 hi,
                                 horizontalMoveStart,
                                 horizontalEndpoint,
+                                horizontalNeedsMove,
                                 vi,
                                 verticalMoveStart,
                                 verticalEndpoint,
+                                verticalNeedsMove,
                                 intersection,
                                 score));
                         }
@@ -2723,8 +3203,12 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        var movedHorizontal = TryMoveEndpoint(horizontalWritable, pair.HorizontalMoveStart, pair.Target, endpointMoveTol);
-                        var movedVertical = TryMoveEndpoint(verticalWritable, pair.VerticalMoveStart, pair.Target, endpointMoveTol);
+                        var movedHorizontal =
+                            !pair.MoveHorizontal ||
+                            TryMoveEndpoint(horizontalWritable, pair.HorizontalMoveStart, pair.Target, endpointMoveTol);
+                        var movedVertical =
+                            !pair.MoveVertical ||
+                            TryMoveEndpoint(verticalWritable, pair.VerticalMoveStart, pair.Target, endpointMoveTol);
                         if (!movedHorizontal || !movedVertical)
                         {
                             continue;
@@ -2738,7 +3222,7 @@ namespace AtsBackgroundBuilder
 
                         horizontalSources[pair.HorizontalIndex] = (horizontalSource.Id, horizontalSource.Layer, newHorizontalA, newHorizontalB);
                         verticalSources[pair.VerticalIndex] = (verticalSource.Id, verticalSource.Layer, newVerticalA, newVerticalB);
-                        trimmed += 2;
+                        trimmed += (pair.MoveHorizontal ? 1 : 0) + (pair.MoveVertical ? 1 : 0);
                         openTPairsAdjusted++;
                         movedAny = true;
                         if (openTPairSamples.Count < 80)
@@ -3162,6 +3646,7 @@ namespace AtsBackgroundBuilder
             var clipWindows = MergeOverlappingClipWindows(rawClipWindows);
             if (clipWindows.Count == 0)
             {
+                logger?.WriteLine("CorrectionLine: mixed 30.16/20.11 ordinary normalize skipped (no clip windows).");
                 return false;
             }
 
@@ -3169,6 +3654,50 @@ namespace AtsBackgroundBuilder
             bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenLinearSegment(ent, out a, out b);
             bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) =>
                 TryMoveEndpointForCorrectionLinePost(writable, moveStart, target, moveTol);
+            bool TryMoveEndpointAnyDirection(Entity writable, bool moveStart, Point2d target, double moveTol)
+            {
+                if (writable == null || writable.IsErased)
+                {
+                    return false;
+                }
+
+                if (writable is Line line)
+                {
+                    var existing = moveStart
+                        ? new Point2d(line.StartPoint.X, line.StartPoint.Y)
+                        : new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                    if (existing.GetDistanceTo(target) <= moveTol)
+                    {
+                        return false;
+                    }
+
+                    if (moveStart)
+                    {
+                        line.StartPoint = new Point3d(target.X, target.Y, line.StartPoint.Z);
+                    }
+                    else
+                    {
+                        line.EndPoint = new Point3d(target.X, target.Y, line.EndPoint.Z);
+                    }
+
+                    return true;
+                }
+
+                if (writable is Polyline polyline && polyline.NumberOfVertices >= 2)
+                {
+                    var index = moveStart ? 0 : (polyline.NumberOfVertices - 1);
+                    var existing = polyline.GetPoint2dAt(index);
+                    if (existing.GetDistanceTo(target) <= moveTol)
+                    {
+                        return false;
+                    }
+
+                    polyline.SetPointAt(index, target);
+                    return true;
+                }
+
+                return false;
+            }
             bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
                 TryIntersectInfiniteLinesForPluginGeometry(a0, a1, b0, b1, out intersection);
 
@@ -3414,15 +3943,3459 @@ namespace AtsBackgroundBuilder
                     }
                 }
 
+                bool IsOrdinaryUsecLayer(string layer)
+                {
+                    return string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase);
+                }
+
+                var mixedAdjustedVerticals = 0;
+                var mixedAdjustedHorizontals = 0;
+                var mixedSamples = new List<string>();
+
+                List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, double Axis, double MajorMin, double MajorMax, Vector2d Unit)> CollectMixedHorizontals()
+                {
+                    var results = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, double Axis, double MajorMin, double MajorMax, Vector2d Unit)>();
+                    foreach (ObjectId id in ms)
+                    {
+                        Entity? ent = null;
+                        try
+                        {
+                            ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                        }
+                        catch (Autodesk.AutoCAD.Runtime.Exception)
+                        {
+                            continue;
+                        }
+
+                        if (ent == null || ent.IsErased || !IsOrdinaryUsecLayer(ent.Layer ?? string.Empty))
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenSegment(ent, out var a, out var b) ||
+                            !DoesSegmentIntersectAnyWindow(a, b) ||
+                            !IsHorizontalLikeForCorrectionLinePost(a, b))
+                        {
+                            continue;
+                        }
+
+                        var dir = b - a;
+                        var len = dir.Length;
+                        if (len <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        results.Add((id, ent.Layer ?? string.Empty, a, b, len, 0.5 * (a.Y + b.Y), Math.Min(a.X, b.X), Math.Max(a.X, b.X), dir / len));
+                    }
+
+                    return results;
+                }
+
+                List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, Vector2d Unit)> CollectMixedVerticals(bool ordinaryOnly)
+                {
+                    var results = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, Vector2d Unit)>();
+                    foreach (ObjectId id in ms)
+                    {
+                        Entity? ent = null;
+                        try
+                        {
+                            ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                        }
+                        catch (Autodesk.AutoCAD.Runtime.Exception)
+                        {
+                            continue;
+                        }
+
+                        var layer = ent?.Layer ?? string.Empty;
+                        if (ent == null || ent.IsErased)
+                        {
+                            continue;
+                        }
+
+                        var isSupportedLayer =
+                            IsOrdinaryUsecLayer(layer) ||
+                            string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase);
+                        if (!isSupportedLayer || (ordinaryOnly && !IsOrdinaryUsecLayer(layer)))
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenSegment(ent, out var a, out var b) ||
+                            !DoesSegmentIntersectAnyWindow(a, b) ||
+                            !IsVerticalLikeForCorrectionLinePost(a, b))
+                        {
+                            continue;
+                        }
+
+                        var dir = b - a;
+                        var len = dir.Length;
+                        if (len <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        results.Add((id, layer, a, b, len, dir / len));
+                    }
+
+                    return results;
+                }
+
+                bool HasParallelHorizontalCompanion(
+                    (ObjectId Id, string Layer, Point2d A, Point2d B, double Length, double Axis, double MajorMin, double MajorMax, Vector2d Unit) row,
+                    IReadOnlyList<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, double Axis, double MajorMin, double MajorMax, Vector2d Unit)> allRows,
+                    double expectedGap,
+                    double gapTol)
+                {
+                    const double parallelDotMin = 0.985;
+                    for (var i = 0; i < allRows.Count; i++)
+                    {
+                        var other = allRows[i];
+                        if (other.Id == row.Id)
+                        {
+                            continue;
+                        }
+
+                        if (Math.Abs(row.Unit.DotProduct(other.Unit)) < parallelDotMin)
+                        {
+                            continue;
+                        }
+
+                        var overlap = Math.Min(row.MajorMax, other.MajorMax) - Math.Max(row.MajorMin, other.MajorMin);
+                        if (overlap < 8.0)
+                        {
+                            continue;
+                        }
+
+                        var rowMid = Midpoint(row.A, row.B);
+                        var gap = Math.Abs(DistancePointToInfiniteLine(rowMid, other.A, other.B));
+                        if (Math.Abs(gap - expectedGap) <= gapTol)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                const double mixedEndpointTol = 0.80;
+                const double mixedParallelDotMin = 0.985;
+                const double mixedMinMove = 0.05;
+                const double mixedMoveTol = 0.05;
+                const double mixedRetreatTol = 1.60;
+                const double mixedRetreatStationTol = 25.0;
+                const double mixedCompanionTol = 1.80;
+                const double mixedPivotTol = 1.80;
+                const double mixedAnchorOffsetTol = 2.00;
+                const double mixedCurrentOffsetTol = 2.00;
+                const double mixedOverlapMin = 60.0;
+
+                var mixedHorizontals = CollectMixedHorizontals();
+                var mixedOrdinaryVerticals = CollectMixedVerticals(ordinaryOnly: true);
+                logger?.WriteLine(
+                    $"Cleanup: mixed ordinary live counts h={mixedHorizontals.Count}, v={mixedOrdinaryVerticals.Count}.");
+                for (var vi = 0; vi < mixedOrdinaryVerticals.Count; vi++)
+                {
+                    var source = mixedOrdinaryVerticals[vi];
+                    if (!(tr.GetObject(source.Id, OpenMode.ForWrite, false) is Entity writableVertical) || writableVertical.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(writableVertical, out var sourceA, out var sourceB) || !IsVerticalLikeForCorrectionLinePost(sourceA, sourceB))
+                    {
+                        continue;
+                    }
+
+                    for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                    {
+                        var endpoint = endpointIndex == 0 ? sourceA : sourceB;
+                        var other = endpointIndex == 0 ? sourceB : sourceA;
+                        var inward = other - endpoint;
+                        var inwardLen = inward.Length;
+                        if (inwardLen <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        var inwardUnit = inward / inwardLen;
+                        var foundTarget = false;
+                        var bestTarget = endpoint;
+                        var bestScore = double.MaxValue;
+                        for (var ci = 0; ci < mixedHorizontals.Count; ci++)
+                        {
+                            var candidate = mixedHorizontals[ci];
+                            if (candidate.Id == source.Id)
+                            {
+                                continue;
+                            }
+
+                            if (!HasParallelHorizontalCompanion(candidate, mixedHorizontals, RoadAllowanceSecWidthMeters, mixedCompanionTol) &&
+                                !HasParallelHorizontalCompanion(candidate, mixedHorizontals, RoadAllowanceUsecWidthMeters, mixedCompanionTol))
+                            {
+                                continue;
+                            }
+
+                            if (!TryIntersectInfiniteLines(sourceA, sourceB, candidate.A, candidate.B, out var target))
+                            {
+                                continue;
+                            }
+
+                            if (DistancePointToSegment(target, candidate.A, candidate.B) > mixedEndpointTol)
+                            {
+                                continue;
+                            }
+
+                            var along = (target - endpoint).DotProduct(inwardUnit);
+                            if (Math.Abs(along - RoadAllowanceSecWidthMeters) > mixedRetreatTol)
+                            {
+                                continue;
+                            }
+
+                            var stationGap = Math.Min(
+                                Math.Min(Math.Abs(endpoint.X - candidate.A.X), Math.Abs(endpoint.X - candidate.B.X)),
+                                endpoint.X < candidate.MajorMin
+                                    ? (candidate.MajorMin - endpoint.X)
+                                    : endpoint.X > candidate.MajorMax
+                                        ? (endpoint.X - candidate.MajorMax)
+                                        : 0.0);
+                            if (stationGap > mixedRetreatStationTol)
+                            {
+                                continue;
+                            }
+
+                            var score =
+                                Math.Abs(along - RoadAllowanceSecWidthMeters) +
+                                (0.04 * stationGap) -
+                                (0.0005 * candidate.Length);
+                            if (!foundTarget || score < bestScore - 1e-6)
+                            {
+                                foundTarget = true;
+                                bestScore = score;
+                                bestTarget = target;
+                            }
+                        }
+
+                        if (!foundTarget || endpoint.GetDistanceTo(bestTarget) <= mixedMinMove)
+                        {
+                            continue;
+                        }
+
+                        if (!TryMoveEndpoint(writableVertical, endpointIndex == 0, bestTarget, mixedMoveTol))
+                        {
+                            continue;
+                        }
+
+                        mixedAdjustedVerticals++;
+                        if (mixedSamples.Count < 16)
+                        {
+                            mixedSamples.Add(
+                                string.Format(
+                                    CultureInfo.InvariantCulture,
+                                    "v id={0} ({1:0.###},{2:0.###})->({3:0.###},{4:0.###})",
+                                    source.Id.Handle.ToString(),
+                                    endpoint.X,
+                                    endpoint.Y,
+                                    bestTarget.X,
+                                    bestTarget.Y));
+                        }
+
+                        if (!TryReadOpenSegment(writableVertical, out sourceA, out sourceB))
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                mixedHorizontals = CollectMixedHorizontals();
+                var mixedSupportVerticals = CollectMixedVerticals(ordinaryOnly: false);
+                logger?.WriteLine(
+                    $"Cleanup: mixed ordinary support counts h={mixedHorizontals.Count}, supportV={mixedSupportVerticals.Count}.");
+                for (var hi = 0; hi < mixedHorizontals.Count; hi++)
+                {
+                    var source = mixedHorizontals[hi];
+                    if (!(tr.GetObject(source.Id, OpenMode.ForWrite, false) is Entity writableHorizontal) || writableHorizontal.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(writableHorizontal, out var sourceA, out var sourceB) || !IsHorizontalLikeForCorrectionLinePost(sourceA, sourceB))
+                    {
+                        continue;
+                    }
+
+                    for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                    {
+                        var endpoint = endpointIndex == 0 ? sourceA : sourceB;
+                        var anchor = endpointIndex == 0 ? sourceB : sourceA;
+                        var traceMixedSec31Horizontal =
+                            Math.Abs(endpoint.X - 615061.122) <= 1.0 &&
+                            Math.Abs(endpoint.Y - 5846513.752) <= 1.0;
+                        var foundTarget = false;
+                        var bestTarget = endpoint;
+                        var bestScore = double.MaxValue;
+
+                        for (var si = 0; si < mixedSupportVerticals.Count; si++)
+                        {
+                            var support = mixedSupportVerticals[si];
+                            if (support.Id == source.Id || DistancePointToSegment(endpoint, support.A, support.B) > mixedEndpointTol)
+                            {
+                                continue;
+                            }
+
+                            for (var ci = 0; ci < mixedHorizontals.Count; ci++)
+                            {
+                                var candidate = mixedHorizontals[ci];
+                                if (candidate.Id == source.Id)
+                                {
+                                    continue;
+                                }
+
+                                if (Math.Abs(candidate.Unit.DotProduct(source.Unit)) < mixedParallelDotMin)
+                                {
+                                    continue;
+                                }
+
+                                var overlap = Math.Min(source.MajorMax, candidate.MajorMax) - Math.Max(source.MajorMin, candidate.MajorMin);
+                                if (overlap < mixedOverlapMin)
+                                {
+                                    continue;
+                                }
+
+                                var anchorOffset = Math.Abs(DistancePointToInfiniteLine(anchor, candidate.A, candidate.B));
+                                if (Math.Abs(anchorOffset - RoadAllowanceUsecWidthMeters) > mixedAnchorOffsetTol)
+                                {
+                                    continue;
+                                }
+
+                                var currentOffset = Math.Abs(DistancePointToInfiniteLine(endpoint, candidate.A, candidate.B));
+                                if (Math.Abs(currentOffset - RoadAllowanceSecWidthMeters) > mixedCurrentOffsetTol)
+                                {
+                                    if (traceMixedSec31Horizontal)
+                                    {
+                                        logger?.WriteLine(
+                                            $"Cleanup: mixed ordinary sec31 horizontal reject offset cand={candidate.A.X:0.###},{candidate.A.Y:0.###}->{candidate.B.X:0.###},{candidate.B.Y:0.###} anchorOff={anchorOffset:0.###} currentOff={currentOffset:0.###}");
+                                    }
+                                    continue;
+                                }
+
+                                var candidateParallelPoint = anchor + candidate.Unit;
+                                if (!TryIntersectInfiniteLines(anchor, candidateParallelPoint, support.A, support.B, out var target))
+                                {
+                                    continue;
+                                }
+
+                                if (DistancePointToSegment(target, support.A, support.B) > mixedEndpointTol)
+                                {
+                                    continue;
+                                }
+
+                                var moveDistance = endpoint.GetDistanceTo(target);
+                                if (moveDistance <= mixedMinMove || Math.Abs(moveDistance - CorrectionLinePairGapMeters) > mixedPivotTol)
+                                {
+                                    if (traceMixedSec31Horizontal)
+                                    {
+                                        logger?.WriteLine(
+                                            $"Cleanup: mixed ordinary sec31 horizontal reject move cand={candidate.A.X:0.###},{candidate.A.Y:0.###}->{candidate.B.X:0.###},{candidate.B.Y:0.###} move={moveDistance:0.###}");
+                                    }
+                                    continue;
+                                }
+
+                                var score =
+                                    Math.Abs(anchorOffset - RoadAllowanceUsecWidthMeters) +
+                                    Math.Abs(currentOffset - RoadAllowanceSecWidthMeters) +
+                                    Math.Abs(moveDistance - CorrectionLinePairGapMeters);
+                                if (traceMixedSec31Horizontal)
+                                {
+                                    logger?.WriteLine(
+                                        $"Cleanup: mixed ordinary sec31 horizontal cand={candidate.A.X:0.###},{candidate.A.Y:0.###}->{candidate.B.X:0.###},{candidate.B.Y:0.###} anchorOff={anchorOffset:0.###} currentOff={currentOffset:0.###} move={moveDistance:0.###} score={score:0.###}");
+                                }
+                                if (!foundTarget || score < bestScore - 1e-6)
+                                {
+                                    foundTarget = true;
+                                    bestScore = score;
+                                    bestTarget = target;
+                                }
+                            }
+                        }
+
+                        if (!foundTarget || endpoint.GetDistanceTo(bestTarget) <= mixedMinMove)
+                        {
+                            continue;
+                        }
+
+                        if (!TryMoveEndpointAnyDirection(writableHorizontal, endpointIndex == 0, bestTarget, mixedMoveTol))
+                        {
+                            continue;
+                        }
+
+                        mixedAdjustedHorizontals++;
+                        if (mixedSamples.Count < 16)
+                        {
+                            mixedSamples.Add(
+                                string.Format(
+                                    CultureInfo.InvariantCulture,
+                                    "h id={0} ({1:0.###},{2:0.###})->({3:0.###},{4:0.###})",
+                                    source.Id.Handle.ToString(),
+                                    endpoint.X,
+                                    endpoint.Y,
+                                    bestTarget.X,
+                                    bestTarget.Y));
+                        }
+
+                        if (!TryReadOpenSegment(writableHorizontal, out sourceA, out sourceB))
+                        {
+                            break;
+                        }
+                    }
+                }
+
                 tr.Commit();
                 logger?.WriteLine(
-                    $"CorrectionLine: blind-30 correction-outer trim scannedEndpoints={scannedEndpoints}, zeroMatched={zeroMatchedEndpoints}, noTarget={noTarget}, trimmedEndpoints={trimmedEndpoints}, trimmedLines={trimmedLines}.");
+                    $"Cleanup: mixed ordinary adjusted v={mixedAdjustedVerticals}, h={mixedAdjustedHorizontals}.");
+                logger?.WriteLine(
+                    $"CorrectionLine: blind-30 correction-outer trim scannedEndpoints={scannedEndpoints}, zeroMatched={zeroMatchedEndpoints}, noTarget={noTarget}, trimmedEndpoints={trimmedEndpoints}, trimmedLines={trimmedLines}, mixedVerticalAdjusted={mixedAdjustedVerticals}, mixedHorizontalAdjusted={mixedAdjustedHorizontals}.");
                 for (var i = 0; i < moveSamples.Count; i++)
                 {
                     logger?.WriteLine("CorrectionLine:   blind-30-trim " + moveSamples[i]);
                 }
+                for (var i = 0; i < mixedSamples.Count; i++)
+                {
+                    logger?.WriteLine("CorrectionLine:   mixed-30-20 " + mixedSamples[i]);
+                }
 
-                return trimmedEndpoints > 0;
+                return trimmedEndpoints > 0 || mixedAdjustedVerticals > 0 || mixedAdjustedHorizontals > 0;
+            }
+        }
+
+        private static bool NormalizeMixedThirtyTwentyOrdinaryEndpoints(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null)
+            {
+                return false;
+            }
+
+            var rawClipWindows = BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0);
+            var clipWindows = MergeOverlappingClipWindows(rawClipWindows);
+            if (clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenLinearSegment(ent, out a, out b);
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) =>
+                TryMoveEndpointForCorrectionLinePost(writable, moveStart, target, moveTol);
+            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
+                TryIntersectInfiniteLinesForPluginGeometry(a0, a1, b0, b1, out intersection);
+
+            try
+            {
+                using (var tr = database.TransactionManager.StartTransaction())
+                {
+                    var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                    bool IsOrdinaryUsecLayer(string layer)
+                    {
+                        return string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase);
+                    }
+
+                    var ordinaryHorizontals = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, double Axis, double MajorMin, double MajorMax, Vector2d Unit)>();
+                    var ordinaryVerticals = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, double Axis, double MajorMin, double MajorMax, Vector2d Unit)>();
+                    var supportVerticals = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length)>();
+
+                    void CollectSegments()
+                    {
+                        ordinaryHorizontals.Clear();
+                        ordinaryVerticals.Clear();
+                        supportVerticals.Clear();
+                        foreach (ObjectId id in ms)
+                        {
+                            Entity? ent = null;
+                            try
+                            {
+                                ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                            }
+                            catch (Autodesk.AutoCAD.Runtime.Exception)
+                            {
+                                continue;
+                            }
+                            if (ent == null || ent.IsErased)
+                            {
+                                continue;
+                            }
+
+                            if (!TryReadOpenSegment(ent, out var a, out var b) || !DoesSegmentIntersectAnyWindow(a, b))
+                            {
+                                continue;
+                            }
+
+                            var layer = ent.Layer ?? string.Empty;
+                            var horizontal = IsHorizontalLikeForCorrectionLinePost(a, b);
+                            var vertical = IsVerticalLikeForCorrectionLinePost(a, b);
+                            if (!horizontal && !vertical)
+                            {
+                                continue;
+                            }
+
+                            var dir = b - a;
+                            var len = dir.Length;
+                            if (len <= 1e-6)
+                            {
+                                continue;
+                            }
+
+                            var unit = dir / len;
+                            if (IsOrdinaryUsecLayer(layer))
+                            {
+                                if (horizontal)
+                                {
+                                    ordinaryHorizontals.Add((id, layer, a, b, len, 0.5 * (a.Y + b.Y), Math.Min(a.X, b.X), Math.Max(a.X, b.X), unit));
+                                }
+                                else if (vertical)
+                                {
+                                    ordinaryVerticals.Add((id, layer, a, b, len, 0.5 * (a.X + b.X), Math.Min(a.Y, b.Y), Math.Max(a.Y, b.Y), unit));
+                                }
+                            }
+
+                            var isSupportVertical =
+                                vertical &&
+                                (IsOrdinaryUsecLayer(layer) ||
+                                 string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase));
+                            if (isSupportVertical)
+                            {
+                                supportVerticals.Add((id, layer, a, b, len));
+                            }
+                        }
+                    }
+
+                    CollectSegments();
+                    if (ordinaryHorizontals.Count == 0 || (ordinaryVerticals.Count == 0 && supportVerticals.Count == 0))
+                    {
+                        logger?.WriteLine(
+                            $"CorrectionLine: mixed 30.16/20.11 ordinary normalize skipped (h={ordinaryHorizontals.Count}, v={ordinaryVerticals.Count}, supportV={supportVerticals.Count}).");
+                        tr.Commit();
+                        return false;
+                    }
+
+                    logger?.WriteLine(
+                        $"CorrectionLine: mixed 30.16/20.11 ordinary normalize candidates h={ordinaryHorizontals.Count}, v={ordinaryVerticals.Count}, supportV={supportVerticals.Count}.");
+
+                    const double endpointTouchTol = 0.80;
+                    const double supportTouchTol = 0.80;
+                    const double parallelDotMin = 0.985;
+                    const double minMove = 1.0;
+                    const double endpointMoveTol = 0.05;
+                    const double shortTouchedLengthMax = 220.0;
+                    const double longerCandidateMargin = 40.0;
+                    const double retreatTarget = RoadAllowanceSecWidthMeters;
+                    const double retreatTol = 1.60;
+                    const double retreatStationTol = 25.0;
+                    const double retreatCompanionTol = 1.80;
+                    const double pivotTarget = CorrectionLinePairGapMeters;
+                    const double pivotTol = 1.80;
+                    const double pivotAnchorOffsetTol = 2.00;
+                    const double pivotCurrentOffsetTol = 2.00;
+                    const double overlapMin = 60.0;
+
+                bool HasParallelHorizontalCompanion(
+                    (ObjectId Id, string Layer, Point2d A, Point2d B, double Length, double Axis, double MajorMin, double MajorMax, Vector2d Unit) row,
+                    double expectedGap,
+                    double gapTol)
+                {
+                    for (var i = 0; i < ordinaryHorizontals.Count; i++)
+                    {
+                        var other = ordinaryHorizontals[i];
+                        if (other.Id == row.Id)
+                        {
+                            continue;
+                        }
+
+                        if (Math.Abs(row.Unit.DotProduct(other.Unit)) < parallelDotMin)
+                        {
+                            continue;
+                        }
+
+                        var overlap = Math.Min(row.MajorMax, other.MajorMax) - Math.Max(row.MajorMin, other.MajorMin);
+                        if (overlap < 8.0)
+                        {
+                            continue;
+                        }
+
+                        var rowMid = Midpoint(row.A, row.B);
+                        var gap = Math.Abs(DistancePointToInfiniteLine(rowMid, other.A, other.B));
+                        if (Math.Abs(gap - expectedGap) <= gapTol)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                var adjustedVerticalEndpoints = 0;
+                var adjustedHorizontalEndpoints = 0;
+                var mixedSamples = new List<string>();
+
+                for (var i = 0; i < ordinaryVerticals.Count; i++)
+                {
+                    var source = ordinaryVerticals[i];
+                    if (!(tr.GetObject(source.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(writable, out var a, out var b) || !IsVerticalLikeForCorrectionLinePost(a, b))
+                    {
+                        continue;
+                    }
+
+                    for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                    {
+                        var endpoint = endpointIndex == 0 ? a : b;
+                        var other = endpointIndex == 0 ? b : a;
+                        var inward = other - endpoint;
+                        var inwardLen = inward.Length;
+                        if (inwardLen <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        var inwardUnit = inward / inwardLen;
+                        var foundTarget = false;
+                        var bestTarget = endpoint;
+                        var bestScore = double.MaxValue;
+                        for (var hi = 0; hi < ordinaryHorizontals.Count; hi++)
+                        {
+                            var touched = ordinaryHorizontals[hi];
+                            if (DistancePointToSegment(endpoint, touched.A, touched.B) > endpointTouchTol)
+                            {
+                                continue;
+                            }
+
+                            var touchIsEndpoint =
+                                endpoint.GetDistanceTo(touched.A) <= endpointTouchTol ||
+                                endpoint.GetDistanceTo(touched.B) <= endpointTouchTol;
+                            if (!touchIsEndpoint || touched.Length > shortTouchedLengthMax)
+                            {
+                                continue;
+                            }
+
+                            if (!HasParallelHorizontalCompanion(touched, CorrectionLinePairGapMeters, retreatCompanionTol) &&
+                                !HasParallelHorizontalCompanion(touched, RoadAllowanceSecWidthMeters, retreatCompanionTol))
+                            {
+                                continue;
+                            }
+
+                            for (var ci = 0; ci < ordinaryHorizontals.Count; ci++)
+                            {
+                                var candidate = ordinaryHorizontals[ci];
+                                if (candidate.Id == touched.Id || candidate.Id == source.Id)
+                                {
+                                    continue;
+                                }
+
+                                if (Math.Abs(candidate.Unit.DotProduct(touched.Unit)) < parallelDotMin)
+                                {
+                                    continue;
+                                }
+
+                                if (candidate.Length <= (touched.Length + longerCandidateMargin))
+                                {
+                                    continue;
+                                }
+
+                                var touchedMid = Midpoint(touched.A, touched.B);
+                                var gap = Math.Abs(DistancePointToInfiniteLine(touchedMid, candidate.A, candidate.B));
+                                if (Math.Abs(gap - retreatTarget) > retreatTol)
+                                {
+                                    continue;
+                                }
+
+                                if (!TryIntersectInfiniteLines(a, b, candidate.A, candidate.B, out var target))
+                                {
+                                    continue;
+                                }
+
+                                if (DistancePointToSegment(target, candidate.A, candidate.B) > endpointTouchTol)
+                                {
+                                    continue;
+                                }
+
+                                var along = (target - endpoint).DotProduct(inwardUnit);
+                                if (Math.Abs(along - retreatTarget) > retreatTol)
+                                {
+                                    continue;
+                                }
+
+                                var stationGap = Math.Min(
+                                    Math.Min(Math.Abs(endpoint.X - candidate.A.X), Math.Abs(endpoint.X - candidate.B.X)),
+                                    endpoint.X < candidate.MajorMin
+                                        ? (candidate.MajorMin - endpoint.X)
+                                        : endpoint.X > candidate.MajorMax
+                                            ? (endpoint.X - candidate.MajorMax)
+                                            : 0.0);
+                                if (stationGap > retreatStationTol)
+                                {
+                                    continue;
+                                }
+
+                                var score =
+                                    Math.Abs(gap - retreatTarget) +
+                                    Math.Abs(along - retreatTarget) +
+                                    (0.04 * stationGap) +
+                                    (0.001 * Math.Max(0.0, touched.Length - candidate.Length));
+                                if (!foundTarget || score < bestScore - 1e-6)
+                                {
+                                    foundTarget = true;
+                                    bestScore = score;
+                                    bestTarget = target;
+                                }
+                            }
+                        }
+
+                        if (!foundTarget || endpoint.GetDistanceTo(bestTarget) <= minMove)
+                        {
+                            continue;
+                        }
+
+                        if (!TryMoveEndpoint(writable, endpointIndex == 0, bestTarget, endpointMoveTol))
+                        {
+                            continue;
+                        }
+
+                        adjustedVerticalEndpoints++;
+                        if (mixedSamples.Count < 16)
+                        {
+                            mixedSamples.Add(
+                                string.Format(
+                                    CultureInfo.InvariantCulture,
+                                    "vertical id={0} ({1:0.###},{2:0.###})->({3:0.###},{4:0.###})",
+                                    source.Id.Handle.ToString(),
+                                    endpoint.X,
+                                    endpoint.Y,
+                                    bestTarget.X,
+                                    bestTarget.Y));
+                        }
+
+                        if (!TryReadOpenSegment(writable, out a, out b))
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                CollectSegments();
+                for (var i = 0; i < ordinaryHorizontals.Count; i++)
+                {
+                    var source = ordinaryHorizontals[i];
+                    if (!(tr.GetObject(source.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(writable, out var a, out var b) || !IsHorizontalLikeForCorrectionLinePost(a, b))
+                    {
+                        continue;
+                    }
+
+                    for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                    {
+                        var endpoint = endpointIndex == 0 ? a : b;
+                        var anchor = endpointIndex == 0 ? b : a;
+                        var foundTarget = false;
+                        var bestTarget = endpoint;
+                        var bestScore = double.MaxValue;
+
+                        for (var si = 0; si < supportVerticals.Count; si++)
+                        {
+                            var support = supportVerticals[si];
+                            if (support.Id == source.Id || DistancePointToSegment(endpoint, support.A, support.B) > supportTouchTol)
+                            {
+                                continue;
+                            }
+
+                            for (var ci = 0; ci < ordinaryHorizontals.Count; ci++)
+                            {
+                                var candidate = ordinaryHorizontals[ci];
+                                if (candidate.Id == source.Id)
+                                {
+                                    continue;
+                                }
+
+                                if (Math.Abs(candidate.Unit.DotProduct(source.Unit)) < parallelDotMin)
+                                {
+                                    continue;
+                                }
+
+                                var overlap = Math.Min(source.MajorMax, candidate.MajorMax) - Math.Max(source.MajorMin, candidate.MajorMin);
+                                if (overlap < overlapMin)
+                                {
+                                    continue;
+                                }
+
+                                var anchorOffset = Math.Abs(DistancePointToInfiniteLine(anchor, candidate.A, candidate.B));
+                                if (Math.Abs(anchorOffset - RoadAllowanceUsecWidthMeters) > pivotAnchorOffsetTol)
+                                {
+                                    continue;
+                                }
+
+                                var currentOffset = Math.Abs(DistancePointToInfiniteLine(endpoint, candidate.A, candidate.B));
+                                if (Math.Abs(currentOffset - RoadAllowanceSecWidthMeters) > pivotCurrentOffsetTol)
+                                {
+                                    continue;
+                                }
+
+                                var candidateParallelPoint = anchor + candidate.Unit;
+                                if (!TryIntersectInfiniteLines(anchor, candidateParallelPoint, support.A, support.B, out var target))
+                                {
+                                    continue;
+                                }
+
+                                if (DistancePointToSegment(target, support.A, support.B) > supportTouchTol)
+                                {
+                                    continue;
+                                }
+
+                                var moveDistance = endpoint.GetDistanceTo(target);
+                                if (moveDistance <= minMove || Math.Abs(moveDistance - pivotTarget) > pivotTol)
+                                {
+                                    continue;
+                                }
+
+                                var score =
+                                    Math.Abs(anchorOffset - RoadAllowanceUsecWidthMeters) +
+                                    Math.Abs(currentOffset - RoadAllowanceSecWidthMeters) +
+                                    Math.Abs(moveDistance - pivotTarget);
+                                if (!foundTarget || score < bestScore - 1e-6)
+                                {
+                                    foundTarget = true;
+                                    bestScore = score;
+                                    bestTarget = target;
+                                }
+                            }
+                        }
+
+                        if (!foundTarget || endpoint.GetDistanceTo(bestTarget) <= minMove)
+                        {
+                            continue;
+                        }
+
+                        if (!TryMoveEndpoint(writable, endpointIndex == 0, bestTarget, endpointMoveTol))
+                        {
+                            continue;
+                        }
+
+                        adjustedHorizontalEndpoints++;
+                        if (mixedSamples.Count < 16)
+                        {
+                            mixedSamples.Add(
+                                string.Format(
+                                    CultureInfo.InvariantCulture,
+                                    "horizontal id={0} ({1:0.###},{2:0.###})->({3:0.###},{4:0.###})",
+                                    source.Id.Handle.ToString(),
+                                    endpoint.X,
+                                    endpoint.Y,
+                                    bestTarget.X,
+                                    bestTarget.Y));
+                        }
+
+                        if (!TryReadOpenSegment(writable, out a, out b))
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                    tr.Commit();
+                    logger?.WriteLine(
+                        $"CorrectionLine: mixed 30.16/20.11 ordinary normalize verticalAdjusted={adjustedVerticalEndpoints}, horizontalAdjusted={adjustedHorizontalEndpoints}.");
+                    for (var i = 0; i < mixedSamples.Count; i++)
+                    {
+                        logger?.WriteLine("CorrectionLine:   mixed-30-20 " + mixedSamples[i]);
+                    }
+
+                    return adjustedVerticalEndpoints > 0 || adjustedHorizontalEndpoints > 0;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("CorrectionLine: mixed 30.16/20.11 ordinary normalize exception: " + ex.Message);
+                return false;
+            }
+        }
+
+        private static bool NormalizeFinalMixedThirtyTwentyOrdinaryEndpoints(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null)
+            {
+                return false;
+            }
+
+            var rawClipWindows = BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0);
+            var clipWindows = MergeOverlappingClipWindows(rawClipWindows);
+            if (clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenLinearSegment(ent, out a, out b);
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) =>
+                TryMoveEndpointForCorrectionLinePost(writable, moveStart, target, moveTol);
+            bool TryMoveEndpointAnyDirection(Entity writable, bool moveStart, Point2d target, double moveTol)
+            {
+                if (writable == null || writable.IsErased)
+                {
+                    return false;
+                }
+
+                if (writable is Line line)
+                {
+                    var existing = moveStart
+                        ? new Point2d(line.StartPoint.X, line.StartPoint.Y)
+                        : new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                    if (existing.GetDistanceTo(target) <= moveTol)
+                    {
+                        return false;
+                    }
+
+                    if (moveStart)
+                    {
+                        line.StartPoint = new Point3d(target.X, target.Y, line.StartPoint.Z);
+                    }
+                    else
+                    {
+                        line.EndPoint = new Point3d(target.X, target.Y, line.EndPoint.Z);
+                    }
+
+                    return true;
+                }
+
+                if (writable is Polyline polyline && polyline.NumberOfVertices >= 2)
+                {
+                    var index = moveStart ? 0 : (polyline.NumberOfVertices - 1);
+                    var existing = polyline.GetPoint2dAt(index);
+                    if (existing.GetDistanceTo(target) <= moveTol)
+                    {
+                        return false;
+                    }
+
+                    polyline.SetPointAt(index, target);
+                    return true;
+                }
+
+                return false;
+            }
+            bool TryIntersectInfiniteLines(Point2d a0, Point2d a1, Point2d b0, Point2d b1, out Point2d intersection) =>
+                TryIntersectInfiniteLinesForPluginGeometry(a0, a1, b0, b1, out intersection);
+
+            try
+            {
+                using (var tr = database.TransactionManager.StartTransaction())
+                {
+                    var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                    bool IsOrdinaryUsecLayer(string layer)
+                    {
+                        return string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase);
+                    }
+
+                    var ordinaryHorizontals =
+                        new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, double MajorMin, double MajorMax, Vector2d Unit)>();
+                    var ordinaryVerticals =
+                        new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, Vector2d Unit)>();
+                    var supportVerticals =
+                        new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length, Vector2d Unit)>();
+
+                    void CollectSegments()
+                    {
+                        ordinaryHorizontals.Clear();
+                        ordinaryVerticals.Clear();
+                        supportVerticals.Clear();
+                        foreach (ObjectId id in ms)
+                        {
+                            Entity? ent = null;
+                            try
+                            {
+                                ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                            }
+                            catch (Autodesk.AutoCAD.Runtime.Exception)
+                            {
+                                continue;
+                            }
+
+                            if (ent == null || ent.IsErased)
+                            {
+                                continue;
+                            }
+
+                            if (!TryReadOpenSegment(ent, out var a, out var b) || !DoesSegmentIntersectAnyWindow(a, b))
+                            {
+                                continue;
+                            }
+
+                            var layer = ent.Layer ?? string.Empty;
+                            var horizontal = IsHorizontalLikeForCorrectionLinePost(a, b);
+                            var vertical = IsVerticalLikeForCorrectionLinePost(a, b);
+                            if (!horizontal && !vertical)
+                            {
+                                continue;
+                            }
+
+                            var dir = b - a;
+                            var len = dir.Length;
+                            if (len <= 1e-6)
+                            {
+                                continue;
+                            }
+
+                            var unit = dir / len;
+                            if (IsOrdinaryUsecLayer(layer))
+                            {
+                                if (horizontal)
+                                {
+                                    ordinaryHorizontals.Add((id, layer, a, b, len, Math.Min(a.X, b.X), Math.Max(a.X, b.X), unit));
+                                }
+                                else if (vertical)
+                                {
+                                    ordinaryVerticals.Add((id, layer, a, b, len, unit));
+                                }
+                            }
+
+                            if (vertical &&
+                                (IsOrdinaryUsecLayer(layer) ||
+                                 string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase)))
+                            {
+                                supportVerticals.Add((id, layer, a, b, len, unit));
+                            }
+                        }
+                    }
+
+                    const double endpointTol = 0.80;
+                    const double parallelDotMin = 0.985;
+                    const double minMove = 1.0;
+                    const double moveTol = 0.05;
+                    const double retreatTol = 1.80;
+                    const double stationTol = 25.0;
+                    const double pivotTol = 1.80;
+                    const double anchorOffsetTol = 2.00;
+                    const double currentOffsetTol = 2.00;
+                    const double overlapMin = 60.0;
+
+                    double HorizontalGapToPoint(
+                        (ObjectId Id, string Layer, Point2d A, Point2d B, double Length, double MajorMin, double MajorMax, Vector2d Unit) row,
+                        Point2d point)
+                    {
+                        return Math.Abs(DistancePointToInfiniteLine(point, row.A, row.B));
+                    }
+
+                    CollectSegments();
+                    logger?.WriteLine(
+                        $"CorrectionLine: final mixed 30.16/20.11 normalize candidates h={ordinaryHorizontals.Count}, v={ordinaryVerticals.Count}, supportV={supportVerticals.Count}.");
+
+                    var adjustedVerticalEndpoints = 0;
+                    var adjustedHorizontalEndpoints = 0;
+                    var samples = new List<string>();
+
+                    for (var i = 0; i < ordinaryVerticals.Count; i++)
+                    {
+                        var source = ordinaryVerticals[i];
+                        if (!(tr.GetObject(source.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenSegment(writable, out var sourceA, out var sourceB) || !IsVerticalLikeForCorrectionLinePost(sourceA, sourceB))
+                        {
+                            continue;
+                        }
+
+                        for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                        {
+                            var endpoint = endpointIndex == 0 ? sourceA : sourceB;
+                            var other = endpointIndex == 0 ? sourceB : sourceA;
+                            var inward = other - endpoint;
+                            var inwardLen = inward.Length;
+                            if (inwardLen <= 1e-6)
+                            {
+                                continue;
+                            }
+
+                            var inwardUnit = inward / inwardLen;
+                            var foundTarget = false;
+                            var bestTarget = endpoint;
+                            var bestScore = double.MaxValue;
+
+                            for (var ci = 0; ci < ordinaryHorizontals.Count; ci++)
+                            {
+                                var candidate = ordinaryHorizontals[ci];
+                                if (!TryIntersectInfiniteLines(sourceA, sourceB, candidate.A, candidate.B, out var target))
+                                {
+                                    continue;
+                                }
+
+                                if (DistancePointToSegment(target, candidate.A, candidate.B) > endpointTol)
+                                {
+                                    continue;
+                                }
+
+                                var along = (target - endpoint).DotProduct(inwardUnit);
+                                if (Math.Abs(along - RoadAllowanceSecWidthMeters) > retreatTol)
+                                {
+                                    continue;
+                                }
+
+                                var stationGap = Math.Min(
+                                    Math.Min(Math.Abs(endpoint.X - candidate.A.X), Math.Abs(endpoint.X - candidate.B.X)),
+                                    endpoint.X < candidate.MajorMin
+                                        ? (candidate.MajorMin - endpoint.X)
+                                        : endpoint.X > candidate.MajorMax
+                                            ? (endpoint.X - candidate.MajorMax)
+                                            : 0.0);
+                                if (stationGap > stationTol)
+                                {
+                                    continue;
+                                }
+
+                                var foundNearRow = false;
+                                var bestNearGap = double.MaxValue;
+                                for (var ni = 0; ni < ordinaryHorizontals.Count; ni++)
+                                {
+                                    var near = ordinaryHorizontals[ni];
+                                    if (near.Id == candidate.Id)
+                                    {
+                                        continue;
+                                    }
+
+                                    if (Math.Abs(near.Unit.DotProduct(candidate.Unit)) < parallelDotMin)
+                                    {
+                                        continue;
+                                    }
+
+                                    var overlap = Math.Min(near.MajorMax, candidate.MajorMax) - Math.Max(near.MajorMin, candidate.MajorMin);
+                                    if (overlap < overlapMin)
+                                    {
+                                        continue;
+                                    }
+
+                                    var nearGap = HorizontalGapToPoint(near, endpoint);
+                                    if (Math.Abs(nearGap - CorrectionLinePairGapMeters) > pivotTol)
+                                    {
+                                        continue;
+                                    }
+
+                                    foundNearRow = true;
+                                    bestNearGap = Math.Min(bestNearGap, nearGap);
+                                }
+
+                                if (!foundNearRow)
+                                {
+                                    continue;
+                                }
+
+                                var score =
+                                    Math.Abs(along - RoadAllowanceSecWidthMeters) +
+                                    (0.04 * stationGap) +
+                                    Math.Abs(bestNearGap - CorrectionLinePairGapMeters);
+                                if (!foundTarget || score < bestScore - 1e-6)
+                                {
+                                    foundTarget = true;
+                                    bestScore = score;
+                                    bestTarget = target;
+                                }
+                            }
+
+                            if (!foundTarget || endpoint.GetDistanceTo(bestTarget) <= minMove)
+                            {
+                                continue;
+                            }
+
+                            if (!TryMoveEndpoint(writable, endpointIndex == 0, bestTarget, moveTol))
+                            {
+                                continue;
+                            }
+
+                            adjustedVerticalEndpoints++;
+                            if (samples.Count < 16)
+                            {
+                                samples.Add(
+                                    string.Format(
+                                        CultureInfo.InvariantCulture,
+                                        "final-mixed-v id={0} ({1:0.###},{2:0.###})->({3:0.###},{4:0.###})",
+                                        source.Id.Handle.ToString(),
+                                        endpoint.X,
+                                        endpoint.Y,
+                                        bestTarget.X,
+                                        bestTarget.Y));
+                            }
+
+                            if (!TryReadOpenSegment(writable, out sourceA, out sourceB))
+                            {
+                                break;
+                            }
+                        }
+                    }
+
+                    CollectSegments();
+                    for (var i = 0; i < ordinaryHorizontals.Count; i++)
+                    {
+                        var source = ordinaryHorizontals[i];
+                        if (!(tr.GetObject(source.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenSegment(writable, out var sourceA, out var sourceB) || !IsHorizontalLikeForCorrectionLinePost(sourceA, sourceB))
+                        {
+                            continue;
+                        }
+
+                        for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                        {
+                            var endpoint = endpointIndex == 0 ? sourceA : sourceB;
+                            var anchor = endpointIndex == 0 ? sourceB : sourceA;
+                            var foundTarget = false;
+                            var bestTarget = endpoint;
+                            var bestScore = double.MaxValue;
+
+                            for (var si = 0; si < supportVerticals.Count; si++)
+                            {
+                                var support = supportVerticals[si];
+                                if (support.Id == source.Id || DistancePointToSegment(endpoint, support.A, support.B) > endpointTol)
+                                {
+                                    continue;
+                                }
+
+                                for (var ci = 0; ci < ordinaryHorizontals.Count; ci++)
+                                {
+                                    var candidate = ordinaryHorizontals[ci];
+                                    if (candidate.Id == source.Id)
+                                    {
+                                        continue;
+                                    }
+
+                                    if (Math.Abs(candidate.Unit.DotProduct(source.Unit)) < parallelDotMin)
+                                    {
+                                        continue;
+                                    }
+
+                                    var overlap = Math.Min(source.MajorMax, candidate.MajorMax) - Math.Max(source.MajorMin, candidate.MajorMin);
+                                    if (overlap < overlapMin)
+                                    {
+                                        continue;
+                                    }
+
+                                    var anchorOffset = HorizontalGapToPoint(candidate, anchor);
+                                    if (Math.Abs(anchorOffset - RoadAllowanceUsecWidthMeters) > anchorOffsetTol)
+                                    {
+                                        continue;
+                                    }
+
+                                    var currentOffset = HorizontalGapToPoint(candidate, endpoint);
+                                    if (Math.Abs(currentOffset - RoadAllowanceSecWidthMeters) > currentOffsetTol)
+                                    {
+                                        continue;
+                                    }
+
+                                    var candidateParallelPoint = anchor + candidate.Unit;
+                                    if (!TryIntersectInfiniteLines(anchor, candidateParallelPoint, support.A, support.B, out var target))
+                                    {
+                                        continue;
+                                    }
+
+                                    if (DistancePointToSegment(target, support.A, support.B) > endpointTol)
+                                    {
+                                        continue;
+                                    }
+
+                                    var moveDistance = endpoint.GetDistanceTo(target);
+                                    if (moveDistance <= minMove || Math.Abs(moveDistance - CorrectionLinePairGapMeters) > pivotTol)
+                                    {
+                                        continue;
+                                    }
+
+                                    var score =
+                                        Math.Abs(anchorOffset - RoadAllowanceUsecWidthMeters) +
+                                        Math.Abs(currentOffset - RoadAllowanceSecWidthMeters) +
+                                        Math.Abs(moveDistance - CorrectionLinePairGapMeters);
+                                    if (!foundTarget || score < bestScore - 1e-6)
+                                    {
+                                        foundTarget = true;
+                                        bestScore = score;
+                                        bestTarget = target;
+                                    }
+                                }
+                            }
+
+                            if (!foundTarget || endpoint.GetDistanceTo(bestTarget) <= minMove)
+                            {
+                                continue;
+                            }
+
+                            if (!TryMoveEndpointAnyDirection(writable, endpointIndex == 0, bestTarget, moveTol))
+                            {
+                                continue;
+                            }
+
+                            adjustedHorizontalEndpoints++;
+                            if (samples.Count < 16)
+                            {
+                                samples.Add(
+                                    string.Format(
+                                        CultureInfo.InvariantCulture,
+                                        "final-mixed-h id={0} ({1:0.###},{2:0.###})->({3:0.###},{4:0.###})",
+                                        source.Id.Handle.ToString(),
+                                        endpoint.X,
+                                        endpoint.Y,
+                                        bestTarget.X,
+                                        bestTarget.Y));
+                            }
+
+                            if (!TryReadOpenSegment(writable, out sourceA, out sourceB))
+                            {
+                                break;
+                            }
+                        }
+                    }
+
+                    tr.Commit();
+                    logger?.WriteLine(
+                        $"CorrectionLine: final mixed 30.16/20.11 normalize verticalAdjusted={adjustedVerticalEndpoints}, horizontalAdjusted={adjustedHorizontalEndpoints}.");
+                    for (var i = 0; i < samples.Count; i++)
+                    {
+                        logger?.WriteLine("CorrectionLine:   final-mixed-30-20 " + samples[i]);
+                    }
+
+                    return adjustedVerticalEndpoints > 0 || adjustedHorizontalEndpoints > 0;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("CorrectionLine: final mixed 30.16/20.11 normalize exception: " + ex.Message);
+                return false;
+            }
+        }
+
+        private static bool RetargetOrdinaryRoadAllowanceEndpointsToInnerBand(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger,
+            ICollection<Point2d> adjustedTargets,
+            ICollection<Point2d> adjustedCapTargets,
+            ICollection<(Point2d Original, Point2d Target)> adjustedEndpointPairs)
+        {
+            if (database == null || requestedQuarterIds == null)
+            {
+                return false;
+            }
+
+            var clipWindows = MergeOverlappingClipWindows(BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0));
+            if (clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenLinearSegment(ent, out a, out b);
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) =>
+                TryMoveEndpointForCorrectionLinePost(writable, moveStart, target, moveTol);
+
+            bool IsOrdinaryRoadAllowanceLayer(string layer)
+            {
+                return string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-0", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
+            }
+
+                bool IsTwentyRoadAllowanceLayer(string layer)
+                {
+                    return string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+                }
+
+                bool IsZeroRoadAllowanceLayer(string layer)
+                {
+                    return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(layer, "L-USEC-0", StringComparison.OrdinalIgnoreCase);
+                }
+
+            bool IsQuarterDefinitionLayer(string layer)
+            {
+                return string.Equals(layer, "L-QUATER", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-QUARTER", StringComparison.OrdinalIgnoreCase);
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                var segments = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, bool Horizontal, bool Vertical, double Length, Vector2d Unit)>();
+
+                foreach (ObjectId id in ms)
+                {
+                    Entity? ent = null;
+                    try
+                    {
+                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (ent == null || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    var layer = ent.Layer ?? string.Empty;
+                    if (!IsOrdinaryRoadAllowanceLayer(layer) ||
+                        !TryReadOpenSegment(ent, out var a, out var b) ||
+                        !DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    var horizontal = IsHorizontalLikeForCorrectionLinePost(a, b);
+                    var vertical = IsVerticalLikeForCorrectionLinePost(a, b);
+                    if (!horizontal && !vertical)
+                    {
+                        continue;
+                    }
+
+                    var direction = b - a;
+                    var length = direction.Length;
+                    if (length <= 1e-6)
+                    {
+                        continue;
+                    }
+
+                    segments.Add((id, layer, a, b, horizontal, vertical, length, direction / length));
+                }
+
+                if (segments.Count == 0)
+                {
+                    tr.Commit();
+                    return false;
+                }
+
+                const double endpointTol = 0.80;
+                const double axisTol = 0.80;
+                const double sourceSpanTol = 0.80;
+                const double parallelDotMin = 0.985;
+                const double perpendicularDotMax = 0.25;
+                const double minSupportLength = 40.0;
+                const double moveTol = 0.05;
+                const double minMove = 1.0;
+                const double bandTol = 1.80;
+                const double targetBand = RoadAllowanceSecWidthMeters;
+
+                bool IsPerpendicular(int sourceIndex, int targetIndex)
+                {
+                    return Math.Abs(segments[sourceIndex].Unit.DotProduct(segments[targetIndex].Unit)) <= perpendicularDotMax;
+                }
+
+                bool EndpointTouchesSegmentEndpoint(Point2d endpoint, int segmentIndex)
+                {
+                    var segment = segments[segmentIndex];
+                    return endpoint.GetDistanceTo(segment.A) <= endpointTol ||
+                           endpoint.GetDistanceTo(segment.B) <= endpointTol;
+                }
+
+                bool TryFindInnerBandStop(int sourceIndex, Point2d endpoint, Point2d other, out Point2d target, out double score)
+                {
+                    target = endpoint;
+                    score = double.MaxValue;
+                    var source = segments[sourceIndex];
+                    var inward = other - endpoint;
+                    var inwardLength = inward.Length;
+                    if (inwardLength <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var inwardUnit = inward / inwardLength;
+                    var currentSupports = new List<int>();
+                    for (var i = 0; i < segments.Count; i++)
+                    {
+                        if (i == sourceIndex ||
+                            segments[i].Length < minSupportLength ||
+                            !IsPerpendicular(sourceIndex, i) ||
+                            !EndpointTouchesSegmentEndpoint(endpoint, i))
+                        {
+                            continue;
+                        }
+
+                        currentSupports.Add(i);
+                    }
+
+                    if (currentSupports.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    var found = false;
+                    for (var i = 0; i < segments.Count; i++)
+                    {
+                        if (i == sourceIndex || segments[i].Length < minSupportLength || !IsPerpendicular(sourceIndex, i))
+                        {
+                            continue;
+                        }
+
+                        var candidateSupport = segments[i];
+                        var hasParallelCurrentSupport = currentSupports.Any(currentIndex =>
+                            Math.Abs(segments[currentIndex].Unit.DotProduct(candidateSupport.Unit)) >= parallelDotMin);
+                        if (!hasParallelCurrentSupport)
+                        {
+                            continue;
+                        }
+
+                        var candidates = new[] { candidateSupport.A, candidateSupport.B };
+                        for (var candidateIndex = 0; candidateIndex < candidates.Length; candidateIndex++)
+                        {
+                            var candidate = candidates[candidateIndex];
+                            if (candidate.GetDistanceTo(endpoint) <= endpointTol)
+                            {
+                                continue;
+                            }
+
+                            var along = (candidate - endpoint).DotProduct(inwardUnit);
+                            if (Math.Abs(along - targetBand) > bandTol)
+                            {
+                                continue;
+                            }
+
+                            if (DistancePointToInfiniteLine(candidate, source.A, source.B) > axisTol ||
+                                DistancePointToSegment(candidate, source.A, source.B) > sourceSpanTol)
+                            {
+                                continue;
+                            }
+
+                            var candidateScore =
+                                Math.Abs(along - targetBand) +
+                                DistancePointToInfiniteLine(candidate, source.A, source.B);
+                            if (candidateScore >= score)
+                            {
+                                continue;
+                            }
+
+                            found = true;
+                            target = candidate;
+                            score = candidateScore;
+                        }
+                    }
+
+                    return found;
+                }
+
+                var plans = new List<(ObjectId Id, bool MoveStart, Point2d Original, Point2d Target, string Layer)>();
+                for (var i = 0; i < segments.Count; i++)
+                {
+                    var source = segments[i];
+                    for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                    {
+                        var endpoint = endpointIndex == 0 ? source.A : source.B;
+                        var other = endpointIndex == 0 ? source.B : source.A;
+                        if (!TryFindInnerBandStop(i, endpoint, other, out var target, out _) ||
+                            endpoint.GetDistanceTo(target) <= minMove)
+                        {
+                            continue;
+                        }
+
+                        plans.Add((source.Id, endpointIndex == 0, endpoint, target, source.Layer));
+                    }
+                }
+
+                if (plans.Count == 0)
+                {
+                    tr.Commit();
+                    return false;
+                }
+
+                var hasTwentyBandPlan = plans.Any(plan => IsTwentyRoadAllowanceLayer(plan.Layer));
+                var adjusted = 0;
+                var quarterAdjusted = 0;
+                var samples = new List<string>();
+                var appliedPlans = new List<(Point2d Original, Point2d Target)>();
+                foreach (var plan in plans
+                    .OrderBy(plan => plan.Original.GetDistanceTo(plan.Target))
+                    .ThenBy(plan => plan.Id.Handle.ToString()))
+                {
+                    if (IsZeroRoadAllowanceLayer(plan.Layer) && !hasTwentyBandPlan)
+                    {
+                        continue;
+                    }
+
+                    if (!(tr.GetObject(plan.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!TryMoveEndpoint(writable, plan.MoveStart, plan.Target, moveTol))
+                    {
+                        continue;
+                    }
+
+                    adjusted++;
+                    adjustedTargets.Add(plan.Target);
+                    if (IsTwentyRoadAllowanceLayer(plan.Layer))
+                    {
+                        adjustedCapTargets.Add(plan.Target);
+                    }
+                    adjustedEndpointPairs.Add((plan.Original, plan.Target));
+                    appliedPlans.Add((plan.Original, plan.Target));
+                    if (samples.Count < 24)
+                    {
+                        samples.Add(
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "{0}/{1} {2:0.###},{3:0.###}->{4:0.###},{5:0.###}",
+                                plan.Id.Handle.ToString(),
+                                plan.Layer,
+                                plan.Original.X,
+                                plan.Original.Y,
+                                plan.Target.X,
+                                plan.Target.Y));
+                    }
+                }
+
+                if (appliedPlans.Count > 0)
+                {
+                    foreach (ObjectId id in ms)
+                    {
+                        if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) ||
+                            ent.IsErased ||
+                            !IsQuarterDefinitionLayer(ent.Layer ?? string.Empty) ||
+                            !TryReadOpenSegment(ent, out var a, out var b) ||
+                            !DoesSegmentIntersectAnyWindow(a, b))
+                        {
+                            continue;
+                        }
+
+                        var moveStart = false;
+                        var moveEnd = false;
+                        var startTarget = a;
+                        var endTarget = b;
+                        for (var planIndex = 0; planIndex < appliedPlans.Count; planIndex++)
+                        {
+                            var plan = appliedPlans[planIndex];
+                            if (!moveStart &&
+                                a.GetDistanceTo(plan.Original) <= endpointTol &&
+                                a.GetDistanceTo(plan.Target) > moveTol)
+                            {
+                                startTarget = plan.Target;
+                                moveStart = true;
+                            }
+
+                            if (!moveEnd &&
+                                b.GetDistanceTo(plan.Original) <= endpointTol &&
+                                b.GetDistanceTo(plan.Target) > moveTol)
+                            {
+                                endTarget = plan.Target;
+                                moveEnd = true;
+                            }
+
+                            if (moveStart && moveEnd)
+                            {
+                                break;
+                            }
+                        }
+
+                        if (!moveStart && !moveEnd)
+                        {
+                            continue;
+                        }
+
+                        if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity writableQuarter) ||
+                            writableQuarter.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (moveStart && TryMoveEndpoint(writableQuarter, moveStart: true, startTarget, moveTol))
+                        {
+                            quarterAdjusted++;
+                        }
+
+                        if (moveEnd && TryMoveEndpoint(writableQuarter, moveStart: false, endTarget, moveTol))
+                        {
+                            quarterAdjusted++;
+                        }
+                    }
+                }
+
+                tr.Commit();
+                if (adjusted > 0 || quarterAdjusted > 0)
+                {
+                    logger?.WriteLine($"Cleanup: inner-band endpoint retarget adjusted {adjusted} ordinary road endpoint(s) and {quarterAdjusted} quarter endpoint(s).");
+                    for (var i = 0; i < samples.Count; i++)
+                    {
+                        logger?.WriteLine("Cleanup:   inner-band-retarget " + samples[i]);
+                    }
+                }
+
+                return adjusted > 0 || quarterAdjusted > 0;
+            }
+        }
+
+        private static bool RetargetQuarterDefinitionEndpointsToAdjustedInnerBand(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger,
+            IReadOnlyCollection<(Point2d Original, Point2d Target)> adjustedEndpointPairs)
+        {
+            if (database == null || requestedQuarterIds == null || adjustedEndpointPairs == null || adjustedEndpointPairs.Count == 0)
+            {
+                return false;
+            }
+
+            var clipWindows = MergeOverlappingClipWindows(BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0));
+            if (clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenLinearSegment(ent, out a, out b);
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) =>
+                TryMoveEndpointForCorrectionLinePost(writable, moveStart, target, moveTol);
+
+            bool IsQuarterDefinitionLayer(string layer)
+            {
+                return string.Equals(layer, "L-QUATER", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-QUARTER", StringComparison.OrdinalIgnoreCase);
+            }
+
+            bool DoesQuarterPolylineIntersectAnyWindow(Polyline polyline)
+            {
+                if (polyline == null || polyline.NumberOfVertices < 2)
+                {
+                    return false;
+                }
+
+                var segmentCount = polyline.Closed
+                    ? polyline.NumberOfVertices
+                    : polyline.NumberOfVertices - 1;
+                for (var vertexIndex = 0; vertexIndex < segmentCount; vertexIndex++)
+                {
+                    var a = polyline.GetPoint2dAt(vertexIndex);
+                    var b = polyline.GetPoint2dAt((vertexIndex + 1) % polyline.NumberOfVertices);
+                    if (DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            const double endpointTol = 0.80;
+            const double moveTol = 0.05;
+            var adjusted = 0;
+            var samples = new List<string>();
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                foreach (ObjectId id in ms)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) ||
+                        ent.IsErased ||
+                        !IsQuarterDefinitionLayer(ent.Layer ?? string.Empty))
+                    {
+                        continue;
+                    }
+
+                    if (ent is Polyline polyline)
+                    {
+                        if (!DoesQuarterPolylineIntersectAnyWindow(polyline))
+                        {
+                            continue;
+                        }
+
+                        var vertexTargets = new Dictionary<int, Point2d>();
+                        for (var vertexIndex = 0; vertexIndex < polyline.NumberOfVertices; vertexIndex++)
+                        {
+                            var vertex = polyline.GetPoint2dAt(vertexIndex);
+                            foreach (var pair in adjustedEndpointPairs)
+                            {
+                                if (vertex.GetDistanceTo(pair.Original) <= endpointTol &&
+                                    vertex.GetDistanceTo(pair.Target) > moveTol)
+                                {
+                                    vertexTargets[vertexIndex] = pair.Target;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (vertexTargets.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Polyline writablePolyline) ||
+                            writablePolyline.IsErased)
+                        {
+                            continue;
+                        }
+
+                        foreach (var target in vertexTargets)
+                        {
+                            var oldVertex = writablePolyline.GetPoint2dAt(target.Key);
+                            writablePolyline.SetPointAt(target.Key, target.Value);
+                            adjusted++;
+                            if (samples.Count < 16)
+                            {
+                                samples.Add(
+                                    string.Format(
+                                        CultureInfo.InvariantCulture,
+                                        "{0} vertex={1} {2:0.###},{3:0.###}->{4:0.###},{5:0.###}",
+                                        id.Handle.ToString(),
+                                        target.Key,
+                                        oldVertex.X,
+                                        oldVertex.Y,
+                                        target.Value.X,
+                                        target.Value.Y));
+                            }
+                        }
+
+                        continue;
+                    }
+
+                    if (!TryReadOpenSegment(ent, out var a, out var b) ||
+                        !DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    var moveStart = false;
+                    var moveEnd = false;
+                    var startTarget = a;
+                    var endTarget = b;
+                    foreach (var pair in adjustedEndpointPairs)
+                    {
+                        if (!moveStart &&
+                            a.GetDistanceTo(pair.Original) <= endpointTol &&
+                            a.GetDistanceTo(pair.Target) > moveTol)
+                        {
+                            startTarget = pair.Target;
+                            moveStart = true;
+                        }
+
+                        if (!moveEnd &&
+                            b.GetDistanceTo(pair.Original) <= endpointTol &&
+                            b.GetDistanceTo(pair.Target) > moveTol)
+                        {
+                            endTarget = pair.Target;
+                            moveEnd = true;
+                        }
+
+                        if (moveStart && moveEnd)
+                        {
+                            break;
+                        }
+                    }
+
+                    if (!moveStart && !moveEnd)
+                    {
+                        continue;
+                    }
+
+                    if (!(tr.GetObject(id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (moveStart && TryMoveEndpoint(writable, moveStart: true, startTarget, moveTol))
+                    {
+                        adjusted++;
+                    }
+
+                    if (moveEnd && TryMoveEndpoint(writable, moveStart: false, endTarget, moveTol))
+                    {
+                        adjusted++;
+                    }
+
+                    if (samples.Count < 16)
+                    {
+                        samples.Add(
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "{0} {1:0.###},{2:0.###}->{3:0.###},{4:0.###} / {5:0.###},{6:0.###}->{7:0.###},{8:0.###}",
+                                id.Handle.ToString(),
+                                a.X,
+                                a.Y,
+                                startTarget.X,
+                                startTarget.Y,
+                                b.X,
+                                b.Y,
+                                endTarget.X,
+                                endTarget.Y));
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            if (adjusted > 0)
+            {
+                logger?.WriteLine($"Cleanup: inner-band quarter endpoint retarget adjusted {adjusted} quarter endpoint(s).");
+                for (var i = 0; i < samples.Count; i++)
+                {
+                    logger?.WriteLine("Cleanup:   inner-band-quarter-retarget " + samples[i]);
+                }
+            }
+
+            return adjusted > 0;
+        }
+
+        private static bool RepairMixedBandVerticalRoadAllowanceCompanions(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null)
+            {
+                return false;
+            }
+
+            var clipWindows = MergeOverlappingClipWindows(BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0));
+            if (clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenLinearSegment(ent, out a, out b);
+
+            bool IsZeroLayer(string layer)
+            {
+                return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-0", StringComparison.OrdinalIgnoreCase);
+            }
+
+            bool IsTwentyLayer(string layer)
+            {
+                return string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+            }
+
+            bool IsThirtyLayer(string layer)
+            {
+                return string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
+            }
+
+            bool IsOrdinaryLayer(string layer)
+            {
+                return string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase) ||
+                       IsZeroLayer(layer) ||
+                       IsTwentyLayer(layer) ||
+                       IsThirtyLayer(layer);
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                var verticals = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length)>();
+                var shortHorizontalCaps = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length)>();
+
+                foreach (ObjectId id in ms)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) ||
+                        ent.IsErased ||
+                        !TryReadOpenSegment(ent, out var a, out var b) ||
+                        !DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    var layer = ent.Layer ?? string.Empty;
+                    if (!IsOrdinaryLayer(layer))
+                    {
+                        continue;
+                    }
+
+                    var length = a.GetDistanceTo(b);
+                    if (IsHorizontalLikeForCorrectionLinePost(a, b) &&
+                        length >= 8.0 &&
+                        length <= 35.0)
+                    {
+                        shortHorizontalCaps.Add((id, layer, a, b, length));
+                    }
+
+                    if (!IsVerticalLikeForCorrectionLinePost(a, b))
+                    {
+                        continue;
+                    }
+
+                    if (length < 200.0)
+                    {
+                        continue;
+                    }
+
+                    verticals.Add((id, layer, a, b, length));
+                }
+
+                if (verticals.Count == 0)
+                {
+                    tr.Commit();
+                    return false;
+                }
+
+                const double parallelDotMin = 0.995;
+                const double stationTol = 35.0;
+                const double axisTol = 1.25;
+                const double twentyMin = 18.0;
+                const double twentyMax = 22.5;
+                const double thirtyMin = 28.0;
+                const double thirtyMax = 32.5;
+                const double bandGapTarget = CorrectionLinePairGapMeters;
+                const double bandGapTol = 2.0;
+                const double duplicateTol = 0.75;
+                const double moveTol = 0.05;
+
+                bool HasNearOrdinarySegment(Point2d a, Point2d b)
+                {
+                    return verticals.Any(segment =>
+                        Math.Min(
+                            segment.A.GetDistanceTo(a) + segment.B.GetDistanceTo(b),
+                            segment.A.GetDistanceTo(b) + segment.B.GetDistanceTo(a)) <= duplicateTol);
+                }
+
+                bool HasShortCapAtEndpoint(Point2d point)
+                {
+                    const double capEndpointTol = 0.80;
+                    return shortHorizontalCaps.Any(cap =>
+                        cap.A.GetDistanceTo(point) <= capEndpointTol ||
+                        cap.B.GetDistanceTo(point) <= capEndpointTol);
+                }
+
+                var repairs = new List<(ObjectId Id, bool MoveStart, Point2d Original, Point2d Target, Point2d TwentyA, Point2d TwentyB)>();
+                foreach (var baseSegment in verticals.Where(v => IsZeroLayer(v.Layer) || HasShortCapAtEndpoint(v.A) || HasShortCapAtEndpoint(v.B)))
+                {
+                    var baseIsExplicitZero = IsZeroLayer(baseSegment.Layer);
+                    var baseHasShortCap = HasShortCapAtEndpoint(baseSegment.A) || HasShortCapAtEndpoint(baseSegment.B);
+                    var baseDir = baseSegment.B - baseSegment.A;
+                    var baseLen = baseDir.Length;
+                    if (baseLen <= 1e-6)
+                    {
+                        continue;
+                    }
+
+                    var baseUnit = baseDir / baseLen;
+                    var normal = new Vector2d(-baseUnit.Y, baseUnit.X);
+                    foreach (var candidate in verticals.Where(v =>
+                        v.Id != baseSegment.Id &&
+                        (!IsZeroLayer(v.Layer) || baseHasShortCap) &&
+                        (baseIsExplicitZero && !baseHasShortCap || (!HasShortCapAtEndpoint(v.A) && !HasShortCapAtEndpoint(v.B)))))
+                    {
+                        var candidateDir = candidate.B - candidate.A;
+                        var candidateLen = candidateDir.Length;
+                        if (candidateLen <= 1e-6 ||
+                            Math.Abs((candidateDir / candidateLen).DotProduct(baseUnit)) < parallelDotMin)
+                        {
+                            continue;
+                        }
+
+                        var endpoints = new[]
+                        {
+                            (MoveStart: true, Point: candidate.A),
+                            (MoveStart: false, Point: candidate.B)
+                        };
+
+                        var resolved = endpoints
+                            .Select(endpoint =>
+                            {
+                                var along = (endpoint.Point - baseSegment.A).DotProduct(baseUnit);
+                                var basePoint = baseSegment.A + (baseUnit * along);
+                                var offset = (endpoint.Point - basePoint).DotProduct(normal);
+                                return new
+                                {
+                                    endpoint.MoveStart,
+                                    endpoint.Point,
+                                    Along = along,
+                                    BasePoint = basePoint,
+                                    Offset = offset,
+                                    AbsOffset = Math.Abs(offset),
+                                    AxisGap = endpoint.Point.GetDistanceTo(basePoint)
+                                };
+                            })
+                            .ToList();
+
+                        if (resolved.Count != 2 ||
+                            resolved.Any(r => r.Along < -stationTol || r.Along > baseLen + stationTol) ||
+                            resolved.Any(r => Math.Abs(r.AxisGap - r.AbsOffset) > axisTol) ||
+                            Math.Sign(resolved[0].Offset) != Math.Sign(resolved[1].Offset))
+                        {
+                            continue;
+                        }
+
+                        var twentyEndpoint = resolved.OrderBy(r => r.AbsOffset).First();
+                        var thirtyEndpoint = resolved.OrderByDescending(r => r.AbsOffset).First();
+                        if (twentyEndpoint.AbsOffset < twentyMin ||
+                            twentyEndpoint.AbsOffset > twentyMax ||
+                            thirtyEndpoint.AbsOffset < thirtyMin ||
+                            thirtyEndpoint.AbsOffset > thirtyMax ||
+                            Math.Abs((thirtyEndpoint.AbsOffset - twentyEndpoint.AbsOffset) - bandGapTarget) > bandGapTol)
+                        {
+                            continue;
+                        }
+
+                        var sign = Math.Sign(thirtyEndpoint.Offset);
+                        var thirtyTarget = twentyEndpoint.BasePoint + (normal * (sign * thirtyEndpoint.AbsOffset));
+                        var twentyAtThirtyStation = thirtyEndpoint.BasePoint + (normal * (sign * twentyEndpoint.AbsOffset));
+                        var twentyAtTwentyStation = twentyEndpoint.BasePoint + (normal * (sign * twentyEndpoint.AbsOffset));
+                        if (twentyEndpoint.Point.GetDistanceTo(twentyAtTwentyStation) > axisTol ||
+                            thirtyEndpoint.Point.GetDistanceTo(thirtyEndpoint.BasePoint + (normal * thirtyEndpoint.Offset)) > axisTol ||
+                            HasNearOrdinarySegment(twentyAtThirtyStation, twentyAtTwentyStation) ||
+                            repairs.Any(repair =>
+                                Math.Min(
+                                    repair.TwentyA.GetDistanceTo(twentyAtThirtyStation) + repair.TwentyB.GetDistanceTo(twentyAtTwentyStation),
+                                    repair.TwentyA.GetDistanceTo(twentyAtTwentyStation) + repair.TwentyB.GetDistanceTo(twentyAtThirtyStation)) <= duplicateTol))
+                        {
+                            continue;
+                        }
+
+                        repairs.Add((candidate.Id, twentyEndpoint.MoveStart, twentyEndpoint.Point, thirtyTarget, twentyAtThirtyStation, twentyAtTwentyStation));
+                    }
+                }
+
+                if (repairs.Count == 0)
+                {
+                    tr.Commit();
+                    return false;
+                }
+
+                EnsureLayerWithColor(database, tr, LayerUsecTwenty, ResolveUsecLayerColorIndex(LayerUsecTwenty));
+                var adjusted = 0;
+                var created = 0;
+                var samples = new List<string>();
+                foreach (var repair in repairs.OrderBy(r => r.Original.GetDistanceTo(r.Target)))
+                {
+                    if (!(tr.GetObject(repair.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (TryMoveEndpointForCorrectionLinePost(writable, repair.MoveStart, repair.Target, moveTol))
+                    {
+                        adjusted++;
+                    }
+
+                    var connector = new Line(
+                        new Point3d(repair.TwentyA.X, repair.TwentyA.Y, 0.0),
+                        new Point3d(repair.TwentyB.X, repair.TwentyB.Y, 0.0))
+                    {
+                        Layer = LayerUsecTwenty,
+                        ColorIndex = 256
+                    };
+                    ms.AppendEntity(connector);
+                    tr.AddNewlyCreatedDBObject(connector, true);
+                    created++;
+
+                    if (samples.Count < 16)
+                    {
+                        samples.Add(
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "thirty {0:0.###},{1:0.###}->{2:0.###},{3:0.###}; twenty {4:0.###},{5:0.###}->{6:0.###},{7:0.###}",
+                                repair.Original.X,
+                                repair.Original.Y,
+                                repair.Target.X,
+                                repair.Target.Y,
+                                repair.TwentyA.X,
+                                repair.TwentyA.Y,
+                                repair.TwentyB.X,
+                                repair.TwentyB.Y));
+                    }
+                }
+
+                tr.Commit();
+
+                if (adjusted > 0 || created > 0)
+                {
+                    logger?.WriteLine($"Cleanup: mixed-band vertical road companion repair adjusted={adjusted}, createdTwenty={created}.");
+                    for (var i = 0; i < samples.Count; i++)
+                    {
+                        logger?.WriteLine("Cleanup:   mixed-band-vertical " + samples[i]);
+                    }
+                }
+
+                return adjusted > 0 || created > 0;
+            }
+        }
+
+        private static bool TrimOrdinaryVerticalEndpointsToCorrectionOuterRows(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null)
+            {
+                return false;
+            }
+
+            var clipWindows = MergeOverlappingClipWindows(BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0));
+            if (clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenLinearSegment(ent, out a, out b);
+
+            bool IsOrdinaryLayer(string layer)
+            {
+                return string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-0", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
+            }
+
+            bool IsZeroLayer(string layer)
+            {
+                return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-0", StringComparison.OrdinalIgnoreCase);
+            }
+
+            Point2d ClosestPointOnSegment(Point2d p, Point2d a, Point2d b)
+            {
+                var ab = b - a;
+                var abLen2 = ab.DotProduct(ab);
+                if (abLen2 <= 1e-9)
+                {
+                    return a;
+                }
+
+                var t = (p - a).DotProduct(ab) / abLen2;
+                t = Math.Max(0.0, Math.Min(1.0, t));
+                return a + (ab * t);
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                var ordinaryVerticals = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, double Length)>();
+                var correctionOuterRows = new List<(Point2d A, Point2d B)>();
+                var correctionZeroRows = new List<(Point2d A, Point2d B)>();
+
+                foreach (ObjectId id in ms)
+                {
+                    if (!(tr.GetObject(id, OpenMode.ForRead, false) is Entity ent) ||
+                        ent.IsErased ||
+                        !TryReadOpenSegment(ent, out var a, out var b) ||
+                        !DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    var layer = ent.Layer ?? string.Empty;
+                    if (string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) &&
+                        IsHorizontalLikeForCorrectionLinePost(a, b))
+                    {
+                        correctionOuterRows.Add((a, b));
+                        continue;
+                    }
+
+                    if (string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) &&
+                        IsHorizontalLikeForCorrectionLinePost(a, b))
+                    {
+                        correctionZeroRows.Add((a, b));
+                        continue;
+                    }
+
+                    if (IsOrdinaryLayer(layer) && IsVerticalLikeForCorrectionLinePost(a, b))
+                    {
+                        var length = a.GetDistanceTo(b);
+                        if (length >= 25.0)
+                        {
+                            ordinaryVerticals.Add((id, layer, a, b, length));
+                        }
+                    }
+                }
+
+                if (ordinaryVerticals.Count == 0 || correctionOuterRows.Count == 0 || correctionZeroRows.Count == 0)
+                {
+                    tr.Commit();
+                    return false;
+                }
+
+                const double maxMove = 40.0;
+                const double minMove = 0.10;
+                const double axisTol = 1.0;
+                const double correctionZeroNearbyTol = 12.0;
+                const double minRemainingLength = 20.0;
+                const double zeroRowOvershootMoveMin = 10.0;
+                const double moveTol = 0.05;
+
+                bool EndpointNearCorrectionZero(Point2d endpoint)
+                {
+                    return correctionZeroRows.Any(row => DistancePointToSegment(endpoint, row.A, row.B) <= correctionZeroNearbyTol);
+                }
+
+                var plans = new List<(ObjectId Id, bool MoveStart, Point2d Original, Point2d Target)>();
+                foreach (var vertical in ordinaryVerticals)
+                {
+                    var endpoints = new[] { (MoveStart: true, Point: vertical.A, Other: vertical.B), (MoveStart: false, Point: vertical.B, Other: vertical.A) };
+                    foreach (var endpoint in endpoints)
+                    {
+                        if (!EndpointNearCorrectionZero(endpoint.Point))
+                        {
+                            continue;
+                        }
+
+                        var direction = endpoint.Other - endpoint.Point;
+                        var directionLen = direction.Length;
+                        if (directionLen <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        var unit = direction / directionLen;
+                        var bestTarget = endpoint.Point;
+                        var bestMove = double.MaxValue;
+                        foreach (var row in correctionOuterRows)
+                        {
+                            var candidate = ClosestPointOnSegment(endpoint.Point, row.A, row.B);
+                            var move = endpoint.Point.GetDistanceTo(candidate);
+                            if (move < minMove || move > maxMove)
+                            {
+                                continue;
+                            }
+
+                            var along = (candidate - endpoint.Point).DotProduct(unit);
+                            if (along <= minMove || along >= directionLen - minRemainingLength)
+                            {
+                                continue;
+                            }
+
+                            if (DistancePointToInfiniteLine(candidate, endpoint.Point, endpoint.Other) > axisTol)
+                            {
+                                continue;
+                            }
+
+                            if (move < bestMove)
+                            {
+                                bestMove = move;
+                                bestTarget = candidate;
+                            }
+                        }
+
+                        if (bestMove < double.MaxValue)
+                        {
+                            if (IsZeroLayer(vertical.Layer) && bestMove < zeroRowOvershootMoveMin)
+                            {
+                                continue;
+                            }
+
+                            plans.Add((vertical.Id, endpoint.MoveStart, endpoint.Point, bestTarget));
+                        }
+                    }
+                }
+
+                if (plans.Count == 0)
+                {
+                    tr.Commit();
+                    return false;
+                }
+
+                var adjusted = 0;
+                var samples = new List<string>();
+                foreach (var plan in plans.OrderBy(p => p.Original.GetDistanceTo(p.Target)))
+                {
+                    if (!(tr.GetObject(plan.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!TryMoveEndpointForCorrectionLinePost(writable, plan.MoveStart, plan.Target, moveTol))
+                    {
+                        continue;
+                    }
+
+                    adjusted++;
+                    if (samples.Count < 16)
+                    {
+                        samples.Add(
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "{0:0.###},{1:0.###}->{2:0.###},{3:0.###}",
+                                plan.Original.X,
+                                plan.Original.Y,
+                                plan.Target.X,
+                                plan.Target.Y));
+                    }
+                }
+
+                tr.Commit();
+
+                if (adjusted > 0)
+                {
+                    logger?.WriteLine($"Cleanup: correction outer vertical endpoint trim adjusted {adjusted} endpoint(s).");
+                    for (var i = 0; i < samples.Count; i++)
+                    {
+                        logger?.WriteLine("Cleanup:   correction-outer-vertical-trim " + samples[i]);
+                    }
+                }
+
+                return adjusted > 0;
+            }
+        }
+
+        private static bool ExtendShortOrdinaryRoadBoundaryStubsToAnchoredContinuation(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null)
+            {
+                return false;
+            }
+
+            var clipWindows = MergeOverlappingClipWindows(BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0));
+            if (clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenLinearSegment(ent, out a, out b);
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) =>
+                TryMoveEndpointForCorrectionLinePost(writable, moveStart, target, moveTol);
+
+            bool IsOrdinaryRoadAllowanceLayer(string layer)
+            {
+                return string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-0", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                var roadSegments = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, bool Horizontal, bool Vertical, double Length, Vector2d Unit)>();
+                var anchoredEndpoints = new List<Point2d>();
+
+                foreach (ObjectId id in ms)
+                {
+                    Entity? ent = null;
+                    try
+                    {
+                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (ent == null || ent.IsErased ||
+                        !TryReadOpenSegment(ent, out var a, out var b) ||
+                        !DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    var layer = ent.Layer ?? string.Empty;
+                    if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        anchoredEndpoints.Add(a);
+                        anchoredEndpoints.Add(b);
+                    }
+
+                    if (!IsOrdinaryRoadAllowanceLayer(layer))
+                    {
+                        continue;
+                    }
+
+                    var horizontal = IsHorizontalLikeForCorrectionLinePost(a, b);
+                    var vertical = IsVerticalLikeForCorrectionLinePost(a, b);
+                    if (!horizontal && !vertical)
+                    {
+                        continue;
+                    }
+
+                    var direction = b - a;
+                    var length = direction.Length;
+                    if (length <= 1e-6)
+                    {
+                        continue;
+                    }
+
+                    roadSegments.Add((id, layer, a, b, horizontal, vertical, length, direction / length));
+                }
+
+                if (roadSegments.Count == 0 || anchoredEndpoints.Count == 0)
+                {
+                    tr.Commit();
+                    return false;
+                }
+
+                const double shortStubMax = 35.0;
+                const double continuationMin = 80.0;
+                const double maxExtend = 1200.0;
+                const double minExtend = 40.0;
+                const double axisTol = 0.75;
+                const double endpointTol = 0.85;
+                const double parallelDotMin = 0.985;
+                const double moveTol = 0.05;
+
+                bool EndpointIsAnchored(Point2d point)
+                {
+                    return anchoredEndpoints.Any(anchor => anchor.GetDistanceTo(point) <= endpointTol);
+                }
+
+                bool TryFindContinuationStop(
+                    int sourceIndex,
+                    Point2d anchor,
+                    Point2d endpoint,
+                    out Point2d target,
+                    out double score)
+                {
+                    target = endpoint;
+                    score = double.MaxValue;
+                    var source = roadSegments[sourceIndex];
+                    var direction = endpoint - anchor;
+                    var directionLength = direction.Length;
+                    if (directionLength <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var unit = direction / directionLength;
+                    var found = false;
+                    for (var i = 0; i < roadSegments.Count; i++)
+                    {
+                        if (i == sourceIndex)
+                        {
+                            continue;
+                        }
+
+                        var candidate = roadSegments[i];
+                        if (candidate.Length < continuationMin ||
+                            candidate.Horizontal != source.Horizontal ||
+                            candidate.Vertical != source.Vertical ||
+                            Math.Abs(candidate.Unit.DotProduct(source.Unit)) < parallelDotMin)
+                        {
+                            continue;
+                        }
+
+                        var candidateEndpoints = new[] { candidate.A, candidate.B };
+                        for (var endpointIndex = 0; endpointIndex < candidateEndpoints.Length; endpointIndex++)
+                        {
+                            var candidatePoint = candidateEndpoints[endpointIndex];
+                            var along = (candidatePoint - endpoint).DotProduct(unit);
+                            if (along < minExtend || along > maxExtend)
+                            {
+                                continue;
+                            }
+
+                            if (DistancePointToInfiniteLine(candidatePoint, source.A, source.B) > axisTol ||
+                                !EndpointIsAnchored(candidatePoint))
+                            {
+                                continue;
+                            }
+
+                            var candidateScore =
+                                DistancePointToInfiniteLine(candidatePoint, source.A, source.B) +
+                                (0.001 * along);
+                            if (candidateScore >= score)
+                            {
+                                continue;
+                            }
+
+                            found = true;
+                            target = candidatePoint;
+                            score = candidateScore;
+                        }
+                    }
+
+                    return found;
+                }
+
+                var plans = new List<(ObjectId Id, bool MoveStart, Point2d Original, Point2d Target, string Layer)>();
+                for (var i = 0; i < roadSegments.Count; i++)
+                {
+                    var source = roadSegments[i];
+                    if (source.Length > shortStubMax)
+                    {
+                        continue;
+                    }
+
+                    if (TryFindContinuationStop(i, source.B, source.A, out var startTarget, out _))
+                    {
+                        plans.Add((source.Id, true, source.A, startTarget, source.Layer));
+                    }
+
+                    if (TryFindContinuationStop(i, source.A, source.B, out var endTarget, out _))
+                    {
+                        plans.Add((source.Id, false, source.B, endTarget, source.Layer));
+                    }
+                }
+
+                if (plans.Count == 0)
+                {
+                    tr.Commit();
+                    return false;
+                }
+
+                var adjusted = 0;
+                var samples = new List<string>();
+                foreach (var plan in plans
+                    .OrderBy(plan => plan.Original.GetDistanceTo(plan.Target))
+                    .ThenBy(plan => plan.Id.Handle.ToString()))
+                {
+                    if (!(tr.GetObject(plan.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!TryMoveEndpoint(writable, plan.MoveStart, plan.Target, moveTol))
+                    {
+                        continue;
+                    }
+
+                    adjusted++;
+                    if (samples.Count < 20)
+                    {
+                        samples.Add(
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "{0}/{1} {2:0.###},{3:0.###}->{4:0.###},{5:0.###}",
+                                plan.Id.Handle.ToString(),
+                                plan.Layer,
+                                plan.Original.X,
+                                plan.Original.Y,
+                                plan.Target.X,
+                                plan.Target.Y));
+                    }
+                }
+
+                tr.Commit();
+                if (adjusted > 0)
+                {
+                    logger?.WriteLine($"Cleanup: short road-boundary stub extension adjusted {adjusted} endpoint(s).");
+                    for (var i = 0; i < samples.Count; i++)
+                    {
+                        logger?.WriteLine("Cleanup:   short-stub-extension " + samples[i]);
+                    }
+                }
+
+                return adjusted > 0;
+            }
+        }
+
+        private static bool AddMissingShortTwentyBandCapsAtRoadCorners(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger,
+            IReadOnlyCollection<Point2d> innerBandRetargets)
+        {
+            if (database == null ||
+                requestedQuarterIds == null ||
+                innerBandRetargets == null ||
+                innerBandRetargets.Count == 0)
+            {
+                return false;
+            }
+
+            var clipWindows = MergeOverlappingClipWindows(BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0));
+            if (clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenLinearSegment(ent, out a, out b);
+
+            bool IsOrdinaryRoadAllowanceLayer(string layer)
+            {
+                return string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-0", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
+            }
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                var roadSegments = new List<(ObjectId Id, string Layer, Point2d A, Point2d B, bool Horizontal, bool Vertical, double Length)>();
+                var qsecEndpoints = new List<Point2d>();
+
+                foreach (ObjectId id in ms)
+                {
+                    Entity? ent = null;
+                    try
+                    {
+                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (ent == null || ent.IsErased ||
+                        !TryReadOpenSegment(ent, out var a, out var b) ||
+                        !DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    var layer = ent.Layer ?? string.Empty;
+                    if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        qsecEndpoints.Add(a);
+                        qsecEndpoints.Add(b);
+                    }
+
+                    if (!IsOrdinaryRoadAllowanceLayer(layer))
+                    {
+                        continue;
+                    }
+
+                    var horizontal = IsHorizontalLikeForCorrectionLinePost(a, b);
+                    var vertical = IsVerticalLikeForCorrectionLinePost(a, b);
+                    if (!horizontal && !vertical)
+                    {
+                        continue;
+                    }
+
+                    roadSegments.Add((id, layer, a, b, horizontal, vertical, a.GetDistanceTo(b)));
+                }
+
+                if (roadSegments.Count == 0 || qsecEndpoints.Count == 0)
+                {
+                    tr.Commit();
+                    return false;
+                }
+
+                const double qsecEndpointTol = 0.80;
+                const double existingCapTol = 0.80;
+                const double capMin = 18.0;
+                const double capMax = 22.5;
+                const double verticalLengthMin = 200.0;
+                const double duplicateTol = 0.75;
+
+                bool EndpointTouchesQsec(Point2d point)
+                {
+                    return qsecEndpoints.Any(endpoint => endpoint.GetDistanceTo(point) <= qsecEndpointTol);
+                }
+
+                bool HasHorizontalRoadCapAt(Point2d point)
+                {
+                    return roadSegments.Any(segment =>
+                        segment.Horizontal &&
+                        DistancePointToSegment(point, segment.A, segment.B) <= existingCapTol);
+                }
+
+                bool HasNearRoadSegment(Point2d a, Point2d b)
+                {
+                    return roadSegments.Any(segment =>
+                        Math.Min(
+                            segment.A.GetDistanceTo(a) + segment.B.GetDistanceTo(b),
+                            segment.A.GetDistanceTo(b) + segment.B.GetDistanceTo(a)) <= duplicateTol);
+                }
+
+                bool IsUsecZeroLayer(string layer)
+                {
+                    return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(layer, "L-USEC-0", StringComparison.OrdinalIgnoreCase);
+                }
+
+                bool HasLongSameZeroBoundaryAt(Point2d point, string layer)
+                {
+                    const double horizontalBoundaryMin = 200.0;
+                    return IsUsecZeroLayer(layer) &&
+                           roadSegments.Any(segment =>
+                               segment.Horizontal &&
+                               segment.Length >= horizontalBoundaryMin &&
+                               IsUsecZeroLayer(segment.Layer) &&
+                               DistancePointToSegment(point, segment.A, segment.B) <= existingCapTol);
+                }
+
+                bool IsNearInnerBandRetarget(Point2d point)
+                {
+                    const double retargetTieTol = RoadAllowanceSecWidthMeters + 2.0;
+                    return innerBandRetargets.Any(target => target.GetDistanceTo(point) <= retargetTieTol);
+                }
+
+                var plannedCaps = new List<(Point2d Endpoint, Point2d Target, double Length)>();
+                var samples = new List<string>();
+                foreach (var segment in roadSegments)
+                {
+                    if (!segment.Vertical ||
+                        segment.Length < verticalLengthMin ||
+                        !IsUsecZeroLayer(segment.Layer))
+                    {
+                        continue;
+                    }
+
+                    var dx = Math.Abs(segment.A.X - segment.B.X);
+                    if (dx < capMin || dx > capMax)
+                    {
+                        continue;
+                    }
+
+                    var endpoints = new[] { (Point: segment.A, Other: segment.B), (Point: segment.B, Other: segment.A) };
+                    for (var endpointIndex = 0; endpointIndex < endpoints.Length; endpointIndex++)
+                    {
+                        var endpoint = endpoints[endpointIndex].Point;
+                        var other = endpoints[endpointIndex].Other;
+                        if (!EndpointTouchesQsec(endpoint) ||
+                            HasHorizontalRoadCapAt(endpoint) ||
+                            !IsNearInnerBandRetarget(other) ||
+                            !HasLongSameZeroBoundaryAt(other, segment.Layer))
+                        {
+                            continue;
+                        }
+
+                        var target = new Point2d(other.X, endpoint.Y);
+                        var capLength = endpoint.GetDistanceTo(target);
+                        if (capLength < capMin ||
+                            capLength > capMax ||
+                            HasNearRoadSegment(endpoint, target) ||
+                            plannedCaps.Any(cap =>
+                                Math.Min(
+                                    cap.Endpoint.GetDistanceTo(endpoint) + cap.Target.GetDistanceTo(target),
+                                    cap.Endpoint.GetDistanceTo(target) + cap.Target.GetDistanceTo(endpoint)) <= duplicateTol))
+                        {
+                            continue;
+                        }
+
+                        plannedCaps.Add((endpoint, target, capLength));
+
+                        if (samples.Count < 16)
+                        {
+                            samples.Add(
+                                string.Format(
+                                    CultureInfo.InvariantCulture,
+                                    "{0:0.###},{1:0.###}->{2:0.###},{3:0.###}",
+                                    endpoint.X,
+                                    endpoint.Y,
+                                    target.X,
+                                    target.Y));
+                        }
+                    }
+                }
+
+                var added = 0;
+                if (plannedCaps.Count > 0)
+                {
+                    EnsureLayerWithColor(database, tr, LayerUsecTwenty, ResolveUsecLayerColorIndex(LayerUsecTwenty));
+                    foreach (var cap in plannedCaps)
+                    {
+                        var connector = new Line(
+                            new Point3d(cap.Endpoint.X, cap.Endpoint.Y, 0.0),
+                            new Point3d(cap.Target.X, cap.Target.Y, 0.0))
+                        {
+                            Layer = LayerUsecTwenty,
+                            ColorIndex = 256
+                        };
+                        ms.AppendEntity(connector);
+                        tr.AddNewlyCreatedDBObject(connector, true);
+                        added++;
+                    }
+                }
+
+                tr.Commit();
+                if (added > 0)
+                {
+                    logger?.WriteLine($"Cleanup: road-corner 20.11 cap restore added {added} connector(s).");
+                    for (var i = 0; i < samples.Count; i++)
+                    {
+                        logger?.WriteLine("Cleanup:   road-corner-cap " + samples[i]);
+                    }
+                }
+
+                return added > 0;
+            }
+        }
+
+        private static bool TrimUsecTwentyEndpointsToZeroTerminators(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            IReadOnlyCollection<ObjectId> generatedRoadAllowanceIds,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null || generatedRoadAllowanceIds == null || generatedRoadAllowanceIds.Count == 0)
+            {
+                return false;
+            }
+
+            var rawClipWindows = BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0);
+            var clipWindows = MergeOverlappingClipWindows(rawClipWindows);
+            if (clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenLinearSegment(ent, out a, out b);
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) =>
+                TryMoveEndpointForCorrectionLinePost(writable, moveStart, target, moveTol);
+
+            static bool IsUsecTwentyLayerName(string layer)
+            {
+                return string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+            }
+
+            static bool IsZeroOrSurveyedTerminatorLayer(string layer)
+            {
+                return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-SEC", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-SEC-2012", StringComparison.OrdinalIgnoreCase);
+            }
+
+            try
+            {
+                using (var tr = database.TransactionManager.StartTransaction())
+                {
+                    var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                    var generatedSet = new HashSet<ObjectId>(generatedRoadAllowanceIds.Where(id => !id.IsNull));
+                    var sources = new List<(ObjectId Id, string Layer, Point2d A, Point2d B)>();
+                    var terminators = new List<(ObjectId Id, string Layer, Point2d A, Point2d B)>();
+
+                    foreach (ObjectId id in ms)
+                    {
+                        Entity? ent = null;
+                        try
+                        {
+                            ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                        }
+                        catch (Autodesk.AutoCAD.Runtime.Exception)
+                        {
+                            continue;
+                        }
+
+                        if (ent == null || ent.IsErased)
+                        {
+                            continue;
+                        }
+
+                        var layer = ent.Layer ?? string.Empty;
+                        if (!IsUsecTwentyLayerName(layer) && !IsZeroOrSurveyedTerminatorLayer(layer))
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenSegment(ent, out var a, out var b) || !DoesSegmentIntersectAnyWindow(a, b))
+                        {
+                            continue;
+                        }
+
+                        if (IsUsecTwentyLayerName(layer) && generatedSet.Contains(id))
+                        {
+                            sources.Add((id, layer, a, b));
+                        }
+
+                        if (IsZeroOrSurveyedTerminatorLayer(layer))
+                        {
+                            terminators.Add((id, layer, a, b));
+                        }
+                    }
+
+                    if (sources.Count == 0 || terminators.Count == 0)
+                    {
+                        tr.Commit();
+                        return false;
+                    }
+
+                    const double pointOnSourceTol = 0.65;
+                    const double offAxisTerminatorTol = 0.80;
+                    const double minMove = 1.0;
+                    const double moveTol = 0.05;
+                    const double minRemainingLength = 2.0;
+                    var maxMove = RoadAllowanceUsecWidthMeters + 2.0;
+                    var adjusted = 0;
+                    var samples = new List<string>();
+
+                    bool TryFindTerminator(
+                        ObjectId sourceId,
+                        Point2d sourceA,
+                        Point2d sourceB,
+                        bool moveStart,
+                        out Point2d bestTarget,
+                        out string bestLayer,
+                        out double bestMove)
+                    {
+                        bestTarget = moveStart ? sourceA : sourceB;
+                        bestLayer = string.Empty;
+                        bestMove = double.MaxValue;
+                        var candidateBestTarget = bestTarget;
+                        var candidateBestLayer = string.Empty;
+                        var candidateBestMove = double.MaxValue;
+                        var endpoint = moveStart ? sourceA : sourceB;
+                        var otherEndpoint = moveStart ? sourceB : sourceA;
+                        var sourceLength = sourceA.GetDistanceTo(sourceB);
+                        if (sourceLength <= minRemainingLength)
+                        {
+                            return false;
+                        }
+
+                        for (var ti = 0; ti < terminators.Count; ti++)
+                        {
+                            var terminator = terminators[ti];
+                            if (terminator.Id == sourceId)
+                            {
+                                continue;
+                            }
+
+                            void Consider(Point2d candidate, Point2d terminatorOther)
+                            {
+                                if (DistancePointToSegment(candidate, sourceA, sourceB) > pointOnSourceTol)
+                                {
+                                    return;
+                                }
+
+                                var moveDistance = endpoint.GetDistanceTo(candidate);
+                                if (moveDistance <= minMove || moveDistance > maxMove)
+                                {
+                                    return;
+                                }
+
+                                if (otherEndpoint.GetDistanceTo(candidate) <= minRemainingLength)
+                                {
+                                    return;
+                                }
+
+                                if (DistancePointToInfiniteLine(terminatorOther, sourceA, sourceB) <= offAxisTerminatorTol)
+                                {
+                                    return;
+                                }
+
+                                var toCandidate = candidate - endpoint;
+                                var toOther = otherEndpoint - endpoint;
+                                if (toCandidate.DotProduct(toOther) <= 0.0)
+                                {
+                                    return;
+                                }
+
+                                if (moveDistance >= candidateBestMove)
+                                {
+                                    return;
+                                }
+
+                                candidateBestMove = moveDistance;
+                                candidateBestTarget = candidate;
+                                candidateBestLayer = terminator.Layer;
+                            }
+
+                            Consider(terminator.A, terminator.B);
+                            Consider(terminator.B, terminator.A);
+                        }
+
+                        if (candidateBestMove >= double.MaxValue)
+                        {
+                            return false;
+                        }
+
+                        bestTarget = candidateBestTarget;
+                        bestLayer = candidateBestLayer;
+                        bestMove = candidateBestMove;
+                        return true;
+                    }
+
+                    for (var i = 0; i < sources.Count; i++)
+                    {
+                        var source = sources[i];
+                        if (!(tr.GetObject(source.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenSegment(writable, out var sourceA, out var sourceB))
+                        {
+                            continue;
+                        }
+
+                        for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                        {
+                            var moveStart = endpointIndex == 0;
+                            if (!TryFindTerminator(source.Id, sourceA, sourceB, moveStart, out var target, out var targetLayer, out var moveDistance))
+                            {
+                                continue;
+                            }
+
+                            if (!TryMoveEndpoint(writable, moveStart, target, moveTol))
+                            {
+                                continue;
+                            }
+
+                            adjusted++;
+                            if (samples.Count < 16)
+                            {
+                                var endpoint = moveStart ? sourceA : sourceB;
+                                samples.Add(
+                                    string.Format(
+                                        CultureInfo.InvariantCulture,
+                                        "id={0} {1} endpoint=({2:0.###},{3:0.###}) target=({4:0.###},{5:0.###}) via={6} move={7:0.###}",
+                                        source.Id.Handle.ToString(),
+                                        source.Layer,
+                                        endpoint.X,
+                                        endpoint.Y,
+                                        target.X,
+                                        target.Y,
+                                        targetLayer,
+                                        moveDistance));
+                            }
+
+                            if (!TryReadOpenSegment(writable, out sourceA, out sourceB))
+                            {
+                                break;
+                            }
+                        }
+                    }
+
+                    tr.Commit();
+                    if (adjusted > 0)
+                    {
+                        logger?.WriteLine($"CorrectionLine: trimmed {adjusted} L-USEC2012 endpoint(s) to zero/surveyed terminators.");
+                        for (var i = 0; i < samples.Count; i++)
+                        {
+                            logger?.WriteLine("CorrectionLine:   trim-20-to-zero " + samples[i]);
+                        }
+                    }
+
+                    return adjusted > 0;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("CorrectionLine: trim L-USEC2012 endpoints to zero/surveyed terminators exception: " + ex.Message);
+                return false;
+            }
+        }
+
+        private static bool ProjectMisbandedTwentyRowsToTwentyOffset(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null)
+            {
+                return false;
+            }
+
+            var clipWindows = MergeOverlappingClipWindows(BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0));
+            if (clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
+            bool TryReadOpenSegment(Entity ent, out Point2d a, out Point2d b) => TryReadOpenLinearSegment(ent, out a, out b);
+            bool TryMoveEndpoint(Entity writable, bool moveStart, Point2d target, double moveTol) =>
+                TryMoveEndpointForCorrectionLinePost(writable, moveStart, target, moveTol);
+
+            static bool IsUsecTwentyLayerName(string layer)
+            {
+                return string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase);
+            }
+
+            static bool IsZeroBaseLayerName(string layer)
+            {
+                return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-SEC-0", StringComparison.OrdinalIgnoreCase);
+            }
+
+            static double SegmentOverlapAlongAxis(Point2d a0, Point2d a1, Point2d b0, Point2d b1)
+            {
+                var axis = a1 - a0;
+                var len = axis.Length;
+                if (len <= 1e-6)
+                {
+                    return 0.0;
+                }
+
+                var u = axis / len;
+                var aMin = 0.0;
+                var aMax = len;
+                var bT0 = (b0 - a0).DotProduct(u);
+                var bT1 = (b1 - a0).DotProduct(u);
+                var bMin = Math.Min(bT0, bT1);
+                var bMax = Math.Max(bT0, bT1);
+                return Math.Min(aMax, bMax) - Math.Max(aMin, bMin);
+            }
+
+            try
+            {
+                using (var tr = database.TransactionManager.StartTransaction())
+                {
+                    var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                    var sources = new List<(ObjectId Id, string Layer, Point2d A, Point2d B)>();
+                    var zeroRows = new List<(ObjectId Id, Point2d A, Point2d B)>();
+
+                    foreach (ObjectId id in ms)
+                    {
+                        Entity? ent = null;
+                        try
+                        {
+                            ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                        }
+                        catch (Autodesk.AutoCAD.Runtime.Exception)
+                        {
+                            continue;
+                        }
+
+                        if (ent == null || ent.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenSegment(ent, out var a, out var b) ||
+                            !DoesSegmentIntersectAnyWindow(a, b) ||
+                            !IsHorizontalLikeForCorrectionLinePost(a, b))
+                        {
+                            continue;
+                        }
+
+                        var layer = ent.Layer ?? string.Empty;
+                        if (IsUsecTwentyLayerName(layer))
+                        {
+                            sources.Add((id, layer, a, b));
+                        }
+                        else if (IsZeroBaseLayerName(layer))
+                        {
+                            zeroRows.Add((id, a, b));
+                        }
+                    }
+
+                    if (sources.Count == 0 || zeroRows.Count == 0)
+                    {
+                        tr.Commit();
+                        return false;
+                    }
+
+                    const double parallelDotMin = 0.985;
+                    const double overlapMin = 60.0;
+                    const double currentThirtyOffsetTol = 1.80;
+                    const double endpointMoveMin = 0.05;
+                    const double endpointMoveMax = 15.0;
+                    const double endpointMoveTol = 0.05;
+                    var adjusted = 0;
+                    var samples = new List<string>();
+
+                    for (var si = 0; si < sources.Count; si++)
+                    {
+                        var source = sources[si];
+                        var sourceVector = source.B - source.A;
+                        var sourceLength = sourceVector.Length;
+                        if (sourceLength <= 1e-6)
+                        {
+                            continue;
+                        }
+
+                        var sourceUnit = sourceVector / sourceLength;
+                        var sourceMid = Midpoint(source.A, source.B);
+                        var bestScore = double.MaxValue;
+                        var bestStart = source.A;
+                        var bestEnd = source.B;
+                        var bestBase = default((ObjectId Id, Point2d A, Point2d B));
+                        var found = false;
+
+                        for (var zi = 0; zi < zeroRows.Count; zi++)
+                        {
+                            var zero = zeroRows[zi];
+                            if (zero.Id == source.Id)
+                            {
+                                continue;
+                            }
+
+                            var zeroVector = zero.B - zero.A;
+                            var zeroLength = zeroVector.Length;
+                            if (zeroLength <= 1e-6)
+                            {
+                                continue;
+                            }
+
+                            var zeroUnit = zeroVector / zeroLength;
+                            if (Math.Abs(sourceUnit.DotProduct(zeroUnit)) < parallelDotMin)
+                            {
+                                continue;
+                            }
+
+                            var overlap = Math.Max(
+                                SegmentOverlapAlongAxis(zero.A, zero.B, source.A, source.B),
+                                SegmentOverlapAlongAxis(source.A, source.B, zero.A, zero.B));
+                            if (overlap < overlapMin)
+                            {
+                                continue;
+                            }
+
+                            var offset = DistancePointToInfiniteLine(sourceMid, zero.A, zero.B);
+                            if (Math.Abs(offset - RoadAllowanceUsecWidthMeters) > currentThirtyOffsetTol)
+                            {
+                                continue;
+                            }
+
+                            var normal = new Vector2d(-zeroUnit.Y, zeroUnit.X);
+                            var positiveA = zero.A + normal * RoadAllowanceSecWidthMeters;
+                            var positiveB = zero.B + normal * RoadAllowanceSecWidthMeters;
+                            var negativeA = zero.A - normal * RoadAllowanceSecWidthMeters;
+                            var negativeB = zero.B - normal * RoadAllowanceSecWidthMeters;
+                            var positiveMid = Midpoint(positiveA, positiveB);
+                            var negativeMid = Midpoint(negativeA, negativeB);
+                            var usePositive = sourceMid.GetDistanceTo(positiveMid) <= sourceMid.GetDistanceTo(negativeMid);
+                            var candidateA = usePositive ? positiveA : negativeA;
+                            var candidateB = usePositive ? positiveB : negativeB;
+                            var directScore = source.A.GetDistanceTo(candidateA) + source.B.GetDistanceTo(candidateB);
+                            var reverseScore = source.A.GetDistanceTo(candidateB) + source.B.GetDistanceTo(candidateA);
+                            if (reverseScore < directScore)
+                            {
+                                (candidateA, candidateB) = (candidateB, candidateA);
+                            }
+
+                            var moveA = source.A.GetDistanceTo(candidateA);
+                            var moveB = source.B.GetDistanceTo(candidateB);
+                            if ((moveA <= endpointMoveMin && moveB <= endpointMoveMin) ||
+                                moveA > endpointMoveMax ||
+                                moveB > endpointMoveMax)
+                            {
+                                continue;
+                            }
+
+                            var score = Math.Abs(offset - RoadAllowanceUsecWidthMeters) + moveA + moveB - (0.001 * overlap);
+                            if (score >= bestScore)
+                            {
+                                continue;
+                            }
+
+                            found = true;
+                            bestScore = score;
+                            bestStart = candidateA;
+                            bestEnd = candidateB;
+                            bestBase = zero;
+                        }
+
+                        if (!found)
+                        {
+                            continue;
+                        }
+
+                        if (!(tr.GetObject(source.Id, OpenMode.ForWrite, false) is Entity writable) || writable.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenSegment(writable, out var currentA, out var currentB))
+                        {
+                            continue;
+                        }
+
+                        var movedStart = currentA.GetDistanceTo(bestStart) > endpointMoveMin &&
+                                         TryMoveEndpoint(writable, moveStart: true, bestStart, endpointMoveTol);
+                        var movedEnd = currentB.GetDistanceTo(bestEnd) > endpointMoveMin &&
+                                       TryMoveEndpoint(writable, moveStart: false, bestEnd, endpointMoveTol);
+                        if (!movedStart && !movedEnd)
+                        {
+                            continue;
+                        }
+
+                        adjusted++;
+                        if (samples.Count < 16)
+                        {
+                            samples.Add(
+                                string.Format(
+                                    CultureInfo.InvariantCulture,
+                                    "id={0} {1} base={2} from=({3:0.###},{4:0.###})->({5:0.###},{6:0.###}) to=({7:0.###},{8:0.###})->({9:0.###},{10:0.###})",
+                                    source.Id.Handle.ToString(),
+                                    source.Layer,
+                                    bestBase.Id.Handle.ToString(),
+                                    source.A.X,
+                                    source.A.Y,
+                                    source.B.X,
+                                    source.B.Y,
+                                    bestStart.X,
+                                    bestStart.Y,
+                                    bestEnd.X,
+                                    bestEnd.Y));
+                        }
+                    }
+
+                    tr.Commit();
+                    if (adjusted > 0)
+                    {
+                        logger?.WriteLine($"CorrectionLine: projected {adjusted} L-USEC2012 row(s) from 30.16 band back to 20.11 band.");
+                        for (var i = 0; i < samples.Count; i++)
+                        {
+                            logger?.WriteLine("CorrectionLine:   project-20-row " + samples[i]);
+                        }
+                    }
+
+                    return adjusted > 0;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                logger?.WriteLine("CorrectionLine: project L-USEC2012 rows to 20.11 offset exception: " + ex.Message);
+                return false;
             }
         }
 
@@ -4010,7 +7983,7 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenLinearSegment(ent, out var a, out var b) || !IsHorizontalLike(a, b))
+                    if (!TryReadOpenLinearSegment(ent, out var a, out var b))
                     {
                         continue;
                     }
@@ -4031,6 +8004,29 @@ namespace AtsBackgroundBuilder
                         sectionVerticalSplitSegments.Add((a, b, Math.Min(a.Y, b.Y), Math.Max(a.Y, b.Y)));
                     }
 
+                    var isCorrectionPromotableLayer =
+                        string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase) ||
+                        IsCorrectionSurveyedLayer(layer);
+                    if (isCorrectionPromotableLayer &&
+                        !IsCorrectionLayer(layer) &&
+                        IsVerticalLikeForCorrectionLinePost(a, b))
+                    {
+                        ordinaryVerticalCorridorAnchors.Add((a, b, layer));
+                    }
+
+                    if (!IsHorizontalLike(a, b))
+                    {
+                        continue;
+                    }
+
                     if (string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase))
                     {
                         correctionOuterAnchors.Add((a, b, Midpoint(a, b), Math.Min(a.X, b.X), Math.Max(a.X, b.X)));
@@ -4048,24 +8044,6 @@ namespace AtsBackgroundBuilder
 
                         correctionInnerAnchors.Add((a, b, Midpoint(a, b), dir / len, len));
                         continue;
-                    }
-
-                    var isCorrectionPromotableLayer =
-                        string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase) ||
-                        IsCorrectionSurveyedLayer(layer);
-                    if (isCorrectionPromotableLayer &&
-                        !IsCorrectionLayer(layer) &&
-                        IsVerticalLikeForCorrectionLinePost(a, b))
-                    {
-                        ordinaryVerticalCorridorAnchors.Add((a, b, layer));
                     }
 
                     if (isCorrectionPromotableLayer)
@@ -4174,7 +8152,189 @@ namespace AtsBackgroundBuilder
                     var negativeAcceptable = CorrectionSouthBoundaryPreference.IsCompanionCoverageAcceptable(negativeCoverage, len);
                     if (!positiveAcceptable && !negativeAcceptable)
                     {
-                        return false;
+                        const double connectedInnerEndpointTol = 1.20;
+                        const double connectedInnerOffsetTol = 1.25;
+                        const double connectedVerticalBridgeTol = 0.85;
+                        var foundConnectedInnerHint = false;
+                        var bestConnectedInnerEndpointGap = double.MaxValue;
+                        var bestConnectedInnerOffsetDelta = double.MaxValue;
+                        var bestConnectedInnerOverlap = double.NegativeInfinity;
+                        for (var ii = 0; ii < correctionInnerAnchors.Count; ii++)
+                        {
+                            var inner = correctionInnerAnchors[ii];
+                            if (Math.Abs(u.DotProduct(inner.U)) < directionDotMin)
+                            {
+                                continue;
+                            }
+
+                            var signedOffset = GetSignedOffsetToLine(a, b, inner.Mid);
+                            var sign = Math.Sign(signedOffset);
+                            if (sign == 0)
+                            {
+                                continue;
+                            }
+
+                            var offsetDelta = Math.Abs(Math.Abs(signedOffset) - CorrectionLinePostInsetMeters);
+                            if (offsetDelta > connectedInnerOffsetTol)
+                            {
+                                continue;
+                            }
+
+                            var endpointPairs = new[]
+                            {
+                                (Candidate: a, Inner: inner.A),
+                                (Candidate: a, Inner: inner.B),
+                                (Candidate: b, Inner: inner.A),
+                                (Candidate: b, Inner: inner.B),
+                            };
+
+                            for (var pi = 0; pi < endpointPairs.Length; pi++)
+                            {
+                                var pair = endpointPairs[pi];
+                                var gapVector = pair.Inner - pair.Candidate;
+                                var alongGap = Math.Abs(gapVector.DotProduct(u));
+                                if (alongGap > connectedInnerOffsetTol)
+                                {
+                                    continue;
+                                }
+
+                                var endpointGap = pair.Candidate.GetDistanceTo(pair.Inner);
+                                var perpendicularGap = Math.Sqrt(Math.Max(0.0, (endpointGap * endpointGap) - (alongGap * alongGap)));
+                                var endpointGapIsExactTouch = endpointGap <= connectedInnerEndpointTol;
+                                var endpointGapIsInsetBand =
+                                    Math.Abs(perpendicularGap - CorrectionLinePostInsetMeters) <= connectedInnerOffsetTol;
+                                if (!endpointGapIsExactTouch && !endpointGapIsInsetBand)
+                                {
+                                    continue;
+                                }
+
+                                var overlap = GetProjectedOverlap(a, b, inner.A, inner.B);
+                                if (!foundConnectedInnerHint ||
+                                    endpointGap < bestConnectedInnerEndpointGap - 1e-6 ||
+                                    (Math.Abs(endpointGap - bestConnectedInnerEndpointGap) <= 1e-6 &&
+                                     offsetDelta < bestConnectedInnerOffsetDelta - 1e-6) ||
+                                    (Math.Abs(endpointGap - bestConnectedInnerEndpointGap) <= 1e-6 &&
+                                     Math.Abs(offsetDelta - bestConnectedInnerOffsetDelta) <= 1e-6 &&
+                                     overlap > bestConnectedInnerOverlap + 1e-6))
+                                {
+                                    foundConnectedInnerHint = true;
+                                    bestConnectedInnerEndpointGap = endpointGap;
+                                    bestConnectedInnerOffsetDelta = offsetDelta;
+                                    bestConnectedInnerOverlap = overlap;
+                                    preferredOffsetSign = sign;
+                                }
+                            }
+                        }
+
+                        if (!foundConnectedInnerHint)
+                        {
+                            for (var ii = 0; ii < correctionInnerAnchors.Count; ii++)
+                            {
+                                var inner = correctionInnerAnchors[ii];
+                                if (Math.Abs(u.DotProduct(inner.U)) < directionDotMin)
+                                {
+                                    continue;
+                                }
+
+                                var signedOffset = GetSignedOffsetToLine(a, b, inner.Mid);
+                                var sign = Math.Sign(signedOffset);
+                                if (sign == 0)
+                                {
+                                    continue;
+                                }
+
+                                var offsetDelta = Math.Abs(Math.Abs(signedOffset) - CorrectionLinePostInsetMeters);
+                                if (offsetDelta > connectedInnerOffsetTol)
+                                {
+                                    continue;
+                                }
+
+                                var endpointPairs = new[]
+                                {
+                                    (Candidate: a, Inner: inner.A),
+                                    (Candidate: a, Inner: inner.B),
+                                    (Candidate: b, Inner: inner.A),
+                                    (Candidate: b, Inner: inner.B),
+                                };
+
+                                for (var pi = 0; pi < endpointPairs.Length; pi++)
+                                {
+                                    var pair = endpointPairs[pi];
+                                    var bridged = false;
+                                    for (var vi = 0; vi < ordinaryVerticalCorridorAnchors.Count; vi++)
+                                    {
+                                        var verticalAnchor = ordinaryVerticalCorridorAnchors[vi];
+                                        if (DistancePointToSegment(pair.Candidate, verticalAnchor.A, verticalAnchor.B) > connectedVerticalBridgeTol)
+                                        {
+                                            continue;
+                                        }
+
+                                        if (DistancePointToSegment(pair.Inner, verticalAnchor.A, verticalAnchor.B) > connectedVerticalBridgeTol)
+                                        {
+                                            continue;
+                                        }
+
+                                        bridged = true;
+                                        break;
+                                    }
+
+                                    if (!bridged)
+                                    {
+                                        for (var vi = 0; vi < sectionVerticalSplitSegments.Count; vi++)
+                                        {
+                                            var verticalSplit = sectionVerticalSplitSegments[vi];
+                                            if (DistancePointToSegment(pair.Candidate, verticalSplit.A, verticalSplit.B) > connectedVerticalBridgeTol)
+                                            {
+                                                continue;
+                                            }
+
+                                            if (DistancePointToSegment(pair.Inner, verticalSplit.A, verticalSplit.B) > connectedVerticalBridgeTol)
+                                            {
+                                                continue;
+                                            }
+
+                                            bridged = true;
+                                            break;
+                                        }
+                                    }
+
+                                    if (!bridged)
+                                    {
+                                        continue;
+                                    }
+
+                                    var endpointGap = pair.Candidate.GetDistanceTo(pair.Inner);
+                                    var overlap = GetProjectedOverlap(a, b, inner.A, inner.B);
+                                    if (!foundConnectedInnerHint ||
+                                        endpointGap < bestConnectedInnerEndpointGap - 1e-6 ||
+                                        (Math.Abs(endpointGap - bestConnectedInnerEndpointGap) <= 1e-6 &&
+                                         offsetDelta < bestConnectedInnerOffsetDelta - 1e-6) ||
+                                        (Math.Abs(endpointGap - bestConnectedInnerEndpointGap) <= 1e-6 &&
+                                         Math.Abs(offsetDelta - bestConnectedInnerOffsetDelta) <= 1e-6 &&
+                                         overlap > bestConnectedInnerOverlap + 1e-6))
+                                    {
+                                        foundConnectedInnerHint = true;
+                                        bestConnectedInnerEndpointGap = endpointGap;
+                                        bestConnectedInnerOffsetDelta = offsetDelta;
+                                        bestConnectedInnerOverlap = overlap;
+                                        preferredOffsetSign = sign;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!foundConnectedInnerHint)
+                        {
+                            return false;
+                        }
+
+                        if (ShouldTraceFinalOuterCandidate(a, b))
+                        {
+                            logger?.WriteLine(
+                                $"Cleanup: corr-final trace connected-inner-side-hint A=({a.X:0.###},{a.Y:0.###}) B=({b.X:0.###},{b.Y:0.###}) sign={preferredOffsetSign} endpointGap={bestConnectedInnerEndpointGap:0.###} offsetDelta={bestConnectedInnerOffsetDelta:0.###} overlap={bestConnectedInnerOverlap:0.###}.");
+                        }
+
+                        return preferredOffsetSign != 0;
                     }
 
                     preferredOffsetSign = positiveCoverage >= negativeCoverage ? 1 : -1;
@@ -5249,11 +9409,72 @@ namespace AtsBackgroundBuilder
                            coreCoveredLength <= bufferedCoverageTol;
                 }
 
+                bool HasConnectedInsetInnerEndpointHint(Point2d a, Point2d b)
+                {
+                    var dir = b - a;
+                    var len = dir.Length;
+                    if (len <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var u = dir / len;
+                    const double connectedInnerEndpointTol = 1.25;
+                    const double connectedInnerInsetTol = 1.25;
+                    for (var ii = 0; ii < correctionInnerAnchors.Count; ii++)
+                    {
+                        var inner = correctionInnerAnchors[ii];
+                        if (Math.Abs(u.DotProduct(inner.U)) < directionDotMin)
+                        {
+                            continue;
+                        }
+
+                        var signedOffset = GetSignedOffsetToLine(a, b, inner.Mid);
+                        if (Math.Abs(Math.Abs(signedOffset) - CorrectionLinePostInsetMeters) > connectedInnerInsetTol)
+                        {
+                            continue;
+                        }
+
+                        var endpointPairs = new[]
+                        {
+                            (Candidate: a, Inner: inner.A),
+                            (Candidate: a, Inner: inner.B),
+                            (Candidate: b, Inner: inner.A),
+                            (Candidate: b, Inner: inner.B),
+                        };
+
+                        for (var pi = 0; pi < endpointPairs.Length; pi++)
+                        {
+                            var pair = endpointPairs[pi];
+                            var gapVector = pair.Inner - pair.Candidate;
+                            var alongGap = Math.Abs(gapVector.DotProduct(u));
+                            if (alongGap > connectedInnerEndpointTol)
+                            {
+                                continue;
+                            }
+
+                            var endpointGap = pair.Candidate.GetDistanceTo(pair.Inner);
+                            var perpendicularGap = Math.Sqrt(Math.Max(0.0, (endpointGap * endpointGap) - (alongGap * alongGap)));
+                            if (Math.Abs(perpendicularGap - CorrectionLinePostInsetMeters) <= connectedInnerInsetTol)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+
+                    return false;
+                }
+
                 bool ShouldPreserveOriginalOrdinaryCorridorAsCorrectionOuter(Point2d a, Point2d b)
                 {
                     const double minimumOuterGap = 10.0;
                     const double maximumOuterGap = 35.0;
                     if (IsBufferedOnlyQuarterCoverage(a, b))
+                    {
+                        return true;
+                    }
+
+                    if (HasConnectedInsetInnerEndpointHint(a, b))
                     {
                         return true;
                     }
@@ -5901,6 +10122,664 @@ namespace AtsBackgroundBuilder
                     }
                 }
 
+                int RestoreDeflectedCorrectionOuterAcrossVerticalGaps()
+                {
+                    if (correctionOuterAnchors.Count == 0 ||
+                        ordinaryVerticalCorridorAnchors.Count == 0 ||
+                        sectionVerticalSplitSegments.Count == 0)
+                    {
+                        return 0;
+                    }
+
+                    bool IsThirtyVerticalLayer(string layer)
+                    {
+                        return string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase);
+                    }
+
+                    bool IsZeroVerticalLayer(string layer)
+                    {
+                        return string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase);
+                    }
+
+                    var liveOuterSegments = CollectHorizontalCorrectionSegments(
+                        tr,
+                        ms,
+                        layer => string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase));
+                    liveOuterSegments.AddRange(
+                        correctionOuterAnchors.Select(anchor => new CorrectionSegment(ObjectId.Null, LayerUsecCorrection, anchor.A, anchor.B)));
+
+                    bool HasOuter(Point2d a, Point2d b) => HasMatchingCorrectionSegment(liveOuterSegments, a, b);
+
+                    bool TryAddOuter(Point2d a, Point2d b, string reason)
+                    {
+                        if (a.GetDistanceTo(b) <= 1e-4 || HasOuter(a, b))
+                        {
+                            return false;
+                        }
+
+                        var line = new Line(
+                            new Point3d(a.X, a.Y, 0.0),
+                            new Point3d(b.X, b.Y, 0.0))
+                        {
+                            Layer = LayerUsecCorrection,
+                            ColorIndex = 256
+                        };
+
+                        var id = ms.AppendEntity(line);
+                        tr.AddNewlyCreatedDBObject(line, true);
+                        if (id.IsNull)
+                        {
+                            return false;
+                        }
+
+                        var restored = new CorrectionSegment(id, LayerUsecCorrection, a, b);
+                        liveOuterSegments.Add(restored);
+                        correctionOuterAnchors.Add((a, b, Midpoint(a, b), Math.Min(a.X, b.X), Math.Max(a.X, b.X)));
+                        correctionChain.Add((a, b));
+                        logger?.WriteLine(
+                            $"Cleanup: restored deflected correction outer {reason} A=({a.X:0.###},{a.Y:0.###}) B=({b.X:0.###},{b.Y:0.###}).");
+                        return true;
+                    }
+
+                    bool TryFindThirtyGapEndpoint(
+                        Point2d anchorEndpoint,
+                        Vector2d outwardUnit,
+                        Point2d lineA,
+                        Point2d lineB,
+                        out Point2d gapEndpoint)
+                    {
+                        gapEndpoint = default;
+                        var found = false;
+                        var bestAlong = double.MaxValue;
+                        const double gapMin = 18.0;
+                        const double gapMax = 35.5;
+                        const double collinearEndpointTol = 0.90;
+                        foreach (var vertical in ordinaryVerticalCorridorAnchors)
+                        {
+                            if (!IsThirtyVerticalLayer(vertical.Layer))
+                            {
+                                continue;
+                            }
+
+                            var endpoints = new[] { vertical.A, vertical.B };
+                            for (var ei = 0; ei < endpoints.Length; ei++)
+                            {
+                                var candidate = endpoints[ei];
+                                var delta = candidate - anchorEndpoint;
+                                var along = delta.DotProduct(outwardUnit);
+                                if (along < gapMin || along > gapMax)
+                                {
+                                    continue;
+                                }
+
+                                if (DistancePointToInfiniteLine(candidate, lineA, lineB) > collinearEndpointTol)
+                                {
+                                    continue;
+                                }
+
+                                if (!found || along < bestAlong)
+                                {
+                                    found = true;
+                                    bestAlong = along;
+                                    gapEndpoint = candidate;
+                                }
+                            }
+                        }
+
+                        return found;
+                    }
+
+                    bool TryFindNextSectionSplit(
+                        Point2d from,
+                        Vector2d outwardUnit,
+                        Point2d lineA,
+                        Point2d lineB,
+                        out Point2d splitPoint)
+                    {
+                        splitPoint = default;
+                        var found = false;
+                        var bestAlong = double.MaxValue;
+                        const double minAlong = 80.0;
+                        const double maxAlong = 1200.0;
+                        const double splitTouchTol = 0.90;
+                        foreach (var split in sectionVerticalSplitSegments)
+                        {
+                            if (!TryIntersectInfiniteLinesForPluginGeometry(lineA, lineB, split.A, split.B, out var intersection))
+                            {
+                                continue;
+                            }
+
+                            var along = (intersection - from).DotProduct(outwardUnit);
+                            if (along < minAlong || along > maxAlong)
+                            {
+                                continue;
+                            }
+
+                            if (DistancePointToSegment(intersection, split.A, split.B) > splitTouchTol)
+                            {
+                                continue;
+                            }
+
+                            if (!found || along < bestAlong)
+                            {
+                                found = true;
+                                bestAlong = along;
+                                splitPoint = intersection;
+                            }
+                        }
+
+                        return found;
+                    }
+
+                    bool TryRetargetCorrectionOuterAsZeroCompanion(
+                        CorrectionSegment source,
+                        Point2d near,
+                        Point2d far)
+                    {
+                        if (source.Id.IsNull || near.GetDistanceTo(far) <= 1e-4)
+                        {
+                            return false;
+                        }
+
+                        Entity? writable = null;
+                        try
+                        {
+                            writable = tr.GetObject(source.Id, OpenMode.ForWrite, false) as Entity;
+                        }
+                        catch (Autodesk.AutoCAD.Runtime.Exception)
+                        {
+                            return false;
+                        }
+
+                        if (writable == null || writable.IsErased)
+                        {
+                            return false;
+                        }
+
+                        if (writable is Line line)
+                        {
+                            var start = new Point2d(line.StartPoint.X, line.StartPoint.Y);
+                            var end = new Point2d(line.EndPoint.X, line.EndPoint.Y);
+                            var keepForward =
+                                start.GetDistanceTo(source.A) + end.GetDistanceTo(source.B) <=
+                                start.GetDistanceTo(source.B) + end.GetDistanceTo(source.A);
+                            line.StartPoint = keepForward
+                                ? new Point3d(near.X, near.Y, line.StartPoint.Z)
+                                : new Point3d(far.X, far.Y, line.StartPoint.Z);
+                            line.EndPoint = keepForward
+                                ? new Point3d(far.X, far.Y, line.EndPoint.Z)
+                                : new Point3d(near.X, near.Y, line.EndPoint.Z);
+                            line.Layer = LayerUsecCorrectionZero;
+                            line.ColorIndex = 256;
+                            return true;
+                        }
+
+                        if (writable is Polyline polyline && !polyline.Closed && polyline.NumberOfVertices >= 2)
+                        {
+                            var startIndex = 0;
+                            var endIndex = polyline.NumberOfVertices - 1;
+                            var start = polyline.GetPoint2dAt(startIndex);
+                            var end = polyline.GetPoint2dAt(endIndex);
+                            var keepForward =
+                                start.GetDistanceTo(source.A) + end.GetDistanceTo(source.B) <=
+                                start.GetDistanceTo(source.B) + end.GetDistanceTo(source.A);
+                            polyline.SetPointAt(startIndex, keepForward ? near : far);
+                            polyline.SetPointAt(endIndex, keepForward ? far : near);
+                            polyline.Layer = LayerUsecCorrectionZero;
+                            polyline.ColorIndex = 256;
+                            return true;
+                        }
+
+                        return false;
+                    }
+
+                    bool TryFindZeroEndpointForOffsetDiagonal(
+                        Point2d splitPoint,
+                        Vector2d outwardUnit,
+                        out Point2d zeroEndpoint,
+                        out CorrectionSegment diagonalOuter,
+                        out Point2d correctedOffsetNear,
+                        out Point2d correctedOffsetFar)
+                    {
+                        zeroEndpoint = default;
+                        diagonalOuter = default;
+                        correctedOffsetNear = default;
+                        correctedOffsetFar = default;
+                        var found = false;
+                        var bestScore = double.MaxValue;
+                        const double splitOffsetMin = 3.0;
+                        const double splitOffsetMax = 7.5;
+                        const double zeroEndpointTouchTol = 1.50;
+                        const double minAlong = 100.0;
+                        const double maxAlong = 1200.0;
+
+                        foreach (var outer in liveOuterSegments)
+                        {
+                            if (outer.Id.IsNull ||
+                                !string.Equals(outer.Layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+
+                            var endpoints = new[] { outer.A, outer.B };
+                            for (var nearIndex = 0; nearIndex <= 1; nearIndex++)
+                            {
+                                var near = endpoints[nearIndex];
+                                var far = endpoints[1 - nearIndex];
+                                var splitGap = near.GetDistanceTo(splitPoint);
+                                if (splitGap < splitOffsetMin || splitGap > splitOffsetMax)
+                                {
+                                    continue;
+                                }
+
+                                var along = (far - splitPoint).DotProduct(outwardUnit);
+                                if (along < minAlong || along > maxAlong)
+                                {
+                                    continue;
+                                }
+
+                                foreach (var vertical in ordinaryVerticalCorridorAnchors)
+                                {
+                                    if (!IsZeroVerticalLayer(vertical.Layer))
+                                    {
+                                        continue;
+                                    }
+
+                                    var verticalEndpoints = new[] { vertical.A, vertical.B };
+                                    for (var vi = 0; vi < verticalEndpoints.Length; vi++)
+                                    {
+                                        var candidate = verticalEndpoints[vi];
+                                        var endpointGap = candidate.GetDistanceTo(far);
+                                        if (endpointGap > zeroEndpointTouchTol)
+                                        {
+                                            continue;
+                                        }
+
+                                        var axisGap = Math.Abs(candidate.Y - splitPoint.Y);
+                                        if (axisGap < 18.0 || axisGap > 35.5)
+                                        {
+                                            continue;
+                                        }
+
+                                        var insetVector = near - splitPoint;
+                                        var recoveredOriginalFar = far - insetVector;
+                                        var score = splitGap + endpointGap + Math.Abs(along - 800.0) * 0.001;
+                                        if (!found || score < bestScore)
+                                        {
+                                            found = true;
+                                            bestScore = score;
+                                            zeroEndpoint = recoveredOriginalFar;
+                                            diagonalOuter = outer;
+                                            correctedOffsetNear = near;
+                                            correctedOffsetFar = far;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        return found;
+                    }
+
+                    bool TryFindThirtyEndpointForLocalZeroEndpoint(
+                        Point2d zeroEndpoint,
+                        Point2d lineA,
+                        Point2d lineB,
+                        out Point2d thirtyEndpoint)
+                    {
+                        thirtyEndpoint = default;
+                        var dir = lineB - lineA;
+                        var len = dir.Length;
+                        if (len <= 1e-6)
+                        {
+                            return false;
+                        }
+
+                        var u = dir / len;
+                        var found = false;
+                        var bestScore = double.MaxValue;
+                        const double alongMin = -2.0;
+                        const double alongMax = 16.0;
+                        const double endpointDistanceMax = 18.0;
+                        const double offsetTol = 1.40;
+                        foreach (var vertical in ordinaryVerticalCorridorAnchors)
+                        {
+                            if (!IsThirtyVerticalLayer(vertical.Layer))
+                            {
+                                continue;
+                            }
+
+                            var endpoints = new[] { vertical.A, vertical.B };
+                            for (var ei = 0; ei < endpoints.Length; ei++)
+                            {
+                                var candidate = endpoints[ei];
+                                var delta = candidate - zeroEndpoint;
+                                var along = delta.DotProduct(u);
+                                if (along < alongMin || along > alongMax)
+                                {
+                                    continue;
+                                }
+
+                                var endpointDistance = zeroEndpoint.GetDistanceTo(candidate);
+                                if (endpointDistance > endpointDistanceMax)
+                                {
+                                    continue;
+                                }
+
+                                var offsetDistance = Math.Abs(DistancePointToInfiniteLine(candidate, lineA, lineB));
+                                var offsetDelta = Math.Abs(offsetDistance - CorrectionLinePostInsetMeters);
+                                if (offsetDelta > offsetTol)
+                                {
+                                    continue;
+                                }
+
+                                var score = offsetDelta + (endpointDistance * 0.01);
+                                if (!found || score < bestScore)
+                                {
+                                    found = true;
+                                    bestScore = score;
+                                    thirtyEndpoint = candidate;
+                                }
+                            }
+                        }
+
+                        return found;
+                    }
+
+                    bool TryFindOuterEndpointForLocalZeroEndpoint(
+                        Point2d zeroEndpoint,
+                        Point2d lineA,
+                        Point2d lineB,
+                        out Point2d outerEndpoint)
+                    {
+                        outerEndpoint = default;
+                        var dir = lineB - lineA;
+                        var len = dir.Length;
+                        if (len <= 1e-6)
+                        {
+                            return false;
+                        }
+
+                        var u = dir / len;
+                        var found = false;
+                        var bestScore = double.MaxValue;
+                        const double endpointDistanceMax = 7.0;
+                        const double alongTol = 1.60;
+                        const double offsetTol = 1.25;
+                        foreach (var outer in liveOuterSegments)
+                        {
+                            if (!string.Equals(outer.Layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+
+                            var endpoints = new[] { outer.A, outer.B };
+                            for (var ei = 0; ei < endpoints.Length; ei++)
+                            {
+                                var candidate = endpoints[ei];
+                                var delta = candidate - zeroEndpoint;
+                                var endpointDistance = zeroEndpoint.GetDistanceTo(candidate);
+                                if (endpointDistance > endpointDistanceMax)
+                                {
+                                    continue;
+                                }
+
+                                var alongGap = Math.Abs(delta.DotProduct(u));
+                                if (alongGap > alongTol)
+                                {
+                                    continue;
+                                }
+
+                                var perpendicularGap = Math.Sqrt(Math.Max(0.0, (endpointDistance * endpointDistance) - (alongGap * alongGap)));
+                                var offsetDelta = Math.Abs(perpendicularGap - CorrectionLinePostInsetMeters);
+                                if (offsetDelta > offsetTol)
+                                {
+                                    continue;
+                                }
+
+                                var score = offsetDelta + alongGap;
+                                if (!found || score < bestScore)
+                                {
+                                    found = true;
+                                    bestScore = score;
+                                    outerEndpoint = candidate;
+                                }
+                            }
+                        }
+
+                        return found;
+                    }
+
+                    int RestoreOuterSpansFromLocalZeroCompanions()
+                    {
+                        var liveInnerSegments = CollectHorizontalCorrectionSegments(
+                            tr,
+                            ms,
+                            layer => string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase));
+                        var restored = 0;
+                        const double minRestoreLength = 80.0;
+                        const double maxLocalCompanionLength = 1200.0;
+                        foreach (var inner in liveInnerSegments)
+                        {
+                            if (!inner.IsHorizontalLike ||
+                                inner.Length < minRestoreLength ||
+                                inner.Length > maxLocalCompanionLength)
+                            {
+                                continue;
+                            }
+
+                            var endpointPairs = new[]
+                            {
+                                (ZeroStart: inner.A, ZeroEnd: inner.B),
+                                (ZeroStart: inner.B, ZeroEnd: inner.A),
+                            };
+                            for (var pi = 0; pi < endpointPairs.Length; pi++)
+                            {
+                                var pair = endpointPairs[pi];
+                                var hasThirty = TryFindThirtyEndpointForLocalZeroEndpoint(pair.ZeroStart, inner.A, inner.B, out var thirtyEndpoint);
+                                var hasOuter = TryFindOuterEndpointForLocalZeroEndpoint(pair.ZeroEnd, inner.A, inner.B, out var outerEndpoint);
+
+                                if (!hasThirty ||
+                                    !hasOuter ||
+                                    thirtyEndpoint.GetDistanceTo(outerEndpoint) < minRestoreLength)
+                                {
+                                    continue;
+                                }
+
+                                var innerDir = inner.B - inner.A;
+                                var restoreDir = outerEndpoint - thirtyEndpoint;
+                                if (innerDir.Length <= 1e-6 ||
+                                    restoreDir.Length <= 1e-6 ||
+                                    Math.Abs((innerDir / innerDir.Length).DotProduct(restoreDir / restoreDir.Length)) < 0.985)
+                                {
+                                    continue;
+                                }
+
+                                if (HasMatchingCorrectionSegment(liveInnerSegments, thirtyEndpoint, outerEndpoint))
+                                {
+                                    continue;
+                                }
+
+                                if (TryAddOuter(thirtyEndpoint, outerEndpoint, "from local zero companion to 30.18 vertical endpoint"))
+                                {
+                                    restored++;
+                                }
+                            }
+                        }
+
+                        return restored;
+                    }
+
+                    double GetProjectedParameter(Point2d point, Point2d a, Point2d b)
+                    {
+                        var dir = b - a;
+                        var lenSquared = dir.DotProduct(dir);
+                        if (lenSquared <= 1e-9)
+                        {
+                            return 0.0;
+                        }
+
+                        return ((point - a).DotProduct(dir)) / lenSquared;
+                    }
+
+                    int CountInteriorVerticalBreakpoints(CorrectionSegment segment)
+                    {
+                        var breakpoints = new List<Point2d>();
+                        const double verticalTouchTol = 16.0;
+                        foreach (var vertical in ordinaryVerticalCorridorAnchors)
+                        {
+                            var endpoints = new[] { vertical.A, vertical.B };
+                            for (var ei = 0; ei < endpoints.Length; ei++)
+                            {
+                                var endpoint = endpoints[ei];
+                                var parameter = GetProjectedParameter(endpoint, segment.A, segment.B);
+                                if (parameter <= 0.05 || parameter >= 0.95)
+                                {
+                                    continue;
+                                }
+
+                                if (DistancePointToSegment(endpoint, segment.A, segment.B) > verticalTouchTol)
+                                {
+                                    continue;
+                                }
+
+                                if (breakpoints.Any(existing => existing.GetDistanceTo(endpoint) <= 18.0))
+                                {
+                                    continue;
+                                }
+
+                                breakpoints.Add(endpoint);
+                            }
+                        }
+
+                        return breakpoints.Count;
+                    }
+
+                    int EraseOverlongCorrectionZeroBridges()
+                    {
+                        var liveInnerSegments = CollectHorizontalCorrectionSegments(
+                            tr,
+                            ms,
+                            layer => string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase));
+                        var erased = 0;
+                        const double overlongBridgeMinLength = 1600.0;
+                        foreach (var inner in liveInnerSegments)
+                        {
+                            var breakpointCount = CountInteriorVerticalBreakpoints(inner);
+
+                            if (inner.Id.IsNull ||
+                                !inner.IsHorizontalLike ||
+                                inner.Length < overlongBridgeMinLength ||
+                                breakpointCount < 2)
+                            {
+                                continue;
+                            }
+
+                            Entity? writable = null;
+                            try
+                            {
+                                writable = tr.GetObject(inner.Id, OpenMode.ForWrite, false) as Entity;
+                            }
+                            catch (Autodesk.AutoCAD.Runtime.Exception)
+                            {
+                                continue;
+                            }
+
+                            if (writable == null || writable.IsErased)
+                            {
+                                continue;
+                            }
+
+                            writable.Erase();
+                            erased++;
+                            logger?.WriteLine(
+                                $"Cleanup: erased overlong correction zero bridge A=({inner.A.X:0.###},{inner.A.Y:0.###}) B=({inner.B.X:0.###},{inner.B.Y:0.###}).");
+                        }
+
+                        return erased;
+                    }
+
+                    var restoredCount = 0;
+                    var initialOuterCount = correctionOuterAnchors.Count;
+                    for (var ai = 0; ai < initialOuterCount; ai++)
+                    {
+                        var anchor = correctionOuterAnchors[ai];
+                        var endpoints = new[] { anchor.A, anchor.B };
+                        for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                        {
+                            var anchorEndpoint = endpoints[endpointIndex];
+                            var anchorOther = endpoints[1 - endpointIndex];
+                            var outward = anchorEndpoint - anchorOther;
+                            var outwardLen = outward.Length;
+                            if (outwardLen <= 1e-6)
+                            {
+                                continue;
+                            }
+
+                            var outwardUnit = outward / outwardLen;
+                            if (!TryFindThirtyGapEndpoint(anchorEndpoint, outwardUnit, anchor.A, anchor.B, out var gapEndpoint))
+                            {
+                                continue;
+                            }
+
+                            if (!TryFindNextSectionSplit(gapEndpoint, outwardUnit, anchor.A, anchor.B, out var splitPoint))
+                            {
+                                continue;
+                            }
+
+                            if (!TryFindZeroEndpointForOffsetDiagonal(
+                                    splitPoint,
+                                    outwardUnit,
+                                    out var zeroEndpoint,
+                                    out var diagonalOuter,
+                                    out var correctedOffsetNear,
+                                    out var correctedOffsetFar) ||
+                                zeroEndpoint.GetDistanceTo(splitPoint) <= 1e-4)
+                            {
+                                continue;
+                            }
+
+                            var splitToOffsetNearGap = splitPoint.GetDistanceTo(correctedOffsetNear);
+                            var splitHasStandardCorrectionInset =
+                                Math.Abs(splitToOffsetNearGap - CorrectionLinePostInsetMeters) <= 0.75;
+                            var firstOuterEnd = splitHasStandardCorrectionInset ? splitPoint : correctedOffsetNear;
+
+                            if (TryAddOuter(
+                                    gapEndpoint,
+                                    firstOuterEnd,
+                                    splitHasStandardCorrectionInset
+                                        ? "across 30.18 gap to split"
+                                        : "across 30.18 gap to clipped correction-zero buffer endpoint"))
+                            {
+                                restoredCount++;
+                            }
+
+                            if (splitHasStandardCorrectionInset &&
+                                TryAddOuter(splitPoint, zeroEndpoint, "from split to same-side zero boundary"))
+                            {
+                                restoredCount++;
+                            }
+
+                            if (TryRetargetCorrectionOuterAsZeroCompanion(diagonalOuter, correctedOffsetNear, correctedOffsetFar))
+                            {
+                                restoredCount++;
+                                logger?.WriteLine(
+                                    $"Cleanup: retargeted deflected correction offset companion A=({correctedOffsetNear.X:0.###},{correctedOffsetNear.Y:0.###}) B=({correctedOffsetFar.X:0.###},{correctedOffsetFar.Y:0.###}).");
+                            }
+                        }
+                    }
+
+                    restoredCount += RestoreOuterSpansFromLocalZeroCompanions();
+                    restoredCount += EraseOverlongCorrectionZeroBridges();
+
+                    return restoredCount;
+                }
+
+                var restoredDeflectedCorrectionOuters = RestoreDeflectedCorrectionOuterAcrossVerticalGaps();
+                converted += restoredDeflectedCorrectionOuters;
+
                 tr.Commit();
             }
 
@@ -5922,6 +10801,7 @@ namespace AtsBackgroundBuilder
             }
 
             var clipWindows = MergeOverlappingClipWindows(BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0));
+            var coreClipWindows = MergeOverlappingClipWindows(BuildBufferedQuarterWindows(database, requestedQuarterIds, 0.0));
             if (clipWindows.Count == 0)
             {
                 return false;
@@ -6068,6 +10948,8 @@ namespace AtsBackgroundBuilder
                 var correctionOuterSegments = new List<(Point2d A, Point2d B, Point2d Mid, double MinX, double MaxX)>();
                 var verticalTargets = new List<(ObjectId Id, Point2d A, Point2d B, double MinY, double MaxY, double AxisX)>();
                 var verticalProtectedRestoreTargets = new List<(ObjectId Id, Point2d A, Point2d B, double MinY, double MaxY, double AxisX)>();
+                var verticalTwentyTargets = new List<(ObjectId Id, Point2d A, Point2d B, double MinY, double MaxY, double AxisX)>();
+                var verticalThirtyTargets = new List<(ObjectId Id, Point2d A, Point2d B, double MinY, double MaxY, double AxisX)>();
                 var verticalEndpointAnchors = new List<(Point2d A, Point2d B)>();
                 var horizontalEndpointAnchors = new List<(ObjectId Id, Point2d A, Point2d B)>();
                 var sectionVerticalSplitSegments = new List<(Point2d A, Point2d B, double MinY, double MaxY)>();
@@ -6114,6 +10996,22 @@ namespace AtsBackgroundBuilder
                     if (IsVerticalLike(a, b) && IsVerticalProtectedRestoreLayer(layer))
                     {
                         verticalProtectedRestoreTargets.Add((id, a, b, Math.Min(a.Y, b.Y), Math.Max(a.Y, b.Y), 0.5 * (a.X + b.X)));
+                    }
+
+                    if (IsVerticalLike(a, b) &&
+                        (string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        verticalTwentyTargets.Add((id, a, b, Math.Min(a.Y, b.Y), Math.Max(a.Y, b.Y), 0.5 * (a.X + b.X)));
+                    }
+
+                    if (IsVerticalLike(a, b) &&
+                        (string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        verticalThirtyTargets.Add((id, a, b, Math.Min(a.Y, b.Y), Math.Max(a.Y, b.Y), 0.5 * (a.X + b.X)));
                     }
 
                     if (IsVerticalLike(a, b) && IsSectionVerticalSplitLayer(layer))
@@ -6188,6 +11086,7 @@ namespace AtsBackgroundBuilder
                 var splitInnerFromOuterAnchors = 0;
                 var splitOuterSources = 0;
                 var splitOuterCreated = 0;
+                var erasedOverlongCorrectionZeroBridges = 0;
                 var sampleMoves = new List<string>();
                 var verticalTargetBestSnapByEndpoint = new Dictionary<(ObjectId TargetId, bool MoveStart), (Point2d OriginalEndpoint, double BestDistanceFromOriginal)>();
 
@@ -6728,6 +11627,232 @@ namespace AtsBackgroundBuilder
                         break;
                     }
                     return true;
+                }
+
+                bool TryForceSpecificVerticalEndpointToPoint(
+                    ObjectId targetId,
+                    Point2d touchPoint,
+                    Point2d connectionPoint)
+                {
+                    if (targetId.IsNull)
+                    {
+                        return false;
+                    }
+
+                    Entity? targetWritable = null;
+                    try
+                    {
+                        targetWritable = tr.GetObject(targetId, OpenMode.ForWrite, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        return false;
+                    }
+
+                    if (targetWritable == null || targetWritable.IsErased)
+                    {
+                        return false;
+                    }
+
+                    if (!TryReadOpenLinearSegment(targetWritable, out var currentA, out var currentB))
+                    {
+                        return false;
+                    }
+
+                    var startDistance = Math.Min(currentA.GetDistanceTo(touchPoint), currentA.GetDistanceTo(connectionPoint));
+                    var endDistance = Math.Min(currentB.GetDistanceTo(touchPoint), currentB.GetDistanceTo(connectionPoint));
+                    var moveStart = startDistance <= endDistance;
+                    var moveEndpoint = moveStart ? currentA : currentB;
+                    var endpointMoveDistance = moveEndpoint.GetDistanceTo(connectionPoint);
+                    if (endpointMoveDistance > protectedTouchingVerticalRestoreMax ||
+                        endpointMoveDistance <= exactEndpointMoveTol)
+                    {
+                        return false;
+                    }
+
+                    var fixedEndpoint = moveStart ? currentB : currentA;
+                    if (fixedEndpoint.GetDistanceTo(connectionPoint) < minRemainingLength)
+                    {
+                        return false;
+                    }
+
+                    if (!TryMoveEndpoint(targetWritable, moveStart, connectionPoint, exactEndpointMoveTol))
+                    {
+                        return false;
+                    }
+
+                    if (!TryReadOpenLinearSegment(targetWritable, out var newA, out var newB))
+                    {
+                        return true;
+                    }
+
+                    for (var i = 0; i < verticalTargets.Count; i++)
+                    {
+                        if (verticalTargets[i].Id != targetId)
+                        {
+                            continue;
+                        }
+
+                        verticalTargets[i] = (
+                            targetId,
+                            newA,
+                            newB,
+                            Math.Min(newA.Y, newB.Y),
+                            Math.Max(newA.Y, newB.Y),
+                            0.5 * (newA.X + newB.X));
+                        break;
+                    }
+
+                    for (var i = 0; i < verticalProtectedRestoreTargets.Count; i++)
+                    {
+                        if (verticalProtectedRestoreTargets[i].Id != targetId)
+                        {
+                            continue;
+                        }
+
+                        verticalProtectedRestoreTargets[i] = (
+                            targetId,
+                            newA,
+                            newB,
+                            Math.Min(newA.Y, newB.Y),
+                            Math.Max(newA.Y, newB.Y),
+                            0.5 * (newA.X + newB.X));
+                        break;
+                    }
+
+                    for (var i = 0; i < verticalTwentyTargets.Count; i++)
+                    {
+                        if (verticalTwentyTargets[i].Id != targetId)
+                        {
+                            continue;
+                        }
+
+                        verticalTwentyTargets[i] = (
+                            targetId,
+                            newA,
+                            newB,
+                            Math.Min(newA.Y, newB.Y),
+                            Math.Max(newA.Y, newB.Y),
+                            0.5 * (newA.X + newB.X));
+                        break;
+                    }
+
+                    for (var i = 0; i < verticalThirtyTargets.Count; i++)
+                    {
+                        if (verticalThirtyTargets[i].Id != targetId)
+                        {
+                            continue;
+                        }
+
+                        verticalThirtyTargets[i] = (
+                            targetId,
+                            newA,
+                            newB,
+                            Math.Min(newA.Y, newB.Y),
+                            Math.Max(newA.Y, newB.Y),
+                            0.5 * (newA.X + newB.X));
+                        break;
+                    }
+
+                    return true;
+                }
+
+                bool TryResolveMixedTwentyThirtyOuterEndpointTarget(
+                    Point2d endpoint,
+                    Point2d other,
+                    out Point2d targetPoint,
+                    out ObjectId touchingThirtyId)
+                {
+                    targetPoint = endpoint;
+                    touchingThirtyId = ObjectId.Null;
+
+                    const double endpointTouchTol = 0.80;
+                    const double axisGapTarget = CorrectionLinePostInsetMeters * 2.0;
+                    const double axisGapTol = 1.40;
+                    const double outerToTwentyGapTarget = CorrectionLinePostInsetMeters;
+                    const double outerToTwentyGapTol = 1.40;
+                    const double targetMoveMax = 2.5;
+
+                    var found = false;
+                    var bestScore = double.MaxValue;
+                    var bestMove = double.MaxValue;
+                    for (var ti = 0; ti < verticalThirtyTargets.Count; ti++)
+                    {
+                        var thirty = verticalThirtyTargets[ti];
+                        var thirtyEndpointA = endpoint.GetDistanceTo(thirty.A);
+                        var thirtyEndpointB = endpoint.GetDistanceTo(thirty.B);
+                        if (thirtyEndpointA > endpointTouchTol && thirtyEndpointB > endpointTouchTol)
+                        {
+                            continue;
+                        }
+
+                        for (var vi = 0; vi < verticalTwentyTargets.Count; vi++)
+                        {
+                            var twenty = verticalTwentyTargets[vi];
+                            var touchingThirtyPoint = thirtyEndpointA <= thirtyEndpointB
+                                ? thirty.A
+                                : thirty.B;
+                            var twentyEndpoints = new[] { twenty.A, twenty.B };
+                            for (var ei = 0; ei < twentyEndpoints.Length; ei++)
+                            {
+                                var twentyEndpoint = twentyEndpoints[ei];
+                                var axisGap = Math.Abs(touchingThirtyPoint.X - twentyEndpoint.X);
+                                if (Math.Abs(axisGap - axisGapTarget) > axisGapTol)
+                                {
+                                    continue;
+                                }
+
+                                var currentGap = endpoint.Y - twentyEndpoint.Y;
+                                var gapSign = Math.Sign(currentGap);
+                                if (gapSign == 0)
+                                {
+                                    continue;
+                                }
+
+                                if (Math.Abs(Math.Abs(currentGap) - outerToTwentyGapTarget) > outerToTwentyGapTol)
+                                {
+                                    continue;
+                                }
+
+                                var candidateTarget = new Point2d(
+                                    touchingThirtyPoint.X,
+                                    twentyEndpoint.Y + (gapSign * CorrectionLinePostInsetMeters));
+                                if (candidateTarget.Y < thirty.MinY - endpointTouchTol ||
+                                    candidateTarget.Y > thirty.MaxY + endpointTouchTol)
+                                {
+                                    continue;
+                                }
+
+                                if (other.GetDistanceTo(candidateTarget) < minRemainingLength)
+                                {
+                                    continue;
+                                }
+
+                                var move = endpoint.GetDistanceTo(candidateTarget);
+                                if (move <= exactEndpointMoveTol || move > targetMoveMax)
+                                {
+                                    continue;
+                                }
+
+                                var score =
+                                    Math.Abs(axisGap - axisGapTarget) +
+                                    Math.Abs(Math.Abs(currentGap) - outerToTwentyGapTarget) +
+                                    (move * 3.0);
+                                if (!found ||
+                                    score < bestScore - 1e-6 ||
+                                    (Math.Abs(score - bestScore) <= 1e-6 && move < bestMove - 1e-6))
+                                {
+                                    found = true;
+                                    bestScore = score;
+                                    bestMove = move;
+                                    targetPoint = candidateTarget;
+                                    touchingThirtyId = thirty.Id;
+                                }
+                            }
+                        }
+                    }
+
+                    return found;
                 }
 
                 bool TryAdjustVerticalTargetEndpointToPoint(
@@ -7586,6 +12711,42 @@ namespace AtsBackgroundBuilder
                                 changed = true;
                             }
 
+                            if (TryResolveMixedTwentyThirtyOuterEndpointTarget(endpoint, other, out var mixedThirtyTarget, out var touchingThirtyId))
+                            {
+                                if (TryMoveEndpoint(writable, moveStart, mixedThirtyTarget, endpointMoveTol))
+                                {
+                                    movedEndpoints++;
+                                    movedHorizontalEndpoints++;
+                                    updatedEndpoint = mixedThirtyTarget;
+                                    changed = true;
+                                    if (sampleMoves.Count < 24)
+                                    {
+                                        sampleMoves.Add(
+                                            string.Format(
+                                                CultureInfo.InvariantCulture,
+                                                "id={0} {1} C-outer mixed30 ({2:0.###},{3:0.###})->({4:0.###},{5:0.###})",
+                                                source.Id.Handle.ToString(),
+                                                moveStart ? "start" : "end",
+                                                endpoint.X,
+                                                endpoint.Y,
+                                                mixedThirtyTarget.X,
+                                                mixedThirtyTarget.Y));
+                                    }
+                                }
+
+                                if (TryForceSpecificVerticalEndpointToPoint(touchingThirtyId, endpoint, mixedThirtyTarget))
+                                {
+                                    movedEndpoints++;
+                                    movedVerticalEndpoints++;
+                                    changed = true;
+                                }
+
+                                if (changed)
+                                {
+                                    return true;
+                                }
+                            }
+
                             if (IsEndpointSharedWithOtherOuterSegments(source.Id, endpoint) ||
                                 IsEndpointAnchoredToVerticalTargetEndpoint(endpoint))
                             {
@@ -7674,6 +12835,7 @@ namespace AtsBackgroundBuilder
                             Math.Min(source.A.X, source.B.X),
                             Math.Max(source.A.X, source.B.X)));
                     }
+
                 }
 
                 // Keep correction inner boundaries local to each quarter span: split any
@@ -7719,6 +12881,105 @@ namespace AtsBackgroundBuilder
                     }
 
                     return false;
+                }
+
+                double GetCorrectionZeroBridgeParameter(Point2d point, Point2d a, Point2d b)
+                {
+                    var dir = b - a;
+                    var lenSquared = dir.DotProduct(dir);
+                    if (lenSquared <= 1e-9)
+                    {
+                        return 0.0;
+                    }
+
+                    return ((point - a).DotProduct(dir)) / lenSquared;
+                }
+
+                int CountInteriorCorrectionZeroBridgeBreakpoints(CorrectionSegment segment)
+                {
+                    var breakpoints = new List<Point2d>();
+                    const double verticalTouchTol = 24.0;
+                    const double uniqueBreakpointTol = 18.0;
+
+                    void TryAddBreakpoint(Point2d endpoint)
+                    {
+                        var parameter = GetCorrectionZeroBridgeParameter(endpoint, segment.A, segment.B);
+                        if (parameter <= 0.05 || parameter >= 0.95)
+                        {
+                            return;
+                        }
+
+                        if (DistancePointToSegment(endpoint, segment.A, segment.B) > verticalTouchTol)
+                        {
+                            return;
+                        }
+
+                        if (breakpoints.Any(existing => existing.GetDistanceTo(endpoint) <= uniqueBreakpointTol))
+                        {
+                            return;
+                        }
+
+                        breakpoints.Add(endpoint);
+                    }
+
+                    for (var vi = 0; vi < verticalEndpointAnchors.Count; vi++)
+                    {
+                        var vertical = verticalEndpointAnchors[vi];
+                        TryAddBreakpoint(vertical.A);
+                        TryAddBreakpoint(vertical.B);
+                    }
+
+                    for (var si = 0; si < sectionVerticalSplitSegments.Count; si++)
+                    {
+                        var split = sectionVerticalSplitSegments[si];
+                        TryAddBreakpoint(split.A);
+                        TryAddBreakpoint(split.B);
+                    }
+
+                    return breakpoints.Count;
+                }
+
+                int EraseOverlongCorrectionZeroBridgesAfterSplit()
+                {
+                    var liveInnerSegments = CollectHorizontalCorrectionSegments(
+                        tr,
+                        ms,
+                        layer => string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase));
+                    var erased = 0;
+                    const double overlongBridgeMinLength = 1600.0;
+                    foreach (var inner in liveInnerSegments)
+                    {
+                        var breakpointCount = CountInteriorCorrectionZeroBridgeBreakpoints(inner);
+                        if (inner.Id.IsNull ||
+                            !inner.IsHorizontalLike ||
+                            inner.Length < overlongBridgeMinLength ||
+                            breakpointCount < 2)
+                        {
+                            continue;
+                        }
+
+                        Entity? writable = null;
+                        try
+                        {
+                            writable = tr.GetObject(inner.Id, OpenMode.ForWrite, false) as Entity;
+                        }
+                        catch (Autodesk.AutoCAD.Runtime.Exception)
+                        {
+                            continue;
+                        }
+
+                        if (writable == null || writable.IsErased)
+                        {
+                            continue;
+                        }
+
+                        writable.Erase();
+                        erased++;
+                        logger?.WriteLine(
+                            $"CorrectionLine: erased overlong correction-zero bridge after split A=({inner.A.X:0.###},{inner.A.Y:0.###}) B=({inner.B.X:0.###},{inner.B.Y:0.###}) breakpoints={breakpointCount}.");
+                    }
+
+                    return erased;
                 }
 
                 for (var i = 0; i < correctionInnerSources.Count; i++)
@@ -7887,6 +13148,8 @@ namespace AtsBackgroundBuilder
                         splitInnerCreated++;
                     }
                 }
+
+                erasedOverlongCorrectionZeroBridges += EraseOverlongCorrectionZeroBridgesAfterSplit();
 
                 // Keep correction outer boundaries local to quarter spans too. Without matching
                 // splits on L-USEC-C, a single survivor can visually run across a north/south
@@ -8517,6 +13780,8 @@ namespace AtsBackgroundBuilder
                 // still covers that missing span one band away.
                 var longSplitCorrectionZeroOverlapCreated = 0;
                 var longSplitCorrectionZeroOverlapSamples = new List<string>();
+                var verticalQsecCorrectionZeroRetargeted = 0;
+                var verticalQsecCorrectionZeroSamples = new List<string>();
                 var liveSplitCorrectionZeroSegments = liveCorrectionZeroSegments.ToList();
                 var liveSplitOrdinaryVerticals = liveOrdinaryVerticals.ToList();
                 var liveSplitCorrectionOuterSegments = correctionOuterSources
@@ -8592,6 +13857,226 @@ namespace AtsBackgroundBuilder
                         Math.Abs(endpointDistance - CorrectionLinePostInsetMeters));
 
                     return score <= longSplitCorrectionZeroEndpointTol;
+                }
+
+                int RetargetVerticalQsecEndpointsToCorrectionZeroIntersections()
+                {
+                    var zeroRows = new List<CorrectionSegment>();
+                    var outerRows = new List<CorrectionSegment>();
+                    var qsecRows = new List<(ObjectId Id, Point2d A, Point2d B)>();
+                    foreach (ObjectId id in ms)
+                    {
+                        Entity? ent = null;
+                        try
+                        {
+                            ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                        }
+                        catch (Autodesk.AutoCAD.Runtime.Exception)
+                        {
+                            continue;
+                        }
+
+                        if (ent == null || ent.IsErased)
+                        {
+                            continue;
+                        }
+
+                        if (!TryReadOpenLinearSegment(ent, out var a, out var b) ||
+                            !DoesSegmentIntersectAnyWindow(a, b))
+                        {
+                            continue;
+                        }
+
+                        var layer = ent.Layer ?? string.Empty;
+                        if (string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) &&
+                            IsHorizontalLike(a, b))
+                        {
+                            zeroRows.Add(new CorrectionSegment(id, layer, a, b));
+                            continue;
+                        }
+
+                        if (string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) &&
+                            IsHorizontalLike(a, b))
+                        {
+                            outerRows.Add(new CorrectionSegment(id, layer, a, b));
+                            continue;
+                        }
+
+                        if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase) &&
+                            IsVerticalLike(a, b))
+                        {
+                            qsecRows.Add((id, a, b));
+                        }
+                    }
+
+                    if (zeroRows.Count == 0 || qsecRows.Count == 0)
+                    {
+                        return 0;
+                    }
+
+                    double SegmentParameter(Point2d point, Point2d a, Point2d b)
+                    {
+                        var ab = b - a;
+                        var len2 = ab.DotProduct(ab);
+                        if (len2 <= 1e-9)
+                        {
+                            return 0.0;
+                        }
+
+                        return (point - a).DotProduct(ab) / len2;
+                    }
+
+                    bool TouchesCorrectionOuter(Point2d point)
+                    {
+                        for (var i = 0; i < outerRows.Count; i++)
+                        {
+                            var row = outerRows[i];
+                            if (DistancePointToSegment(point, row.A, row.B) <= 0.90)
+                            {
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    }
+
+                    bool TouchesCorrectionZeroEndpoint(Point2d point)
+                    {
+                        for (var i = 0; i < zeroRows.Count; i++)
+                        {
+                            var row = zeroRows[i];
+                            if (point.GetDistanceTo(row.A) <= 1.20 ||
+                                point.GetDistanceTo(row.B) <= 1.20)
+                            {
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    }
+
+                    var retargeted = 0;
+                    const double qsecZeroSegmentTouchTol = 0.75;
+                    const double qsecZeroMinMove = 0.60;
+                    const double qsecZeroMaxMove = 45.0;
+                    const double qsecZeroShortMoveMax = CorrectionLinePostInsetMeters + 1.50;
+                    const double qsecZeroDeepMoveMin = 24.0;
+                    const double qsecZeroDeepMoveMax = 42.0;
+                    const double qsecZeroEndpointSnapTol = 0.35;
+                    const double qsecZeroInteriorParamTol = 0.05;
+
+                    foreach (var qsec in qsecRows)
+                    {
+                        Entity? writable = null;
+                        try
+                        {
+                            writable = tr.GetObject(qsec.Id, OpenMode.ForWrite, false) as Entity;
+                        }
+                        catch (Autodesk.AutoCAD.Runtime.Exception)
+                        {
+                            continue;
+                        }
+
+                        if (writable == null || writable.IsErased ||
+                            !TryReadOpenLinearSegment(writable, out var currentA, out var currentB) ||
+                            !IsVerticalLike(currentA, currentB))
+                        {
+                            continue;
+                        }
+
+                        for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                        {
+                            var endpoint = endpointIndex == 0 ? currentA : currentB;
+                            var other = endpointIndex == 0 ? currentB : currentA;
+                            var endpointTouchesOuter = TouchesCorrectionOuter(endpoint);
+                            var endpointTouchesZeroEndpoint = TouchesCorrectionZeroEndpoint(endpoint);
+                            var bestFound = false;
+                            var bestTarget = endpoint;
+                            var bestScore = double.MaxValue;
+                            var bestKind = string.Empty;
+
+                            for (var zi = 0; zi < zeroRows.Count; zi++)
+                            {
+                                var zero = zeroRows[zi];
+                                if (!TryIntersectInfiniteLines(endpoint, other, zero.A, zero.B, out var intersection))
+                                {
+                                    continue;
+                                }
+
+                                if (DistancePointToSegment(intersection, zero.A, zero.B) > qsecZeroSegmentTouchTol)
+                                {
+                                    continue;
+                                }
+
+                                var target = intersection;
+                                var endpointA = intersection.GetDistanceTo(zero.A);
+                                var endpointB = intersection.GetDistanceTo(zero.B);
+                                if (endpointA <= qsecZeroEndpointSnapTol || endpointB <= qsecZeroEndpointSnapTol)
+                                {
+                                    target = endpointA <= endpointB ? zero.A : zero.B;
+                                }
+
+                                var move = endpoint.GetDistanceTo(target);
+                                if (move <= qsecZeroMinMove || move > qsecZeroMaxMove)
+                                {
+                                    continue;
+                                }
+
+                                var parameter = SegmentParameter(intersection, zero.A, zero.B);
+                                var isShortInsetRetarget =
+                                    move <= qsecZeroShortMoveMax &&
+                                    endpointTouchesOuter;
+                                var isDeepJunctionRetarget =
+                                    endpointTouchesZeroEndpoint &&
+                                    move >= qsecZeroDeepMoveMin &&
+                                    move <= qsecZeroDeepMoveMax &&
+                                    parameter > qsecZeroInteriorParamTol &&
+                                    parameter < 1.0 - qsecZeroInteriorParamTol;
+
+                                if (!isShortInsetRetarget && !isDeepJunctionRetarget)
+                                {
+                                    continue;
+                                }
+
+                                var score = isShortInsetRetarget
+                                    ? move
+                                    : 100.0 - move;
+                                if (!bestFound || score < bestScore)
+                                {
+                                    bestFound = true;
+                                    bestScore = score;
+                                    bestTarget = target;
+                                    bestKind = isShortInsetRetarget ? "short-inset" : "deep-junction";
+                                }
+                            }
+
+                            if (!bestFound)
+                            {
+                                continue;
+                            }
+
+                            if (TryMoveEndpoint(writable, endpointIndex == 0, bestTarget, endpointMoveTol) &&
+                                TryReadOpenLinearSegment(writable, out currentA, out currentB))
+                            {
+                                retargeted++;
+                                if (verticalQsecCorrectionZeroSamples.Count < 8)
+                                {
+                                    verticalQsecCorrectionZeroSamples.Add(
+                                        string.Format(
+                                            CultureInfo.InvariantCulture,
+                                            "qsec={0} kind={1} from=({2:0.###},{3:0.###}) to=({4:0.###},{5:0.###})",
+                                            qsec.Id.Handle.ToString(),
+                                            bestKind,
+                                            endpoint.X,
+                                            endpoint.Y,
+                                            bestTarget.X,
+                                            bestTarget.Y));
+                                }
+                            }
+                        }
+                    }
+
+                    return retargeted;
                 }
 
                 foreach (var zeroRow in liveSplitCorrectionZeroSegments.ToList())
@@ -8705,6 +14190,8 @@ namespace AtsBackgroundBuilder
                     }
                 }
 
+                verticalQsecCorrectionZeroRetargeted += RetargetVerticalQsecEndpointsToCorrectionZeroIntersections();
+
                 if (longSplitCorrectionZeroOverlapCreated > 0)
                 {
                     logger?.WriteLine(
@@ -8715,6 +14202,16 @@ namespace AtsBackgroundBuilder
                     }
                 }
 
+                if (verticalQsecCorrectionZeroRetargeted > 0)
+                {
+                    logger?.WriteLine(
+                        $"CorrectionLine: vertical QSEC correction-zero retarget moved={verticalQsecCorrectionZeroRetargeted}.");
+                    for (var i = 0; i < verticalQsecCorrectionZeroSamples.Count; i++)
+                    {
+                        logger?.WriteLine("CorrectionLine:   qsec-zero " + verticalQsecCorrectionZeroSamples[i]);
+                    }
+                }
+
                 tr.Commit();
                 logger?.WriteLine(
                     $"CorrectionLine: C-0 endpoint snap scanned={scannedEndpoints}, movedEndpoints={movedEndpoints}, movedHorizontal={movedHorizontalEndpoints}, movedVertical={movedVerticalEndpoints}, movedLines={movedLines}, alreadyConnected={alreadyConnected}, sharedSkipped={sharedEndpointSkipped}, noDirectionResolved={noDirectionResolved}, noTargetFound={noTargetFound}, maxMove={maxMove:0.##}.");
@@ -8722,6 +14219,11 @@ namespace AtsBackgroundBuilder
                     $"CorrectionLine: C-0 split at boundaries sources={splitInnerSources}, created={splitInnerCreated}, outerAnchors={splitInnerFromOuterAnchors}.");
                 logger?.WriteLine(
                     $"CorrectionLine: C split at vertical boundaries sources={splitOuterSources}, created={splitOuterCreated}.");
+                if (erasedOverlongCorrectionZeroBridges > 0)
+                {
+                    logger?.WriteLine(
+                        $"CorrectionLine: overlong correction-zero bridge cleanup erased={erasedOverlongCorrectionZeroBridges}.");
+                }
                 logger?.WriteLine(
                     $"CorrectionLine: forced correction outer relayer converted {forcedOuterRelayer} seam-overlap L-USEC20/3018 segment(s) to {LayerUsecCorrection} (anchors={correctionOuterAnchors.Count}).");
                 if (addedInwardShortCorrectionZeroCompanions > 0 || retargetedInwardShortCorrectionZeroVerticals > 0)
@@ -8746,9 +14248,268 @@ namespace AtsBackgroundBuilder
                 return movedEndpoints > 0 ||
                        splitInnerCreated > 0 ||
                        splitOuterCreated > 0 ||
+                       erasedOverlongCorrectionZeroBridges > 0 ||
                        addedInwardShortCorrectionZeroCompanions > 0 ||
                        longSplitCorrectionZeroOverlapCreated > 0 ||
+                       verticalQsecCorrectionZeroRetargeted > 0 ||
                        retargetedInwardShortCorrectionZeroVerticals > 0;
+            }
+        }
+
+        private static bool RetargetVerticalQsecEndpointsToCorrectionZeroIntersections(
+            Database database,
+            IEnumerable<ObjectId> requestedQuarterIds,
+            Logger? logger)
+        {
+            if (database == null || requestedQuarterIds == null)
+            {
+                return false;
+            }
+
+            var clipWindows = MergeOverlappingClipWindows(BuildBufferedQuarterWindows(database, requestedQuarterIds, 100.0));
+            if (clipWindows.Count == 0)
+            {
+                return false;
+            }
+
+            bool DoesSegmentIntersectAnyWindow(Point2d a, Point2d b) => DoesSegmentIntersectAnyWindowForCorrectionLinePost(a, b, clipWindows);
+            bool IsHorizontalLike(Point2d a, Point2d b) => IsHorizontalLikeForCorrectionLinePost(a, b);
+            bool IsVerticalLike(Point2d a, Point2d b) => IsVerticalLikeForCorrectionLinePost(a, b);
+
+            using (var tr = database.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                var zeroRows = new List<CorrectionSegment>();
+                var outerRows = new List<CorrectionSegment>();
+                var qsecRows = new List<(ObjectId Id, Point2d A, Point2d B)>();
+
+                foreach (ObjectId id in ms)
+                {
+                    Entity? ent = null;
+                    try
+                    {
+                        ent = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (ent == null || ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!TryReadOpenLinearSegment(ent, out var a, out var b) ||
+                        !DoesSegmentIntersectAnyWindow(a, b))
+                    {
+                        continue;
+                    }
+
+                    var layer = ent.Layer ?? string.Empty;
+                    if (string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) &&
+                        IsHorizontalLike(a, b))
+                    {
+                        zeroRows.Add(new CorrectionSegment(id, layer, a, b));
+                        continue;
+                    }
+
+                    if (string.Equals(layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase) &&
+                        IsHorizontalLike(a, b))
+                    {
+                        outerRows.Add(new CorrectionSegment(id, layer, a, b));
+                        continue;
+                    }
+
+                    if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase) &&
+                        IsVerticalLike(a, b))
+                    {
+                        qsecRows.Add((id, a, b));
+                    }
+                }
+
+                if (zeroRows.Count == 0 || qsecRows.Count == 0)
+                {
+                    tr.Commit();
+                    return false;
+                }
+
+                double SegmentParameter(Point2d point, Point2d a, Point2d b)
+                {
+                    var ab = b - a;
+                    var len2 = ab.DotProduct(ab);
+                    if (len2 <= 1e-9)
+                    {
+                        return 0.0;
+                    }
+
+                    return (point - a).DotProduct(ab) / len2;
+                }
+
+                bool TouchesCorrectionOuter(Point2d point)
+                {
+                    for (var i = 0; i < outerRows.Count; i++)
+                    {
+                        var row = outerRows[i];
+                        if (DistancePointToSegment(point, row.A, row.B) <= 0.90)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool TouchesCorrectionZeroEndpoint(Point2d point)
+                {
+                    for (var i = 0; i < zeroRows.Count; i++)
+                    {
+                        var row = zeroRows[i];
+                        if (point.GetDistanceTo(row.A) <= 1.20 ||
+                            point.GetDistanceTo(row.B) <= 1.20)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                var retargeted = 0;
+                var samples = new List<string>();
+                const double qsecZeroSegmentTouchTol = 0.75;
+                const double qsecZeroMinMove = 0.60;
+                const double qsecZeroMaxMove = 45.0;
+                const double qsecZeroShortMoveMax = CorrectionLinePostInsetMeters + 1.50;
+                const double qsecZeroDeepMoveMin = 24.0;
+                const double qsecZeroDeepMoveMax = 42.0;
+                const double qsecZeroEndpointSnapTol = 0.35;
+                const double qsecZeroInteriorParamTol = 0.05;
+
+                foreach (var qsec in qsecRows)
+                {
+                    Entity? writable = null;
+                    try
+                    {
+                        writable = tr.GetObject(qsec.Id, OpenMode.ForWrite, false) as Entity;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (writable == null || writable.IsErased ||
+                        !TryReadOpenLinearSegment(writable, out var currentA, out var currentB) ||
+                        !IsVerticalLike(currentA, currentB))
+                    {
+                        continue;
+                    }
+
+                    for (var endpointIndex = 0; endpointIndex <= 1; endpointIndex++)
+                    {
+                        var endpoint = endpointIndex == 0 ? currentA : currentB;
+                        var other = endpointIndex == 0 ? currentB : currentA;
+                        var endpointTouchesOuter = TouchesCorrectionOuter(endpoint);
+                        var endpointTouchesZeroEndpoint = TouchesCorrectionZeroEndpoint(endpoint);
+                        var bestFound = false;
+                        var bestTarget = endpoint;
+                        var bestScore = double.MaxValue;
+                        var bestKind = string.Empty;
+
+                        for (var zi = 0; zi < zeroRows.Count; zi++)
+                        {
+                            var zero = zeroRows[zi];
+                            if (!TryIntersectInfiniteLinesForPluginGeometry(endpoint, other, zero.A, zero.B, out var intersection))
+                            {
+                                continue;
+                            }
+
+                            if (DistancePointToSegment(intersection, zero.A, zero.B) > qsecZeroSegmentTouchTol)
+                            {
+                                continue;
+                            }
+
+                            var target = intersection;
+                            var endpointA = intersection.GetDistanceTo(zero.A);
+                            var endpointB = intersection.GetDistanceTo(zero.B);
+                            if (endpointA <= qsecZeroEndpointSnapTol || endpointB <= qsecZeroEndpointSnapTol)
+                            {
+                                target = endpointA <= endpointB ? zero.A : zero.B;
+                            }
+
+                            var move = endpoint.GetDistanceTo(target);
+                            if (move <= qsecZeroMinMove || move > qsecZeroMaxMove)
+                            {
+                                continue;
+                            }
+
+                            var parameter = SegmentParameter(intersection, zero.A, zero.B);
+                            var isShortInsetRetarget =
+                                move <= qsecZeroShortMoveMax &&
+                                endpointTouchesOuter;
+                            var isDeepJunctionRetarget =
+                                endpointTouchesZeroEndpoint &&
+                                move >= qsecZeroDeepMoveMin &&
+                                move <= qsecZeroDeepMoveMax &&
+                                parameter > qsecZeroInteriorParamTol &&
+                                parameter < 1.0 - qsecZeroInteriorParamTol;
+
+                            if (!isShortInsetRetarget && !isDeepJunctionRetarget)
+                            {
+                                continue;
+                            }
+
+                            var score = isShortInsetRetarget
+                                ? move
+                                : 100.0 - move;
+                            if (!bestFound || score < bestScore)
+                            {
+                                bestFound = true;
+                                bestScore = score;
+                                bestTarget = target;
+                                bestKind = isShortInsetRetarget ? "short-inset" : "deep-junction";
+                            }
+                        }
+
+                        if (!bestFound)
+                        {
+                            continue;
+                        }
+
+                        if (TryMoveEndpointForCorrectionLinePost(writable, endpointIndex == 0, bestTarget, 0.05) &&
+                            TryReadOpenLinearSegment(writable, out currentA, out currentB))
+                        {
+                            retargeted++;
+                            if (samples.Count < 8)
+                            {
+                                samples.Add(
+                                    string.Format(
+                                        CultureInfo.InvariantCulture,
+                                        "qsec={0} kind={1} from=({2:0.###},{3:0.###}) to=({4:0.###},{5:0.###})",
+                                        qsec.Id.Handle.ToString(),
+                                        bestKind,
+                                        endpoint.X,
+                                        endpoint.Y,
+                                        bestTarget.X,
+                                        bestTarget.Y));
+                            }
+                        }
+                    }
+                }
+
+                tr.Commit();
+                if (retargeted > 0)
+                {
+                    logger?.WriteLine(
+                        $"Cleanup: vertical QSEC correction-zero retarget moved={retargeted}.");
+                    for (var i = 0; i < samples.Count; i++)
+                    {
+                        logger?.WriteLine("Cleanup:   qsec-zero " + samples[i]);
+                    }
+                }
+
+                return retargeted > 0;
             }
         }
 
@@ -9013,7 +14774,8 @@ namespace AtsBackgroundBuilder
         private static bool ShouldTraceCorrectionCandidate(Point2d a, Point2d b)
         {
             return IntersectsCorrectionTraceWindow(a, b, 624100.0, 5836950.0, 625150.0, 5837105.0) ||
-                   IntersectsCorrectionTraceWindow(a, b, 632450.0, 5837240.0, 634250.0, 5837320.0);
+                   IntersectsCorrectionTraceWindow(a, b, 632450.0, 5837240.0, 634250.0, 5837320.0) ||
+                   IntersectsCorrectionTraceWindow(a, b, 614200.0, 5844850.0, 615950.0, 5846555.0);
         }
 
         private static bool IntersectsCorrectionTraceWindow(
@@ -9497,6 +15259,67 @@ namespace AtsBackgroundBuilder
             var chosenOffset = Math.Abs(centerSignedOffset(candidateMidA)) <= Math.Abs(centerSignedOffset(candidateMidB))
                 ? (normal * inset)
                 : (oppositeNormal * inset);
+
+            const double parallelDirectionDotMin = 0.985;
+            const double nearbyOuterMinOffset = 7.5;
+            const double nearbyOuterMaxOffset = 25.0;
+            var nearbyOuterFound = false;
+            var nearbyOuterDistance = double.MaxValue;
+            CorrectionSegment nearbyOuter = default;
+            for (var i = 0; i < existingSegments.Count; i++)
+            {
+                var candidate = existingSegments[i];
+                if (candidate.Id == outer.Id ||
+                    !candidate.IsHorizontalLike ||
+                    !string.Equals(candidate.Layer, LayerUsecCorrection, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var candidateDirection = candidate.B - candidate.A;
+                var candidateLength = candidateDirection.Length;
+                if (candidateLength <= 1e-6)
+                {
+                    continue;
+                }
+
+                var candidateUnit = candidateDirection / candidateLength;
+                var directionDot = Math.Abs(((direction / length).DotProduct(candidateUnit)));
+                if (directionDot < parallelDirectionDotMin)
+                {
+                    continue;
+                }
+
+                var overlap = GetCorrectionHorizontalOverlap(candidate, outer.MinX, outer.MaxX);
+                if (overlap < Math.Max(20.0, outer.Length * 0.20))
+                {
+                    continue;
+                }
+
+                var offsetFromOuter = Math.Abs(DistancePointToInfiniteLine(candidate.Mid, outer.A, outer.B));
+                if (offsetFromOuter < nearbyOuterMinOffset || offsetFromOuter > nearbyOuterMaxOffset)
+                {
+                    continue;
+                }
+
+                if (offsetFromOuter >= nearbyOuterDistance - 1e-6)
+                {
+                    continue;
+                }
+
+                nearbyOuterFound = true;
+                nearbyOuterDistance = offsetFromOuter;
+                nearbyOuter = candidate;
+            }
+
+            if (nearbyOuterFound)
+            {
+                var candidateADistance = Math.Abs(DistancePointToInfiniteLine(candidateMidA, nearbyOuter.A, nearbyOuter.B));
+                var candidateBDistance = Math.Abs(DistancePointToInfiniteLine(candidateMidB, nearbyOuter.A, nearbyOuter.B));
+                chosenOffset = candidateADistance >= candidateBDistance
+                    ? (normal * inset)
+                    : (oppositeNormal * inset);
+            }
 
             newA = outer.A + chosenOffset;
             newB = outer.B + chosenOffset;

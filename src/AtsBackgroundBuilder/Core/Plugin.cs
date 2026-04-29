@@ -12,6 +12,7 @@ using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using AtsBackgroundBuilder.Core;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
@@ -274,15 +275,19 @@ namespace AtsBackgroundBuilder
                 logger.WriteLine(msg);
             }
 
+            SetExitStage("config_load");
             var configPath = Path.Combine(dllFolder, "Config.json");
             var config = Config.Load(configPath, logger);
             var drawQuarterView = IsAffirmativeToggle(config.Quaterview) || EnableQuarterViewByEnvironment;
             logger.WriteLine($"Quarter view: {(drawQuarterView ? "ON" : "OFF")} (Config.Quaterview='{config.Quaterview}', envOverride={(EnableQuarterViewByEnvironment ? "ON" : "OFF")}).");
 
+            SetExitStage("lookup_paths");
             var companyLookupPath = ResolveLookupPath(config.LookupFolder, config.CompanyLookupFile, dllFolder, "CompanyLookup.xlsx");
             var purposeLookupPath = ResolveLookupPath(config.LookupFolder, config.PurposeLookupFile, dllFolder, "PurposeLookup.xlsx");
 
+            SetExitStage("company_lookup");
             var companyLookup = ExcelLookup.Load(companyLookupPath, logger);
+            SetExitStage("purpose_lookup");
             var purposeLookup = ExcelLookup.Load(purposeLookupPath, logger);
 
             // ------------------------------------------------------------------
@@ -303,8 +308,10 @@ namespace AtsBackgroundBuilder
                 const int maxAutoCloseResumeAttempts = 3;
                 while (true)
                 {
+                    SetExitStage("ui_construct");
                     var window = new AtsBuildWindow(clientNames, config, seededUiInput);
                     seededUiInput = null;
+                    SetExitStage("ui_show_dialog");
                     var dr = window.ShowDialog();
                     if (window.Result == null)
                     {
@@ -1842,9 +1849,9 @@ namespace AtsBackgroundBuilder
                             continue;
                         }
 
-                        // Existing OD disposition geometry may be on project-specific layers,
-                        // so do not restrict by C-/F- layer naming here.
-                        if (!(entity is Polyline || entity is Polyline2d || entity is Polyline3d))
+                        // Existing OD disposition geometry may be on project-specific layers
+                        // or stored as Map polygon entities, so do not restrict by layer name.
+                        if (!IsExistingDispositionSourceGeometry(entity, id))
                         {
                             continue;
                         }
@@ -1905,8 +1912,22 @@ namespace AtsBackgroundBuilder
 
             scanTimer.Stop();
             logger.WriteLine(
-                $"Disposition source scan: found {unique.Count} existing OD polyline(s) in requested scope ({scanTimer.ElapsedMilliseconds} ms).");
+                $"Disposition source scan: found {unique.Count} existing OD source geometries in requested scope ({scanTimer.ElapsedMilliseconds} ms).");
             return unique;
+        }
+
+        private static bool IsExistingDispositionSourceGeometry(Entity entity, ObjectId id)
+        {
+            if (entity is Polyline || entity is Polyline2d || entity is Polyline3d)
+            {
+                return true;
+            }
+
+            var objectClass = id.ObjectClass;
+            return DispositionSourceGeometryTypePolicy.IsMapPolygon(
+                objectClass?.DxfName,
+                objectClass?.Name,
+                entity.GetType().Name);
         }
 
         private static bool IsLikelyDispositionLineLayer(string layerName)

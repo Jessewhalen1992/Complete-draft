@@ -73,7 +73,15 @@ namespace AtsBackgroundBuilder
             bool IsRegularUsecBoundaryLayer(string layer)
             {
                 return string.Equals(layer, LayerUsecBase, StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase);
+                       string.Equals(layer, "L-USEC", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-0", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecTwenty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC2012", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, LayerUsecThirty, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC-3018", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(layer, "L-USEC3018", StringComparison.OrdinalIgnoreCase);
             }
 
             bool IsSecLikeHardTarget(string layer)
@@ -89,7 +97,7 @@ namespace AtsBackgroundBuilder
             using (var tr = database.TransactionManager.StartTransaction())
             {
                 var hardBoundarySegments = new List<(ObjectId Id, Point2d A, Point2d B, string Layer)>();
-                var regularUsecBoundarySegments = new List<(ObjectId Id, Point2d A, Point2d B, bool IsHorizontal, bool IsVertical)>();
+                var regularUsecBoundarySegments = new List<(ObjectId Id, Point2d A, Point2d B, bool IsHorizontal, bool IsVertical, string Layer)>();
                 var secSourceIds = new List<ObjectId>();
                 var sectionSplitVerticalSegments = new List<(ObjectId Id, Point2d A, Point2d B, string Layer)>();
                 var bt = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
@@ -124,7 +132,8 @@ namespace AtsBackgroundBuilder
                             a,
                             b,
                             IsHorizontalLikeForEndpointEnforcement(a, b),
-                            IsVerticalLikeForEndpointEnforcement(a, b)));
+                            IsVerticalLikeForEndpointEnforcement(a, b),
+                            layer));
                     }
 
                     if (IsVerticalLikeForEndpointEnforcement(a, b) &&
@@ -769,6 +778,8 @@ namespace AtsBackgroundBuilder
                     }
 
                     var endpointOnRegularUsecBoundary = false;
+                    var endpointOnZeroBoundary = false;
+                    var endpointOnTwentyBoundary = false;
                     for (var i = 0; i < regularUsecBoundarySegments.Count; i++)
                     {
                         var seg = regularUsecBoundarySegments[i];
@@ -780,11 +791,22 @@ namespace AtsBackgroundBuilder
                         if (DistancePointToSegment(endpoint, seg.A, seg.B) <= endpointTouchTol)
                         {
                             endpointOnRegularUsecBoundary = true;
+                            if (string.Equals(seg.Layer, LayerUsecZero, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(seg.Layer, "L-USEC-0", StringComparison.OrdinalIgnoreCase))
+                            {
+                                endpointOnZeroBoundary = true;
+                            }
+
+                            if (IsUsec2012Layer(seg.Layer))
+                            {
+                                endpointOnTwentyBoundary = true;
+                            }
+
                             break;
                         }
                     }
 
-                    if (!endpointOnRegularUsecBoundary)
+                    if (!endpointOnRegularUsecBoundary || endpointOnZeroBoundary)
                     {
                         return false;
                     }
@@ -883,8 +905,36 @@ namespace AtsBackgroundBuilder
                         return false;
                     }
 
+                    if (sourceIsVertical &&
+                        endpointOnTwentyBoundary &&
+                        IsEndpointOfDifferentVerticalSecSource(bestOrdinaryTarget, sourceId))
+                    {
+                        return false;
+                    }
+
                     target = bestOrdinaryTarget;
                     return true;
+                }
+
+                bool IsEndpointOfDifferentVerticalSecSource(Point2d point, ObjectId sourceId)
+                {
+                    for (var i = 0; i < sectionSplitVerticalSegments.Count; i++)
+                    {
+                        var seg = sectionSplitVerticalSegments[i];
+                        if (seg.Id == sourceId ||
+                            !string.Equals(seg.Layer, "L-SEC", StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        if (point.GetDistanceTo(seg.A) <= endpointTouchTol ||
+                            point.GetDistanceTo(seg.B) <= endpointTouchTol)
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
                 }
 
                 bool TryFindExtensionTarget(
@@ -3499,6 +3549,123 @@ namespace AtsBackgroundBuilder
                     return BuildFallbackOuterKinds(lineIsHorizontal, context);
                 }
 
+                bool TryFindHorizontalBoundaryKindAtPoint(
+                    Point2d point,
+                    LsdQuarterContext context,
+                    out string kind)
+                {
+                    kind = string.Empty;
+                    const double pointTol = 0.75;
+                    foreach (var entry in horizontalByKind)
+                    {
+                        if (string.Equals(entry.Key, boundaryKindSec, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        var segments = entry.Value;
+                        if (segments == null || segments.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        for (var segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)
+                        {
+                            var seg = segments[segmentIndex];
+                            if (DistancePointToSegment(point, seg.A, seg.B) > pointTol)
+                            {
+                                continue;
+                            }
+
+                            kind = entry.Key;
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                bool ShouldPreserveCurrentOuterForLiveQsecVertical(
+                    string innerSource,
+                    bool currentLineIsHorizontal,
+                    Point2d outerPoint,
+                    Point2d innerPoint,
+                    Point2d candidateOuterTarget,
+                    LsdQuarterContext context,
+                    out string supportKind)
+                {
+                    supportKind = string.Empty;
+                    if (currentLineIsHorizontal ||
+                        !string.Equals(innerSource, "live-qsec", StringComparison.OrdinalIgnoreCase) ||
+                        outerPoint.GetDistanceTo(candidateOuterTarget) <= 2.0)
+                    {
+                        return false;
+                    }
+
+                    if (!TryFindHorizontalBoundaryKindAtPoint(outerPoint, context, out supportKind))
+                    {
+                        return false;
+                    }
+
+                    if (!horizontalByKind.TryGetValue(boundaryKindSec, out var secSegments) || secSegments.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    const double secTouchTol = 0.75;
+                    const double preserveBandMoveMin = 18.0;
+                    const double preserveBandMoveMax = 25.5;
+                    var candidateMove = outerPoint.GetDistanceTo(candidateOuterTarget);
+                    var candidateOnSec = false;
+                    for (var segmentIndex = 0; segmentIndex < secSegments.Count; segmentIndex++)
+                    {
+                        var seg = secSegments[segmentIndex];
+                        if (DistancePointToSegment(candidateOuterTarget, seg.A, seg.B) > secTouchTol)
+                        {
+                            continue;
+                        }
+
+                        candidateOnSec = true;
+                        break;
+                    }
+
+                    if (candidateOnSec &&
+                        candidateMove >= preserveBandMoveMin &&
+                        candidateMove <= preserveBandMoveMax)
+                    {
+                        return true;
+                    }
+
+                    var outward = candidateOuterTarget - innerPoint;
+                    var outwardLen = outward.Length;
+                    if (outwardLen <= 1e-6)
+                    {
+                        return false;
+                    }
+
+                    var currentLen = innerPoint.GetDistanceTo(outerPoint);
+                    var outwardDir = outward / outwardLen;
+                    const double crossTol = 1.0;
+                    for (var segmentIndex = 0; segmentIndex < secSegments.Count; segmentIndex++)
+                    {
+                        var seg = secSegments[segmentIndex];
+                        if (!TryIntersectInfiniteLineWithSegment(innerPoint, outwardDir, seg.A, seg.B, out var lineT))
+                        {
+                            continue;
+                        }
+
+                        if (lineT <= (currentLen + crossTol) || lineT >= (outwardLen - crossTol))
+                        {
+                            continue;
+                        }
+
+                        return true;
+                    }
+
+                    supportKind = string.Empty;
+                    return false;
+                }
+
                 bool TryFindBoundaryStationTargetInContext(
                     Point2d endpoint,
                     Point2d innerEndpoint,
@@ -3518,6 +3685,46 @@ namespace AtsBackgroundBuilder
                         context.SectionMinV,
                         context.SectionMaxV,
                         preferredKinds,
+                        out target);
+                }
+
+                bool TryFindCompanionRoadAllowanceStationTarget(
+                    Point2d endpoint,
+                    Point2d innerEndpoint,
+                    bool lineIsHorizontal,
+                    LsdQuarterContext context,
+                    IReadOnlyList<string> preferredKinds,
+                    out Point2d target,
+                    out string companionKind)
+                {
+                    target = endpoint;
+                    companionKind = string.Empty;
+                    if (preferredKinds == null || preferredKinds.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    var primaryKind = preferredKinds[0];
+                    if (string.Equals(primaryKind, boundaryKindTwenty, StringComparison.OrdinalIgnoreCase))
+                    {
+                        companionKind = boundaryKindZero;
+                    }
+                    else if (string.Equals(primaryKind, boundaryKindZero, StringComparison.OrdinalIgnoreCase))
+                    {
+                        companionKind = boundaryKindTwenty;
+                    }
+                    else
+                    {
+                        return false;
+                    }
+
+                    var companionKinds = new[] { companionKind };
+                    return TryFindBoundaryStationTargetInContext(
+                        endpoint,
+                        innerEndpoint,
+                        lineIsHorizontal,
+                        context,
+                        companionKinds,
                         out target);
                 }
 
@@ -5087,6 +5294,22 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
+                    if (found && preserveOnPrimaryBoundary && preferredKinds.Count > 0)
+                    {
+                        var primaryKind = preferredKinds[0];
+                        var currentOutwardAdvance = (endpoint - innerEndpoint).DotProduct(outwardDir);
+                        var targetOutwardAdvance = (target - innerEndpoint).DotProduct(outwardDir);
+                        if ((string.Equals(primaryKind, "ZERO", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(primaryKind, "TWENTY", StringComparison.OrdinalIgnoreCase)) &&
+                            targetOutwardAdvance > currentOutwardAdvance + (RoadAllowanceSecWidthMeters * 0.35))
+                        {
+                            // The endpoint is already on the first valid road boundary for this LSD.
+                            // Do not walk to the next parallel 0/20.12 row across the road allowance.
+                            target = endpoint;
+                            return true;
+                        }
+                    }
+
                     if (found &&
                         preserveOnPrimaryBoundary &&
                         preferredKinds.Count == 1 &&
@@ -5907,6 +6130,8 @@ namespace AtsBackgroundBuilder
                     var usedResolvedCorrectionZeroTarget = false;
                     var usedInteriorCorrectionZeroTarget = false;
                     var usedMidpointCorrectionZeroTarget = false;
+                    var usedCompanionRoadAllowanceTarget = false;
+                    var companionRoadAllowanceKind = string.Empty;
                     var outerTarget = outerPoint;
                     var foundOuterTarget = false;
                     var useQuarterCorrectionZeroTarget =
@@ -6024,6 +6249,23 @@ namespace AtsBackgroundBuilder
                     if (!foundOuterTarget &&
                         !usedSurveySecTarget &&
                         !correctionOverride &&
+                        TryFindCompanionRoadAllowanceStationTarget(
+                            outerPoint,
+                            innerPoint,
+                            lineIsHorizontal,
+                            context,
+                            preferredKinds,
+                            out outerTarget,
+                            out companionRoadAllowanceKind))
+                    {
+                        foundOuterTarget = true;
+                        usedStationTarget = true;
+                        usedCompanionRoadAllowanceTarget = true;
+                    }
+
+                    if (!foundOuterTarget &&
+                        !usedSurveySecTarget &&
+                        !correctionOverride &&
                         TryFindSecBoundaryStationTarget(
                             outerPoint,
                             innerPoint,
@@ -6134,6 +6376,30 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
+                    var preservedCurrentOuterForLiveQsec = false;
+                    var preservedCurrentOuterKind = string.Empty;
+                    if (foundOuterTarget &&
+                        ShouldPreserveCurrentOuterForLiveQsecVertical(
+                            innerTargetSource,
+                            lineIsHorizontal,
+                            outerPoint,
+                            innerPoint,
+                            outerTarget,
+                            context,
+                            out preservedCurrentOuterKind))
+                    {
+                        outerTarget = outerPoint;
+                        usedStationTarget = false;
+                        usedSurveySecTarget = false;
+                        usedCorrectionBandShiftTarget = false;
+                        usedResolvedCorrectionSouthBoundaryTarget = false;
+                        usedResolvedCorrectionSouthHalfMidTarget = false;
+                        usedResolvedCorrectionZeroTarget = false;
+                        usedInteriorCorrectionZeroTarget = false;
+                        usedMidpointCorrectionZeroTarget = false;
+                        preservedCurrentOuterForLiveQsec = true;
+                    }
+
                     movedByStationTarget = TryMoveEndpoint(writable, !startIsInner, outerTarget, endpointMoveTol);
                         if (movedByStationTarget)
                         {
@@ -6150,11 +6416,13 @@ namespace AtsBackgroundBuilder
                     if (traceRuleFlow)
                     {
                         var outerSource =
+                            preservedCurrentOuterForLiveQsec ? $"preserve-{preservedCurrentOuterKind.ToLowerInvariant()}-live-qsec" :
                             usedSurveySecTarget ? "survey-sec-target" :
                             usedCorrectionBandShiftTarget ? "corr-band-shift" :
                             usedResolvedCorrectionSouthBoundaryTarget ? "corr-south-hard" :
                             usedResolvedCorrectionZeroTarget ? "corrzero-resolved" :
                             usedInteriorCorrectionZeroTarget ? "corrzero-interior" :
+                            usedCompanionRoadAllowanceTarget ? $"companion-{companionRoadAllowanceKind.ToLowerInvariant()}" :
                             usedStationTarget ? "station-kind" :
                             "unknown";
                         logger?.WriteLine(

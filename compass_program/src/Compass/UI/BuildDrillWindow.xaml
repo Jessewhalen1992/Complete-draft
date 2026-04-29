@@ -253,8 +253,13 @@
                                             </Grid>
 
                                             <CheckBox Margin="0,10,0,0"
-                                                      Content="Use ATS hard boundaries"
-                                                      IsChecked="{Binding UseAtsFabric, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                      Content="ATS hard boundaries required for section offsets"
+                                                      IsChecked="{Binding UseAtsFabric, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      IsEnabled="False" />
+                                            <TextBlock Margin="0,6,0,0"
+                                                       Foreground="#FF6B7280"
+                                                       Text="Keep the drawing saved and make sure AtsBackgroundBuilder is available. Compass will stop instead of falling back to non-ATS offsets."
+                                                       TextWrapping="Wrap" />
 
                                             <Grid Margin="0,10,0,0">
                                                 <Grid.ColumnDefinitions>

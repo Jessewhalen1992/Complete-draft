@@ -11,12 +11,13 @@
     <DefineConstants>NET8_0_WINDOWS;$(DefineConstants)</DefineConstants>
     <UseWindowsForms>true</UseWindowsForms>
     <UseWPF>true</UseWPF>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
   </PropertyGroup>
 
   <Target Name="CopyBuildOutput" AfterTargets="Build">
     <ItemGroup>
-      <BuildOutputFiles Include="$(TargetDir)*.*" />
+      <BuildOutputFiles Include="$(TargetDir)*.*" Exclude="$(TargetDir)*.log" />
     </ItemGroup>
     <Copy SourceFiles="@(BuildOutputFiles)" DestinationFolder="$(MSBuildProjectDirectory)\..\..\build\$(TargetFramework)" SkipUnchangedFiles="true" />
   </Target>
