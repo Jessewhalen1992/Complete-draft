@@ -734,6 +734,14 @@ namespace AtsBackgroundBuilder
                     context.LsdQuarterInfos.ToList());
                 RebuildLsdLabelsAtFinalIntersections(context.Database, context.LsdQuarterInfos.ToList(), context.Logger);
             }
+            if (RetargetVerticalQsecEndpointsToCorrectionZeroIntersections(
+                    context.Database,
+                    context.RequestedScopeIds,
+                    context.Logger,
+                    allowDeepJunctionRetargets: false))
+            {
+                TraceTargetLayerSegmentState(context.Database, context.RequestedScopeIds, "after-final-qsec-correction-zero-retarget", context.Logger);
+            }
             if (!context.KeepGeneratedAtsFabric)
             {
                 CaptureRemainingGeneratedRoadAllowanceEntityIds(context);

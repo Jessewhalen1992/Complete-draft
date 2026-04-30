@@ -14259,7 +14259,8 @@ namespace AtsBackgroundBuilder
         private static bool RetargetVerticalQsecEndpointsToCorrectionZeroIntersections(
             Database database,
             IEnumerable<ObjectId> requestedQuarterIds,
-            Logger? logger)
+            Logger? logger,
+            bool allowDeepJunctionRetargets = true)
         {
             if (database == null || requestedQuarterIds == null)
             {
@@ -14282,7 +14283,7 @@ namespace AtsBackgroundBuilder
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                 var zeroRows = new List<CorrectionSegment>();
                 var outerRows = new List<CorrectionSegment>();
-                var qsecRows = new List<(ObjectId Id, Point2d A, Point2d B)>();
+                var qsecCandidateRows = new List<(ObjectId Id, Point2d A, Point2d B, bool IntersectsWindow)>();
 
                 foreach (ObjectId id in ms)
                 {
@@ -14301,13 +14302,25 @@ namespace AtsBackgroundBuilder
                         continue;
                     }
 
-                    if (!TryReadOpenLinearSegment(ent, out var a, out var b) ||
-                        !DoesSegmentIntersectAnyWindow(a, b))
+                    if (!TryReadOpenLinearSegment(ent, out var a, out var b))
                     {
                         continue;
                     }
 
                     var layer = ent.Layer ?? string.Empty;
+                    var intersectsWindow = DoesSegmentIntersectAnyWindow(a, b);
+                    if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase) &&
+                        IsVerticalLike(a, b))
+                    {
+                        qsecCandidateRows.Add((id, a, b, intersectsWindow));
+                        continue;
+                    }
+
+                    if (!intersectsWindow)
+                    {
+                        continue;
+                    }
+
                     if (string.Equals(layer, LayerUsecCorrectionZero, StringComparison.OrdinalIgnoreCase) &&
                         IsHorizontalLike(a, b))
                     {
@@ -14321,15 +14334,9 @@ namespace AtsBackgroundBuilder
                         outerRows.Add(new CorrectionSegment(id, layer, a, b));
                         continue;
                     }
-
-                    if (string.Equals(layer, "L-QSEC", StringComparison.OrdinalIgnoreCase) &&
-                        IsVerticalLike(a, b))
-                    {
-                        qsecRows.Add((id, a, b));
-                    }
                 }
 
-                if (zeroRows.Count == 0 || qsecRows.Count == 0)
+                if (zeroRows.Count == 0 || qsecCandidateRows.Count == 0)
                 {
                     tr.Commit();
                     return false;
@@ -14373,6 +14380,26 @@ namespace AtsBackgroundBuilder
                         }
                     }
 
+                    return false;
+                }
+
+                var qsecRows = new List<(ObjectId Id, Point2d A, Point2d B)>();
+                for (var i = 0; i < qsecCandidateRows.Count; i++)
+                {
+                    var qsec = qsecCandidateRows[i];
+                    if (qsec.IntersectsWindow ||
+                        TouchesCorrectionOuter(qsec.A) ||
+                        TouchesCorrectionOuter(qsec.B) ||
+                        TouchesCorrectionZeroEndpoint(qsec.A) ||
+                        TouchesCorrectionZeroEndpoint(qsec.B))
+                    {
+                        qsecRows.Add((qsec.Id, qsec.A, qsec.B));
+                    }
+                }
+
+                if (qsecRows.Count == 0)
+                {
+                    tr.Commit();
                     return false;
                 }
 
@@ -14449,6 +14476,7 @@ namespace AtsBackgroundBuilder
                                 move <= qsecZeroShortMoveMax &&
                                 endpointTouchesOuter;
                             var isDeepJunctionRetarget =
+                                allowDeepJunctionRetargets &&
                                 endpointTouchesZeroEndpoint &&
                                 move >= qsecZeroDeepMoveMin &&
                                 move <= qsecZeroDeepMoveMax &&

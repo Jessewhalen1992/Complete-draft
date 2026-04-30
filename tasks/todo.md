@@ -11157,3 +11157,22 @@ Review 2026-04-29 (Repair 62-18-5 shared S.W./N.W. quarter definitions):
 - Protected `43-8-5` guard `data\regression-checks\twp43-8-5-after-62-18-zero-gate-r238` passed with `baselineComparePassed=true`, `baselineAdded=0`, `baselineMissing=0`, and `expected3dpMismatchCount=0`.
 - Deployment:
 - `C:\AUTOCAD-SETUP CG\CG_LISP\AtsBackgroundBuilder.dll` and `C:\AUTOCAD-SETUP CG\CG_LISP\ATSBUILD_MANUAL\AtsBackgroundBuilder.dll` were refreshed from the tested Release build and match SHA256 `5B511CE3C783D39DE03EECD374D94C9A9FD5FF77C60F76605092FF373139E994`, timestamp `2026-04-29 09:50:03 -03:00`.
+
+## 2026-04-29 - Repair 43-8-5 south road-allowance quarter-line endpoint
+
+- [x] Reproduce the reported 43-8-5 quarter-line miss from `625709.420,5837061.207 -> 625712.518,5836956.427`, where the south-of-road-allowance endpoint should instead land at `625709.272,5837066.225`.
+- [x] Trace the reusable section/quarter road-boundary rule so the fix can apply township-to-township without coordinate-specific fallbacks.
+- [x] Patch the smallest responsible logic.
+- [x] Rebuild and prove the 43-8-5 reference changes only the intended quarter-line geometry.
+
+Review 2026-04-29 (Repair 43-8-5 south road-allowance quarter-line endpoint):
+- Root cause:
+- The correction-zero retarget pass ran before the final quarter/LSD draw and only considered `L-QSEC` segments intersecting the buffered request windows. The reported south-of-road-allowance quarter lines are final-display `L-QSEC` segments that sit just outside that window while still touching an in-scope `L-USEC-C` / `L-USEC-C-0` correction pair, so they remained on the outer correction row.
+- Fix:
+- `RetargetVerticalQsecEndpointsToCorrectionZeroIntersections(...)` now keeps `L-QSEC` candidates that either intersect the request window or touch an in-scope correction/correction-zero boundary, while correction boundary collection itself stays window-scoped.
+- The same pass now supports disabling deep-junction retargets; the final cleanup call runs after LSD/label generation with deep-junction moves disabled so it only adjusts the final short 5.02 m correction-inset QSEC endpoints and does not churn LSD or labels.
+- Verification:
+- `dotnet build .\src\AtsBackgroundBuilder\AtsBackgroundBuilder.csproj -c Release -p:Platform=x64 -p:NuGetAudit=false -m:1 -v:minimal` passed with `0` warnings and `0` errors.
+- Full AutoCAD proof `data\regression-checks\twp43-8-5-after-qsec-corrzero-r8\artifacts\output.dxf` generated from the `43-8-5` reference with runner exit code `0` and `batchCompleted=true`.
+- The reported `L-QSEC` line now lands at `625709.272,5837066.225 -> 625712.518,5836956.427`.
+- The 3dp DXF compare against `data\regression-baselines\twp43-8-5\accepted-output.dxf` shows unchanged entity counts (`1888` supported entities before/after) and exactly six missing/added `L-QSEC` line fingerprints, all short-inset south road-allowance endpoint moves; no `L-SECTION-LSD`, label, quarter-box, or other layer/entity changes remain.
